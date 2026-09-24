@@ -48,10 +48,17 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     // jump the view once older rows are prepended.
     const el = scroller.current
     const i = firstVisiblePostIndex(rows, v.range?.startIndex ?? 0)
-    const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
-    if (info && el) {
-      anchor.current = rows[i].key
-      anchorOffset.current = info[0] - el.scrollTop // preserve its on-screen position, not just align it to top
+    const key = i >= 0 ? rows[i].key : undefined
+    const rowEl = key !== undefined ? v.elementsCache.get(key) : undefined
+    if (key !== undefined && rowEl && el) {
+      // The anchor row is already mounted and on screen — its real
+      // rendered position is exact. v.getOffsetForIndex(i, 'start') would
+      // also work, but it reads measurementsCache, which can still hold an
+      // estimate for a row whose real size its measureElement ref hasn't
+      // flushed yet (e.g. right after an abrupt jump); the DOM is ground
+      // truth.
+      anchor.current = key
+      anchorOffset.current = rowEl.getBoundingClientRect().top - el.getBoundingClientRect().top
     } else {
       anchor.current = null
     }
