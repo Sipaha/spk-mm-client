@@ -84,6 +84,13 @@ func mustJSON(v any) []byte {
 // TakeSnapshot returns what changed since the previous call and resets the
 // dirty set. Encoding happens under the lock — it is cheap next to the disk
 // write, which the caller does after releasing it.
+//
+// The dirty set is cleared unconditionally, before the caller has persisted
+// anything: the returned put/del slices are the only copy of this delta. If
+// store.SaveCache fails, the caller (the write-behind worker, Task 10) must
+// hold on to put/del and retry them — merged with whatever the next
+// TakeSnapshot call returns — because calling TakeSnapshot again will not
+// reproduce them.
 func (s *Server) TakeSnapshot() (put []store.CacheEntry, del []store.CacheKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,13 +197,8 @@ func (s *Server) Restore(entries []store.CacheEntry) error {
 		if ch == nil {
 			continue
 		}
-		if !w.Stale {
-			w.SyncedAt = max(w.SyncedAt, liveAt)
-		}
-		w.Loaded, w.Stale, w.GapAfter = true, true, ""
-		if n := len(w.Posts); n > 0 {
-			w.GapAfter = w.Posts[n-1].ID
-		}
+		w.Loaded = true
+		w.markStale(liveAt)
 		ch.Win = w
 		for _, p := range w.Posts {
 			s.seen.add(p.ID)

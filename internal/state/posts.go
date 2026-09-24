@@ -201,6 +201,23 @@ func (s *Server) OldestPostID(channelID string) string {
 	return ""
 }
 
+// markStale marks w stale as of liveUntil: posts after GapAfter may be
+// missing until the worker catches the window up via since=. If w was
+// already stale, SyncedAt is left alone — the gap already started earlier
+// and liveUntil must not move it forward again. Shared by MarkStale (the
+// event stream was lost) and Restore (every window comes back from a
+// snapshot stale, caught up to live/at).
+func (w *Window) markStale(liveUntil int64) {
+	if !w.Stale {
+		w.SyncedAt = max(w.SyncedAt, liveUntil)
+	}
+	w.Stale = true
+	w.GapAfter = ""
+	if n := len(w.Posts); n > 0 {
+		w.GapAfter = w.Posts[n-1].ID
+	}
+}
+
 // MarkStale records that the event stream was lost. Every loaded window may
 // miss posts after its last one; it stays readable and is caught up by the worker.
 func (s *Server) MarkStale(liveUntil int64) {
@@ -210,12 +227,7 @@ func (s *Server) MarkStale(liveUntil int64) {
 		if !ch.Win.Loaded || ch.Win.Stale {
 			continue
 		}
-		ch.Win.SyncedAt = max(ch.Win.SyncedAt, liveUntil)
-		ch.Win.Stale = true
-		ch.Win.GapAfter = ""
-		if n := len(ch.Win.Posts); n > 0 {
-			ch.Win.GapAfter = ch.Win.Posts[n-1].ID
-		}
+		ch.Win.markStale(liveUntil)
 		s.dirty.posts[id] = true
 	}
 }
