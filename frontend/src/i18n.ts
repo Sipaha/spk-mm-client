@@ -51,6 +51,21 @@ const ru = {
   'err.no_channel': 'Канал не найден',
   'err.empty_message': 'Пустое сообщение',
   'err.forbidden': 'Нет прав на это действие',
+  'day.today': 'Сегодня',
+  'day.yesterday': 'Вчера',
+  'feed.label': 'Сообщения',
+  'feed.new': 'Новые сообщения',
+  'feed.gap': 'Загружаю пропущенные сообщения…',
+  'feed.loadingOlder': 'Загрузка истории…',
+  'feed.empty': 'Сообщений пока нет',
+  'feed.loading': 'Загрузка сообщений…',
+  'channel.syncing': 'Синхронизация…',
+  'post.edited': '(изменено)',
+  'post.replies': 'Ответов: {n}',
+  'post.sending': 'Отправка…',
+  'post.failed': 'Не отправлено.',
+  'post.retry': 'Повторить',
+  'post.discard': 'Удалить',
 } as const
 
 type Key = keyof typeof ru
@@ -108,6 +123,21 @@ const en: Record<Key, string> = {
   'err.no_channel': 'Channel not found',
   'err.empty_message': 'The message is empty',
   'err.forbidden': 'You are not allowed to do that',
+  'day.today': 'Today',
+  'day.yesterday': 'Yesterday',
+  'feed.label': 'Messages',
+  'feed.new': 'New messages',
+  'feed.gap': 'Loading missed messages…',
+  'feed.loadingOlder': 'Loading history…',
+  'feed.empty': 'No messages yet',
+  'feed.loading': 'Loading messages…',
+  'channel.syncing': 'Syncing…',
+  'post.edited': '(edited)',
+  'post.replies': 'Replies: {n}',
+  'post.sending': 'Sending…',
+  'post.failed': 'Not sent.',
+  'post.retry': 'Retry',
+  'post.discard': 'Discard',
 }
 
 export const dict = { ru, en }

@@ -109,3 +109,28 @@ export function openFromNotification(serverId: number, channelId: string) {
   if (useStore.getState().selectedId !== serverId) selectServer(serverId)
   void openChannel(serverId, channelId)
 }
+
+export const openLink = (href: string) => {
+  client.openURL(href).catch(report)
+}
+
+// loadOlder fetches one page of history above the window; resolves true
+// when the channel was re-read with it.
+export async function loadOlder(serverId: number, channelId: string): Promise<boolean> {
+  try {
+    await client.loadOlder(serverId, channelId)
+    await refreshChannel(serverId, channelId)
+    return true
+  } catch (e) {
+    report(e)
+    return false
+  }
+}
+
+export const retryPost = (serverId: number, channelId: string, pendingId: string) => {
+  client.retryPost(serverId, channelId, pendingId).catch(report)
+}
+
+export const discardPost = (serverId: number, channelId: string, pendingId: string) => {
+  client.discardPost(serverId, channelId, pendingId).catch(report)
+}

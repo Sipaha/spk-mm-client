@@ -132,6 +132,27 @@ TOTAL PRIVATE: 73.3 MB (budgeted)   TOTAL PSS: 187.7 MB (reference)
 ~75 МБ на сам чат (кэш постов в Go ~10–35 МБ по оценке спецификации + DOM
 виртуализированной ленты). Реалистично, но следить с первых задач этапа 2.
 
+### Этап 2, задача 13: Go-часть после предзагрузки 100 каналов (2026-09-24)
+
+Замер только Go-процесса (browser-режим — без WebKit, тот бюджет уже учтён
+в замере выше): `make build`, свежий `SPK_MATTERMOST_HOME`,
+`--mm-fake --mm-fake-channels 100 --test-api`, вход alice/secret. Через
+HTTP API (`OpenChannel`) открыты все 100 `load-NNN` каналов (по 20 постов
+каждый) плюс Town Square (150 постов) и Off-Topic — везде окно в 60
+последних постов держится в памяти по правилу «горячего слоя». Замер через
+scripts/pss.sh <pid> дважды с интервалом 3 с (значение не растёт):
+
+```
+   PRIVATE        PSS  PID CMD
+   16.6 MB    27.8 MB  spk-mattermost --browser --port 5182 --mm-fake --mm-fake-channels 100 --test-api
+TOTAL PRIVATE: 16.6 MB (budgeted)   TOTAL PSS: 27.8 MB (reference)
+```
+
+Итог: 16.6 МБ Private_Dirty для ~100 открытых каналов — заметно меньше
+бюджета в 75 МБ, оценённого в замере выше. Виртуализация ленты (React,
+не Go) и `react-markdown`/`remark-*` живут во фронтенд-процессе (WebKit в
+desktop-режиме), в этот замер не входят.
+
 ### Release-сборка и GPU-политика WebKitGTK (2026-09-24)
 
 WebKitGTK 2.52.3, NVIDIA 580 + Mesa, X11. Тот же сценарий (пустое окно, свежий

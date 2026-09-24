@@ -1,8 +1,24 @@
+import { useMemo } from 'react'
 import type { ChannelDTO, ServerDTO } from '../api/types'
+import { discardPost, loadOlder, openLink, retryPost } from '../chat'
+import { formatLocale } from '../format'
 import { t } from '../i18n'
+import { Feed } from './Feed'
 import { channelGlyph } from './glyph'
+import type { PostActions } from './PostItem'
 
 export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; channel: ChannelDTO | null; onReauth(): void }) {
+  const channelId = channel?.id ?? ''
+  // Stable per channel: PostItem is memoized on its props.
+  const actions = useMemo<PostActions>(
+    () => ({
+      link: openLink,
+      retry: (p) => retryPost(server.id, channelId, p.id),
+      discard: (p) => discardPost(server.id, channelId, p.id),
+    }),
+    [server.id, channelId],
+  )
+  const me = useMemo(() => ({ id: channel?.me_id ?? '', username: server.username }), [channel?.me_id, server.username])
   if (!channel) {
     return <div className="flex flex-1 items-center justify-center text-neutral-500">{t('channel.none')}</div>
   }
@@ -27,7 +43,12 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           </button>
         </div>
       )}
-      <div className="min-h-0 flex-1" />
+      {channel.loaded && channel.syncing && server.state !== 'needs_reauth' && (
+        <div role="status" className="border-b border-neutral-100 px-4 py-0.5 text-xs text-neutral-500">
+          {t('channel.syncing')}
+        </div>
+      )}
+      <Feed key={channel.id} channel={channel} me={me} locale={formatLocale()} actions={actions} onLoadOlder={() => loadOlder(server.id, channel.id)} />
     </section>
   )
 }
