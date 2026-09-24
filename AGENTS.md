@@ -30,6 +30,17 @@
   фронт при его обработке обновляет только список серверов и не сбрасывает `lastError` или
   выбранный сервер — иначе баннер ошибки/выбор мигали бы на каждый чих. —
   `frontend/src/store.ts` (`setServers`).
+- Начало дыры в потоке событий — конец последнего **доказанного** потока: `Worker.live` (и
+  `live/at` в снимке) не двигаются, пока новый поток не доказан (завершён bootstrap, событие с
+  ожидаемым seq после resume или `resumeSettle` без `hello`); иначе отказ в resume после долгого
+  офлайна догонял бы каналы только с момента переподключения и терял посты из дыры. —
+  `TestLongOfflineGapWithLossCatchesUpFromStreamEnd`, `TestLiveMarkMovesOnlyWhileProven`.
+- Обновление метаданных применяет цикл событий сессии (`startRefresh`/`finishRefresh`), события
+  на время REST-чтения копятся и применяются после `Bootstrap` под его guard — иначе `Bootstrap`
+  откатывает счётчики, поднятые событиями. Уведомление зависит от новизны поста (seen-set), не от
+  guard; пост неизвестного канала хранится (`TakeOrphans`) до обновления. —
+  `TestMetaRefreshKeepsCountersRaisedByEvents`, `TestFirstPostInNewChannelNotifies`,
+  `TestPostInsideGuardNotifiesWithoutDoubleCount`.
 - Действия записи (`SendPost`, `EditPost`, `DeletePost`, `MarkUnread`, …) при `needs_reauth`
   отказывают сразу кодом `session_expired`, не уходя в воркер — see `s.writer()` seam. —
   `internal/api/chat.go`.
@@ -43,6 +54,7 @@
 - Memory budget is **Private_Dirty** of all app processes (≤150 MB with 2–3 servers/~100 channels), not PSS: PSS includes a share of WebKit/GTK/ICU libraries shared with other apps and swings with what else runs (150–196 MB PSS vs ~73–80 MB Private_Dirty for the empty shell; release build and WebKit GPU policy don't change it). Measure with `scripts/pss.sh <pid>` (prints both). — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Wails beta.25 Linux tray: `SystemTray.SetTooltip` is a no-op and the StatusNotifierItem `Id`/`ToolTip` are frozen to the label when the tray starts (default "Wails"); only `SetLabel` (SNI `Title`) and `SetIcon` update live. Tray/notification calls reach GTK/D-Bus with no timeout — keep them off service goroutines (`offerLatest`, `asyncSender`). — `internal/desktop/tray.go` (`setTrayText`, `trayBadge`), `internal/desktop/async.go` (`TestAsyncSenderDetachesAHungSendAndResumes`).
 - Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mattermost/browser.go`.
+- Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
 - `--mm-fake-channels N` (browser mode) seeds N extra open channels (`c-load-001`…, 20 posts each) in the fake server for memory/perf checks; the desktop `--mm-fake` flag (dev builds only) starts the same fake server in-process and signs in as alice automatically — always point it at its own `SPK_MATTERMOST_HOME` (a fresh temp dir), never at the live client's data dir, and it clears any stale fake-mode server entries from a previous dev run before adding the live one. — `cmd/spk-mattermost/main.go`, `cmd/spk-mattermost/run_desktop_wails.go`.
 - Testing the virtualized feed under Vitest/jsdom needs a manual layout stub: jsdom never computes real layout, so `HTMLElement.prototype.offsetHeight` (row height for the virtualizer) and `scrollTo` (history-load anchor) must be overridden in `beforeEach`/restored in `afterEach`, not left at jsdom's defaults (0 / no-op that doesn't move `scrollTop`). — `frontend/src/components/Feed.test.tsx`.
 - `ServerRail`'s per-server button folds the unread/mention badge into its own accessible name ("`<name> — Mentions: N`" or "`<name> — Unread messages`"), not just the sibling badge `<span>` (Task 12 fix). Playwright's `getByLabel`/`getByRole(name:)` match is a substring by default, so `page.getByRole('navigation').getByLabel('Mentions: 1')` also matches that button (whose name contains "Mentions: 1") in addition to the intended badge — two hits trip strict mode. e2e assertions on these badge labels need `{ exact: true }`. — `frontend/src/components/ServerRail.tsx`, `tests/e2e/chat.spec.ts`.
