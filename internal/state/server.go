@@ -88,7 +88,8 @@ type Server struct {
 	guard         map[string]int64
 	seen          seenSet
 
-	dirty dirtySet // Task 8
+	liveAt int64    // Task 8: local ms of the last live WS moment
+	dirty  dirtySet // Task 8
 }
 
 func New(now func() time.Time) *Server {
