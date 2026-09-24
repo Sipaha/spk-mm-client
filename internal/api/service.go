@@ -31,11 +31,14 @@ type Service struct {
 	// action for minutes.
 	callTimeout time.Duration
 
-	co      *events.Coalescer
-	nq      *notifyQueue
-	getenv  func(string) string
-	tune    func(*mmsync.Config) // tests: shorter intervals
-	focusMu sync.Mutex           // serializes applyFocus
+	co     *events.Coalescer
+	nq     *notifyQueue
+	getenv func(string) string
+	tune   func(*mmsync.Config) // tests: shorter intervals
+	// onFocus (tests) sees each worker about to get focus with the channel
+	// that SetFocused(true) will then mark read; nil in production.
+	onFocus func(serverID int64, activeChannel string)
+	focusMu sync.Mutex // serializes applyFocus
 
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
@@ -213,6 +216,7 @@ func (s *Service) LoginWithPassword(ctx context.Context, id int64, login, passwo
 	s.deactivate(id)
 	s.revoke(ctx, srv)
 	if err := s.st.SetSession(ctx, id, tok, u.ID, u.Username); err != nil {
+		s.resume(ctx, srv)
 		return ServerDTO{}, coded(CodeInternal, err)
 	}
 	s.activate(ctx, srv)
@@ -273,6 +277,7 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	s.deactivate(srv.ID) // the old token's worker stops before the token is revoked
 	s.revoke(ctx, srv)   // replace, don't orphan, an existing session
 	if err := s.st.SetSession(ctx, srv.ID, res.Token, u.ID, u.Username); err != nil {
+		s.resume(ctx, srv)
 		return s.loginFailed(res.ServerID, coded(CodeInternal, err))
 	}
 	s.activate(ctx, srv)

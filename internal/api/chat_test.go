@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,6 +309,15 @@ func TestOpenChannelOnAnotherServerViewsOnlyThatChannel(t *testing.T) {
 	a, b := f.signIn(fakeA, "alice"), f.signIn(fakeB, "alice")
 	ctx := context.Background()
 	f.eventually(func() bool { return f.loaded(a, "c-town") && f.loaded(b, "c-offtopic") && f.loaded(b, "c-town") }, "prefetch")
+	var mu sync.Mutex
+	var viewedOnB []string // B's active channel each time B's worker got focus (SetFocused(true) views it)
+	f.svc.onFocus = func(id int64, active string) {
+		if id == b {
+			mu.Lock()
+			viewedOnB = append(viewedOnB, active)
+			mu.Unlock()
+		}
+	}
 
 	_, err := f.svc.OpenChannel(ctx, b, "c-offtopic") // unfocused: B's active channel is now Y, nothing viewed
 	require.NoError(t, err)
@@ -323,7 +334,29 @@ func TestOpenChannelOnAnotherServerViewsOnlyThatChannel(t *testing.T) {
 	f.eventually(func() bool {
 		return fakeB.Member("c-town", "alice").MsgCount == fakeB.Channel("c-town").TotalMsgCount
 	}, "the opened channel X is viewed")
+	mu.Lock()
+	assert.Equal(t, []string{"c-town"}, viewedOnB, "B was focused only with X active, never with Y")
+	mu.Unlock()
 	time.Sleep(300 * time.Millisecond)
 	assert.Less(t, fakeB.Member("c-offtopic", "alice").MsgCount, fakeB.Channel("c-offtopic").TotalMsgCount,
 		"B's previously active channel Y was never shown: stays unread")
+}
+
+// A re-login that fails to save the new session must leave the server
+// syncing with the stored (now revoked) token — needs_reauth, not "off"
+// while the store still says signed in.
+func TestFailedSessionSaveRestartsSync(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.server(id).State == "live" }, "live")
+	require.NoError(t, f.st.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TRIGGER fail_session BEFORE UPDATE OF token ON servers
+			BEGIN SELECT RAISE(ABORT, 'injected'); END`)
+		return err
+	}))
+	_, err := f.svc.LoginWithPassword(ctx, id, "alice", "secret")
+	assert.Equal(t, CodeInternal, codeOf(err))
+	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "sync restarted with the stored token")
 }

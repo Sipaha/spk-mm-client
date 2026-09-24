@@ -96,6 +96,15 @@ func (s *Service) activate(ctx context.Context, before store.Server) {
 	s.co.Schedule("badge", s.refreshBadges)
 }
 
+// resume restarts sync after a sign-in whose session could not be saved: the
+// worker was stopped for it, but the store still holds the previous session
+// (revoked by then, so the worker shows needs_reauth).
+func (s *Service) resume(ctx context.Context, before store.Server) {
+	if before.SignedIn() {
+		s.activate(ctx, before)
+	}
+}
+
 func (s *Service) deactivate(id int64) {
 	if m := s.manager(); m != nil {
 		m.Stop(id)
@@ -129,7 +138,13 @@ func (s *Service) applyFocus() {
 	if m == nil {
 		return
 	}
-	m.Each(func(id int64, w *mmsync.Worker) { w.SetFocused(focused && id == active) })
+	m.Each(func(id int64, w *mmsync.Worker) {
+		f := focused && id == active
+		if f && s.onFocus != nil {
+			s.onFocus(id, w.State().Active())
+		}
+		w.SetFocused(f)
+	})
 }
 
 func (s *Service) NetworkChanged(context.Context) error {
