@@ -129,3 +129,38 @@ func TestAppendOlderOnlyForActiveChannel(t *testing.T) {
 	v, _ = s.ChannelView("town")
 	assert.Len(t, v.Posts, 1, "history is dropped when leaving the channel")
 }
+
+// Fix round 1, finding 2: trimming a full window for the active channel
+// must not drop the evicted post from what the user is reading — it moves
+// to the end of s.older instead, where ChannelView still shows it.
+func TestTrimmedWindowPostMovesToOlderForActiveChannel(t *testing.T) {
+	s := newFixture()
+	var page []model.Post
+	for i := 0; i < WindowSize; i++ {
+		page = append(page, mkPost(fmt.Sprint("w", i), "town", "u2", int64(100+i)))
+	}
+	s.SetWindow("town", page, true, 5)
+	s.SetActive("town")
+	s.AppendOlder("town", []model.Post{mkPost("old1", "town", "u2", 50)}, false)
+	s.ClearGuard()
+	s.ApplyEvent(postedEv(mkPost("new1", "town", "u2", int64(100+WindowSize))))
+
+	v, _ := s.ChannelView("town")
+	require.Len(t, v.Posts, WindowSize+2, "old1, the trimmed w0, and the still-full window")
+	assert.Equal(t, "old1", v.Posts[0].ID)
+	assert.Equal(t, "w0", v.Posts[1].ID, "trimmed post still visible, right after older history")
+	assert.Equal(t, "new1", v.Posts[len(v.Posts)-1].ID)
+}
+
+// Fix round 1, finding 3: an empty final AppendOlder page (there is no more
+// history) must clear HasMore even though s.older stays empty.
+func TestHasMoreFalseAfterEmptyFinalAppendOlder(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("town", []model.Post{mkPost("t1", "town", "u2", 100)}, false, 5)
+	s.SetActive("town")
+	v, _ := s.ChannelView("town")
+	assert.True(t, v.HasMore, "sanity: window incomplete, nothing fetched yet")
+	s.AppendOlder("town", nil, true)
+	v, _ = s.ChannelView("town")
+	assert.False(t, v.HasMore, "AppendOlder said there is nothing older left")
+}

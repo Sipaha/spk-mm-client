@@ -237,3 +237,42 @@ func TestUnknownChannelPostAsksForMeta(t *testing.T) {
 	eff := s.ApplyEvent(postedEv(mkPost("x", "brand-new", "u2", 5000)))
 	assert.True(t, eff.NeedMeta)
 }
+
+// Fix round 1, finding 1(a): a prefetch page can land a post in the window
+// before its own "posted" event arrives (REST-before-WS race). SetWindow
+// must not mark the post seen — only the event applying it may, so the
+// event still bumps counters and produces a notification.
+func TestPostedAfterPageAlreadyContainsItStillBumpsCounters(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	p := mkPost("p1", "off", "u2", 5000)
+	s.SetWindow("off", []model.Post{p}, true, 5) // prefetch already landed p1
+	assert.Equal(t, []string{"p1"}, windowIDs(s, "off"))
+	eff := s.ApplyEvent(postedEv(p))
+	info, _ := counts(s, "off")
+	assert.Equal(t, int64(8), info.TotalMsgCount, "the event still counts p1 once")
+	assert.Equal(t, []string{"p1"}, windowIDs(s, "off"), "no duplicate in the window")
+	require.NotNil(t, eff.Notify, "the event still notifies")
+}
+
+// Fix round 1, finding 1: root ReplyCount/LastReplyAt bump. A CRT root
+// fetched via REST already reflects a reply in its own ReplyCount/LastReplyAt
+// fields; the reply's own "posted" event must not bump it again.
+func TestCRTReplyAlreadyReflectedByRESTDoesNotDoubleBump(t *testing.T) {
+	b := fixture()
+	b.Config.CollapsedThreads = "always_on"
+	s := New(fixedNow)
+	s.Bootstrap(b)
+	s.ClearGuard()
+	root := mkPost("root", "town", "u2", 1000)
+	root.ReplyCount, root.LastReplyAt = 1, 2000 // REST already counted this reply
+	s.SetWindow("town", []model.Post{root}, true, 5)
+	reply := mkPost("r1", "town", "u3", 2000)
+	reply.RootID = "root"
+	s.ApplyEvent(postedEv(reply, "u1"))
+	s.mu.Lock()
+	got := s.chans["town"].Win.Posts[0]
+	s.mu.Unlock()
+	assert.Equal(t, int64(1), got.ReplyCount, "not double-bumped")
+	assert.Equal(t, int64(2000), got.LastReplyAt)
+}

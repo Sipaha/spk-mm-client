@@ -55,10 +55,22 @@ func sortPosts(ps []model.Post) {
 	sort.SliceStable(ps, func(i, j int) bool { return ps[i].CreateAt < ps[j].CreateAt })
 }
 
-func trimWindow(w *Window) {
-	if len(w.Posts) > WindowSize {
-		w.Posts = append([]model.Post(nil), w.Posts[len(w.Posts)-WindowSize:]...)
-		w.Complete = false
+// trimWindowLocked keeps ch.Win.Posts at ≤ WindowSize. For the active
+// channel with history already loaded (s.older non-empty), the trimmed
+// (oldest) posts are not discarded — they are still visible above the
+// window, so they move to the end of s.older instead.
+func (s *Server) trimWindowLocked(ch *Chan) {
+	w := &ch.Win
+	if len(w.Posts) <= WindowSize {
+		return
+	}
+	cut := len(w.Posts) - WindowSize
+	trimmed := append([]model.Post(nil), w.Posts[:cut]...)
+	w.Posts = append([]model.Post(nil), w.Posts[cut:]...)
+	w.Complete = false
+	if ch.Info.ID == s.active && len(s.older) > 0 {
+		s.older = append(s.older, trimmed...)
+		sortPosts(s.older)
 	}
 }
 
@@ -73,7 +85,7 @@ func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 	} else {
 		ch.Win.Posts = append(ch.Win.Posts, p)
 		sortPosts(ch.Win.Posts)
-		trimWindow(&ch.Win)
+		s.trimWindowLocked(ch)
 	}
 	s.dirty.posts[ch.Info.ID] = true
 }
@@ -111,7 +123,6 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	for _, p := range page {
 		if keep(p, crt) {
 			merged = append(merged, p)
-			s.seen.add(p.ID)
 		}
 		newest = max(newest, p.CreateAt)
 	}
@@ -122,7 +133,7 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	}
 	sortPosts(merged)
 	ch.Win = Window{Posts: merged, Loaded: true, Complete: complete, SyncedAt: syncedAt}
-	trimWindow(&ch.Win)
+	s.trimWindowLocked(ch)
 	s.dirty.posts[channelID] = true
 }
 
@@ -150,7 +161,6 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 			continue
 		case indexOf(ch.Win.Posts, p.ID) >= 0 || p.CreateAt >= oldest:
 			s.upsertLocked(ch, p)
-			s.seen.add(p.ID)
 		}
 	}
 	ch.Win.Loaded, ch.Win.Stale, ch.Win.GapAfter = true, false, ""
@@ -344,7 +354,11 @@ func (s *Server) PostCreated(p model.Post) Change {
 // REST create). It updates the window and, once per post id, the counters.
 func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (bumped bool) {
 	crt := s.crtLocked()
-	isNew := !s.seen.has(p.ID) && indexOf(ch.Win.Posts, p.ID) < 0
+	// Window/seen membership never comes from a page fetch (SetWindow,
+	// MergeSince) — only this function records ids in seen. So a post
+	// already displayed via a REST page but not yet seen here is still
+	// new: its counters and reply-count bump have not happened yet.
+	isNew := !s.seen.has(p.ID)
 	s.seen.add(p.ID)
 	s.dropPendingLocked(ch.Info.ID, p.PendingPostID)
 	root := p.RootID == ""
@@ -354,9 +368,12 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 			s.upsertLocked(ch, p)
 		}
 	case crt && !root && isNew:
-		if i := indexOf(ch.Win.Posts, p.RootID); i >= 0 {
+		// The root may already have this reply's count from a REST fetch
+		// (its ReplyCount/LastReplyAt fields came straight from the
+		// server); only bump if this reply is not already reflected there.
+		if i := indexOf(ch.Win.Posts, p.RootID); i >= 0 && p.CreateAt > ch.Win.Posts[i].LastReplyAt {
 			ch.Win.Posts[i].ReplyCount++
-			ch.Win.Posts[i].LastReplyAt = max(ch.Win.Posts[i].LastReplyAt, p.CreateAt)
+			ch.Win.Posts[i].LastReplyAt = p.CreateAt
 			s.dirty.posts[ch.Info.ID] = true
 		}
 	}

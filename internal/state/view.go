@@ -76,7 +76,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		posts = append(posts, s.older...)
 	}
 	posts = append(posts, ch.Win.Posts...)
-	if channelID == s.active && len(s.older) > 0 {
+	if channelID == s.active && (s.olderComplete || len(s.older) > 0) {
 		v.HasMore = !s.olderComplete
 	} else {
 		v.HasMore = ch.Win.Loaded && !ch.Win.Complete
