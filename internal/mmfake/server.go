@@ -190,7 +190,7 @@ func (s *Server) mobileLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) gitlabAuthorize(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<html><body><h1>Fake GitLab</h1><a id="authorize" href="/mmfake/gitlab/complete?state=%s">Authorize as %s</a></body></html>`,
+	_, _ = fmt.Fprintf(w, `<html><body><h1>Fake GitLab</h1><a id="authorize" href="/mmfake/gitlab/complete?state=%s">Authorize as %s</a></body></html>`,
 		url.QueryEscape(state), html.EscapeString(s.opts.Users[0].Username))
 }
 
@@ -214,5 +214,5 @@ func (s *Server) gitlabComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	link := html.EscapeString(redirect + sep + q.Encode())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<html><head><meta http-equiv="refresh" content="2; url=%s"></head><body><h2>Authentication complete</h2><p><a id="mmauth-link" href="%s">Click here</a></p></body></html>`, link, link)
+	_, _ = fmt.Fprintf(w, `<html><head><meta http-equiv="refresh" content="2; url=%s"></head><body><h2>Authentication complete</h2><p><a id="mmauth-link" href="%s">Click here</a></p></body></html>`, link, link)
 }

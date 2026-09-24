@@ -7,6 +7,8 @@ import (
 
 type ErrKind int
 
+// ErrKind values classify why a request failed, so callers can branch on
+// network vs. auth vs. other API errors without string-matching messages.
 const (
 	KindNetwork ErrKind = iota + 1 // transport failure, timeout, 5xx
 	KindAuth                       // 401/403: token missing, expired or revoked

@@ -33,7 +33,7 @@ func TestRequestCarriesBearerAndXRequestedWith(t *testing.T) {
 
 func TestRetries429HonouringRetryAfter(t *testing.T) {
 	var n atomic.Int32
-	c, slept := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, slept := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		if n.Add(1) == 1 {
 			w.Header().Set("Retry-After", "3")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -48,7 +48,7 @@ func TestRetries429HonouringRetryAfter(t *testing.T) {
 
 func TestGives429UpAfterMaxAttempts(t *testing.T) {
 	var n atomic.Int32
-	c, slept := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, slept := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		n.Add(1)
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
@@ -61,7 +61,7 @@ func TestGives429UpAfterMaxAttempts(t *testing.T) {
 }
 
 func TestClassifies401AsAuthWithServerErrorID(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"id":"api.context.session_expired.app_error","message":"Invalid or expired session","status_code":401}`))
 	})
@@ -73,7 +73,7 @@ func TestClassifies401AsAuthWithServerErrorID(t *testing.T) {
 }
 
 func TestClassifies502AsNetwork(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) })
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) })
 	err := c.Ping(context.Background())
 	assert.True(t, IsNetwork(err))
 }
@@ -89,7 +89,7 @@ func TestTransportErrorIsNetwork(t *testing.T) {
 
 func TestPostIsNotRetriedOnTransportError(t *testing.T) {
 	var n atomic.Int32
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		n.Add(1)
 		hj, _ := w.(http.Hijacker)
 		conn, _, _ := hj.Hijack()
@@ -101,9 +101,9 @@ func TestPostIsNotRetriedOnTransportError(t *testing.T) {
 }
 
 func TestContextCancelStopsRetries(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) })
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) })
 	ctx, cancel := context.WithCancel(context.Background())
-	c.sleep = func(ctx context.Context, d time.Duration) error { cancel(); return ctx.Err() }
+	c.sleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
 	err := c.Ping(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
 }

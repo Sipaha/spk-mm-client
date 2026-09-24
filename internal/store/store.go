@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
 //go:embed migrations/*.sql

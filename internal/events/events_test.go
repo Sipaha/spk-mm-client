@@ -47,7 +47,7 @@ func TestUnsubscribeClosesChannelAndIsIdempotent(t *testing.T) {
 	e.Emit(Event{Type: "after"}) // must not panic
 }
 
-func TestNilEmitterIsNoop(t *testing.T) {
+func TestNilEmitterIsNoop(_ *testing.T) {
 	var e *Emitter
 	e.Emit(Event{Type: "x"})
 }

@@ -16,6 +16,8 @@ import (
 )
 
 const (
+	// CallbackURL is the redirect_to value passed to Mattermost's mobile
+	// login flow; the OS hands the resulting mmauth://callback URL back to us.
 	CallbackURL = "mmauth://callback"
 	scheme      = "mmauth"
 	pendingTTL  = 10 * time.Minute
@@ -26,8 +28,8 @@ var (
 	ErrNoPendingLogin    = errors.New("no login in progress")
 	ErrServerMismatch    = errors.New("login callback does not match a server being signed in")
 	ErrMalformedCallback = errors.New("malformed login callback")
-	// ErrAlreadyCompleted: the same callback delivered twice (Wails launch
-	// event + second-instance args, or a double click). Callers ignore it.
+	// ErrAlreadyCompleted signals the same callback delivered twice (Wails
+	// launch event + second-instance args, or a double click). Callers ignore it.
 	ErrAlreadyCompleted = errors.New("login callback already handled")
 )
 

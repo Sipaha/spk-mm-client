@@ -23,7 +23,7 @@ func TestClientConfig(t *testing.T) {
 }
 
 func TestPingRejectsNonOKStatus(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"FAIL"}`)) })
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"status":"FAIL"}`)) })
 	assert.Error(t, c.Ping(context.Background()))
 }
 
@@ -45,13 +45,13 @@ func TestLoginReturnsTokenFromHeader(t *testing.T) {
 }
 
 func TestLoginWithoutTokenHeaderFails(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"id":"u1"}`)) })
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"u1"}`)) })
 	_, _, err := c.Login(context.Background(), "alice", "pw")
 	assert.Error(t, err)
 }
 
 func TestLogoutTreats401AsSuccess(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) })
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) })
 	assert.NoError(t, c.Logout(context.Background()))
 }
 
