@@ -66,11 +66,13 @@ test('GitLab SSO through mmauth:// callback', async ({ page, context }) => {
   expect(r.ok()).toBeTruthy()
   await expect(page.getByText('Signed in as alice')).toBeVisible()
 
-  // second delivery of the same callback must not surface an error
-  await page.request.post('/api/_test/deeplink', {
+  // second delivery of the same callback is accepted silently, not an error
+  const again = await page.request.post('/api/_test/deeplink', {
     headers: { Authorization: `Bearer ${await apiToken(page)}`, Origin: new URL(page.url()).origin },
     data: { url: href },
   })
+  expect(again.ok()).toBeTruthy()
+  expect(await again.json()).toEqual({ status: 'ok' })
   await expect(page.getByRole('alert')).toHaveCount(0)
   await removeServer(page)
 })
