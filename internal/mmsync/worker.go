@@ -92,6 +92,14 @@ const (
 	createTimeout  = 30 * time.Second
 	metaDebounce   = 300 * time.Millisecond
 	finalFlushTime = 5 * time.Second
+	// resumeSettle: a server that refuses a resume answers with a hello
+	// first thing; a resumed socket that stays quiet this long without one
+	// was accepted (Mattermost sends nothing at all on a lossless resume).
+	resumeSettle = 3 * time.Second
+	// maxResumeFails: consecutive resumes that end before they are proven
+	// (the server closes the socket on a connection_id it rejects) before
+	// the worker gives up on the saved stream and reconnects fresh.
+	maxResumeFails = 3
 	// dialTimeout bounds the WebSocket handshake only; the established
 	// connection lives as long as the session.
 	dialTimeout = 30 * time.Second
@@ -124,19 +132,21 @@ type Worker struct {
 	nudge      chan struct{}
 	authFail   chan struct{}
 	metaReq    chan struct{}
+	metaDue    chan struct{} // debounced metaReq, served by the session's event loop
 	queue      *fetchQueue
 	viewing    sync.Map // channel id → in-flight view
 	usersMu    sync.Mutex
 	bg         sync.WaitGroup
-	lastLive   atomic.Int64
+	live       liveMark
 
 	// only touched by the Run goroutine
 	resume ws.Resume
 	booted bool
-	// needResync: a hello reset the stream but the resync has not happened
-	// yet (bootstrap failed, or the reset was seen while draining); the
-	// next session must bootstrap even though it can resume the new stream.
-	needResync bool
+	// needResync: the stream was lost but the resync has not happened yet
+	// (bootstrap failed, or a reset was seen while draining); the next
+	// session must bootstrap even though it can resume the new stream.
+	needResync  bool
+	resumeFails int
 
 	// only touched by the flush loop: a delta SaveCache failed to write,
 	// retried (merged with newer changes) by the next flush.
@@ -153,6 +163,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		nudge:    make(chan struct{}, 1),
 		authFail: make(chan struct{}, 1),
 		metaReq:  make(chan struct{}, 1),
+		metaDue:  make(chan struct{}, 1),
 		queue:    newFetchQueue(),
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
@@ -278,7 +289,15 @@ func (w *Worker) wsOptions() ws.Options {
 // session is one connection lifetime: validate the token, dial (resuming
 // the previous stream if any), bootstrap when there is no stream to
 // continue, then apply events until the stream ends.
-func (w *Worker) session(ctx context.Context, onLive func()) error {
+//
+// Continuity bookkeeping (w.live): the moment the previous stream ended is
+// the start of the gap. It only moves forward once the new stream is proven
+// continuous — a bootstrap completed on it, or the resume was accepted (an
+// event in sequence, or resumeSettle without a hello). A refused resume
+// (reset hello) therefore marks the windows stale from the real gap start.
+func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
+	var refreshes sync.WaitGroup
+	defer refreshes.Wait() // runs after cancel: an in-flight refresh ends with sctx
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	select { // drop stale signals from the previous session
@@ -294,25 +313,52 @@ func (w *Worker) session(ctx context.Context, onLive func()) error {
 	if err != nil {
 		return err
 	}
+	resumed := w.resume.ConnectionID != ""
+	// A metadata refresh runs while events keep coming: they are held back
+	// and applied after the refreshed metadata, under its guard.
+	var held []ws.Event
+	var refresh chan metaResult // non-nil while a refresh fetch is in flight
 	defer func() {
 		// Resume counts every event already placed in Events(): apply the
-		// buffered ones before taking it, or they would be skipped for good.
+		// held and buffered ones before taking it, or they would be
+		// skipped for good.
 		conn.Close()
+		for _, ev := range held {
+			w.applyDrained(ev)
+		}
 		w.drain(conn.Events())
 		w.resume = conn.Resume()
-		if w.Status() == StatusLive {
-			w.lastLive.Store(w.cfg.Now().UnixMilli())
+		now := w.cfg.Now().UnixMilli()
+		if w.live.end(now) {
+			w.st.SetLiveAt(now)
+		} else if resumed && ctx.Err() == nil && !errors.Is(err, errNudged) && !sessionExpired(err) {
+			w.resumeFails++
+			if w.resumeFails >= maxResumeFails {
+				slog.Info("server keeps refusing the resume, reconnecting fresh", "srv", w.srv.ID)
+				w.resume, w.needResync, w.resumeFails = ws.Resume{}, true, 0
+			}
+		}
+		if refresh != nil { // abandoned: done again once a session runs
+			w.requestMeta()
 		}
 	}()
-	if !w.booted || w.resume.ConnectionID == "" || w.needResync {
+	if !w.booted || !resumed || w.needResync {
 		if err := w.bootstrap(sctx, w.booted); err != nil {
 			return err
 		}
+		w.proveLive()
 	}
 	w.setStatus(StatusLive)
-	w.lastLive.Store(w.cfg.Now().UnixMilli())
 	onLive()
+	var settle <-chan time.Time
+	if !w.live.proven() {
+		settle = time.After(resumeSettle)
+	}
 	for {
+		due := w.metaDue
+		if refresh != nil {
+			due = nil // one refresh at a time; a new request waits in metaDue
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -320,21 +366,37 @@ func (w *Worker) session(ctx context.Context, onLive func()) error {
 			return errNudged
 		case <-w.authFail:
 			return &rest.Error{Kind: rest.KindAuth, Status: http.StatusUnauthorized, Err: errors.New("request rejected with 401")}
+		case <-settle:
+			w.proveLive() // no hello: the server accepted the resume
+		case <-due:
+			refresh = w.startRefresh(sctx, &refreshes)
+		case r := <-refresh:
+			refresh = nil
+			if err := w.finishRefresh(r); err != nil {
+				return err
+			}
+			evs := held
+			held = nil
+			for i, ev := range evs {
+				if err := w.handle(sctx, ev); err != nil {
+					held = evs[i+1:] // the cleanup applies the rest
+					return err
+				}
+			}
+			if len(conn.Events()) == 0 {
+				w.st.ClearGuard()
+			}
 		case ev, ok := <-conn.Events():
 			if !ok {
 				return conn.Err()
 			}
-			if ev.Type == "hello" {
-				if ev.Reset {
-					slog.Info("event stream lost, resyncing", "srv", w.srv.ID)
-					w.needResync = true
-					if err := w.bootstrap(sctx, true); err != nil {
-						return err
-					}
-				}
+			if refresh != nil {
+				held = append(held, ev)
 				continue
 			}
-			w.apply(ev)
+			if err := w.handle(sctx, ev); err != nil {
+				return err
+			}
 			if len(conn.Events()) == 0 {
 				w.st.ClearGuard()
 			}
@@ -342,15 +404,156 @@ func (w *Worker) session(ctx context.Context, onLive func()) error {
 	}
 }
 
+// handle applies one event of the live stream.
+func (w *Worker) handle(ctx context.Context, ev ws.Event) error {
+	if ev.Type == "hello" {
+		if ev.Reset {
+			slog.Info("event stream lost, resyncing", "srv", w.srv.ID)
+			if err := w.bootstrap(ctx, true); err != nil {
+				return err
+			}
+		}
+		w.proveLive()
+		return nil
+	}
+	w.apply(ev)
+	w.proveLive() // Conn checked the sequence: the stream continues ours
+	return nil
+}
+
+// proveLive records that the current stream is continuous with what we
+// hold: from now on the live mark follows the clock.
+func (w *Worker) proveLive() {
+	if w.live.prove(w.cfg.Now().UnixMilli()) {
+		w.resumeFails = 0
+	}
+}
+
+// liveMark tracks up to when the event stream is known to be continuous.
+// After a disconnect, at is where the gap starts; it moves forward again
+// only once the new stream is proven. Shared by the Run goroutine and the
+// flush loop.
+type liveMark struct {
+	mu     sync.Mutex
+	isLive bool
+	at     int64
+}
+
+// prove marks the stream continuous as of now; false if it already was.
+func (m *liveMark) prove(now int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.isLive {
+		return false
+	}
+	m.isLive, m.at = true, max(m.at, now)
+	return true
+}
+
+func (m *liveMark) proven() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.isLive
+}
+
+// advance moves the mark to now if the stream is proven continuous.
+func (m *liveMark) advance(now int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.isLive {
+		m.at = max(m.at, now)
+	}
+	return m.isLive
+}
+
+// end closes the stream: if it was proven, the gap starts now; otherwise it
+// still starts where the last proven stream ended. Reports whether the
+// stream was proven.
+func (m *liveMark) end(now int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	was := m.isLive
+	if was {
+		m.at = max(m.at, now)
+	}
+	m.isLive = false
+	return was
+}
+
+func (m *liveMark) gapStart() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.at
+}
+
+type metaResult struct {
+	b       state.Bootstrap
+	settled bool
+	err     error
+}
+
+// startRefresh fetches metadata in the background; the result goes back to
+// the event loop, which holds events back until it lands.
+func (w *Worker) startRefresh(ctx context.Context, wg *sync.WaitGroup) chan metaResult {
+	out := make(chan metaResult, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		b, settled, err := w.fetchMeta(ctx)
+		out <- metaResult{b, settled, err}
+	}()
+	return out
+}
+
+// finishRefresh applies a refresh result on the event loop. The caller then
+// applies the events held back meanwhile, under the fresh guard: posts the
+// REST read already counted are not counted again, later ones are.
+func (w *Worker) finishRefresh(r metaResult) error {
+	if r.err != nil {
+		if sessionExpired(r.err) {
+			return r.err
+		}
+		slog.Warn("metadata refresh failed", "srv", w.srv.ID, "err", r.err)
+		return nil
+	}
+	w.st.Bootstrap(r.b)
+	if !r.settled {
+		w.requestMeta()
+	}
+	w.replayOrphans()
+	w.goBG(w.loadUsers)
+	w.enqueueAll()
+	w.changed(state.Change{Sidebar: true, Badge: true})
+	return nil
+}
+
+// replayOrphans applies posts that arrived for channels the last Bootstrap
+// brought in (first message of a new DM, a channel we were added to).
+func (w *Worker) replayOrphans() {
+	for _, ev := range w.st.TakeOrphans() {
+		w.apply(ev)
+	}
+}
+
+// bootstrap reads all metadata. lost: the event stream was lost, so every
+// window may miss posts since the gap start — needResync stays set until
+// this succeeds, so a failure is retried by the next session.
 func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
-	b, err := w.fetchMeta(ctx)
+	if lost {
+		w.needResync = true
+	}
+	b, settled, err := w.fetchMeta(ctx)
 	if err != nil {
 		return err
 	}
 	w.st.Bootstrap(b)
-	if lost {
-		w.st.MarkStale(w.lastLive.Load())
+	if !settled {
+		w.requestMeta()
 	}
+	if lost {
+		w.st.MarkStale(w.live.gapStart())
+	}
+	w.replayOrphans()
 	w.booted, w.needResync = true, false
 	w.loadUsers(ctx)
 	w.enqueueAll()
@@ -358,28 +561,40 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	return nil
 }
 
-func (w *Worker) fetchMeta(ctx context.Context) (state.Bootstrap, error) {
-	var b state.Bootstrap
+// fetchMeta reads channels and memberships first: events that arrive
+// while a refresh is in flight are applied after it, and absolute ones
+// (member updates) should predate these reads as little as possible.
+//
+// The two reads are not atomic: a post landing between them is in the
+// member counters but not in the channel's last_post_at (the guard), so its
+// event would count it again. Channels are read once more to detect that;
+// settled=false asks for another refresh, which repairs the counters.
+func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool, err error) {
+	if b.Channels, err = w.rc.MyChannels(ctx); err != nil {
+		return b, false, err
+	}
+	if b.Members, err = w.rc.MyChannelMembers(ctx); err != nil {
+		return b, false, err
+	}
+	again, err := w.rc.MyChannels(ctx)
+	if err != nil {
+		return b, false, err
+	}
+	settled = sameLastPosts(b.Channels, again)
 	cfg, err := w.rc.ClientConfig(ctx)
 	if err != nil {
-		return b, err
+		return b, false, err
 	}
 	b.Config = state.Config{CollapsedThreads: cfg.CollapsedThreads, TeammateNameDisplay: cfg.TeammateNameDisplay,
 		LockTeammateNameDisplay: cfg.LockTeammateNameDisplay == "true"}
 	if b.Me, err = w.rc.Me(ctx); err != nil {
-		return b, err
+		return b, false, err
 	}
 	if b.Prefs, err = w.rc.MyPreferences(ctx); err != nil {
-		return b, err
+		return b, false, err
 	}
 	if b.Teams, err = w.rc.MyTeams(ctx); err != nil {
-		return b, err
-	}
-	if b.Channels, err = w.rc.MyChannels(ctx); err != nil {
-		return b, err
-	}
-	if b.Members, err = w.rc.MyChannelMembers(ctx); err != nil {
-		return b, err
+		return b, false, err
 	}
 	if b.Status, err = w.rc.MyStatus(ctx); err != nil {
 		slog.Debug("status unavailable", "srv", w.srv.ID, "err", err)
@@ -390,14 +605,27 @@ func (w *Worker) fetchMeta(ctx context.Context) (state.Bootstrap, error) {
 		cats, err := w.rc.Categories(ctx, t.ID)
 		if err != nil {
 			if sessionExpired(err) {
-				return b, err
+				return b, false, err
 			}
 			slog.Warn("sidebar categories unavailable", "srv", w.srv.ID, "team", t.ID, "err", err)
 			continue
 		}
 		b.Categories[t.ID] = cats
 	}
-	return b, nil
+	return b, settled, nil
+}
+
+func sameLastPosts(a, b []model.Channel) bool {
+	last := make(map[string]int64, len(a))
+	for _, c := range a {
+		last[c.ID] = c.LastPostAt
+	}
+	for _, c := range b {
+		if at, ok := last[c.ID]; ok && at != c.LastPostAt {
+			return false
+		}
+	}
+	return true
 }
 
 // drain applies the events left in a closed connection's buffer, like the
@@ -405,15 +633,19 @@ func (w *Worker) fetchMeta(ctx context.Context) (state.Bootstrap, error) {
 // resync happens at the start of the next session.
 func (w *Worker) drain(events <-chan ws.Event) {
 	for ev := range events {
-		if ev.Type == "hello" {
-			if ev.Reset {
-				w.needResync = true
-			}
-			continue
-		}
-		w.apply(ev)
+		w.applyDrained(ev)
 	}
 	w.st.ClearGuard()
+}
+
+func (w *Worker) applyDrained(ev ws.Event) {
+	if ev.Type == "hello" {
+		if ev.Reset {
+			w.needResync = true
+		}
+		return
+	}
+	w.apply(ev)
 }
 
 func (w *Worker) apply(ev ws.Event) {
@@ -453,9 +685,10 @@ func (w *Worker) requestMeta() {
 	}
 }
 
-// metaLoop refreshes channels/memberships/categories after events that
-// change them (joined a channel, new DM, categories edited elsewhere),
-// debounced so a burst costs one refresh.
+// metaLoop asks for a channels/memberships/categories refresh after events
+// that change them (joined a channel, new DM, categories edited elsewhere),
+// debounced so a burst costs one refresh. The session's event loop performs
+// it, so the result is applied in order with the events.
 func (w *Worker) metaLoop(ctx context.Context) {
 	for {
 		select {
@@ -472,18 +705,10 @@ func (w *Worker) metaLoop(ctx context.Context) {
 		case <-w.metaReq:
 		default:
 		}
-		b, err := w.fetchMeta(ctx)
-		if err != nil {
-			if sessionExpired(err) {
-				w.signalAuth()
-			}
-			slog.Warn("metadata refresh failed", "srv", w.srv.ID, "err", err)
-			continue
+		select { // served by the next event loop that runs
+		case w.metaDue <- struct{}{}:
+		default:
 		}
-		w.st.Bootstrap(b)
-		w.loadUsers(ctx)
-		w.enqueueAll()
-		w.changed(state.Change{Sidebar: true, Badge: true})
 	}
 }
 
@@ -532,9 +757,9 @@ func (w *Worker) flushLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return // Run does the final flush once everything else stopped
 		case <-t.C:
-			if w.Status() == StatusLive {
-				now := w.cfg.Now().UnixMilli()
-				w.lastLive.Store(now)
+			// live/at is persisted only while the stream is proven
+			// continuous: a cold start catches up from there.
+			if now := w.cfg.Now().UnixMilli(); w.live.advance(now) {
 				w.st.SetLiveAt(now)
 			}
 			w.flush(ctx)

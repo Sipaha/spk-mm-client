@@ -3,6 +3,7 @@ package mmsync
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type harness struct {
 	done   chan struct{}
 	// sinceLimit mirrors the fake's since= cap (0 → the real server's).
 	sinceLimit int
+	clock      *clock // nil → the real clock
 
 	mu       sync.Mutex
 	statuses []Status
@@ -49,8 +51,13 @@ func newHarness(t *testing.T, o mmfake.Options) *harness {
 }
 
 func (h *harness) config() Config {
+	var now func() time.Time
+	if h.clock != nil {
+		now = h.clock.now
+	}
 	return Config{
 		Store: h.store,
+		Now:   now,
 		Hooks: Hooks{
 			Changed: func(int64, state.Change) {},
 			Status: func(_ int64, s Status) {
@@ -113,3 +120,65 @@ func (h *harness) hasMessage(ch, msg string) bool {
 }
 
 func (h *harness) allLoaded() bool { return len(h.w.State().SyncItems()) == 0 }
+
+// clock is the real clock shifted by an offset the test can move forward
+// (the worker's view of time; the fake server keeps the real one).
+type clock struct {
+	mu  sync.Mutex
+	off time.Duration
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.off)
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.off += d
+	c.mu.Unlock()
+}
+
+// useClock gives the worker a clock the test can jump forward.
+func (h *harness) useClock() *clock {
+	h.clock = &clock{}
+	return h.clock
+}
+
+// liveAt is the persisted "stream proven continuous until" mark.
+func (h *harness) liveAt() int64 {
+	h.t.Helper()
+	entries, err := h.store.LoadCache(context.Background(), h.srv.ID)
+	require.NoError(h.t, err)
+	for _, e := range entries {
+		if e.Kind == "live" && e.Key == "at" {
+			n, err := strconv.ParseInt(string(e.Data), 10, 64)
+			require.NoError(h.t, err)
+			return n
+		}
+	}
+	return 0
+}
+
+func (h *harness) mentions(ch string) int {
+	for _, c := range h.w.State().Sidebar("").Categories {
+		for _, it := range c.Channels {
+			if it.ID == ch {
+				return it.Mentions
+			}
+		}
+	}
+	return -1
+}
+
+func (h *harness) notified(msg string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, n := range h.notes {
+		if n.Post.Message == msg {
+			return true
+		}
+	}
+	return false
+}
