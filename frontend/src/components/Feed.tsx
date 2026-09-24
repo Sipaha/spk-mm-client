@@ -16,7 +16,17 @@ interface Props {
 
 const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
+const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
 const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
+
+// anchorNudge computes how far scrollTop must move to bring the anchor
+// row's measured on-screen position back to its target — the position it
+// had before the history load. Returns null once already within
+// `tolerance` px (converged; nothing to do).
+export function anchorNudge(measured: number, target: number, tolerance = 1): number | null {
+  const delta = measured - target
+  return Math.abs(delta) <= tolerance ? null : delta
+}
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
@@ -27,6 +37,7 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
   const atBottom = useRef(true)
   const anchor = useRef<string | null>(null)
   const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
+  const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
   const loading = useRef(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const v = useVirtualizer({
@@ -81,6 +92,48 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     })
   }
 
+  // The initial scrollToOffset restore (above the call site below) can be
+  // off by a few px: the newly-prepended rows above the anchor were never
+  // rendered before that call, so v.getOffsetForIndex used estimateSize for
+  // them (and the virtualizer's own reconciliation, which can also nudge
+  // scrollTop as those rows get measured, runs on its own schedule). Nudge
+  // scrollTop to close that gap over a couple of frames, re-measuring the
+  // anchor's *real* DOM position each time rather than trusting another
+  // estimate. Aborts if a real user gesture (wheel/touch) happened since —
+  // userScrolling is reset right before the restore call and only a
+  // wheel/touchmove handler on the scroller sets it, so this can't mistake
+  // the virtualizer's own scroll adjustments for the user and fight them.
+  const correctAnchorPosition = (key: string, target: number, attempt: number) => {
+    if (attempt > MAX_CORRECTIONS) return
+    requestAnimationFrame(() => {
+      const el = scroller.current
+      if (!el || userScrolling.current) return
+      const row = rows.find((r) => r.key === key)
+      if (!row) return // anchor no longer in the data — nothing to correct against
+      // A plain DOM query, not v.elementsCache: the anchor row is being
+      // (re-)mounted for the very first time at this exact scroll target
+      // (scrollToOffset above), and the virtualizer's own bookkeeping for
+      // "is this index in range" can lag its own paint by a frame, leaving
+      // a freshly-rendered row's measureElement registration skipped. The
+      // DOM itself has no such race. Measure the positioned wrapper
+      // (data-index), not the <article> inside it — PostItem gives head
+      // posts a margin-top the wrapper doesn't have, and `target` was
+      // captured against the wrapper too (loadOlder above, via
+      // v.elementsCache), so both sides must agree on which box they mean.
+      const articleEl = row.kind === 'post' ? el.querySelector(`[data-post-id="${CSS.escape(row.post.id)}"]`) : null
+      const rowEl = articleEl?.closest('[data-index]')
+      if (!rowEl) {
+        correctAnchorPosition(key, target, attempt + 1) // not painted yet — retry
+        return
+      }
+      const measured = rowEl.getBoundingClientRect().top - el.getBoundingClientRect().top
+      const nudge = anchorNudge(measured, target)
+      if (nudge === null) return // converged
+      el.scrollTop += nudge
+      correctAnchorPosition(key, target, attempt + 1)
+    })
+  }
+
   useLayoutEffect(() => {
     if (!rows.length) return
     if (!ready.current) {
@@ -103,9 +156,14 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
       const key = anchor.current
       const offset = anchorOffset.current
       anchor.current = null
+      const el = scroller.current
       const i = rows.findIndex((r) => r.key === key)
       const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
-      if (info) v.scrollToOffset(Math.max(0, info[0] - offset), { align: 'start' })
+      if (info && el) {
+        userScrolling.current = false
+        v.scrollToOffset(Math.max(0, info[0] - offset), { align: 'start' })
+        correctAnchorPosition(key, offset, 1)
+      }
       fillViewportIfShort()
       return
     }
@@ -148,8 +206,20 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     }
   }
 
+  const onUserGesture = () => {
+    userScrolling.current = true
+  }
+
   return (
-    <div ref={scroller} onScroll={onScroll} role="log" aria-label={t('feed.label')} className="relative min-h-0 flex-1 overflow-y-auto pb-2">
+    <div
+      ref={scroller}
+      onScroll={onScroll}
+      onWheel={onUserGesture}
+      onTouchMove={onUserGesture}
+      role="log"
+      aria-label={t('feed.label')}
+      className="relative min-h-0 flex-1 overflow-y-auto pb-2"
+    >
       {!rows.length && (
         <div className="absolute inset-0 flex items-center justify-center text-neutral-500">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
       )}

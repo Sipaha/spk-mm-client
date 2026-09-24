@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
-import { Feed } from './Feed'
+import { anchorNudge, Feed } from './Feed'
 
 // jsdom has no layout: give the scroller and rows sizes so the virtualizer renders.
 const saved = {
@@ -63,4 +63,13 @@ test('scrolling to the top loads history once at a time', async () => {
 test('empty channel says so', () => {
   render(<Feed {...props({ posts: [] })} />)
   expect(screen.getByText('No messages yet')).toBeInTheDocument()
+})
+
+test('anchorNudge: converged within tolerance returns null, otherwise the delta to add to scrollTop', () => {
+  expect(anchorNudge(100, 100)).toBeNull()
+  expect(anchorNudge(100.4, 100)).toBeNull() // within the default 1px tolerance
+  expect(anchorNudge(101, 100)).toBeNull() // exactly at the tolerance boundary
+  expect(anchorNudge(124, 100)).toBe(24) // measured lower on screen than target: scroll down (increase scrollTop) by 24
+  expect(anchorNudge(76, 100)).toBe(-24) // measured higher than target: scroll up (decrease scrollTop) by 24
+  expect(anchorNudge(105, 100, 10)).toBeNull() // a wider tolerance converges sooner
 })
