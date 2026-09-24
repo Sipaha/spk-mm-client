@@ -1,5 +1,5 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, ServerDTO } from './types'
+import type { ApiEvent, AppInfo, ChannelDTO, EventType, ServerDTO, SidebarDTO } from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -14,6 +14,22 @@ export interface Client {
   startGitLabLogin(id: number): Promise<void>
   loginWithPassword(id: number, login: string, password: string): Promise<ServerDTO>
   logout(id: number): Promise<void>
+  appInfo(): Promise<AppInfo>
+  selectServer(id: number): Promise<void>
+  setFocused(focused: boolean): Promise<void>
+  networkChanged(): Promise<void>
+  openURL(url: string): Promise<void>
+  sidebar(id: number, teamId: string): Promise<SidebarDTO>
+  openChannel(id: number, channelId: string): Promise<ChannelDTO>
+  getChannel(id: number, channelId: string): Promise<ChannelDTO>
+  loadOlder(id: number, channelId: string): Promise<void>
+  sendPost(id: number, channelId: string, message: string): Promise<void>
+  retryPost(id: number, channelId: string, pendingId: string): Promise<void>
+  discardPost(id: number, channelId: string, pendingId: string): Promise<void>
+  editPost(id: number, postId: string, message: string): Promise<void>
+  deletePost(id: number, postId: string): Promise<void>
+  markUnread(id: number, postId: string): Promise<void>
+  saveDraft(id: number, channelId: string, text: string): Promise<void>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -36,13 +52,34 @@ async function post<T>(method: string, body: unknown): Promise<T> {
   return (isJSON ? await r.json() : undefined) as T
 }
 
+// HTTP bodies return {} for void methods; the Client contract is void.
+const done = async (p: Promise<unknown>) => {
+  await p
+}
+
 export const httpClient: Client = {
   listServers: () => post('ListServers', {}),
   addServer: (url) => post('AddServer', { url }),
-  removeServer: (id) => post('RemoveServer', { id }),
-  startGitLabLogin: (id) => post('StartGitLabLogin', { id }),
+  removeServer: (id) => done(post('RemoveServer', { id })),
+  startGitLabLogin: (id) => done(post('StartGitLabLogin', { id })),
   loginWithPassword: (id, login, password) => post('LoginWithPassword', { id, login, password }),
-  logout: (id) => post('Logout', { id }),
+  logout: (id) => done(post('Logout', { id })),
+  appInfo: () => post('AppInfo', {}),
+  selectServer: (id) => done(post('SelectServer', { id })),
+  setFocused: (focused) => done(post('SetFocused', { focused })),
+  networkChanged: () => done(post('NetworkChanged', {})),
+  openURL: (url) => done(post('OpenURL', { url })),
+  sidebar: (id, team_id) => post('Sidebar', { id, team_id }),
+  openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
+  getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
+  loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
+  sendPost: (id, channel_id, message) => done(post('SendPost', { id, channel_id, message })),
+  retryPost: (id, channel_id, pending_id) => done(post('RetryPost', { id, channel_id, pending_id })),
+  discardPost: (id, channel_id, pending_id) => done(post('DiscardPost', { id, channel_id, pending_id })),
+  editPost: (id, post_id, message) => done(post('EditPost', { id, post_id, message })),
+  deletePost: (id, post_id) => done(post('DeletePost', { id, post_id })),
+  markUnread: (id, post_id) => done(post('MarkUnread', { id, post_id })),
+  saveDraft: (id, channel_id, text) => done(post('SaveDraft', { id, channel_id, text })),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -67,7 +104,14 @@ async function wcall<T>(method: string, ...args: unknown[]): Promise<T> {
   }
 }
 
-const EVENT_TYPES = ['servers_changed', 'login_failed', 'open_external'] as const
+const EVENT_TYPES: EventType[] = [
+  'servers_changed',
+  'login_failed',
+  'open_external',
+  'sidebar_changed',
+  'channel_changed',
+  'open_channel',
+]
 
 export const wailsClient: Client = {
   listServers: () => wcall('ListServers'),
@@ -76,6 +120,22 @@ export const wailsClient: Client = {
   startGitLabLogin: (id) => wcall('StartGitLabLogin', id),
   loginWithPassword: (id, login, password) => wcall('LoginWithPassword', id, login, password),
   logout: (id) => wcall('Logout', id),
+  appInfo: () => wcall('AppInfo'),
+  selectServer: (id) => wcall('SelectServer', id),
+  setFocused: (focused) => wcall('SetFocused', focused),
+  networkChanged: () => wcall('NetworkChanged'),
+  openURL: (url) => wcall('OpenURL', url),
+  sidebar: (id, teamId) => wcall('Sidebar', id, teamId),
+  openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
+  getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
+  loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
+  sendPost: (id, channelId, message) => wcall('SendPost', id, channelId, message),
+  retryPost: (id, channelId, pendingId) => wcall('RetryPost', id, channelId, pendingId),
+  discardPost: (id, channelId, pendingId) => wcall('DiscardPost', id, channelId, pendingId),
+  editPost: (id, postId, message) => wcall('EditPost', id, postId, message),
+  deletePost: (id, postId) => wcall('DeletePost', id, postId),
+  markUnread: (id, postId) => wcall('MarkUnread', id, postId),
+  saveDraft: (id, channelId, text) => wcall('SaveDraft', id, channelId, text),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

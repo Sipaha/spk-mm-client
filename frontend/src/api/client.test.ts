@@ -49,3 +49,19 @@ test.each([
 ])('isDesktopLocation(%s) === %s', (href, want) => {
   expect(isDesktopLocation(new URL(href))).toBe(want)
 })
+
+test('http client chat methods post snake_case bodies', async () => {
+  // A fresh Response per call: real fetch() never hands back the same
+  // (already-consumed) body twice, but a single mockResolvedValue() would.
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
+  )
+  await httpClient.sendPost(3, 'c1', 'hi')
+  await httpClient.editPost(3, 'p1', 'v2')
+  await httpClient.sidebar(3, '')
+  expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
+    ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi' }],
+    ['/api/EditPost', { id: 3, post_id: 'p1', message: 'v2' }],
+    ['/api/Sidebar', { id: 3, team_id: '' }],
+  ])
+})

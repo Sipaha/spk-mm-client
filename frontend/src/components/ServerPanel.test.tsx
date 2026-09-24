@@ -6,7 +6,10 @@ import { ApiError } from '../api/client'
 import { setLocale } from '../i18n'
 import { ServerPanel } from './ServerPanel'
 
-const base = { id: 1, name: 'Acme', url: 'https://mm.acme', signed_in: false, username: '', gitlab: true }
+const base = {
+  id: 1, name: 'Acme', url: 'https://mm.acme', signed_in: false, username: '', gitlab: true,
+  state: 'off' as const, unread: false, mentions: 0,
+}
 
 function fakeClient(over: Partial<Client> = {}): Client {
   return {
@@ -104,4 +107,13 @@ test('sign-out and remove are disabled while in flight', async () => {
   expect(c.logout).toHaveBeenCalledTimes(1)
   await act(async () => resolve())
   expect(out).toBeEnabled()
+})
+
+test('re-auth mode shows the form over a signed-in server and can go back', async () => {
+  const onCancel = vi.fn()
+  render(<ServerPanel server={{ ...base, signed_in: true, username: 'alice', state: 'needs_reauth' }} client={fakeClient()} reauth onCancel={onCancel} />)
+  expect(screen.getByText('Your session on this server expired — sign in again')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(onCancel).toHaveBeenCalled()
 })

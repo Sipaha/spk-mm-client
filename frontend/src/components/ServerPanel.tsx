@@ -5,7 +5,9 @@ import { errorMessage } from '../errors'
 import { t } from '../i18n'
 
 // loginFailures counts login_failed events; any change ends the GitLab wait.
-export function ServerPanel({ server, client, loginFailures = 0 }: { server: ServerDTO; client: Client; loginFailures?: number }) {
+export function ServerPanel({ server, client, loginFailures = 0, reauth = false, onCancel }: {
+  server: ServerDTO; client: Client; loginFailures?: number; reauth?: boolean; onCancel?: () => void
+}) {
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [waitingGitLab, setWaitingGitLab] = useState(false)
@@ -40,7 +42,7 @@ export function ServerPanel({ server, client, loginFailures = 0 }: { server: Ser
         <h1 className="text-xl font-semibold">{server.name}</h1>
         <p className="text-sm text-neutral-500">{server.url}</p>
       </header>
-      {server.signed_in ? (
+      {server.signed_in && !reauth ? (
         <div className="flex items-center justify-between">
           <span>{t('server.signedInAs', { name: server.username })}</span>
           <button className="rounded border px-3 py-1 disabled:opacity-50" disabled={busy} onClick={() => run(() => client.logout(server.id))}>
@@ -49,7 +51,11 @@ export function ServerPanel({ server, client, loginFailures = 0 }: { server: Ser
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-neutral-500">{t('server.signedOut')}</p>
+          {reauth ? (
+            <p className="text-sm text-amber-700">{t('server.reauthHint')}</p>
+          ) : (
+            <p className="text-sm text-neutral-500">{t('server.signedOut')}</p>
+          )}
           {server.gitlab && (
             <>
               <button
@@ -82,6 +88,11 @@ export function ServerPanel({ server, client, loginFailures = 0 }: { server: Ser
         </div>
       )}
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {onCancel && (
+        <button className="self-start text-sm underline" onClick={onCancel}>
+          {t('server.back')}
+        </button>
+      )}
       <button
         className="self-start text-sm text-red-600 underline disabled:opacity-50"
         disabled={busy}
