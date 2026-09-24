@@ -19,3 +19,7 @@
 - `events.Emitter.Emit` не блокирует: полный буфер подписчика — событие отбрасывается.
 - SQLite — одно соединение; многошаговые записи только через `Store.WithTx`.
 - Версии `github.com/wailsapp/wails/v3` и `@wailsio/runtime` совпадают.
+
+## Things that bite
+
+- Vitest: `@wailsio/runtime` is globally mocked in `frontend/vitest.setup.ts` (its import-time drag/resize code touches `window` after jsdom teardown); tests of `wailsClient` override the mock locally.
