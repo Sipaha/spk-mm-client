@@ -11,6 +11,12 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		down := s.down
+		fail := 0
+		for part, code := range s.failures {
+			if strings.Contains(r.URL.Path, part) {
+				fail = code
+			}
+		}
 		var delay time.Duration
 		for part, d := range s.latency {
 			if strings.Contains(r.URL.Path, part) {
@@ -20,6 +26,10 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 		s.mu.Unlock()
 		if down {
 			http.Error(w, "fake server is down", http.StatusServiceUnavailable)
+			return
+		}
+		if fail != 0 {
+			appError(w, fail, "mmfake.injected_failure", "injected failure")
 			return
 		}
 		if delay > 0 {
@@ -64,4 +74,19 @@ func (s *Server) RejectResumes(reject bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rejectResumes = reject
+}
+
+// SetFailure makes every request whose path contains part fail with the
+// given status (0 removes the failure).
+func (s *Server) SetFailure(part string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failures == nil {
+		s.failures = map[string]int{}
+	}
+	if status == 0 {
+		delete(s.failures, part)
+		return
+	}
+	s.failures[part] = status
 }

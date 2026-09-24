@@ -92,3 +92,38 @@ func decodeID(t *testing.T, ev ws.Event) string {
 	require.NoError(t, err)
 	return d.Post.ID
 }
+
+// Fix wave 3: a team whose categories could not be read keeps the previous ones.
+func TestBootstrapKeepsCategoriesOfFailedTeams(t *testing.T) {
+	s := newFixture()
+	before := s.Sidebar("t1").Categories
+	b := fixture()
+	b.Categories = map[string]model.OrderedCategories{}
+	b.CategoriesFailed = []string{"t1"}
+	s.Bootstrap(b)
+	assert.Equal(t, before, s.Sidebar("t1").Categories)
+
+	b.CategoriesFailed = nil
+	s.Bootstrap(b)
+	assert.NotEqual(t, before, s.Sidebar("t1").Categories, "a successful empty read does replace them")
+}
+
+// A reloaded page that still reaches the old window's first post joins the
+// loaded history without a hole: the history stays (a repeated fetch of the
+// latest page must not throw away what the user scrolled up to).
+func TestSetWindowOverlappingPageKeepsLoadedHistory(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	s.SetActive("town")
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000)}, false, 5)
+	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
+
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000), mkPost("w3", "town", "u2", 3000)}, false, 9)
+	v, _ := s.ChannelView("town")
+	var got []string
+	for _, p := range v.Posts {
+		got = append(got, p.ID)
+	}
+	assert.Equal(t, []string{"o1", "w1", "w2", "w3"}, got)
+	assert.False(t, v.HasMore, "history already reached the first post")
+}

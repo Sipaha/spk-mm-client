@@ -28,6 +28,7 @@ type harness struct {
 	// sinceLimit mirrors the fake's since= cap (0 → the real server's).
 	sinceLimit int
 	clock      *clock // nil → the real clock
+	tune       func(*Config)
 
 	mu       sync.Mutex
 	statuses []Status
@@ -80,7 +81,11 @@ func (h *harness) config() Config {
 
 func (h *harness) start() {
 	h.t.Helper()
-	h.w = NewWorker(h.config(), h.srv)
+	cfg := h.config()
+	if h.tune != nil {
+		h.tune(&cfg)
+	}
+	h.w = NewWorker(cfg, h.srv)
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
 	go func() { h.w.Run(ctx); close(h.done) }()
@@ -178,6 +183,25 @@ func (h *harness) notified(msg string) bool {
 	for _, n := range h.notes {
 		if n.Post.Message == msg {
 			return true
+		}
+	}
+	return false
+}
+
+func (h *harness) categoryIDs() []string {
+	var out []string
+	for _, c := range h.w.State().Sidebar("").Categories {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
+func (h *harness) inSidebar(ch string) bool {
+	for _, c := range h.w.State().Sidebar("").Categories {
+		for _, it := range c.Channels {
+			if it.ID == ch {
+				return true
+			}
 		}
 	}
 	return false

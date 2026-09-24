@@ -33,6 +33,9 @@ type Bootstrap struct {
 	Channels   []model.Channel
 	Members    []model.ChannelMember
 	Categories map[string]model.OrderedCategories // by team id
+	// CategoriesFailed: teams whose categories could not be read; they keep
+	// the categories held so far instead of being blanked.
+	CategoriesFailed []string
 }
 
 type Window struct {
@@ -150,10 +153,16 @@ func (s *Server) Bootstrap(b Bootstrap) {
 		}
 	}
 	s.chans = next
-	s.cats = map[string]model.OrderedCategories{}
+	cats := make(map[string]model.OrderedCategories, len(b.Categories))
 	for k, v := range b.Categories {
-		s.cats[k] = v
+		cats[k] = v
 	}
+	for _, t := range b.CategoriesFailed {
+		if old, ok := s.cats[t]; ok {
+			cats[t] = old
+		}
+	}
+	s.cats = cats
 	if !s.hasTeamLocked(s.nav.TeamID) && len(s.teams) > 0 {
 		s.nav.TeamID = s.teams[0].ID
 	}

@@ -50,6 +50,7 @@ type Server struct {
 	// network conditions (test controls, see net.go)
 	down          bool
 	latency       map[string]time.Duration
+	failures      map[string]int
 	rejectResumes bool
 }
 

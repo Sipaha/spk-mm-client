@@ -50,3 +50,13 @@ func TestRejectResumesClosesResumedSockets(t *testing.T) {
 	fresh := dialWS(t, s, a.tok, "")
 	assert.Equal(t, "hello", read(t, fresh).Event, "fresh connections still work")
 }
+
+func TestSetFailureFailsMatchingPaths(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	s.SetFailure("/users/me", http.StatusInternalServerError)
+	assert.Equal(t, http.StatusInternalServerError, a.call("GET", "/api/v4/users/me", nil, nil))
+	s.SetFailure("/users/me", 0)
+	assert.Equal(t, http.StatusOK, a.call("GET", "/api/v4/users/me", nil, nil))
+}

@@ -57,6 +57,9 @@ type Config struct {
 	WS         func(*ws.Options) // test seam (ping intervals)
 
 	sinceLimit int // test seam: the server's since= cap; 0 → rest.SinceLimit
+	// test seams: 0 → refreshTimeout / refreshRetryFirst
+	refreshTimeout time.Duration
+	refreshRetry   time.Duration
 }
 
 func (c *Config) defaults() {
@@ -77,6 +80,12 @@ func (c *Config) defaults() {
 	}
 	if c.Fetchers <= 0 {
 		c.Fetchers = 3
+	}
+	if c.refreshTimeout <= 0 {
+		c.refreshTimeout = refreshTimeout
+	}
+	if c.refreshRetry <= 0 {
+		c.refreshRetry = refreshRetryFirst
 	}
 	if c.sinceLimit <= 0 {
 		c.sinceLimit = rest.SinceLimit
@@ -103,6 +112,10 @@ const (
 	// refreshTimeout bounds a metadata refresh as a whole: events are held
 	// back while it runs, so a hung refresh is abandoned and redone later.
 	refreshTimeout = 45 * time.Second
+	// A timed-out refresh is retried after refreshRetryFirst, doubling up to
+	// refreshRetryCap; a successful refresh resets it.
+	refreshRetryFirst = 5 * time.Second
+	refreshRetryCap   = 60 * time.Second
 	// dialTimeout bounds the WebSocket handshake only; the established
 	// connection lives as long as the session.
 	dialTimeout = 30 * time.Second
@@ -154,6 +167,8 @@ type Worker struct {
 	// fetchMeta; a second unsettled read does not ask again (a busy server
 	// would otherwise keep refreshing forever).
 	followUp bool
+	// refreshBackoff: delay before retrying the next timed-out refresh.
+	refreshBackoff time.Duration
 
 	// only touched by the flush loop: a delta SaveCache failed to write,
 	// retried (merged with newer changes) by the next flush.
@@ -520,10 +535,10 @@ func (w *Worker) startRefresh(ctx context.Context, wg *sync.WaitGroup) chan meta
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		rctx, cancel := context.WithTimeout(ctx, refreshTimeout)
+		rctx, cancel := context.WithTimeout(ctx, w.cfg.refreshTimeout)
 		defer cancel()
 		b, settled, err := w.fetchMeta(rctx)
-		timedOut := err != nil && errors.Is(rctx.Err(), context.DeadlineExceeded)
+		timedOut := err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(rctx.Err(), context.DeadlineExceeded))
 		out <- metaResult{b: b, settled: settled, timedOut: timedOut, err: err}
 	}()
 	return out
@@ -539,10 +554,11 @@ func (w *Worker) finishRefresh(r metaResult) error {
 		}
 		slog.Warn("metadata refresh failed", "srv", w.srv.ID, "err", r.err, "timed_out", r.timedOut)
 		if r.timedOut { // abandoned: the held events go on, the refresh is redone later
-			w.requestMeta()
+			w.retryRefresh()
 		}
 		return nil
 	}
+	w.refreshBackoff = 0
 	w.st.Bootstrap(r.b)
 	w.metaSettled(r.settled)
 	w.replayOrphans()
@@ -550,6 +566,24 @@ func (w *Worker) finishRefresh(r metaResult) error {
 	w.enqueueAll()
 	w.changed(state.Change{Sidebar: true, Badge: true})
 	return nil
+}
+
+// retryRefresh requests the refresh again after a backoff (refreshRetry,
+// doubling up to refreshRetryCap), so a server too slow for the deadline is
+// not hammered.
+func (w *Worker) retryRefresh() {
+	d := w.refreshBackoff
+	if d <= 0 {
+		d = w.cfg.refreshRetry
+	}
+	w.refreshBackoff = min(2*d, refreshRetryCap)
+	w.goBG(func(ctx context.Context) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(d):
+			w.requestMeta()
+		}
+	})
 }
 
 // metaSettled asks for one follow-up refresh after an unsettled read (see
@@ -638,13 +672,22 @@ func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool
 	for _, t := range b.Teams {
 		cats, err := w.rc.Categories(ctx, t.ID)
 		if err != nil {
+			// A dead session or our own deadline/cancel fails the whole
+			// read: a partial one would blank the categories not read.
 			if sessionExpired(err) {
 				return b, false, err
 			}
-			slog.Warn("sidebar categories unavailable", "srv", w.srv.ID, "team", t.ID, "err", err)
+			if ctx.Err() != nil {
+				return b, false, ctx.Err()
+			}
+			slog.Warn("sidebar categories unavailable, keeping the previous ones", "srv", w.srv.ID, "team", t.ID, "err", err)
+			b.CategoriesFailed = append(b.CategoriesFailed, t.ID)
 			continue
 		}
 		b.Categories[t.ID] = cats
+	}
+	if ctx.Err() != nil {
+		return b, false, ctx.Err()
 	}
 	return b, settled, nil
 }

@@ -3,6 +3,8 @@ package mmsync
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -160,4 +162,50 @@ func TestRestoreSeedsGapStart(t *testing.T) {
 	w2.restore(context.Background())
 	assert.Equal(t, int64(12345), w2.live.gapStart())
 	assert.False(t, w2.live.proven())
+}
+
+// Fix wave 3: a refresh whose deadline fires during the categories reads
+// is abandoned as a whole (categories are not blanked) and retried later.
+func TestRefreshDeadlineDuringCategoriesKeepsThemAndRetries(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	h.tune = func(c *Config) { c.refreshTimeout, c.refreshRetry = 500*time.Millisecond, 200*time.Millisecond }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	before := h.categoryIDs()
+	require.Contains(t, before[0], "favorites")
+	h.fake.SetLatency("/categories", 2*time.Second)
+	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
+	assert.Never(t, func() bool { return !slices.Equal(h.categoryIDs(), before) || h.inSidebar("c-extra") },
+		2*time.Second, 20*time.Millisecond, "a timed-out refresh must not be applied")
+	h.fake.SetLatency("/categories", 0)
+	h.eventually(func() bool { return h.inSidebar("c-extra") }, "the timed-out refresh was not retried")
+	assert.Equal(t, before, h.categoryIDs())
+}
+
+// Fix wave 3: a team whose categories cannot be read keeps its previous ones.
+func TestCategoriesFailureKeepsPreviousCategories(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	before := h.categoryIDs()
+	h.fake.SetFailure("/categories", http.StatusInternalServerError)
+	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
+	h.eventually(func() bool { return h.view("c-extra").Loaded }, "refresh not applied")
+	assert.Equal(t, before, h.categoryIDs(), "the failed team's categories are kept")
+}
+
+func TestTimedOutRefreshBacksOff(t *testing.T) {
+	w := NewWorker(Config{}, store.Server{ID: 1, URL: "https://mm.example"})
+	defer func() { w.cancelLife(); w.bg.Wait() }()
+	var next []time.Duration
+	for i := 0; i < 6; i++ {
+		w.retryRefresh()
+		next = append(next, w.refreshBackoff)
+	}
+	assert.Equal(t, []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second, 60 * time.Second, 60 * time.Second}, next,
+		"5 s doubling to 60 s")
+	require.NoError(t, w.finishRefresh(metaResult{settled: true}))
+	assert.Zero(t, w.refreshBackoff, "a successful refresh resets the backoff")
 }
