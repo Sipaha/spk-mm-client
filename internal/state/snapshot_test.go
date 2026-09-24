@@ -77,3 +77,16 @@ func TestRestoreRejectsMissingOrForeignVersion(t *testing.T) {
 	err := New(fixedNow).Restore([]store.CacheEntry{{Kind: "meta", Key: "server", Data: meta}})
 	assert.ErrorIs(t, err, ErrSnapshotVersion)
 }
+
+func TestResetWindowsDropsWindowsFromSnapshot(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 100)}, false, 5)
+	s.TakeSnapshot()
+	s.ResetWindows()
+	it, ok := s.SyncItemFor("off")
+	require.True(t, ok)
+	assert.False(t, it.Loaded, "the window is refetched from scratch")
+	put, del := s.TakeSnapshot()
+	assert.NotContains(t, keysOf(put), "posts/off")
+	assert.Contains(t, del, store.CacheKey{Kind: "posts", Key: "off"}, "a stale-kind window must not come back after restart")
+}

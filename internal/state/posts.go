@@ -201,6 +201,18 @@ func (s *Server) OldestPostID(channelID string) string {
 	return ""
 }
 
+// ResetWindows forgets every post window (CRT was toggled: the windows hold
+// the wrong kind of posts). Channels are refetched by the worker.
+func (s *Server) ResetWindows() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, ch := range s.chans {
+		ch.Win = Window{}
+		s.dirty.posts[id] = true
+	}
+	s.older, s.olderComplete = nil, false
+}
+
 // markStale marks w stale as of liveUntil: posts after GapAfter may be
 // missing until the worker catches the window up via since=. If w was
 // already stale, SyncedAt is left alone — the gap already started earlier

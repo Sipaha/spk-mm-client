@@ -115,8 +115,12 @@ func (s *Server) TakeSnapshot() (put []store.CacheEntry, del []store.CacheKey) {
 		}
 	}
 	for id := range d.posts {
-		if ch := s.chans[id]; ch != nil && ch.Win.Loaded {
-			put = append(put, store.CacheEntry{Kind: kindPosts, Key: id, Data: mustJSON(ch.Win)})
+		if ch := s.chans[id]; ch != nil {
+			if ch.Win.Loaded {
+				put = append(put, store.CacheEntry{Kind: kindPosts, Key: id, Data: mustJSON(ch.Win)})
+			} else {
+				del = append(del, store.CacheKey{Kind: kindPosts, Key: id})
+			}
 		}
 	}
 	for id := range d.users {

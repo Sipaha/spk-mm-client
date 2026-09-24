@@ -30,6 +30,7 @@ type chatData struct {
 	events     []RecordedEvent
 	lastMs     int64
 	sinceLimit int
+	failPosts  int
 }
 
 type RecordedEvent struct {
@@ -421,6 +422,12 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	s.mu.Lock()
+	if s.chat.failPosts > 0 {
+		s.chat.failPosts--
+		s.mu.Unlock()
+		appError(w, 500, "app.post.save.app_error", "injected failure")
+		return
+	}
 	p, e := s.createPostLocked(u.ID, in)
 	s.mu.Unlock()
 	if e != nil {
@@ -570,6 +577,13 @@ func (s *Server) DeleteAs(postID string) {
 	if e := s.deletePostLocked("", postID); e != nil {
 		panic("mmfake: DeleteAs: " + e.id)
 	}
+}
+
+// FailPosts makes the next n POST /posts fail with 500 (send-failure tests).
+func (s *Server) FailPosts(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chat.failPosts = n
 }
 
 func (s *Server) Member(channelID, username string) model.ChannelMember {
