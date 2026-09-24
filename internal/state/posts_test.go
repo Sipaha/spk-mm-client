@@ -164,3 +164,42 @@ func TestHasMoreFalseAfterEmptyFinalAppendOlder(t *testing.T) {
 	v, _ = s.ChannelView("town")
 	assert.False(t, v.HasMore, "AppendOlder said there is nothing older left")
 }
+
+// windowPost returns the window copy of the post with the given id, for
+// asserting on fields upsertLocked may or may not have overwritten.
+func windowPost(s *Server, ch, id string) (model.Post, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i := indexOf(s.chans[ch].Win.Posts, id); i >= 0 {
+		return s.chans[ch].Win.Posts[i], true
+	}
+	return model.Post{}, false
+}
+
+// The frontend keys a feed row by pending_post_id (falling back to id) so
+// the pending-post row and its eventual confirmed row share one virtualizer
+// key and don't remount. That only holds if PendingPostID survives every
+// upsert after the confirming one — a plain edit echo, a re-fetched page —
+// even when that particular payload doesn't carry it.
+func TestUpsertPreservesPendingPostIDAcrossLaterUpdatesWithoutIt(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	s.SetWindow("off", nil, true, 0)
+	created := mkPost("real1", "off", "u2", 1000)
+	created.PendingPostID = "u2:1"
+	s.PostCreated(created)
+
+	p, ok := windowPost(s, "off", "real1")
+	require.True(t, ok)
+	assert.Equal(t, "u2:1", p.PendingPostID, "sanity: the confirming post carries it")
+
+	edited := mkPost("real1", "off", "u2", 1000)
+	edited.UpdateAt, edited.EditAt = 2000, 2000
+	// edited.PendingPostID left empty, as a real edit echo would arrive.
+	s.ApplyPostUpdate(edited)
+
+	p, ok = windowPost(s, "off", "real1")
+	require.True(t, ok)
+	assert.Equal(t, "u2:1", p.PendingPostID, "an update without pending_post_id must not erase the stored value")
+	assert.Equal(t, int64(2000), p.EditAt, "the update itself still applies")
+}

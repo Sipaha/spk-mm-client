@@ -80,6 +80,13 @@ func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 			if p.ReplyCount == 0 {
 				p.ReplyCount, p.LastReplyAt = ch.Win.Posts[i].ReplyCount, ch.Win.Posts[i].LastReplyAt
 			}
+			// An update that doesn't carry pending_post_id (e.g. a plain
+			// edit echo) must not erase the value the confirmation set —
+			// the frontend keys its feed row by it across the pending ->
+			// confirmed swap.
+			if p.PendingPostID == "" {
+				p.PendingPostID = ch.Win.Posts[i].PendingPostID
+			}
 			ch.Win.Posts[i] = p
 		}
 	} else {

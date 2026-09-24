@@ -36,7 +36,10 @@ export function buildRows(ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' |
       lineDone = true
       head = true
     }
-    rows.push({ kind: 'post', key: p.id, post: p, head })
+    // A pending post's real post arrives under a different id; keying by
+    // pending_post_id (set on both sides by the Go layer) keeps the row —
+    // and the virtualizer's measured size for it — across the swap.
+    rows.push({ kind: 'post', key: p.pending_post_id || p.id, post: p, head })
     broken = false
     if (ch.gap_after && p.id === ch.gap_after) {
       rows.push({ kind: 'gap', key: 'gap' })
@@ -45,4 +48,16 @@ export function buildRows(ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' |
     prev = p
   }
   return rows
+}
+
+// firstVisiblePostIndex finds the first 'post' row at or after `from` (the
+// virtualizer's true first visible index). Scanning the virtualizer's own
+// getVirtualItems() instead would pick up its overscan buffer — rows
+// rendered above the visible viewport — and anchor scroll restoration on a
+// row that was never actually on screen.
+export function firstVisiblePostIndex(rows: Row[], from: number): number {
+  for (let i = Math.max(from, 0); i < rows.length; i++) {
+    if (rows[i].kind === 'post') return i
+  }
+  return -1
 }

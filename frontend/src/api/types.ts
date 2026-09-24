@@ -92,6 +92,7 @@ export interface PostView {
   bot?: boolean
   pending?: boolean
   failed?: boolean
+  pending_post_id?: string
   attachments?: Attachment[]
   files?: FileView[]
   reactions?: ReactionView[]

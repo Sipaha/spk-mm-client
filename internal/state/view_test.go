@@ -17,6 +17,7 @@ func TestChannelViewComposition(t *testing.T) {
 	sys.Type = "system_join_channel"
 	withMeta := mkPost("m", "off", "u2", 2000)
 	withMeta.EditAt = 2100
+	withMeta.PendingPostID = "u2:9"
 	withMeta.Metadata = &model.PostMetadata{
 		Files:     []model.FileInfo{{ID: "f1", Name: "a.pdf", Size: 10, MimeType: "application/pdf"}},
 		Reactions: []model.Reaction{{UserID: "u2", EmojiName: "+1"}, {UserID: "u1", EmojiName: "+1"}, {UserID: "u3", EmojiName: "tada"}},
@@ -46,8 +47,10 @@ func TestChannelViewComposition(t *testing.T) {
 	assert.Equal(t, int64(2100), v.Posts[2].EditAt)
 	assert.Equal(t, []FileView{{Name: "a.pdf", Size: 10, Mime: "application/pdf"}}, v.Posts[2].Files)
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 2, Mine: true}, {Emoji: "tada", Count: 1}}, v.Posts[2].Reactions)
+	assert.Equal(t, "u2:9", v.Posts[2].PendingPostID, "postViewLocked carries pending_post_id through for the confirmed post")
 	assert.True(t, v.Posts[3].Pending)
 	assert.Equal(t, "alice", v.Posts[3].Author)
+	assert.Equal(t, v.Posts[3].ID, v.Posts[3].PendingPostID, "a local pending entry is keyed by its own id")
 }
 
 func TestChannelViewDMNameAndUnknownChannel(t *testing.T) {

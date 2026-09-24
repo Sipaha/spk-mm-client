@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
-import { buildRows, type Row } from './feedRows'
+import { buildRows, firstVisiblePostIndex, type Row } from './feedRows'
 import { PostItem, type PostActions } from './PostItem'
 
 interface Props {
@@ -26,6 +26,7 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
   const ready = useRef(false)
   const atBottom = useRef(true)
   const anchor = useRef<string | null>(null)
+  const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
   const loading = useRef(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const v = useVirtualizer({
@@ -40,14 +41,37 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     if (loading.current || !channel.has_more) return
     loading.current = true
     setLoadingOlder(true)
-    const top = v.getVirtualItems().find((it) => rows[it.index]?.kind === 'post')
-    anchor.current = top ? rows[top.index].key : null
+    // Anchor on the first post at or after the *true* first visible row
+    // (v.range.startIndex), not the first entry of getVirtualItems() — that
+    // list also carries the overscan buffer rendered above the viewport,
+    // which would anchor on a row that was never actually on screen and
+    // jump the view once older rows are prepended.
+    const el = scroller.current
+    const i = firstVisiblePostIndex(rows, v.range?.startIndex ?? 0)
+    const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
+    if (info && el) {
+      anchor.current = rows[i].key
+      anchorOffset.current = info[0] - el.scrollTop // preserve its on-screen position, not just align it to top
+    } else {
+      anchor.current = null
+    }
     try {
       if (!(await onLoadOlder())) anchor.current = null
     } finally {
       loading.current = false
       setLoadingOlder(false)
     }
+  }
+
+  // Fetches another page when the current one still doesn't fill the
+  // viewport (e.g. a short first page). Runs after every rows change, not
+  // just the first mount, so the feed can't get stuck under-filled with
+  // has_more still true after one page wasn't enough.
+  const fillViewportIfShort = () => {
+    requestAnimationFrame(() => {
+      const el = scroller.current
+      if (el && channel.has_more && el.scrollHeight <= el.clientHeight) void loadOlder()
+    })
   }
 
   useLayoutEffect(() => {
@@ -62,21 +86,25 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
       } else {
         v.scrollToIndex(rows.length - 1, { align: 'end' })
       }
-      requestAnimationFrame(() => {
-        const el = scroller.current
-        if (el && el.scrollHeight <= el.clientHeight) void loadOlder() // too short to scroll: fetch history now
-      })
+      fillViewportIfShort()
       return
     }
     if (anchor.current) {
-      // History landed above: keep the post that was on top in place.
-      const i = rows.findIndex((r) => r.key === anchor.current)
+      // History landed above: keep the anchored row at the exact screen
+      // position it had before the prepend (not necessarily the viewport
+      // top — it may not have been there).
+      const key = anchor.current
+      const offset = anchorOffset.current
       anchor.current = null
-      if (i >= 0) v.scrollToIndex(i, { align: 'start' })
+      const i = rows.findIndex((r) => r.key === key)
+      const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
+      if (info) v.scrollToOffset(Math.max(0, info[0] - offset), { align: 'start' })
+      fillViewportIfShort()
       return
     }
     const last = rows[rows.length - 1]
     if (atBottom.current || (last.kind === 'post' && last.post.pending)) v.scrollToIndex(rows.length - 1, { align: 'end' })
+    fillViewportIfShort()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
 
   const onScroll = () => {

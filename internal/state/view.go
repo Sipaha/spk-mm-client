@@ -19,21 +19,22 @@ type ReactionView struct {
 }
 
 type PostView struct {
-	ID          string             `json:"id"`
-	UserID      string             `json:"user_id"`
-	Author      string             `json:"author"`
-	RootID      string             `json:"root_id,omitempty"`
-	Message     string             `json:"message"`
-	CreateAt    int64              `json:"create_at"`
-	EditAt      int64              `json:"edit_at,omitempty"`
-	ReplyCount  int64              `json:"reply_count,omitempty"`
-	System      bool               `json:"system,omitempty"`
-	Bot         bool               `json:"bot,omitempty"`
-	Pending     bool               `json:"pending,omitempty"`
-	Failed      bool               `json:"failed,omitempty"`
-	Attachments []model.Attachment `json:"attachments,omitempty"`
-	Files       []FileView         `json:"files,omitempty"`
-	Reactions   []ReactionView     `json:"reactions,omitempty"`
+	ID            string             `json:"id"`
+	UserID        string             `json:"user_id"`
+	Author        string             `json:"author"`
+	RootID        string             `json:"root_id,omitempty"`
+	Message       string             `json:"message"`
+	CreateAt      int64              `json:"create_at"`
+	EditAt        int64              `json:"edit_at,omitempty"`
+	ReplyCount    int64              `json:"reply_count,omitempty"`
+	System        bool               `json:"system,omitempty"`
+	Bot           bool               `json:"bot,omitempty"`
+	Pending       bool               `json:"pending,omitempty"`
+	Failed        bool               `json:"failed,omitempty"`
+	PendingPostID string             `json:"pending_post_id,omitempty"`
+	Attachments   []model.Attachment `json:"attachments,omitempty"`
+	Files         []FileView         `json:"files,omitempty"`
+	Reactions     []ReactionView     `json:"reactions,omitempty"`
 }
 
 type ChannelView struct {
@@ -89,7 +90,10 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	sort.SliceStable(pend, func(i, j int) bool { return pend[i].CreateAt < pend[j].CreateAt })
 	for _, p := range pend {
 		v.Posts = append(v.Posts, PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
-			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed})
+			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
+			// Keys the feed row across confirmation: the eventual real post
+			// echoes this same id back as its own PendingPostID.
+			PendingPostID: p.ID})
 	}
 	return v, true
 }
@@ -110,7 +114,7 @@ func (s *Server) teamNameLocked(ch *Chan) string {
 func (s *Server) postViewLocked(p model.Post) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
 		EditAt: p.EditAt, ReplyCount: p.ReplyCount, System: p.IsSystem(), Attachments: p.Props.Attachments,
-		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook)}
+		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
 	v.Author = s.displayNameLocked(p.UserID)
 	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" {
 		v.Author = string(p.Props.OverrideUsername)
