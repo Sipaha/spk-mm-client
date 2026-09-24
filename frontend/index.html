@@ -3,9 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <!-- Dark by default, no setting (see docs/specs UI section): sets the
+         background before Tailwind's CSS module has loaded, so there is no
+         white flash at startup. -->
+    <style>
+      :root { color-scheme: dark; }
+      html, body { background: #1f1f23; }
+    </style>
     <title>spk-mattermost</title>
   </head>
-  <body class="bg-neutral-50 text-neutral-900">
+  <body class="bg-app text-fg">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

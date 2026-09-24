@@ -212,28 +212,28 @@ export function Feed({ channel, me, locale, actions, editingId, onLoadOlder }: P
         // just before this re-render, and a growing row above it would push
         // the anchored post down after the capture.
         return (
-          <div className="py-3 text-center text-xs text-neutral-500">
+          <div className="py-3 text-center text-xs text-fg-muted">
             <span className={loadingOlder ? undefined : 'invisible'}>{t('feed.loadingOlder')}</span>
           </div>
         )
       case 'day':
         return (
           <div className="flex items-center px-4 py-2">
-            <div className="h-px flex-1 bg-neutral-200" />
-            <span className="px-3 text-xs font-semibold text-neutral-500">{formatDay(r.ms, locale)}</span>
-            <div className="h-px flex-1 bg-neutral-200" />
+            <div className="h-px flex-1 bg-line" />
+            <span className="px-3 text-xs font-semibold text-fg-muted">{formatDay(r.ms, locale)}</span>
+            <div className="h-px flex-1 bg-line" />
           </div>
         )
       case 'new':
         return (
           <div className="flex items-center px-4 py-1">
-            <div className="h-px flex-1 bg-red-400" />
-            <span className="px-3 text-xs font-semibold text-red-600">{t('feed.new')}</span>
-            <div className="h-px flex-1 bg-red-400" />
+            <div className="h-px flex-1 bg-danger" />
+            <span className="px-3 text-xs font-semibold text-danger">{t('feed.new')}</span>
+            <div className="h-px flex-1 bg-danger" />
           </div>
         )
       case 'gap':
-        return <div role="status" className="py-2 text-center text-xs text-neutral-500">{t('feed.gap')}</div>
+        return <div role="status" className="py-2 text-center text-xs text-fg-muted">{t('feed.gap')}</div>
       case 'post':
         return <PostItem post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} editing={r.post.id === editingId} />
     }
@@ -254,7 +254,7 @@ export function Feed({ channel, me, locale, actions, editingId, onLoadOlder }: P
       className="relative min-h-0 flex-1 overflow-y-auto pb-2"
     >
       {!rows.length && (
-        <div className="absolute inset-0 flex items-center justify-center text-neutral-500">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
+        <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
       )}
       <div style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
         {v.getVirtualItems().map((it) => (

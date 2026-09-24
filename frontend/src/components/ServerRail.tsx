@@ -9,7 +9,7 @@ const stateLabel: Partial<Record<ServerDTO['state'], Parameters<typeof t>[0]>> =
 
 export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | null; onSelect: (id: number | null) => void }) {
   return (
-    <nav className="flex w-16 shrink-0 flex-col items-center gap-3 bg-neutral-800 py-3">
+    <nav className="flex w-16 shrink-0 flex-col items-center gap-3 bg-rail py-3">
       {props.servers.map((s) => {
         const problem = s.signed_in ? stateLabel[s.state] : undefined
         const dim = !s.signed_in || s.state === 'needs_reauth'
@@ -26,7 +26,7 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
               aria-label={accessibleName}
               aria-current={s.id === props.selectedId}
               onClick={() => props.onSelect(s.id)}
-              className={`h-11 w-11 rounded-xl text-sm font-semibold text-white ${s.id === props.selectedId ? 'bg-blue-600' : 'bg-neutral-600'} ${dim ? 'opacity-60' : ''} ${s.state === 'reconnecting' ? 'ring-2 ring-amber-400' : ''}`}
+              className={`h-11 w-11 rounded-xl text-sm font-semibold text-white ${s.id === props.selectedId ? 'bg-blue-600' : 'bg-hover'} ${dim ? 'opacity-60' : ''} ${s.state === 'reconnecting' ? 'ring-2 ring-mention-fg' : ''}`}
             >
               {s.name.slice(0, 2).toUpperCase()}
             </button>
@@ -38,7 +38,7 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
                 {s.mentions > 99 ? '99+' : s.mentions}
               </span>
             ) : s.unread ? (
-              <span aria-label={t('rail.unread')} className="absolute -left-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-white" />
+              <span aria-label={t('rail.unread')} className="absolute -left-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-fg" />
             ) : null}
           </div>
         )
@@ -47,7 +47,7 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
         title={t('rail.add')}
         aria-label={t('rail.add')}
         onClick={() => props.onSelect(null)}
-        className="h-11 w-11 rounded-xl border border-dashed border-neutral-500 text-xl text-neutral-300"
+        className="h-11 w-11 rounded-xl border border-dashed border-fg-subtle text-xl text-fg-muted"
       >
         +
       </button>

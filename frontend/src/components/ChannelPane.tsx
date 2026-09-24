@@ -32,23 +32,23 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   )
   const me = useMemo(() => ({ id: channel?.me_id ?? '', username: server.username }), [channel?.me_id, server.username])
   if (!channel) {
-    return <div className="flex flex-1 items-center justify-center text-neutral-500">{t('channel.none')}</div>
+    return <div className="flex flex-1 items-center justify-center bg-app text-fg-muted">{t('channel.none')}</div>
   }
   return (
-    <section aria-label={channel.name} className="flex min-h-0 flex-1 flex-col">
-      <header className="flex min-w-0 items-baseline gap-3 border-b border-neutral-200 px-4 py-2">
-        <h1 className="shrink-0 font-semibold">
-          <span className="mr-1 text-neutral-400">{channelGlyph(channel.type)}</span>
+    <section aria-label={channel.name} className="flex min-h-0 flex-1 flex-col bg-app">
+      <header className="flex min-w-0 items-baseline gap-3 border-b border-line bg-panel px-4 py-2">
+        <h1 className="shrink-0 font-semibold text-fg">
+          <span className="mr-1 text-fg-subtle">{channelGlyph(channel.type)}</span>
           {channel.name}
         </h1>
         {channel.header && (
-          <p className="truncate text-xs text-neutral-500" title={channel.header}>
+          <p className="truncate text-xs text-fg-muted" title={channel.header}>
             {channel.header}
           </p>
         )}
       </header>
       {server.state === 'needs_reauth' && (
-        <div role="status" className="flex items-center gap-3 bg-amber-50 px-4 py-1.5 text-sm text-amber-900">
+        <div role="status" className="flex items-center gap-3 bg-mention-bg px-4 py-1.5 text-sm text-mention-fg">
           {t('channel.sessionExpired')}
           <button className="font-medium underline" onClick={onReauth}>
             {t('status.signInAgain')}
@@ -56,7 +56,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         </div>
       )}
       {channel.loaded && channel.syncing && server.state !== 'needs_reauth' && (
-        <div role="status" className="border-b border-neutral-100 px-4 py-0.5 text-xs text-neutral-500">
+        <div role="status" className="border-b border-line px-4 py-0.5 text-xs text-fg-muted">
           {t('channel.syncing')}
         </div>
       )}

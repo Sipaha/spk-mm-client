@@ -156,7 +156,10 @@ func Run(ctx context.Context, o Options) error {
 		Title:            "spk-mattermost",
 		Width:            1200,
 		Height:           800,
-		BackgroundColour: application.NewRGBA(250, 250, 250, 255),
+		// Matches --color-app (#1f1f23) in frontend/src/index.css: the app is
+		// dark by default, so the window background must not flash white/light
+		// before the webview paints.
+		BackgroundColour: application.NewRGBA(31, 31, 35, 255),
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
 		Linux:            application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MATTERMOST_GPU"))},

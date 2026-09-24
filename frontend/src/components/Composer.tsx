@@ -72,9 +72,9 @@ export function Composer({ channel, onSend, onDraft, onEditLast }: Props) {
   }
 
   return (
-    <div className="border-t border-neutral-200 px-4 py-3">
+    <div className="border-t border-line bg-panel px-4 py-3">
       {error && (
-        <p role="alert" className="pb-1 text-xs text-red-600">
+        <p role="alert" className="pb-1 text-xs text-danger">
           {error}
         </p>
       )}
@@ -86,7 +86,7 @@ export function Composer({ channel, onSend, onDraft, onEditLast }: Props) {
         onChange={(e) => change(e.target.value)}
         onKeyDown={onKeyDown}
         autoFocus
-        className="w-full resize-none rounded border border-neutral-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+        className="w-full resize-none rounded border border-line bg-app px-3 py-2 text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
       />
     </div>
   )

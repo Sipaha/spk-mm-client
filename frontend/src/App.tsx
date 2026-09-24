@@ -74,7 +74,7 @@ export function App() {
     if (confirm(t('server.removeConfirm', { name: s.name }))) client.removeServer(s.id).catch(report)
   }
   const banner = lastError && (
-    <p role="alert" className="flex items-center justify-between bg-red-50 px-4 py-2 text-sm text-red-700">
+    <p role="alert" className="flex items-center justify-between bg-danger/15 px-4 py-2 text-sm text-danger">
       {lastError}
       <button aria-label={t('app.dismiss')} className="px-2" onClick={() => setError(null)}>
         ×
@@ -83,7 +83,7 @@ export function App() {
   )
 
   return (
-    <div className="flex h-screen text-sm text-neutral-900">
+    <div className="flex h-screen bg-app text-sm text-fg">
       <ServerRail servers={servers} selectedId={selectedId} onSelect={selectServer} />
       {chat ? (
         <>

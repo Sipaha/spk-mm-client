@@ -39,22 +39,22 @@ export function ServerPanel({ server, client, loginFailures = 0, reauth = false,
   return (
     <section className="mx-auto mt-16 flex w-[28rem] flex-col gap-4">
       <header>
-        <h1 className="text-xl font-semibold">{server.name}</h1>
-        <p className="text-sm text-neutral-500">{server.url}</p>
+        <h1 className="text-xl font-semibold text-fg">{server.name}</h1>
+        <p className="text-sm text-fg-muted">{server.url}</p>
       </header>
       {server.signed_in && !reauth ? (
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between text-fg">
           <span>{t('server.signedInAs', { name: server.username })}</span>
-          <button className="rounded border px-3 py-1 disabled:opacity-50" disabled={busy} onClick={() => run(() => client.logout(server.id))}>
+          <button className="rounded border border-line px-3 py-1 disabled:opacity-50" disabled={busy} onClick={() => run(() => client.logout(server.id))}>
             {t('server.signOut')}
           </button>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
           {reauth ? (
-            <p className="text-sm text-amber-700">{t('server.reauthHint')}</p>
+            <p className="text-sm text-mention-fg">{t('server.reauthHint')}</p>
           ) : (
-            <p className="text-sm text-neutral-500">{t('server.signedOut')}</p>
+            <p className="text-sm text-fg-muted">{t('server.signedOut')}</p>
           )}
           {server.gitlab && (
             <>
@@ -65,21 +65,21 @@ export function ServerPanel({ server, client, loginFailures = 0, reauth = false,
               >
                 {t('server.gitlab')}
               </button>
-              {waitingGitLab && <p className="text-sm text-neutral-600">{t('server.gitlabWaiting')}</p>}
-              <p className="text-center text-xs text-neutral-400">{t('server.orPassword')}</p>
+              {waitingGitLab && <p className="text-sm text-fg-muted">{t('server.gitlabWaiting')}</p>}
+              <p className="text-center text-xs text-fg-subtle">{t('server.orPassword')}</p>
             </>
           )}
           <form
             className="flex flex-col gap-2"
             onSubmit={(e) => { e.preventDefault(); void run(() => client.loginWithPassword(server.id, login, password)) }}
           >
-            <label className="flex flex-col gap-1 text-sm">
+            <label className="flex flex-col gap-1 text-sm text-fg">
               {t('server.login')}
-              <input className="rounded border border-neutral-300 px-2 py-1.5" value={login} onChange={(e) => setLogin(e.target.value)} />
+              <input className="rounded border border-line bg-app px-2 py-1.5 text-fg" value={login} onChange={(e) => setLogin(e.target.value)} />
             </label>
-            <label className="flex flex-col gap-1 text-sm">
+            <label className="flex flex-col gap-1 text-sm text-fg">
               {t('server.password')}
-              <input type="password" className="rounded border border-neutral-300 px-2 py-1.5" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input type="password" className="rounded border border-line bg-app px-2 py-1.5 text-fg" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
             <button type="submit" disabled={busy || !login || !password} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
               {t('server.signIn')}
@@ -87,14 +87,14 @@ export function ServerPanel({ server, client, loginFailures = 0, reauth = false,
           </form>
         </div>
       )}
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {onCancel && (
-        <button className="self-start text-sm underline" onClick={onCancel}>
+        <button className="self-start text-sm text-fg underline" onClick={onCancel}>
           {t('server.back')}
         </button>
       )}
       <button
-        className="self-start text-sm text-red-600 underline disabled:opacity-50"
+        className="self-start text-sm text-danger underline disabled:opacity-50"
         disabled={busy}
         onClick={() => { if (confirm(t('server.removeConfirm', { name: server.name }))) void run(() => client.removeServer(server.id)) }}
       >

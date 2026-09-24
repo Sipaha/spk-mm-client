@@ -1,19 +1,38 @@
 @import "tailwindcss";
 
+/* Dark theme, out of the box, no setting: see docs/specs UI section. */
+@theme {
+  --color-app: #1f1f23;
+  --color-panel: #232327;
+  --color-sidebar: #18181b;
+  --color-rail: #111113;
+  --color-fg: #e4e4e7;
+  --color-fg-muted: #a1a1aa;
+  --color-fg-subtle: #71717a;
+  --color-line: #34343a;
+  --color-hover: #2a2a30;
+  --color-accent: #4f8cff;
+  --color-accent-fg: #ffffff;
+  --color-mention-bg: #4a3b12;
+  --color-mention-fg: #fcd34d;
+  --color-danger: #f87171;
+  --color-code-bg: #2a2a30;
+}
+
 /* Message markdown: Tailwind's preflight resets these elements. */
 .md p { margin: 0.125rem 0; }
 .md ul { list-style: disc; padding-left: 1.5rem; }
 .md ol { list-style: decimal; padding-left: 1.5rem; }
 .md li > input[type="checkbox"] { margin-right: 0.25rem; }
-.md blockquote { border-left: 3px solid #d4d4d4; padding-left: 0.75rem; color: #525252; }
-.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: #f5f5f5; border-radius: 3px; padding: 0 0.25rem; }
-.md pre { background: #f5f5f5; border-radius: 4px; padding: 0.5rem 0.75rem; overflow-x: auto; margin: 0.25rem 0; }
+.md blockquote { border-left: 3px solid var(--color-line); padding-left: 0.75rem; color: var(--color-fg-muted); }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--color-code-bg); border-radius: 3px; padding: 0 0.25rem; }
+.md pre { background: var(--color-code-bg); border-radius: 4px; padding: 0.5rem 0.75rem; overflow-x: auto; margin: 0.25rem 0; }
 .md pre code { background: none; padding: 0; }
 .md table { border-collapse: collapse; margin: 0.25rem 0; }
-.md th, .md td { border: 1px solid #e5e5e5; padding: 0.125rem 0.5rem; }
-.md th { background: #fafafa; font-weight: 600; }
+.md th, .md td { border: 1px solid var(--color-line); padding: 0.125rem 0.5rem; }
+.md th { background: var(--color-hover); font-weight: 600; }
 .md h1 { font-size: 1.25rem; font-weight: 600; }
 .md h2 { font-size: 1.125rem; font-weight: 600; }
 .md h3, .md h4, .md h5, .md h6 { font-size: 1rem; font-weight: 600; }
-.md hr { border-color: #e5e5e5; margin: 0.5rem 0; }
-.md del { color: #737373; }
+.md hr { border-color: var(--color-line); margin: 0.5rem 0; }
+.md del { color: var(--color-fg-muted); }

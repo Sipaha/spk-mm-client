@@ -19,14 +19,14 @@ function linkTo(href: string | undefined, onLink: (href: string) => void) {
 export const Markdown = memo(function Markdown({ text, me, onLink }: { text: string; me: string; onLink(href: string): void }) {
   const components: Components = {
     a: ({ href, children }) => (
-      <a href={href} title={href} className="text-blue-700 hover:underline" onClick={linkTo(href, onLink)}>
+      <a href={href} title={href} className="text-accent hover:underline" onClick={linkTo(href, onLink)}>
         {children}
       </a>
     ),
     img: ({ src, alt }) => {
       const href = typeof src === 'string' ? src : ''
       return (
-        <a href={href} title={href} className="text-blue-700 hover:underline" onClick={linkTo(href, onLink)}>
+        <a href={href} title={href} className="text-accent hover:underline" onClick={linkTo(href, onLink)}>
           🖼 {alt || href}
         </a>
       )
@@ -36,7 +36,7 @@ export const Markdown = memo(function Markdown({ text, me, onLink }: { text: str
       if (typeof name !== 'string') return <span className={props.className}>{props.children}</span>
       const loud = name === me.toLowerCase() || SPECIAL.has(name)
       return (
-        <span data-mention={name} className={loud ? 'rounded bg-amber-100 px-0.5 font-medium text-amber-900' : 'font-medium text-blue-700'}>
+        <span data-mention={name} className={loud ? 'rounded bg-mention-bg px-0.5 font-medium text-mention-fg' : 'font-medium text-accent'}>
           {props.children}
         </span>
       )

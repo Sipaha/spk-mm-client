@@ -48,10 +48,10 @@ function AttachmentView({ a, me, onLink }: { a: Attachment; me: string; onLink(h
   return (
     <div className="mt-1 max-w-3xl border-l-4 pl-3" style={{ borderColor: barColor(a.color) }}>
       {a.pretext && <Markdown text={a.pretext} me={me} onLink={onLink} />}
-      {a.author_name && <div className="text-xs font-medium text-neutral-600">{a.author_name}</div>}
+      {a.author_name && <div className="text-xs font-medium text-fg-muted">{a.author_name}</div>}
       {a.title &&
         (a.title_link ? (
-          <a href={a.title_link} className="font-semibold text-blue-700 hover:underline" onClick={(e) => { e.preventDefault(); onLink(a.title_link!) }}>
+          <a href={a.title_link} className="font-semibold text-accent hover:underline" onClick={(e) => { e.preventDefault(); onLink(a.title_link!) }}>
             {a.title}
           </a>
         ) : (
@@ -68,7 +68,7 @@ function AttachmentView({ a, me, onLink }: { a: Attachment; me: string; onLink(h
           ))}
         </div>
       )}
-      {a.footer && <div className="mt-0.5 text-xs text-neutral-500">{a.footer}</div>}
+      {a.footer && <div className="mt-0.5 text-xs text-fg-muted">{a.footer}</div>}
     </div>
   )
 }
@@ -106,17 +106,17 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
             void save()
           }
         }}
-        className="w-full resize-none rounded border border-blue-400 px-2 py-1 focus:outline-none"
+        className="w-full resize-none rounded border border-accent bg-app px-2 py-1 text-fg focus:outline-none"
       />
       <div className="flex items-center gap-3 text-xs">
         <button className="rounded bg-blue-600 px-2 py-0.5 text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>
           {t('post.save')}
         </button>
-        <button className="underline" onClick={actions.cancelEdit}>
+        <button className="text-fg underline" onClick={actions.cancelEdit}>
           {t('post.cancel')}
         </button>
         {error && (
-          <span role="alert" className="text-red-600">
+          <span role="alert" className="text-danger">
             {error}
           </span>
         )}
@@ -127,7 +127,7 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
 
 function ToolButton({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
   return (
-    <button aria-label={label} title={label} onClick={onClick} className="rounded px-1.5 py-0.5 text-neutral-600 hover:bg-neutral-100">
+    <button aria-label={label} title={label} onClick={onClick} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-hover">
       {children}
     </button>
   )
@@ -138,35 +138,35 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
   return (
     <article
       data-post-id={post.id}
-      className={`group relative flex gap-3 px-4 py-0.5 hover:bg-neutral-50 ${head ? 'mt-2' : ''} ${post.pending ? 'opacity-60' : ''}`}
+      className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''} ${post.pending ? 'opacity-60' : ''}`}
     >
       <div className="w-9 shrink-0 pt-0.5">
-        {head ? <Avatar id={post.user_id} name={post.author} /> : <time className="invisible block pt-1 text-right text-[10px] text-neutral-400 group-hover:visible">{time}</time>}
+        {head ? <Avatar id={post.user_id} name={post.author} /> : <time className="invisible block pt-1 text-right text-[10px] text-fg-subtle group-hover:visible">{time}</time>}
       </div>
       <div className="min-w-0 flex-1">
         {head && (
           <header className="flex items-baseline gap-2">
             <span className="font-semibold">{post.author}</span>
-            {post.bot && <span className="rounded bg-neutral-200 px-1 text-[10px] font-semibold text-neutral-600">BOT</span>}
-            <time className="text-xs text-neutral-500">{time}</time>
+            {post.bot && <span className="rounded bg-hover px-1 text-[10px] font-semibold text-fg-muted">BOT</span>}
+            <time className="text-xs text-fg-muted">{time}</time>
           </header>
         )}
         {editing ? (
           <EditBox post={post} actions={actions} />
         ) : (
-          <div className={post.system ? 'italic text-neutral-500' : ''}>
+          <div className={post.system ? 'italic text-fg-muted' : ''}>
             {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} />}
-            {post.edit_at ? <span className="text-xs text-neutral-400">{t('post.edited')}</span> : null}
+            {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
           </div>
         )}
         {post.attachments?.map((a, i) => <AttachmentView key={i} a={a} me={me.username} onLink={actions.link} />)}
         {post.files && post.files.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
             {post.files.map((f, i) => (
-              <div key={i} className="flex items-center gap-2 rounded border border-neutral-200 px-2 py-1 text-xs">
+              <div key={i} className="flex items-center gap-2 rounded border border-line px-2 py-1 text-xs">
                 <span aria-hidden>📎</span>
                 <span className="max-w-64 truncate">{f.name}</span>
-                <span className="text-neutral-500">{formatSize(f.size)}</span>
+                <span className="text-fg-muted">{formatSize(f.size)}</span>
               </div>
             ))}
           </div>
@@ -174,16 +174,16 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
         {post.reactions && post.reactions.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {post.reactions.map((r) => (
-              <span key={r.emoji} title={`:${r.emoji}:`} className={`rounded-full border px-1.5 text-xs ${r.mine ? 'border-blue-400 bg-blue-50' : 'border-neutral-200'}`}>
+              <span key={r.emoji} title={`:${r.emoji}:`} className={`rounded-full border px-1.5 text-xs ${r.mine ? 'border-accent bg-accent/15' : 'border-line'}`}>
                 {emojiFor(r.emoji)} {r.count}
               </span>
             ))}
           </div>
         )}
-        {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-blue-700">{t('post.replies', { n: String(post.reply_count) })}</div>}
-        {post.pending && <div className="text-xs text-neutral-500">{t('post.sending')}</div>}
+        {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
+        {post.pending && <div className="text-xs text-fg-muted">{t('post.sending')}</div>}
         {post.failed && (
-          <div role="alert" className="flex gap-2 text-xs text-red-600">
+          <div role="alert" className="flex gap-2 text-xs text-danger">
             {t('post.failed')}
             <button className="underline" onClick={() => actions.retry(post)}>{t('post.retry')}</button>
             <button className="underline" onClick={() => actions.discard(post)}>{t('post.discard')}</button>
@@ -194,7 +194,7 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
         <div
           role="toolbar"
           aria-label={t('post.actions')}
-          className="absolute -top-3 right-3 hidden gap-0.5 rounded border border-neutral-200 bg-white px-1 shadow-sm group-focus-within:flex group-hover:flex"
+          className="absolute -top-3 right-3 hidden gap-0.5 rounded border border-line bg-panel px-1 shadow-sm group-focus-within:flex group-hover:flex"
         >
           {post.user_id === me.id && !post.system && (
             <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}>✎</ToolButton>

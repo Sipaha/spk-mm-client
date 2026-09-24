@@ -38,8 +38,8 @@ test('mentions: me and @channel stand out, others are plain highlights, code is 
   const { container } = render(<Markdown text={'@alice @bob @channel `@alice`'} me="alice" onLink={() => {}} />)
   const spans = [...container.querySelectorAll('[data-mention]')]
   expect(spans.map((s) => s.getAttribute('data-mention'))).toEqual(['alice', 'bob', 'channel'])
-  expect(spans[0]).toHaveClass('bg-amber-100')
-  expect(spans[1]).not.toHaveClass('bg-amber-100')
-  expect(spans[2]).toHaveClass('bg-amber-100')
+  expect(spans[0]).toHaveClass('bg-mention-bg')
+  expect(spans[1]).not.toHaveClass('bg-mention-bg')
+  expect(spans[2]).toHaveClass('bg-mention-bg')
   expect(container.querySelector('code')!.textContent).toBe('@alice')
 })

@@ -36,12 +36,12 @@ function MentionPill({ n }: { n: number }) {
 }
 
 function ChannelRow({ item, active, onClick }: { item: ChannelItem; active: boolean; onClick(): void }) {
-  const tone = active ? 'bg-blue-700 text-white' : item.unread ? 'font-semibold text-white' : 'text-neutral-400'
+  const tone = active ? 'bg-blue-700 text-white' : item.unread ? 'font-semibold text-fg' : 'text-fg-subtle'
   return (
     <button
       aria-current={active}
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-neutral-800 ${tone} ${item.muted ? 'opacity-50' : ''}`}
+      className={`flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-hover ${tone} ${item.muted ? 'opacity-50' : ''}`}
     >
       <span className="w-4 shrink-0 text-center text-xs opacity-70">{channelGlyph(item.type)}</span>
       <span className="truncate">{item.name}</span>
@@ -52,13 +52,13 @@ function ChannelRow({ item, active, onClick }: { item: ChannelItem; active: bool
 
 function StatusLine({ state, onReauth }: { state: ServerDTO['state']; onReauth(): void }) {
   if (state === 'connecting' || state === 'reconnecting') {
-    return <p role="status" className="px-3 pb-2 text-xs text-amber-300">{t(state === 'connecting' ? 'status.connecting' : 'status.reconnecting')}</p>
+    return <p role="status" className="px-3 pb-2 text-xs text-mention-fg">{t(state === 'connecting' ? 'status.connecting' : 'status.reconnecting')}</p>
   }
   if (state === 'needs_reauth') {
     return (
-      <p role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-amber-300">
+      <p role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-mention-fg">
         {t('status.needsReauth')}
-        <button className="rounded bg-amber-500 px-2 py-0.5 font-medium text-neutral-900" onClick={onReauth}>
+        <button className="rounded bg-mention-fg px-2 py-0.5 font-medium text-mention-bg" onClick={onReauth}>
           {t('status.signInAgain')}
         </button>
       </p>
@@ -72,21 +72,21 @@ export function Sidebar(p: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const teams = p.sidebar?.teams ?? []
   return (
-    <aside aria-label={t('sidebar.label')} className="flex w-64 shrink-0 flex-col bg-neutral-900 text-sm text-neutral-200">
+    <aside aria-label={t('sidebar.label')} className="flex w-64 shrink-0 flex-col bg-sidebar text-sm text-fg-muted">
       <header className="relative flex items-center justify-between gap-2 px-3 py-2">
         <div className="min-w-0">
-          <div className="truncate font-semibold text-white">{p.server.name}</div>
-          <div className="truncate text-xs text-neutral-400">@{p.server.username}</div>
+          <div className="truncate font-semibold text-fg">{p.server.name}</div>
+          <div className="truncate text-xs text-fg-subtle">@{p.server.username}</div>
         </div>
-        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="rounded px-2 text-lg hover:bg-neutral-800" onClick={() => setMenu(!menu)}>
+        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="rounded px-2 text-lg hover:bg-hover" onClick={() => setMenu(!menu)}>
           ⋯
         </button>
         {menu && (
-          <div role="menu" className="absolute right-2 top-11 z-10 flex w-44 flex-col rounded border border-neutral-700 bg-neutral-800 py-1 shadow-lg">
-            <button role="menuitem" className="px-3 py-1.5 text-left hover:bg-neutral-700" onClick={() => { setMenu(false); p.onSignOut() }}>
+          <div role="menu" className="absolute right-2 top-11 z-10 flex w-44 flex-col rounded border border-line bg-panel py-1 shadow-lg">
+            <button role="menuitem" className="px-3 py-1.5 text-left text-fg hover:bg-hover" onClick={() => { setMenu(false); p.onSignOut() }}>
               {t('server.signOut')}
             </button>
-            <button role="menuitem" className="px-3 py-1.5 text-left text-red-400 hover:bg-neutral-700" onClick={() => { setMenu(false); p.onRemove() }}>
+            <button role="menuitem" className="px-3 py-1.5 text-left text-danger hover:bg-hover" onClick={() => { setMenu(false); p.onRemove() }}>
               {t('server.remove')}
             </button>
           </div>
@@ -100,7 +100,7 @@ export function Sidebar(p: Props) {
               key={tm.id}
               aria-current={tm.id === p.sidebar?.team_id}
               onClick={() => p.onTeam(tm.id)}
-              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs ${tm.id === p.sidebar?.team_id ? 'bg-neutral-700 text-white' : tm.unread ? 'font-semibold text-white' : 'text-neutral-400'}`}
+              className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs ${tm.id === p.sidebar?.team_id ? 'bg-hover text-fg' : tm.unread ? 'font-semibold text-fg' : 'text-fg-subtle'}`}
             >
               {tm.display_name}
               {tm.mentions > 0 && <MentionPill n={tm.mentions} />}
@@ -109,7 +109,7 @@ export function Sidebar(p: Props) {
         </nav>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-        {!p.sidebar && <p className="px-3 py-2 text-neutral-500">{t('sidebar.loading')}</p>}
+        {!p.sidebar && <p className="px-3 py-2 text-fg-muted">{t('sidebar.loading')}</p>}
         {(p.sidebar?.categories ?? []).map((cat) => {
           const isCollapsed = collapsed[cat.id] ?? cat.collapsed
           const all = cat.channels ?? []
@@ -119,7 +119,7 @@ export function Sidebar(p: Props) {
               <button
                 aria-expanded={!isCollapsed}
                 onClick={() => setCollapsed({ ...collapsed, [cat.id]: !isCollapsed })}
-                className="flex w-full items-center gap-1 px-3 py-0.5 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-300"
+                className="flex w-full items-center gap-1 px-3 py-0.5 text-left text-xs font-semibold uppercase tracking-wide text-fg-muted hover:text-fg"
               >
                 <span className="w-3">{isCollapsed ? '▸' : '▾'}</span>
                 {categoryName(cat)}

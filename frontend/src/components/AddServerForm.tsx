@@ -23,19 +23,19 @@ export function AddServerForm(props: { add: (url: string) => Promise<Pick<Server
   }
 
   return (
-    <form onSubmit={submit} className="mx-auto mt-24 flex w-96 flex-col gap-3">
+    <form onSubmit={submit} className="mx-auto mt-24 flex w-96 flex-col gap-3 text-fg">
       <h1 className="text-lg font-semibold">{t('add.title')}</h1>
       <label className="flex flex-col gap-1 text-sm">
         {t('add.urlLabel')}
         <input
-          className="rounded border border-neutral-300 px-2 py-1.5"
+          className="rounded border border-line bg-app px-2 py-1.5 text-fg"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={t('add.urlPlaceholder')}
           autoFocus
         />
       </label>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <button type="submit" disabled={busy || !url.trim()} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
         {busy ? t('add.checking') : t('add.submit')}
       </button>
