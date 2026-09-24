@@ -60,6 +60,11 @@ func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	s.mu.Lock()
+	if connID != "" && s.rejectResumes {
+		s.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, "invalid connection id")
+		return
+	}
 	var sess *wsSession
 	var replay []wsEvent
 	hello := false

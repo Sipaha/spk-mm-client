@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spk/spk-mattermost/internal/mm/model"
 )
@@ -45,6 +46,11 @@ type Server struct {
 	pending  map[string]string // oauth state -> redirect_to
 	chat     chatData
 	hub      wsHub
+
+	// network conditions (test controls, see net.go)
+	down          bool
+	latency       map[string]time.Duration
+	rejectResumes bool
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.
@@ -76,7 +82,7 @@ func Start(o Options) *Server {
 	mux.HandleFunc("GET /mmfake/gitlab/complete", s.gitlabComplete)
 	mux.HandleFunc("GET /api/v4/websocket", s.websocketHandler)
 	s.chatRoutes(mux)
-	s.ts = httptest.NewServer(mux)
+	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }
 
