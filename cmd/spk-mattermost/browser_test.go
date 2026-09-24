@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -82,6 +83,15 @@ func TestTestAPIFakeURLAndDeeplink(t *testing.T) {
 // (/api/events) handler running forever: Shutdown only waits for active
 // connections, it does not cancel their request contexts, so with the UI's
 // SSE tab open, Ctrl+C used to hang the process.
+//
+// The assertion is on the CLIENT side of the stream, not on
+// serveWithGracefulShutdown's return: Server.Shutdown closes the listener
+// (and so makes ListenAndServe return http.ErrServerClosed) as soon as it is
+// called, regardless of whether any active connection ever finishes — so
+// "serveWithGracefulShutdown returns quickly" holds even with the bug and
+// does not discriminate. What the BaseContext fix actually changes is
+// whether the open SSE connection itself gets torn down, which is only
+// observable by reading past its still-open body on the client.
 func TestGracefulShutdownEndsOpenSSEConnectionPromptly(t *testing.T) {
 	t.Setenv("SPK_MATTERMOST_HOME", t.TempDir())
 
@@ -108,14 +118,36 @@ func TestGracefulShutdownEndsOpenSSEConnectionPromptly(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond, "server did not start listening in time")
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
-	// Confirm the SSE stream is actually open (the ": ok" comment line is
-	// written and flushed on connect) before cutting the server down.
-	buf := make([]byte, 64)
-	n, err := resp.Body.Read(buf)
+	// Confirm the SSE stream is actually open by reading its preamble: the
+	// ": ok" comment line plus the blank line that terminates it, both
+	// written and flushed on connect.
+	r := bufio.NewReader(resp.Body)
+	line, err := r.ReadString('\n')
 	require.NoError(t, err)
-	require.Greater(t, n, 0)
+	require.Equal(t, ": ok\n", line)
+	blank, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "\n", blank)
 
 	cancel() // simulate Ctrl+C / SIGTERM while the UI still has the SSE tab open
+
+	// The fix under test: the client must observe end-of-stream (the server
+	// finishing the response once its handler's request context is
+	// canceled) within a few seconds. Without BaseContext wiring the request
+	// context, the handler is still blocked on its ping ticker (up to 25s)
+	// or forever, so the client's Read would still be blocked when this
+	// deadline fires.
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := r.ReadString('\n')
+		readDone <- err
+	}()
+	select {
+	case err := <-readDone:
+		assert.ErrorIs(t, err, io.EOF, "client should observe the server ending the SSE response")
+	case <-time.After(3 * time.Second):
+		t.Fatal("client did not observe end of SSE stream within 3s of shutdown")
+	}
 
 	select {
 	case err := <-done:
