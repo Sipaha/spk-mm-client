@@ -209,6 +209,37 @@ func TestPasswordLoginAndLogout(t *testing.T) {
 	assert.False(t, list[0].SignedIn)
 }
 
+func TestSignInOverExistingSessionRevokesIt(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	dto, err := f.svc.AddServer(ctx, f.fake.URL())
+	require.NoError(t, err)
+	_, err = f.svc.LoginWithPassword(ctx, dto.ID, "alice", "secret")
+	require.NoError(t, err)
+	_, err = f.svc.LoginWithPassword(ctx, dto.ID, "alice", "secret")
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.fake.ActiveSessions(), "password sign-in revokes the old session")
+
+	require.NoError(t, f.svc.StartGitLabLogin(ctx, dto.ID))
+	require.NoError(t, f.svc.HandleDeepLink(ctx, completeGitLab(t, f.opened[0])))
+	assert.Equal(t, 1, f.fake.ActiveSessions(), "GitLab sign-in revokes the old session")
+	list, _ := f.svc.ListServers(ctx)
+	assert.True(t, list[0].SignedIn)
+}
+
+func TestLogoutCancelsPendingGitLabLogin(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	dto, _ := f.svc.AddServer(ctx, f.fake.URL())
+	require.NoError(t, f.svc.StartGitLabLogin(ctx, dto.ID))
+	cb := completeGitLab(t, f.opened[0])
+	require.NoError(t, f.svc.Logout(ctx, dto.ID))
+	err := f.svc.HandleDeepLink(ctx, cb)
+	assert.Equal(t, CodeNoPendingLogin, codeOf(err))
+	list, _ := f.svc.ListServers(ctx)
+	assert.False(t, list[0].SignedIn)
+}
+
 func TestLogoutClearsEvenIfServerRejects(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

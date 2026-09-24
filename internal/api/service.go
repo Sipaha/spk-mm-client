@@ -176,6 +176,10 @@ func (s *Service) LoginWithPassword(ctx context.Context, id int64, login, passwo
 		}
 		return ServerDTO{}, coded(CodeInternal, err)
 	}
+	// Signing in over a live session: revoke the old one (best effort) so it
+	// doesn't linger server-side. Done only after the new login succeeded, so
+	// a failed attempt leaves the existing session intact.
+	s.revoke(ctx, srv)
 	if err := s.st.SetSession(ctx, id, tok, u.ID, u.Username); err != nil {
 		return ServerDTO{}, coded(CodeInternal, err)
 	}
@@ -193,6 +197,7 @@ func (s *Service) Logout(ctx context.Context, id int64) error {
 		return err
 	}
 	s.revoke(ctx, srv)
+	s.sso.Cancel(id) // a GitLab login still in flight must not sign back in
 	if err := s.st.ClearSession(ctx, id); err != nil {
 		return coded(CodeInternal, err)
 	}
@@ -216,7 +221,11 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	}
 	srv, err := s.getServer(ctx, res.ServerID)
 	if err != nil {
-		return s.loginFailed(res.ServerID, err.(*CodedError))
+		var ce *CodedError
+		if !errors.As(err, &ce) {
+			ce = coded(CodeInternal, err)
+		}
+		return s.loginFailed(res.ServerID, ce)
 	}
 	rctx, cancel := s.bounded(ctx)
 	u, err := rest.New(srv.URL, res.Token, s.hc).Me(rctx)
@@ -224,6 +233,7 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	if err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeAuthFailed, err))
 	}
+	s.revoke(ctx, srv) // replace, don't orphan, an existing session
 	if err := s.st.SetSession(ctx, srv.ID, res.Token, u.ID, u.Username); err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeInternal, err))
 	}
