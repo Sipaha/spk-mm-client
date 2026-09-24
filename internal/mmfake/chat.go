@@ -521,16 +521,11 @@ func (s *Server) setUnread(w http.ResponseWriter, r *http.Request, u User) {
 	writeJSON(w, 200, out)
 }
 
-// publishLocked records the event; Task 4 also delivers it over WebSocket.
+// publishLocked records the event and delivers it over WebSocket (ws.go).
 func (s *Server) publishLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions []string) {
 	s.chat.events = append(s.chat.events, RecordedEvent{Name: name, To: to})
 	s.deliverLocked(name, data, b, to, mentions)
 }
-
-// deliverLocked is a placeholder until Task 4 wires the WebSocket: it does
-// nothing. Task 4 replaces this function with real delivery and removes
-// this stub.
-func (s *Server) deliverLocked(string, map[string]any, wsBroadcast, []string, []string) {}
 
 // ---- test controls ----
 

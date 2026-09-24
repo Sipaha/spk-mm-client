@@ -44,6 +44,7 @@ type Server struct {
 	sessions map[string]string // token -> user id
 	pending  map[string]string // oauth state -> redirect_to
 	chat     chatData
+	hub      wsHub
 }
 
 func Start(o Options) *Server {
@@ -57,7 +58,7 @@ func Start(o Options) *Server {
 			{ID: "u-carol", Username: "carol", Password: "secret"},
 		}
 	}
-	s := &Server{opts: o, sessions: map[string]string{}, pending: map[string]string{}}
+	s := &Server{opts: o, sessions: map[string]string{}, pending: map[string]string{}, hub: wsHub{sessions: map[string]*wsSession{}}}
 	s.seed()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/system/ping", func(w http.ResponseWriter, _ *http.Request) {
@@ -70,13 +71,17 @@ func Start(o Options) *Server {
 	mux.HandleFunc("GET /oauth/gitlab/mobile_login", s.mobileLogin)
 	mux.HandleFunc("GET /mmfake/gitlab/authorize", s.gitlabAuthorize)
 	mux.HandleFunc("GET /mmfake/gitlab/complete", s.gitlabComplete)
+	mux.HandleFunc("GET /api/v4/websocket", s.websocketHandler)
 	s.chatRoutes(mux)
 	s.ts = httptest.NewServer(mux)
 	return s
 }
 
 func (s *Server) URL() string { return s.ts.URL }
-func (s *Server) Close()      { s.ts.Close() }
+func (s *Server) Close() {
+	s.DropConnections(true)
+	s.ts.Close()
+}
 
 func (s *Server) ActiveSessions() int {
 	s.mu.Lock()
