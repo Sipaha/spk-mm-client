@@ -18,4 +18,11 @@ func TestTrayLabelsFollowLocale(t *testing.T) {
 	assert.Equal(t, en, trayLabelsFor(env(map[string]string{"LC_ALL": "C", "LANG": "ru_RU.UTF-8"})))
 	assert.Equal(t, ru, trayLabelsFor(env(map[string]string{"LC_MESSAGES": "ru_RU", "LANG": "en_US.UTF-8"})))
 	assert.Equal(t, en, trayLabelsFor(env(map[string]string{"LC_ALL": "en_GB", "LC_MESSAGES": "ru_RU"})))
+	// gettext: LANGUAGE (first ru/en entry) overrides the locale unless it is C.
+	assert.Equal(t, ru, trayLabelsFor(env(map[string]string{"LANGUAGE": "de:ru", "LANG": "en_US.UTF-8"})))
+	assert.Equal(t, en, trayLabelsFor(env(map[string]string{"LANGUAGE": "en_US", "LANG": "ru_RU.UTF-8"})))
+	assert.Equal(t, en, trayLabelsFor(env(map[string]string{"LANGUAGE": "ru", "LC_ALL": "C.UTF-8"})))
+	assert.Equal(t, ru, trayLabelsFor(env(map[string]string{"LANGUAGE": "de", "LANG": "ru_RU.UTF-8"})))
+	// This machine: English messages, Russian formats only.
+	assert.Equal(t, en, trayLabelsFor(env(map[string]string{"LANGUAGE": "en_US", "LANG": "en_US.UTF-8", "LC_TIME": "ru_RU.UTF-8"})))
 }
