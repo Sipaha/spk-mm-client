@@ -43,7 +43,7 @@ func (w *Worker) view(channelID string) {
 	if _, busy := w.viewing.LoadOrStore(channelID, true); busy {
 		return
 	}
-	w.goBG(func(ctx context.Context) {
+	started := w.goBG(func(ctx context.Context) {
 		defer w.viewing.Delete(channelID)
 		for i := 0; i < 3 && w.st.NeedsView(channelID) && w.st.Active() == channelID && w.st.Focused(); i++ {
 			if err := w.rc.ViewChannel(ctx, channelID); err != nil {
@@ -56,6 +56,9 @@ func (w *Worker) view(channelID string) {
 			w.changed(w.st.ViewedLocally(channelID, w.cfg.Now().UnixMilli()))
 		}
 	})
+	if !started { // stopping: the read state is not sent
+		w.viewing.Delete(channelID)
+	}
 }
 
 func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
@@ -79,7 +82,7 @@ func (w *Worker) Send(channelID, message string) error {
 	}
 	p := w.st.AddPending(channelID, "", message)
 	w.changed(state.Change{Channels: []string{channelID}})
-	w.goBG(func(ctx context.Context) { w.create(ctx, p) })
+	w.startCreate(p)
 	return nil
 }
 
@@ -107,7 +110,15 @@ func (w *Worker) Retry(channelID, pendingID string) {
 		return
 	}
 	w.changed(state.Change{Channels: []string{channelID}})
-	w.goBG(func(ctx context.Context) { w.create(ctx, p) })
+	w.startCreate(p)
+}
+
+// startCreate sends p in the background; if the worker is stopping, p is
+// marked failed at once instead of hanging as pending.
+func (w *Worker) startCreate(p state.Pending) {
+	if !w.goBG(func(ctx context.Context) { w.create(ctx, p) }) {
+		w.changed(w.st.FailPending(p.ChannelID, p.ID))
+	}
 }
 
 func (w *Worker) Discard(channelID, pendingID string) {

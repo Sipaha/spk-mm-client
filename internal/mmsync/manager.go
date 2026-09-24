@@ -10,8 +10,12 @@ import (
 type Manager struct {
 	cfg  Config
 	root context.Context
-	mu   sync.Mutex
-	ws   map[int64]*entry
+	// ops serialises Start/Stop/Close across stop+insert, so concurrent
+	// calls never orphan a worker; mu only guards ws for readers.
+	ops    sync.Mutex
+	closed bool
+	mu     sync.Mutex
+	ws     map[int64]*entry
 }
 
 type entry struct {
@@ -39,8 +43,14 @@ func (m *Manager) StartAll(ctx context.Context) error {
 }
 
 // Start (re)starts the worker of srv — after sign-in, with the new token.
+// After Close it does nothing.
 func (m *Manager) Start(srv store.Server) {
-	m.Stop(srv.ID)
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	if m.closed {
+		return
+	}
+	m.stopLocked(srv.ID)
 	w := NewWorker(m.cfg, srv)
 	ctx, cancel := context.WithCancel(m.root)
 	e := &entry{w: w, cancel: cancel, done: make(chan struct{})}
@@ -55,6 +65,12 @@ func (m *Manager) Start(srv store.Server) {
 
 // Stop cancels the worker and waits for its final snapshot flush.
 func (m *Manager) Stop(id int64) {
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	m.stopLocked(id)
+}
+
+func (m *Manager) stopLocked(id int64) {
 	m.mu.Lock()
 	e := m.ws[id]
 	delete(m.ws, id)
@@ -91,7 +107,12 @@ func (m *Manager) Each(fn func(id int64, w *Worker)) {
 
 func (m *Manager) NudgeAll() { m.Each(func(_ int64, w *Worker) { w.Nudge() }) }
 
+// Close stops every worker (waiting for their final flushes); later Start
+// calls are no-ops.
 func (m *Manager) Close() {
+	m.ops.Lock()
+	defer m.ops.Unlock()
+	m.closed = true
 	m.mu.Lock()
 	ids := make([]int64, 0, len(m.ws))
 	for id := range m.ws {
@@ -99,6 +120,6 @@ func (m *Manager) Close() {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		m.Stop(id)
+		m.stopLocked(id)
 	}
 }

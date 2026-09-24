@@ -106,16 +106,23 @@ type Worker struct {
 	rc  *rest.Client
 	st  *state.Server
 
-	runCtx   atomic.Value // context.Context of Run; background work derives from it
-	status   atomic.Value // Status
-	nudge    chan struct{}
-	authFail chan struct{}
-	metaReq  chan struct{}
-	queue    *fetchQueue
-	viewing  sync.Map // channel id → in-flight view
-	usersMu  sync.Mutex
-	bg       sync.WaitGroup
-	lastLive atomic.Int64
+	// Background work (actions, profile loads) runs under life, the
+	// worker's lifetime ctx: created by NewWorker, cancelled when Run's ctx
+	// is. Once Run is stopping, goBG refuses new work (stopping, under bgMu)
+	// so bg.Add never races Run's final bg.Wait.
+	life       context.Context
+	cancelLife context.CancelFunc
+	bgMu       sync.Mutex
+	stopping   bool
+	status     atomic.Value // Status
+	nudge      chan struct{}
+	authFail   chan struct{}
+	metaReq    chan struct{}
+	queue      *fetchQueue
+	viewing    sync.Map // channel id → in-flight view
+	usersMu    sync.Mutex
+	bg         sync.WaitGroup
+	lastLive   atomic.Int64
 
 	// only touched by the Run goroutine
 	resume ws.Resume
@@ -142,6 +149,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		metaReq:  make(chan struct{}, 1),
 		queue:    newFetchQueue(),
 	}
+	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)
 	return w
 }
@@ -176,22 +184,31 @@ func (w *Worker) signalAuth() {
 	}
 }
 
-// goBG runs fn in the background under Run's context (actions may arrive
-// from UI goroutines before Run has started; they then get Background).
-func (w *Worker) goBG(fn func(ctx context.Context)) {
-	ctx, _ := w.runCtx.Load().(context.Context)
-	if ctx == nil {
-		ctx = context.Background()
+// goBG runs fn in the background under the worker's lifetime ctx. Work
+// submitted before Run starts is accepted (Run waits for it before its
+// final flush); once Run is stopping it is refused and goBG reports false.
+func (w *Worker) goBG(fn func(ctx context.Context)) bool {
+	w.bgMu.Lock()
+	if w.stopping {
+		w.bgMu.Unlock()
+		return false
 	}
 	w.bg.Add(1)
+	w.bgMu.Unlock()
 	go func() {
 		defer w.bg.Done()
-		fn(ctx)
+		fn(w.life)
 	}()
+	return true
 }
 
+// Run syncs the server until ctx is cancelled. Shutdown order: the session
+// ends (connection closed, buffered events drained), the loops stop, new
+// background work is refused and running work is cancelled and awaited,
+// then the final snapshot flush — so it holds every change made so far.
+// A Worker runs once; a worker that is never Run must not be given actions.
 func (w *Worker) Run(ctx context.Context) {
-	w.runCtx.Store(ctx)
+	defer context.AfterFunc(ctx, w.cancelLife)()
 	w.restore(ctx)
 	var wg sync.WaitGroup
 	for _, loop := range []func(context.Context){w.flushLoop, w.fetchLoop, w.metaLoop, w.wakeLoop} {
@@ -233,7 +250,14 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+	w.bgMu.Lock()
+	w.stopping = true
+	w.bgMu.Unlock()
+	w.cancelLife()
 	w.bg.Wait()
+	fctx, cancel := context.WithTimeout(context.Background(), finalFlushTime)
+	w.flush(fctx)
+	cancel()
 	w.setStatus(StatusOff)
 }
 
@@ -500,10 +524,7 @@ func (w *Worker) flushLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fctx, cancel := context.WithTimeout(context.Background(), finalFlushTime)
-			w.flush(fctx)
-			cancel()
-			return
+			return // Run does the final flush once everything else stopped
 		case <-t.C:
 			if w.Status() == StatusLive {
 				now := w.cfg.Now().UnixMilli()
