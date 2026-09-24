@@ -1,5 +1,5 @@
 import type { PostView } from '../api/types'
-import { buildRows, firstVisiblePostIndex, type Row } from './feedRows'
+import { buildRows, type Row } from './feedRows'
 
 const base = new Date(2026, 8, 24, 10, 0).getTime()
 const P = (id: string, user: string, min: number, o: Partial<PostView> = {}): PostView => ({
@@ -44,12 +44,4 @@ test('a pending post and its confirmed replacement share one row key', () => {
   const confirmedRows = buildRows(ch([P('real-id-from-server', 'me', 0, { pending_post_id: 'u-me:1' })]))
   expect(pendingRows.find((r) => r.kind === 'post')?.key).toBe('u-me:1')
   expect(confirmedRows.find((r) => r.kind === 'post')?.key).toBe('u-me:1')
-})
-
-test('firstVisiblePostIndex skips rows before `from` and non-post rows, unlike scanning from the start', () => {
-  const rows = buildRows(ch([P('a', 'bob', 0), P('b', 'bob', 1), P('c', 'bob', 2), P('d', 'bob', 3)]))
-  // rows: [day, a*, b, c, d] — indices 0..4
-  expect(firstVisiblePostIndex(rows, 0)).toBe(1) // 'a', same as scanning the whole (unoverscanned) list
-  expect(firstVisiblePostIndex(rows, 3)).toBe(3) // 'c': must not fall back to 'a' just because it's earlier
-  expect(firstVisiblePostIndex(rows, 99)).toBe(-1) // past the end: nothing to anchor on
 })

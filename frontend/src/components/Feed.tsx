@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
-import { buildRows, firstVisiblePostIndex, type Row } from './feedRows'
+import { buildRows, type Row } from './feedRows'
 import { PostItem, type PostActions } from './PostItem'
 
 interface Props {
@@ -28,6 +28,25 @@ export function anchorNudge(measured: number, target: number, tolerance = 1): nu
   return Math.abs(delta) <= tolerance ? null : delta
 }
 
+export interface RowBox {
+  key: string
+  top: number // getBoundingClientRect().top
+  bottom: number // getBoundingClientRect().bottom
+}
+
+// pickAnchor chooses the history-load scroll anchor: of the rendered post
+// rows, the topmost one still (at least partly) visible below the viewport
+// top `viewTop` — i.e. the post the user actually sees at the top — and its
+// offset from the viewport top (negative when partly scrolled out). Rows
+// entirely above the viewport (the virtualizer's overscan) are skipped.
+export function pickAnchor(boxes: RowBox[], viewTop: number): { key: string; offset: number } | null {
+  let best: RowBox | null = null
+  for (const b of boxes) {
+    if (b.bottom > viewTop && (!best || b.top < best.top)) best = b
+  }
+  return best && { key: best.key, offset: best.top - viewTop }
+}
+
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
 export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
@@ -48,31 +67,34 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     overscan: 8,
   })
 
+  // Anchor on the post the user actually sees at the top, read from the
+  // DOM. Not v.range.startIndex: the virtualizer's own scroll offset
+  // tracking lags the real scrollTop during scrolling, so its "first
+  // visible" index can be several rows off; nor the first entry of
+  // getVirtualItems(), which is overscan rendered above the viewport.
+  // Re-run on every scroll while the page is in flight (onScroll), so the
+  // anchor is where the user is when the rows land, not where they were
+  // when the fetch started.
+  const captureAnchor = () => {
+    const el = scroller.current
+    const found = el
+      ? pickAnchor(
+          [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')].map((r) => {
+            const b = r.getBoundingClientRect()
+            return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
+          }),
+          el.getBoundingClientRect().top,
+        )
+      : null
+    anchor.current = found?.key ?? null
+    anchorOffset.current = found?.offset ?? 0
+  }
+
   const loadOlder = async () => {
     if (loading.current || !channel.has_more) return
     loading.current = true
     setLoadingOlder(true)
-    // Anchor on the first post at or after the *true* first visible row
-    // (v.range.startIndex), not the first entry of getVirtualItems() — that
-    // list also carries the overscan buffer rendered above the viewport,
-    // which would anchor on a row that was never actually on screen and
-    // jump the view once older rows are prepended.
-    const el = scroller.current
-    const i = firstVisiblePostIndex(rows, v.range?.startIndex ?? 0)
-    const key = i >= 0 ? rows[i].key : undefined
-    const rowEl = key !== undefined ? v.elementsCache.get(key) : undefined
-    if (key !== undefined && rowEl && el) {
-      // The anchor row is already mounted and on screen — its real
-      // rendered position is exact. v.getOffsetForIndex(i, 'start') would
-      // also work, but it reads measurementsCache, which can still hold an
-      // estimate for a row whose real size its measureElement ref hasn't
-      // flushed yet (e.g. right after an abrupt jump); the DOM is ground
-      // truth.
-      anchor.current = key
-      anchorOffset.current = rowEl.getBoundingClientRect().top - el.getBoundingClientRect().top
-    } else {
-      anchor.current = null
-    }
+    captureAnchor()
     try {
       if (!(await onLoadOlder())) anchor.current = null
     } finally {
@@ -108,20 +130,11 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     requestAnimationFrame(() => {
       const el = scroller.current
       if (!el || userScrolling.current) return
-      const row = rows.find((r) => r.key === key)
-      if (!row) return // anchor no longer in the data — nothing to correct against
       // A plain DOM query, not v.elementsCache: the anchor row is being
-      // (re-)mounted for the very first time at this exact scroll target
-      // (scrollToOffset above), and the virtualizer's own bookkeeping for
-      // "is this index in range" can lag its own paint by a frame, leaving
-      // a freshly-rendered row's measureElement registration skipped. The
-      // DOM itself has no such race. Measure the positioned wrapper
-      // (data-index), not the <article> inside it — PostItem gives head
-      // posts a margin-top the wrapper doesn't have, and `target` was
-      // captured against the wrapper too (loadOlder above, via
-      // v.elementsCache), so both sides must agree on which box they mean.
-      const articleEl = row.kind === 'post' ? el.querySelector(`[data-post-id="${CSS.escape(row.post.id)}"]`) : null
-      const rowEl = articleEl?.closest('[data-index]')
+      // (re-)mounted for the first time at the restored offset, and the
+      // virtualizer can skip registering a freshly-rendered row there for a
+      // frame. Same box (the positioned wrapper) the capture measured.
+      const rowEl = el.querySelector(`[data-key="${CSS.escape(key)}"]`)
       if (!rowEl) {
         correctAnchorPosition(key, target, attempt + 1) // not painted yet — retry
         return
@@ -176,13 +189,22 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     const el = scroller.current
     if (!el) return
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
+    if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
   }
 
   const renderRow = (r: Row) => {
     switch (r.kind) {
       case 'more':
-        return <div className="py-3 text-center text-xs text-neutral-500">{loadingOlder ? t('feed.loadingOlder') : ''}</div>
+        // The label is always rendered and only hidden, so the row's height
+        // never changes when loading starts: the scroll anchor is captured
+        // just before this re-render, and a growing row above it would push
+        // the anchored post down after the capture.
+        return (
+          <div className="py-3 text-center text-xs text-neutral-500">
+            <span className={loadingOlder ? undefined : 'invisible'}>{t('feed.loadingOlder')}</span>
+          </div>
+        )
       case 'day':
         return (
           <div className="flex items-center px-4 py-2">
@@ -228,6 +250,8 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
           <div
             key={it.key}
             data-index={it.index}
+            data-key={it.key}
+            data-kind={rows[it.index].kind}
             ref={v.measureElement}
             style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${it.start}px)` }}
           >

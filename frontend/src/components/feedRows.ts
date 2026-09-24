@@ -49,15 +49,3 @@ export function buildRows(ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' |
   }
   return rows
 }
-
-// firstVisiblePostIndex finds the first 'post' row at or after `from` (the
-// virtualizer's true first visible index). Scanning the virtualizer's own
-// getVirtualItems() instead would pick up its overscan buffer — rows
-// rendered above the visible viewport — and anchor scroll restoration on a
-// row that was never actually on screen.
-export function firstVisiblePostIndex(rows: Row[], from: number): number {
-  for (let i = Math.max(from, 0); i < rows.length; i++) {
-    if (rows[i].kind === 'post') return i
-  }
-  return -1
-}

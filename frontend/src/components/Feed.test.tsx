@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
-import { anchorNudge, Feed } from './Feed'
+import { anchorNudge, Feed, pickAnchor } from './Feed'
 
 // jsdom has no layout: give the scroller and rows sizes so the virtualizer renders.
 const saved = {
@@ -72,4 +72,35 @@ test('anchorNudge: converged within tolerance returns null, otherwise the delta 
   expect(anchorNudge(124, 100)).toBe(24) // measured lower on screen than target: scroll down (increase scrollTop) by 24
   expect(anchorNudge(76, 100)).toBe(-24) // measured higher than target: scroll up (decrease scrollTop) by 24
   expect(anchorNudge(105, 100, 10)).toBeNull() // a wider tolerance converges sooner
+})
+
+test('pickAnchor: the topmost post row still (partly) visible below the viewport top, with its offset', () => {
+  const viewTop = 100
+  // Overscanned rows above the viewport (bottom <= viewTop) must be skipped,
+  // and DOM order must not matter — only on-screen position does.
+  const boxes = [
+    { key: 'c', top: 150, bottom: 190 },
+    { key: 'a', top: 20, bottom: 60 }, // fully above the viewport (overscan)
+    { key: 'edge', top: 60, bottom: 100 }, // bottom exactly at the viewport top: not visible
+    { key: 'b', top: 84, bottom: 150 }, // partly visible: this is what the user sees at the top
+  ]
+  expect(pickAnchor(boxes, viewTop)).toEqual({ key: 'b', offset: -16 })
+  expect(pickAnchor([{ key: 'a', top: 20, bottom: 60 }], viewTop)).toBeNull() // nothing on screen
+  expect(pickAnchor([], viewTop)).toBeNull()
+})
+
+test('the history row keeps its box while loading: the label is only hidden, never removed', async () => {
+  // The scroll anchor is captured just before the loading label appears; if
+  // the row above it grew when the label rendered, everything below would
+  // shift after the capture and the restore would land off by that much.
+  let finish!: (v: boolean) => void
+  const onLoadOlder = vi.fn(() => new Promise<boolean>((r) => (finish = r)))
+  render(<Feed {...props({ has_more: true }, onLoadOlder)} />)
+  const label = screen.getByText('Loading history…')
+  expect(label).toHaveClass('invisible') // present (occupies its line) but not shown
+  const log = screen.getByRole('log')
+  log.scrollTop = 0
+  fireEvent.scroll(log)
+  expect(await screen.findByText('Loading history…')).not.toHaveClass('invisible')
+  finish(true)
 })
