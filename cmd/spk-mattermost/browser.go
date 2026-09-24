@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -18,24 +19,51 @@ import (
 	"github.com/spk/spk-mattermost/internal/store"
 )
 
+// shutdownTimeout bounds how long graceful shutdown waits for active
+// connections (e.g. the SSE /api/events stream) to finish on their own
+// before the server is force-closed. Without a bound, Shutdown blocks until
+// every connection closes itself — with an SSE tab left open in the UI, that
+// never happens, and Ctrl+C hangs the process forever.
+const shutdownTimeout = 3 * time.Second
+
 func runBrowser(ctx context.Context, o browserOpts) error {
-	p, err := paths.Resolve()
+	srv, cancelBase, _, cleanup, err := buildBrowserServer(ctx, o)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
+	return serveWithGracefulShutdown(ctx, srv, cancelBase)
+}
+
+// buildBrowserServer wires the store, optional fake Mattermost server, API
+// service and HTTP handler for browser mode, and returns the *not yet
+// listening* http.Server plus its per-run auth token. Split out from
+// runBrowser so tests can obtain the token and drive the server lifecycle
+// directly (e.g. to prove graceful shutdown does not hang with an open SSE
+// connection) without duplicating the wiring.
+func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, cancelBase context.CancelFunc, token string, cleanup func(), err error) {
+	p, err := paths.Resolve()
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
 	if err := p.Ensure(); err != nil {
-		return err
+		return nil, nil, "", nil, err
 	}
 	st, err := store.Open(ctx, p.DBFile)
 	if err != nil {
-		return fmt.Errorf("open db: %w", err)
+		return nil, nil, "", nil, fmt.Errorf("open db: %w", err)
 	}
-	defer st.Close()
+	closers := []func(){func() { _ = st.Close() }}
+	cleanup = func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}
 
 	var fake *mmfake.Server
 	if o.MMFake {
 		fake = mmfake.Start(mmfake.Options{})
-		defer fake.Close()
+		closers = append(closers, fake.Close)
 		slog.Warn("fake Mattermost server started (development only)", "url", fake.URL())
 	}
 
@@ -47,16 +75,39 @@ func runBrowser(ctx context.Context, o browserOpts) error {
 		return nil
 	}
 	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
-	h, _ := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI)
+	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI)
 
-	srv := &http.Server{
+	// Request contexts derive from baseCtx (via Server.BaseContext) instead
+	// of the default context.Background(), so cancelBase can cancel in-flight
+	// long-lived requests (the SSE stream) directly — Shutdown alone does not
+	// touch active connections, it only waits for them.
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	srv = &http.Server{
 		Addr:              fmt.Sprintf("127.0.0.1:%d", o.Port),
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 	}
 	slog.Info("spk-mattermost browser mode", "url", "http://"+srv.Addr, "data", p.DataDir)
-	go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()
+	return srv, cancelBase, token, cleanup, nil
+}
+
+// serveWithGracefulShutdown runs srv until ctx is done, then shuts it down:
+// it cancels cancelBase first so long-lived handlers (SSE /api/events) see
+// their request context canceled and return promptly, gives remaining
+// connections shutdownTimeout to finish, and force-closes anything left
+// after that so Shutdown can never hang the process.
+func serveWithGracefulShutdown(ctx context.Context, srv *http.Server, cancelBase context.CancelFunc) error {
+	go func() {
+		<-ctx.Done()
+		cancelBase()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			_ = srv.Close()
+		}
+	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

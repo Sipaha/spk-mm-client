@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -73,4 +75,52 @@ func TestTestAPIFakeURLAndDeeplink(t *testing.T) {
 	var e map[string]string
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&e))
 	assert.Equal(t, "no_pending_login", e["code"], "no login was started")
+}
+
+// TestGracefulShutdownEndsOpenSSEConnectionPromptly guards against a
+// regression where cancelling the server's context left the SSE
+// (/api/events) handler running forever: Shutdown only waits for active
+// connections, it does not cancel their request contexts, so with the UI's
+// SSE tab open, Ctrl+C used to hang the process.
+func TestGracefulShutdownEndsOpenSSEConnectionPromptly(t *testing.T) {
+	t.Setenv("SPK_MATTERMOST_HOME", t.TempDir())
+
+	// Reserve a free port up front (listen-then-close) so the client below
+	// can dial it as soon as the server goroutine starts.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	srv, cancelBase, token, cleanup, err := buildBrowserServer(ctx, browserOpts{Port: port})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	done := make(chan error, 1)
+	go func() { done <- serveWithGracefulShutdown(ctx, srv, cancelBase) }()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/events?token=%s", port, token)
+	var resp *http.Response
+	require.Eventually(t, func() bool {
+		resp, err = http.Get(url)
+		return err == nil
+	}, 2*time.Second, 20*time.Millisecond, "server did not start listening in time")
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	// Confirm the SSE stream is actually open (the ": ok" comment line is
+	// written and flushed on connect) before cutting the server down.
+	buf := make([]byte, 64)
+	n, err := resp.Body.Read(buf)
+	require.NoError(t, err)
+	require.Greater(t, n, 0)
+
+	cancel() // simulate Ctrl+C / SIGTERM while the UI still has the SSE tab open
+
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within 5s with an open SSE connection")
+	}
 }
