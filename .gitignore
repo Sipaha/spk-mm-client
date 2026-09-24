@@ -1,0 +1,9 @@
+/build/
+/frontend/node_modules/
+/frontend/dist/
+/tests/e2e/node_modules/
+/tests/e2e/test-results/
+/tests/e2e/playwright-report/
+/cmd/spk-mattermost/dist/*
+!/cmd/spk-mattermost/dist/.gitkeep
+coverage.*

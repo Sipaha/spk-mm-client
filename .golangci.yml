@@ -1,0 +1,26 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+  exclusions:
+    paths:
+      - frontend
+      - build
+    rules:
+      # Deferred Close/Rollback calls: errors are not actionable in defer context
+      - linters: [errcheck]
+        text: "Error return value of `.*\\.Close` is not checked"
+      - linters: [errcheck]
+        text: "Error return value of `.*\\.Rollback` is not checked"
+      # Internal packages are not part of a public API; doc comments are optional
+      - linters: [revive]
+        text: "exported .* should have comment or be unexported"
+      - linters: [revive]
+        text: "should have a package comment"

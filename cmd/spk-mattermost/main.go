@@ -1,0 +1,57 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/cobra"
+)
+
+type browserOpts struct {
+	Port    int
+	MMFake  bool
+	TestAPI bool
+}
+
+type runners struct {
+	browser func(ctx context.Context, o browserOpts) error
+	desktop func(ctx context.Context) error
+}
+
+func newRootCmd(run runners) *cobra.Command {
+	var o browserOpts
+	var browser bool
+	root := &cobra.Command{
+		Use:           "spk-mattermost [mmauth://callback?...]",
+		Short:         "Lightweight Mattermost desktop client",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		// The OS hands a deep link (mmauth://...) over as a positional arg;
+		// Wails reads it from os.Args itself, cobra just has to accept it.
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if browser {
+				return run.browser(cmd.Context(), o)
+			}
+			return run.desktop(cmd.Context())
+		},
+	}
+	root.Flags().BoolVar(&browser, "browser", false, "Serve the UI over HTTP on localhost instead of opening a window")
+	root.Flags().IntVar(&o.Port, "port", 5180, "HTTP port for --browser")
+	root.Flags().BoolVar(&o.MMFake, "mm-fake", false, "Start an in-process fake Mattermost server (browser mode, development/e2e only)")
+	root.Flags().BoolVar(&o.TestAPI, "test-api", false, "Expose /api/_test/* automation routes (development/e2e only)")
+	return root
+}
+
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	cmd := newRootCmd(runners{browser: runBrowser, desktop: runDesktop})
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
