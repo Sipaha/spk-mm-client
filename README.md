@@ -11,6 +11,6 @@
     make run            # desktop
     make test           # go + фронт + e2e
     make install-dev-linux  # зарегистрировать dev-сборку для mmauth:// (Linux)
-    make pss PID=<pid>  # сумма PSS процесса и его потомков (Linux)
+    make pss PID=<pid>  # память процесса и потомков: Private_Dirty (бюджет) и PSS (Linux)
 
 Данные: `~/.spk/spk-mattermost/` (переопределяется `SPK_MATTERMOST_HOME`).
