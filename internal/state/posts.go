@@ -116,7 +116,10 @@ func (s *Server) removeLocked(ch *Chan, id string) bool {
 
 // SetWindow installs the latest page of a channel. Posts already in the
 // window that are newer than the page arrived over WS while the request was
-// in flight — they are kept.
+// in flight — they are kept. History loaded above the old window of the
+// active channel is dropped: the new page may not reach down to it (a
+// catch-up overflow reloads only the latest page), so keeping it would show
+// a silent hole; HasMore then follows the new window.
 func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,6 +142,9 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 		}
 	}
 	sortPosts(merged)
+	if channelID == s.active {
+		s.older, s.olderComplete = nil, false
+	}
 	ch.Win = Window{Posts: merged, Loaded: true, Complete: complete, SyncedAt: syncedAt}
 	s.trimWindowLocked(ch)
 	s.dirty.posts[channelID] = true
@@ -383,13 +389,15 @@ func (s *Server) PostCreated(p model.Post) Change {
 
 // applyNewPostLocked is the single path for a created post (WS posted or
 // REST create). It updates the window and, once per post id, the counters.
-func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (bumped bool) {
+// isNew: the post id was not seen before; bumped: the counters changed (a
+// new post inside the post-bootstrap guard is new but not bumped).
+func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (isNew, bumped bool) {
 	crt := s.crtLocked()
 	// Window/seen membership never comes from a page fetch (SetWindow,
 	// MergeSince) — only this function records ids in seen. So a post
 	// already displayed via a REST page but not yet seen here is still
 	// new: its counters and reply-count bump have not happened yet.
-	isNew := !s.seen.has(p.ID)
+	isNew = !s.seen.has(p.ID)
 	s.seen.add(p.ID)
 	s.dropPendingLocked(ch.Info.ID, p.PendingPostID)
 	root := p.RootID == ""
@@ -409,10 +417,10 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		}
 	}
 	if !isNew {
-		return false
+		return false, false
 	}
 	if g, ok := s.guard[ch.Info.ID]; ok && p.CreateAt <= g {
-		return false
+		return true, false
 	}
 	ch.Info.TotalMsgCount++
 	ch.Info.LastPostAt = max(ch.Info.LastPostAt, p.CreateAt)
@@ -430,7 +438,7 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		}
 	}
 	s.dirty.chans[ch.Info.ID] = true
-	return true
+	return true, true
 }
 
 // ApplyPostUpdate applies an edited post (REST patch response or event).

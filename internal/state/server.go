@@ -87,6 +87,7 @@ type Server struct {
 	suppressView  string
 	guard         map[string]int64
 	seen          seenSet
+	orphans       []orphan // posted events for channels not known yet
 
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8

@@ -168,10 +168,19 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	p := d.Post
 	ch := s.chans[p.ChannelID]
 	if ch == nil {
-		eff.NeedMeta = true // a DM/GM or channel we were just added to
+		// A DM/GM or channel we were just added to: keep the post for
+		// TakeOrphans after the metadata refresh adds the channel.
+		eff.NeedMeta = true
+		if len(s.orphans) == maxOrphans {
+			s.orphans = slices.Delete(s.orphans, 0, 1)
+		}
+		s.orphans = append(s.orphans, orphan{channelID: p.ChannelID, ev: ev})
 		return
 	}
-	bumped := s.applyNewPostLocked(ch, p, d.Mentions)
+	// Notification follows "new to us" (the seen-set), not the counter
+	// bump: a post inside the post-bootstrap guard is already counted by
+	// the REST read, yet the user has not been told about it.
+	isNew, _ := s.applyNewPostLocked(ch, p, d.Mentions)
 	eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{ch.Info.ID}
 	if _, ok := s.users[p.UserID]; !ok && p.UserID != "" {
 		eff.NeedUsers = []string{p.UserID}
@@ -190,7 +199,7 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 			eff.ShowDM = &pref
 		}
 	}
-	if !bumped {
+	if !isNew {
 		return
 	}
 	crt := s.crtLocked()
@@ -207,9 +216,35 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	}
 }
 
+type orphan struct {
+	channelID string
+	ev        ws.Event
+}
+
 func trimAt(s string) string {
 	if len(s) > 0 && s[0] == '@' {
 		return s[1:]
 	}
 	return s
+}
+
+// maxOrphans bounds the posted events kept for channels not known yet.
+const maxOrphans = 100
+
+// TakeOrphans hands out the posted events that arrived for channels we did
+// not know yet and that a metadata refresh has since brought in; events for
+// channels still unknown are dropped. The caller applies them right after
+// the Bootstrap, while its guard keeps them out of the counters the REST
+// read already includes: they insert and notify, they do not count twice.
+func (s *Server) TakeOrphans() []ws.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ws.Event
+	for _, o := range s.orphans {
+		if s.chans[o.channelID] != nil {
+			out = append(out, o.ev)
+		}
+	}
+	s.orphans = nil
+	return out
 }
