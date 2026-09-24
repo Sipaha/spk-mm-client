@@ -193,3 +193,45 @@ func TestCloseIsIdempotentAndClosesEvents(t *testing.T) {
 	c.Close()
 	waitClosed(t, c)
 }
+
+// An event read while the consumer is not draining and dropped by Close must
+// not be counted in Resume: NextSeq stays one past the last event actually
+// placed in Events().
+func TestCloseWhileBlockedDoesNotSkipUndeliveredEvent(t *testing.T) {
+	old := eventBuffer
+	eventBuffer = 1
+	t.Cleanup(func() { eventBuffer = old })
+	sent := make(chan struct{})
+	u := rawServer(t, func(ctx context.Context, c *websocket.Conn) {
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"event":"hello","data":{"connection_id":"x"},"seq":0}`))
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"event":"posted","data":{},"seq":1}`))
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"event":"posted","data":{},"seq":2}`))
+		close(sent)
+		_, _, _ = c.Read(ctx)
+	})
+	c, err := Dial(context.Background(), Options{BaseURL: u, Token: "t"}, Resume{})
+	require.NoError(t, err)
+	defer c.Close()
+	assert.Equal(t, "hello", next(t, c).Type)
+	// Stop draining: seq 1 fills the buffer, the read loop blocks sending seq 2.
+	<-sent
+	require.Eventually(t, func() bool { return len(c.events) == 1 }, 5*time.Second, time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let the read loop reach the blocked send of seq 2
+	c.Close()
+
+	last := int64(0) // hello
+	deadline := time.After(5 * time.Second)
+	for done := false; !done; {
+		select {
+		case ev, ok := <-c.Events():
+			if !ok {
+				done = true
+				break
+			}
+			last = ev.Seq
+		case <-deadline:
+			t.Fatal("stream did not close")
+		}
+	}
+	assert.Equal(t, Resume{ConnectionID: "x", NextSeq: last + 1}, c.Resume())
+}
