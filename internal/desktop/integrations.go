@@ -14,9 +14,6 @@ const (
 	busTimedOut             // hung bus: accepts the connection, never answers
 )
 
-// dbusProbeTimeout bounds the one startup probe of the session bus.
-const dbusProbeTimeout = 2 * time.Second
-
 // probeBus runs connect bounded by timeout. connect is typically a
 // dbus.ConnectSessionBus()+Close(), which has no timeout of its own; on
 // timeout its goroutine is abandoned (see startWithTimeout).
@@ -44,10 +41,6 @@ type integrations struct {
 	// window would never appear even with every Wails D-Bus feature off.
 	cutOffBus bool
 }
-
-// deadBusAddress can never be connected to (a path under /dev/null), so every
-// D-Bus client fails immediately instead of waiting on a hung bus.
-const deadBusAddress = "unix:path=/dev/null/spk-mattermost-dbus-disabled"
 
 // integrationsFor decides, from one probe result, which D-Bus-backed Wails
 // features are safe to turn on. On Linux, Wails v3 beta.25 dials D-Bus with
