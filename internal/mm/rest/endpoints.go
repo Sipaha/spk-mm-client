@@ -5,24 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/spk/spk-mattermost/internal/mm/model"
 )
 
 type ClientConfig struct {
-	SiteName               string `json:"SiteName"`
-	SiteURL                string `json:"SiteURL"`
-	Version                string `json:"Version"`
-	EnableSignUpWithGitLab string `json:"EnableSignUpWithGitLab"`
+	SiteName                string `json:"SiteName"`
+	SiteURL                 string `json:"SiteURL"`
+	Version                 string `json:"Version"`
+	EnableSignUpWithGitLab  string `json:"EnableSignUpWithGitLab"`
+	CollapsedThreads        string `json:"CollapsedThreads"`
+	TeammateNameDisplay     string `json:"TeammateNameDisplay"`
+	LockTeammateNameDisplay string `json:"LockTeammateNameDisplay"`
 }
 
 func (c ClientConfig) GitLabEnabled() bool { return c.EnableSignUpWithGitLab == "true" }
 
-type User struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name,omitempty"`
-	LastName  string `json:"last_name,omitempty"`
-	Nickname  string `json:"nickname,omitempty"`
-}
+type User = model.User
 
 // Ping checks the URL is a live Mattermost server.
 func (c *Client) Ping(ctx context.Context) error {

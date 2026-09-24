@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -26,6 +28,7 @@ type Client struct {
 	token string
 	hc    *http.Client
 	sleep func(context.Context, time.Duration) error
+	lim   *rate.Limiter
 }
 
 // New builds a client for baseURL (already normalized). A nil hc gets a 30s
@@ -44,6 +47,18 @@ func (c *Client) WithToken(token string) *Client {
 	cp.token = token
 	return &cp
 }
+
+// WithLimiter returns a copy whose every attempt (retries included) first
+// takes a token from l. One limiter is shared by all clients of a server.
+func (c *Client) WithLimiter(l *rate.Limiter) *Client {
+	cp := *c
+	cp.lim = l
+	return &cp
+}
+
+// NewLimiter is the per-server budget: 10 req/s sustained, bursts of 20
+// (Mattermost's own default limit is 10/s with burst 100).
+func NewLimiter() *rate.Limiter { return rate.NewLimiter(10, 20) }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -90,6 +105,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 		}
 	}
 	for attempt := 1; ; attempt++ {
+		if c.lim != nil {
+			if err := c.lim.Wait(ctx); err != nil {
+				return nil, &Error{Kind: KindNetwork, Err: err}
+			}
+		}
 		req, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
