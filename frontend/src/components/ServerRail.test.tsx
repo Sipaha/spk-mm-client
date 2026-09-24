@@ -17,7 +17,10 @@ test('mentions pill beats the unread dot; 99+ cap', async () => {
   expect(screen.getByLabelText('Mentions: 3')).toHaveTextContent('3')
   expect(screen.getAllByLabelText('Unread messages')).toHaveLength(1)
   expect(screen.getByLabelText('Mentions: 150')).toHaveTextContent('99+')
-  await userEvent.click(screen.getByRole('button', { name: 'Beta' }))
+  // The badges are visual siblings of the button (for absolute positioning),
+  // but its accessible name must still say so — not just the server name.
+  expect(screen.getByRole('button', { name: /Mentions: 3/ })).toHaveAccessibleName('Acme — Mentions: 3')
+  await userEvent.click(screen.getByRole('button', { name: /Beta.*Unread messages/ }))
   expect(onSelect).toHaveBeenCalledWith(2)
 })
 

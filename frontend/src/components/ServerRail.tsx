@@ -13,11 +13,17 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
       {props.servers.map((s) => {
         const problem = s.signed_in ? stateLabel[s.state] : undefined
         const dim = !s.signed_in || s.state === 'needs_reauth'
+        // The mention pill / unread dot are visually siblings of the button
+        // (for absolute positioning), but a screen-reader user tabbing
+        // through the rail must still hear them as part of the button's
+        // name — not just the bare server name.
+        const badge = s.mentions > 0 ? t('rail.mentions', { n: String(s.mentions) }) : s.unread ? t('rail.unread') : null
+        const accessibleName = badge ? `${s.name} — ${badge}` : s.name
         return (
           <div key={s.id} className="relative">
             <button
               title={problem ? `${s.name} — ${t(problem)}` : s.name}
-              aria-label={s.name}
+              aria-label={accessibleName}
               aria-current={s.id === props.selectedId}
               onClick={() => props.onSelect(s.id)}
               className={`h-11 w-11 rounded-xl text-sm font-semibold text-white ${s.id === props.selectedId ? 'bg-blue-600' : 'bg-neutral-600'} ${dim ? 'opacity-60' : ''} ${s.state === 'reconnecting' ? 'ring-2 ring-amber-400' : ''}`}
