@@ -117,9 +117,10 @@ func (s *Server) removeLocked(ch *Chan, id string) bool {
 // SetWindow installs the latest page of a channel. Posts already in the
 // window that are newer than the page arrived over WS while the request was
 // in flight — they are kept. History loaded above the old window of the
-// active channel is dropped: the new page may not reach down to it (a
-// catch-up overflow reloads only the latest page), so keeping it would show
-// a silent hole; HasMore then follows the new window.
+// active channel is dropped unless the new page still reaches the old
+// window's first post: a catch-up overflow reloads only the latest page, and
+// keeping history across that hole would hide it; HasMore then follows the
+// new window.
 func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,8 +143,15 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 		}
 	}
 	sortPosts(merged)
-	if channelID == s.active {
-		s.older, s.olderComplete = nil, false
+	if channelID == s.active && len(s.older) > 0 {
+		// s.older joins the old window's first post. If the new window
+		// still reaches down to it there is no hole: keep the history
+		// (minus what the window now holds); otherwise drop it.
+		if len(ch.Win.Posts) > 0 && len(merged) > 0 && merged[0].CreateAt <= ch.Win.Posts[0].CreateAt {
+			s.older = slices.DeleteFunc(s.older, func(p model.Post) bool { return p.CreateAt >= merged[0].CreateAt })
+		} else {
+			s.older, s.olderComplete = nil, false
+		}
 	}
 	ch.Win = Window{Posts: merged, Loaded: true, Complete: complete, SyncedAt: syncedAt}
 	s.trimWindowLocked(ch)
