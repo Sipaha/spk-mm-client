@@ -51,6 +51,12 @@ export function Composer({ channel, onSend, onDraft, onEditLast }: Props) {
     } catch (e) {
       setText(msg)
       latest.current = msg
+      // The pre-send flush already persisted '' as the draft; without this,
+      // the restored text would only reach the server on the next edit (500ms
+      // debounce) or on leaving the channel — losing it to a crash/reload in
+      // between even though it's still visible on screen.
+      saved.current = msg
+      onDraft(msg)
       setError(errorMessage(e))
     }
   }

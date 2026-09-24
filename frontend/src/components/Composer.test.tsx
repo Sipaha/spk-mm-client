@@ -36,6 +36,19 @@ test('a refused send puts the text back with the error', async () => {
   expect(box).toHaveValue('hello')
 })
 
+test('a refused send persists the restored text as the draft', async () => {
+  const onSend = vi.fn().mockRejectedValue(new ApiError('session_expired', ''))
+  const onDraft = vi.fn()
+  render(<Composer channel={channel()} onSend={onSend} onDraft={onDraft} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await userEvent.type(box, 'hello{Enter}')
+  await screen.findByRole('alert')
+  // The failed send already cleared the server-side draft (empty) before
+  // trying to send; the restored text must be re-persisted right away, not
+  // left to the next keystroke's debounce or to leaving the channel.
+  expect(onDraft).toHaveBeenLastCalledWith('hello')
+})
+
 test('ArrowUp in an empty box edits the last own post', async () => {
   const onEditLast = vi.fn()
   render(<Composer channel={channel()} onSend={vi.fn()} onDraft={() => {}} onEditLast={onEditLast} />)

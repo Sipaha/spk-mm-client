@@ -144,7 +144,9 @@ export const saveDraft = (serverId: number, channelId: string, text: string) => 
 
 export async function editPost(serverId: number, postId: string, message: string) {
   await client.editPost(serverId, postId, message)
-  useStore.getState().setEditing(null)
+  // Only close the box this save opened: the user may have already moved on
+  // to editing a different post while this request was in flight.
+  if (useStore.getState().editingId === postId) useStore.getState().setEditing(null)
 }
 
 export const deletePost = (serverId: number, postId: string) => {

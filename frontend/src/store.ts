@@ -61,7 +61,12 @@ export const useStore = create<State>((set, get) => ({
     if (get().selectedId === serverId) set({ sidebar: sb })
   },
   setChannel(serverId, ch) {
-    if (get().selectedId === serverId) set({ channel: ch })
+    if (get().selectedId !== serverId) return
+    // A different channel: drop any in-progress edit (it belonged to the
+    // previous one). A refresh of the *same* open channel (e.g. a
+    // channel_changed event) must not interrupt an edit in progress.
+    const switchedChannel = get().channel?.id !== ch.id
+    set({ channel: ch, ...(switchedChannel ? { editingId: null } : {}) })
   },
   setEditing: (id) => set({ editingId: id }),
 }))

@@ -49,3 +49,18 @@ test('views of another server are ignored', () => {
   useStore.getState().setSidebar(2, { team_id: 't', selected_channel_id: '', teams: null, categories: null })
   expect(useStore.getState().sidebar).toBeNull()
 })
+
+const chan = (id: string) => ({
+  id, name: id, type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team', posts: [],
+  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false,
+})
+
+test('switching to a different channel drops an in-progress edit; refreshing the same one does not', () => {
+  useStore.getState().setServers([srv()])
+  useStore.getState().setChannel(1, chan('a'))
+  useStore.getState().setEditing('p1')
+  useStore.getState().setChannel(1, chan('a')) // a content refresh of the still-open channel (e.g. channel_changed)
+  expect(useStore.getState().editingId).toBe('p1')
+  useStore.getState().setChannel(1, chan('b')) // the user actually switched channels
+  expect(useStore.getState().editingId).toBeNull()
+})

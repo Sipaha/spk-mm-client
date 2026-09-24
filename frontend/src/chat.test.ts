@@ -9,11 +9,12 @@ vi.mock('./api/client', () => ({
     sidebar: vi.fn(),
     selectServer: vi.fn().mockResolvedValue(undefined),
     listServers: vi.fn(),
+    editPost: vi.fn(),
   },
 }))
 
 const { client } = await import('./api/client')
-const { loadSidebar, openChannel, refreshChannel, resetChat, selectServer } = await import('./chat')
+const { editPost, loadSidebar, openChannel, refreshChannel, resetChat, selectServer } = await import('./chat')
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -41,7 +42,8 @@ beforeEach(() => {
   vi.mocked(client.openChannel).mockReset()
   vi.mocked(client.getChannel).mockReset()
   vi.mocked(client.sidebar).mockReset()
-  useStore.setState({ servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null })
+  vi.mocked(client.editPost).mockReset()
+  useStore.setState({ servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null, editingId: null })
 })
 
 test('loading the sidebar opens its selected channel', async () => {
@@ -86,6 +88,17 @@ test('responses for a server no longer selected are dropped', async () => {
   await l
   expect(client.openChannel).not.toHaveBeenCalled()
   expect(useStore.getState().selectedId).toBe(2)
+})
+
+test("saving post A while editing B doesn't close B's edit box", async () => {
+  const a = deferred<void>()
+  vi.mocked(client.editPost).mockReturnValueOnce(a.p)
+  useStore.getState().setEditing('postA')
+  const saveA = editPost(1, 'postA', 'edited A')
+  useStore.getState().setEditing('postB') // the user moved on to editing B before A's save landed
+  a.resolve(undefined)
+  await saveA
+  expect(useStore.getState().editingId).toBe('postB')
 })
 
 test('opening a channel of another team switches the sidebar team', async () => {
