@@ -1746,7 +1746,7 @@ git add internal/mm && git commit -m "feat(rest): Mattermost REST client core wi
 
 **Interfaces:**
 - Consumes: ничего из проекта (намеренно — фейк не должен зависеть от клиента).
-- Produces: `type Options struct{ SiteName string; GitLab bool; Users []User }`; `type User struct{ ID, Username, Password string }`; `func Start(o Options) *Server`; `func (s *Server) URL() string`; `func (s *Server) Close()`; `func (s *Server) ActiveSessions() int`; `func (s *Server) RevokeAll()`.
+- Produces: `type Options struct{ SiteName string; DisableGitLab bool; Users []User }`; `type User struct{ ID, Username, Password string }`; `func Start(o Options) *Server`; `func (s *Server) URL() string`; `func (s *Server) Close()`; `func (s *Server) ActiveSessions() int`; `func (s *Server) RevokeAll()`.
   Поведение HTTP (контракт для e2e): `GET /oauth/gitlab/mobile_login?redirect_to=mmauth://…` → 302 на `/mmfake/gitlab/authorize?state=…`; страница содержит ссылку `#authorize`; `GET /mmfake/gitlab/complete?state=…` → страница со ссылкой `#mmauth-link` на `mmauth://callback?MMAUTHTOKEN=…&MMCSRF=…&srv=<URL>`.
 
 - [ ] **Step 1: Падающий тест**
@@ -1889,9 +1889,9 @@ type User struct {
 }
 
 type Options struct {
-	SiteName string // default "Fake MM"
-	GitLab   bool   // advertise GitLab SSO; Start forces true when Users is nil and SiteName is ""
-	Users    []User // default: alice/secret
+	SiteName      string // default "Fake MM"
+	DisableGitLab bool   // GitLab SSO is advertised and served unless set
+	Users         []User // default: alice/secret
 }
 
 type Server struct {
@@ -1903,9 +1903,6 @@ type Server struct {
 }
 
 func Start(o Options) *Server {
-	if o.SiteName == "" && o.Users == nil {
-		o.GitLab = true
-	}
 	if o.SiteName == "" {
 		o.SiteName = "Fake MM"
 	}
@@ -1995,7 +1992,7 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 		"SiteName":               s.opts.SiteName,
 		"SiteURL":                s.ts.URL,
 		"Version":                "10.11.0-fake",
-		"EnableSignUpWithGitLab": fmt.Sprint(s.opts.GitLab),
+		"EnableSignUpWithGitLab": fmt.Sprint(!s.opts.DisableGitLab),
 	})
 }
 
@@ -2045,7 +2042,7 @@ func (s *Server) mobileLogin(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html><body>Invalid custom url scheme has been provided</body></html>"))
 		return
 	}
-	if !s.opts.GitLab {
+	if s.opts.DisableGitLab {
 		appError(w, 501, "api.user.authorize_oauth_user.unsupported.app_error", "GitLab SSO is disabled")
 		return
 	}
@@ -2486,18 +2483,14 @@ func completeGitLab(t *testing.T, loginURL string) string {
 	require.NoError(t, err)
 	u, _ := url.Parse(loginURL)
 	base := u.Scheme + "://" + u.Host
-	state := resp.Header.Get("Location")
-	pu, _ := url.Parse(state)
+	pu, _ := url.Parse(resp.Header.Get("Location"))
 	resp, err = c.Get(base + "/mmfake/gitlab/complete?state=" + pu.Query().Get("state"))
 	require.NoError(t, err)
-	var link string
-	buf := make([]byte, 4096)
-	n, _ := resp.Body.Read(buf)
-	const marker = `id="mmauth-link" href="`
-	s := string(buf[:n])
-	i := len(marker) + indexOf(s, marker)
-	link = s[i : i+indexOf(s[i:], `"`)]
-	return replaceAmp(link)
+	page, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	m := regexp.MustCompile(`id="mmauth-link" href="([^"]+)"`).FindSubmatch(page)
+	require.NotNil(t, m, "complete page has no mmauth link")
+	return strings.ReplaceAll(string(m[1]), "&amp;", "&")
 }
 
 func TestAddServerUsesSiteNameAndGitLabFlag(t *testing.T) {
@@ -2620,7 +2613,7 @@ func TestHandleDeepLinkWithRevokedTokenFails(t *testing.T) {
 
 func TestStartGitLabLoginDisabled(t *testing.T) {
 	f := newFixture(t)
-	noGitLab := mmfake.Start(mmfake.Options{SiteName: "NoGL", GitLab: false, Users: []mmfake.User{{ID: "u", Username: "u", Password: "p"}}})
+	noGitLab := mmfake.Start(mmfake.Options{SiteName: "NoGL", DisableGitLab: true})
 	defer noGitLab.Close()
 	dto, err := f.svc.AddServer(context.Background(), noGitLab.URL())
 	require.NoError(t, err)
@@ -2662,12 +2655,7 @@ func keys(m map[string]any) []string {
 }
 ```
 
-Хелперы `indexOf`/`replaceAmp` — в конце того же файла:
-```go
-func indexOf(s, sub string) int { return strings.Index(s, sub) }
-func replaceAmp(s string) string { return strings.ReplaceAll(s, "&amp;", "&") }
-```
-(добавить `"strings"` в импорты).
+В импорты теста добавить `"io"`, `"regexp"`, `"strings"`.
 
 - [ ] **Step 2: Run — FAIL** (`go test ./internal/api/`)
 
@@ -4295,12 +4283,11 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
 `frontend/src/App.tsx`:
 ```tsx
 import { useEffect } from 'react'
-import { client, isDesktop } from './api/client'
+import { ApiError, client, isDesktop } from './api/client'
 import { AddServerForm } from './components/AddServerForm'
 import { ServerPanel } from './components/ServerPanel'
 import { ServerRail } from './components/ServerRail'
 import { errorMessage } from './errors'
-import { ApiError } from './api/client'
 import { useStore } from './store'
 
 export function App() {
@@ -4312,6 +4299,9 @@ export function App() {
     return client.subscribeEvents((ev) => {
       if (ev.type === 'servers_changed') refresh()
       if (ev.type === 'login_failed') setError(errorMessage(new ApiError(String(ev.payload?.code ?? 'internal'), '')))
+      // Browser mode is dev/e2e only: window.open without a user gesture is
+      // allowed under Playwright (popup blocking off) but may be blocked in a
+      // regular browser — acceptable there. Desktop opens the OS browser in Go.
       if (ev.type === 'open_external' && !isDesktop()) window.open(String(ev.payload?.url), '_blank')
     })
   }, [setServers, setError])
