@@ -1,5 +1,5 @@
 import { afterEach, vi } from 'vitest'
-import { ApiError, httpClient, parseWailsError } from './client'
+import { ApiError, httpClient, isDesktopLocation, parseWailsError } from './client'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -36,4 +36,16 @@ test('wails error text "<code>: <detail>" parses into ApiError', () => {
     new ApiError('bad_credentials', 'mattermost: HTTP 401'),
   )
   expect(parseWailsError({ message: 'not_found' })).toEqual(new ApiError('not_found', ''))
+})
+
+test.each([
+  ['wails://localhost/', true], // Linux, macOS
+  ['http://wails.localhost/', true], // Windows
+  ['http://wails.localhost:34115/', true], // Windows with port
+  ['https://wails.localhost/', true],
+  ['http://127.0.0.1:5180/', false], // browser mode
+  ['http://localhost:5180/', false],
+  ['https://wails.localhost.evil.com/', false],
+])('isDesktopLocation(%s) === %s', (href, want) => {
+  expect(isDesktopLocation(new URL(href))).toBe(want)
 })
