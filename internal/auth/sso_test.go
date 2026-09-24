@@ -103,3 +103,21 @@ func TestFindCallbackArg(t *testing.T) {
 	_, ok = FindCallbackArg([]string{"/usr/bin/spk-mattermost", "--browser"})
 	assert.False(t, ok)
 }
+
+// Two server entries can share a URL alias (same SiteURL). The most recently
+// started login wins, whatever the map iteration order.
+func TestCompleteAmbiguousSrvPicksMostRecent(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		s := NewSSO()
+		clock := time.Unix(1000, 0)
+		s.now = func() time.Time { return clock }
+		s.Begin(1, "https://a.example.com", "https://chat.example.com")
+		clock = clock.Add(time.Second)
+		s.Begin(2, "https://b.example.com", "https://chat.example.com")
+		clock = clock.Add(time.Second)
+		s.Begin(3, "https://c.example.com")
+		res, err := s.Complete(cb("tok", "https://chat.example.com"))
+		require.NoError(t, err)
+		require.Equal(t, int64(2), res.ServerID)
+	}
+}

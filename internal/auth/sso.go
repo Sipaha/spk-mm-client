@@ -128,11 +128,17 @@ func (s *SSO) Complete(raw string) (Result, error) {
 		if err != nil {
 			return Result{}, ErrMalformedCallback
 		}
+		// Two entries may share an alias (same SiteURL): the most recently
+		// started login is the one the user just finished in the browser.
 		found := false
+		var newest time.Time
 		for pid, p := range s.pending {
 			for _, pu := range p.urls {
 				if pu == n {
-					id, found = pid, true
+					if !found || p.started.After(newest) {
+						id, newest, found = pid, p.started, true
+					}
+					break
 				}
 			}
 		}
