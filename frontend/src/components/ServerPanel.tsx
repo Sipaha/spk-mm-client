@@ -4,18 +4,33 @@ import type { ServerDTO } from '../api/types'
 import { errorMessage } from '../errors'
 import { t } from '../i18n'
 
-export function ServerPanel({ server, client }: { server: ServerDTO; client: Client }) {
+// loginFailures counts login_failed events; any change ends the GitLab wait.
+export function ServerPanel({ server, client, loginFailures = 0 }: { server: ServerDTO; client: Client; loginFailures?: number }) {
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [waitingGitLab, setWaitingGitLab] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
+  // The GitLab wait ends when the login fails or the session state changes
+  // (adjusting state during render, not in an effect).
+  const [seen, setSeen] = useState({ loginFailures, signedIn: server.signed_in })
+  if (seen.loginFailures !== loginFailures || seen.signedIn !== server.signed_in) {
+    setSeen({ loginFailures, signedIn: server.signed_in })
+    setWaitingGitLab(false)
+  }
+
+  // run disables every action button until fn settles: no double submit.
   const run = async (fn: () => Promise<unknown>) => {
+    if (busy) return
+    setBusy(true)
     setError(null)
     try {
       await fn()
     } catch (e) {
       setError(errorMessage(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -28,7 +43,7 @@ export function ServerPanel({ server, client }: { server: ServerDTO; client: Cli
       {server.signed_in ? (
         <div className="flex items-center justify-between">
           <span>{t('server.signedInAs', { name: server.username })}</span>
-          <button className="rounded border px-3 py-1" onClick={() => run(() => client.logout(server.id))}>
+          <button className="rounded border px-3 py-1 disabled:opacity-50" disabled={busy} onClick={() => run(() => client.logout(server.id))}>
             {t('server.signOut')}
           </button>
         </div>
@@ -38,7 +53,8 @@ export function ServerPanel({ server, client }: { server: ServerDTO; client: Cli
           {server.gitlab && (
             <>
               <button
-                className="rounded bg-orange-600 px-3 py-1.5 text-white"
+                className="rounded bg-orange-600 px-3 py-1.5 text-white disabled:opacity-50"
+                disabled={busy}
                 onClick={() => run(async () => { await client.startGitLabLogin(server.id); setWaitingGitLab(true) })}
               >
                 {t('server.gitlab')}
@@ -59,7 +75,7 @@ export function ServerPanel({ server, client }: { server: ServerDTO; client: Cli
               {t('server.password')}
               <input type="password" className="rounded border border-neutral-300 px-2 py-1.5" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
-            <button type="submit" disabled={!login || !password} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
+            <button type="submit" disabled={busy || !login || !password} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
               {t('server.signIn')}
             </button>
           </form>
@@ -67,7 +83,8 @@ export function ServerPanel({ server, client }: { server: ServerDTO; client: Cli
       )}
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       <button
-        className="self-start text-sm text-red-600 underline"
+        className="self-start text-sm text-red-600 underline disabled:opacity-50"
+        disabled={busy}
         onClick={() => { if (confirm(t('server.removeConfirm', { name: server.name }))) void run(() => client.removeServer(server.id)) }}
       >
         {t('server.remove')}
