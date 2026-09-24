@@ -1,6 +1,7 @@
 package mmsync
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -8,7 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/spk/spk-mattermost/internal/mm/model"
 	"github.com/spk/spk-mattermost/internal/mmfake"
+	"github.com/spk/spk-mattermost/internal/state"
+	"github.com/spk/spk-mattermost/internal/store"
 )
 
 // Offline longer than the since= margin, the server lost our stream: the
@@ -97,4 +101,63 @@ func TestLiveMarkMovesOnlyWhileProven(t *testing.T) {
 	assert.Equal(t, int64(300), m.gapStart())
 	m.prove(1000)
 	assert.Equal(t, int64(1000), m.gapStart())
+}
+
+// NB-1: a refresh left over from the previous session starts first on the
+// resumed socket and holds the reset hello back past resumeSettle; the
+// settle timer must not prove the stream while the hello may be held.
+func TestSettleDoesNotProveWhileRefreshHoldsTheHello(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	clk := h.useClock()
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	h.fake.SetLatency("/categories", 5*time.Second)
+	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
+	time.Sleep(time.Second) // the refresh is now waiting on categories
+	h.fake.SetDown(true)
+	h.fake.DropConnections(true)
+	h.eventually(func() bool { return h.w.Status() == StatusReconnecting }, "the drop went unnoticed")
+	h.fake.PostAs("c-offtopic", "bob", "sent during the gap")
+	clk.advance(10 * time.Minute)
+	time.Sleep(600 * time.Millisecond) // the abandoned refresh is due again
+	h.fake.SetDown(false)
+	require.Eventually(t, func() bool { return h.hasMessage("c-offtopic", "sent during the gap") }, 25*time.Second, 20*time.Millisecond,
+		"the post sent during the gap was never fetched")
+}
+
+// NB-2: an unsettled read asks for one follow-up refresh, not a chain.
+func TestUnsettledMetaAsksForOneFollowUp(t *testing.T) {
+	w := NewWorker(Config{}, store.Server{ID: 1, URL: "https://mm.example"})
+	requested := func() bool {
+		select {
+		case <-w.metaReq:
+			return true
+		default:
+			return false
+		}
+	}
+	w.metaSettled(false)
+	assert.True(t, requested(), "the first unsettled read asks for a follow-up")
+	w.metaSettled(false)
+	assert.False(t, requested(), "the follow-up being unsettled too does not ask again")
+	w.metaSettled(false)
+	assert.True(t, requested(), "a new original request gets its own follow-up")
+	w.metaSettled(true)
+	w.metaSettled(false)
+	assert.True(t, requested(), "a settled read resets the chain")
+}
+
+// The gap start is seeded from the restored snapshot before any proof.
+func TestRestoreSeedsGapStart(t *testing.T) {
+	st, srv := openStore(t)
+	w := NewWorker(Config{Store: st}, srv)
+	w.st.Bootstrap(state.Bootstrap{Me: model.User{ID: "u1"}})
+	w.st.SetLiveAt(12345)
+	w.flush(context.Background())
+
+	w2 := NewWorker(Config{Store: st}, srv)
+	w2.restore(context.Background())
+	assert.Equal(t, int64(12345), w2.live.gapStart())
+	assert.False(t, w2.live.proven())
 }

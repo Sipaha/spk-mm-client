@@ -67,6 +67,13 @@ func (s *Server) SetLiveAt(ms int64) {
 	s.dirty.live = true
 }
 
+// LiveAt is the persisted "stream continuous until" mark (local ms).
+func (s *Server) LiveAt() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.liveAt
+}
+
 func (s *Server) HasData() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

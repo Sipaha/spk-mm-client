@@ -100,6 +100,9 @@ const (
 	// (the server closes the socket on a connection_id it rejects) before
 	// the worker gives up on the saved stream and reconnects fresh.
 	maxResumeFails = 3
+	// refreshTimeout bounds a metadata refresh as a whole: events are held
+	// back while it runs, so a hung refresh is abandoned and redone later.
+	refreshTimeout = 45 * time.Second
 	// dialTimeout bounds the WebSocket handshake only; the established
 	// connection lives as long as the session.
 	dialTimeout = 30 * time.Second
@@ -147,6 +150,10 @@ type Worker struct {
 	// session must bootstrap even though it can resume the new stream.
 	needResync  bool
 	resumeFails int
+	// followUp: the refresh in progress was requested by an unsettled
+	// fetchMeta; a second unsettled read does not ask again (a busy server
+	// would otherwise keep refreshing forever).
+	followUp bool
 
 	// only touched by the flush loop: a delta SaveCache failed to write,
 	// retried (merged with newer changes) by the next flush.
@@ -367,6 +374,12 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 		case <-w.authFail:
 			return &rest.Error{Kind: rest.KindAuth, Status: http.StatusUnauthorized, Err: errors.New("request rejected with 401")}
 		case <-settle:
+			if refresh != nil || len(held) > 0 {
+				// A hello may be among the held events: only the
+				// socket being quiet with nothing held proves the resume.
+				settle = time.After(resumeSettle)
+				continue
+			}
 			w.proveLive() // no hello: the server accepted the resume
 		case <-due:
 			refresh = w.startRefresh(sctx, &refreshes)
@@ -450,6 +463,13 @@ func (m *liveMark) prove(now int64) bool {
 	return true
 }
 
+// seed sets the gap start before any stream (from the restored snapshot).
+func (m *liveMark) seed(at int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.at = max(m.at, at)
+}
+
 func (m *liveMark) proven() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -487,9 +507,10 @@ func (m *liveMark) gapStart() int64 {
 }
 
 type metaResult struct {
-	b       state.Bootstrap
-	settled bool
-	err     error
+	b        state.Bootstrap
+	settled  bool
+	timedOut bool
+	err      error
 }
 
 // startRefresh fetches metadata in the background; the result goes back to
@@ -499,8 +520,11 @@ func (w *Worker) startRefresh(ctx context.Context, wg *sync.WaitGroup) chan meta
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		b, settled, err := w.fetchMeta(ctx)
-		out <- metaResult{b, settled, err}
+		rctx, cancel := context.WithTimeout(ctx, refreshTimeout)
+		defer cancel()
+		b, settled, err := w.fetchMeta(rctx)
+		timedOut := err != nil && errors.Is(rctx.Err(), context.DeadlineExceeded)
+		out <- metaResult{b: b, settled: settled, timedOut: timedOut, err: err}
 	}()
 	return out
 }
@@ -513,18 +537,30 @@ func (w *Worker) finishRefresh(r metaResult) error {
 		if sessionExpired(r.err) {
 			return r.err
 		}
-		slog.Warn("metadata refresh failed", "srv", w.srv.ID, "err", r.err)
+		slog.Warn("metadata refresh failed", "srv", w.srv.ID, "err", r.err, "timed_out", r.timedOut)
+		if r.timedOut { // abandoned: the held events go on, the refresh is redone later
+			w.requestMeta()
+		}
 		return nil
 	}
 	w.st.Bootstrap(r.b)
-	if !r.settled {
-		w.requestMeta()
-	}
+	w.metaSettled(r.settled)
 	w.replayOrphans()
 	w.goBG(w.loadUsers)
 	w.enqueueAll()
 	w.changed(state.Change{Sidebar: true, Badge: true})
 	return nil
+}
+
+// metaSettled asks for one follow-up refresh after an unsettled read (see
+// fetchMeta), at most one per original request.
+func (w *Worker) metaSettled(settled bool) {
+	if settled || w.followUp {
+		w.followUp = false
+		return
+	}
+	w.followUp = true
+	w.requestMeta()
 }
 
 // replayOrphans applies posts that arrived for channels the last Bootstrap
@@ -547,9 +583,7 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 		return err
 	}
 	w.st.Bootstrap(b)
-	if !settled {
-		w.requestMeta()
-	}
+	w.metaSettled(settled)
 	if lost {
 		w.st.MarkStale(w.live.gapStart())
 	}
@@ -739,6 +773,8 @@ func (w *Worker) restore(ctx context.Context) {
 	}
 	switch err := w.st.Restore(entries); {
 	case err == nil:
+		// Until a stream is proven, a gap starts where the snapshot's did.
+		w.live.seed(w.st.LiveAt())
 		w.changed(state.Change{Sidebar: true, Badge: true})
 	case errors.Is(err, state.ErrNoSnapshot):
 	default:
