@@ -77,12 +77,16 @@ type Server struct {
 	nav    Nav
 
 	// Task 7: posts, pending, active channel.
-	pending map[string][]Pending
-	drafts  map[string]string
-	active  string
-	older   []model.Post
-	guard   map[string]int64
-	seen    seenSet
+	pending       map[string][]Pending
+	drafts        map[string]string
+	active        string
+	focused       bool
+	newSince      int64
+	older         []model.Post
+	olderComplete bool
+	suppressView  string
+	guard         map[string]int64
+	seen          seenSet
 
 	dirty dirtySet // Task 8
 }

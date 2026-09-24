@@ -1,0 +1,215 @@
+package state
+
+import (
+	"slices"
+
+	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mattermost/internal/mm/ws"
+)
+
+// Change tells the API layer which UI views to refresh.
+type Change struct {
+	Sidebar  bool
+	Badge    bool
+	Channels []string
+}
+
+func (c *Change) Merge(o Change) {
+	c.Sidebar = c.Sidebar || o.Sidebar
+	c.Badge = c.Badge || o.Badge
+	for _, id := range o.Channels {
+		if !slices.Contains(c.Channels, id) {
+			c.Channels = append(c.Channels, id)
+		}
+	}
+}
+
+func (c Change) Empty() bool { return !c.Sidebar && !c.Badge && len(c.Channels) == 0 }
+
+// NotifyCandidate carries everything notify.Decide needs, copied under lock.
+type NotifyCandidate struct {
+	Post        model.Post
+	Channel     model.Channel
+	ChannelName string
+	Member      model.ChannelMember
+	Me          model.User
+	Status      model.Status
+	CRT         bool
+	Focused     bool
+	Active      string
+	Mentions    []string
+	Followers   []string
+	SenderName  string
+}
+
+// Effects is what the worker must do after an event, besides refreshing
+// the views in Change.
+type Effects struct {
+	Change
+	NeedMeta  bool              // channels/memberships/categories changed server-side
+	NeedUsers []string          // profiles to fetch
+	ShowDM    *model.Preference // DM/GM got a message while closed: save the "show" preference
+	View      string            // open + focused channel got a post: mark it viewed
+	Notify    *NotifyCandidate
+	Resync    bool // CRT toggled: every window holds the wrong kind of posts
+}
+
+func (s *Server) ApplyEvent(ev ws.Event) Effects {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var eff Effects
+	switch ev.Type {
+	case "posted":
+		s.onPostedLocked(ev, &eff)
+	case "post_edited":
+		if p, err := ws.DecodePost(ev); err == nil && s.updatePostLocked(p) {
+			eff.Channels = []string{p.ChannelID}
+		}
+	case "post_deleted":
+		if p, err := ws.DecodePost(ev); err == nil {
+			if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p.ID) {
+				eff.Channels = []string{p.ChannelID}
+			}
+		}
+	case "reaction_added", "reaction_removed":
+		if r, err := ws.DecodeReaction(ev); err == nil && s.reactLocked(ev.Broadcast.ChannelID, r, ev.Type == "reaction_added") {
+			eff.Channels = []string{ev.Broadcast.ChannelID}
+		}
+	case "multiple_channels_viewed":
+		times, _ := ws.DecodeChannelTimes(ev)
+		for id, at := range times {
+			if ch := s.chans[id]; ch != nil {
+				s.markReadLocked(ch, at)
+			}
+		}
+		eff.Sidebar, eff.Badge = true, true
+	case "post_unread":
+		if u, err := ws.DecodePostUnread(ev); err == nil {
+			s.setUnreadLocked(u)
+			eff.Sidebar, eff.Badge = true, true
+		}
+	case "channel_updated":
+		if c, err := ws.DecodeChannel(ev); err == nil {
+			if ch := s.chans[c.ID]; ch != nil {
+				ch.Info = c
+				s.dirty.chans[c.ID] = true
+				eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{c.ID}
+			}
+		}
+	case "channel_deleted":
+		id := ev.Str("channel_id")
+		if ch := s.chans[id]; ch != nil {
+			ch.Info.DeleteAt = s.now().UnixMilli()
+			s.dirty.chans[id] = true
+			eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{id}
+		}
+	case "user_removed":
+		// The copy addressed to the removed user carries channel_id in data.
+		if ev.Broadcast.UserID == s.me.ID {
+			if id := ev.Str("channel_id"); s.chans[id] != nil {
+				delete(s.chans, id)
+				s.forgetChannelLocked(id)
+				eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{id}
+			}
+		}
+	case "user_added":
+		eff.NeedMeta = ev.Str("user_id") == s.me.ID
+	case "direct_added", "group_added", "channel_created", "channel_restored", "channel_converted",
+		"sidebar_category_created", "sidebar_category_updated", "sidebar_category_deleted", "sidebar_category_order_updated":
+		eff.NeedMeta = true
+	case "channel_member_updated":
+		if m, err := ws.DecodeMember(ev); err == nil && m.UserID == s.me.ID {
+			if ch := s.chans[m.ChannelID]; ch != nil {
+				ch.Member = m
+				s.dirty.chans[m.ChannelID] = true
+				eff.Sidebar, eff.Badge = true, true
+			}
+		}
+	case "preferences_changed", "preferences_deleted":
+		if prefs, err := ws.DecodePreferences(ev); err == nil {
+			wasCRT := s.crtLocked()
+			for _, p := range prefs {
+				if ev.Type == "preferences_changed" {
+					s.prefs[prefKey{p.Category, p.Name}] = p.Value
+				} else {
+					delete(s.prefs, prefKey{p.Category, p.Name})
+				}
+			}
+			s.dirty.meta = true
+			eff.Sidebar, eff.Badge = true, true
+			eff.Resync = wasCRT != s.crtLocked()
+		}
+	case "user_updated":
+		if u, err := ws.DecodeUser(ev); err == nil && u.ID != "" {
+			if u.ID == s.me.ID {
+				if u.NotifyProps == nil { // sanitized broadcast copy
+					u.NotifyProps = s.me.NotifyProps
+				}
+				s.me = u
+				s.dirty.meta = true
+			}
+			s.users[u.ID] = u
+			s.dirty.users[u.ID] = true
+			eff.Sidebar = true
+		}
+	case "status_change":
+		if ev.Str("user_id") == s.me.ID {
+			s.status.Status = ev.Str("status")
+		}
+	}
+	return eff
+}
+
+func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
+	d, err := ws.DecodePosted(ev)
+	if err != nil {
+		return
+	}
+	p := d.Post
+	ch := s.chans[p.ChannelID]
+	if ch == nil {
+		eff.NeedMeta = true // a DM/GM or channel we were just added to
+		return
+	}
+	bumped := s.applyNewPostLocked(ch, p, d.Mentions)
+	eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{ch.Info.ID}
+	if _, ok := s.users[p.UserID]; !ok && p.UserID != "" {
+		eff.NeedUsers = []string{p.UserID}
+	}
+	if p.UserID == s.me.ID {
+		return
+	}
+	if isDirect(ch) {
+		pref := model.Preference{UserID: s.me.ID, Category: "group_channel_show", Name: ch.Info.ID, Value: "true"}
+		if ch.Info.IsDM() {
+			pref.Category, pref.Name = "direct_channel_show", ch.Info.DMPartner(s.me.ID)
+		}
+		if s.prefs[prefKey{pref.Category, pref.Name}] != "true" {
+			s.prefs[prefKey{pref.Category, pref.Name}] = "true"
+			s.dirty.meta = true
+			eff.ShowDM = &pref
+		}
+	}
+	if !bumped {
+		return
+	}
+	crt := s.crtLocked()
+	if ch.Info.ID == s.active && s.focused && s.suppressView != ch.Info.ID && (!crt || p.RootID == "") {
+		eff.View = ch.Info.ID
+	}
+	eff.Notify = &NotifyCandidate{
+		Post: p, Channel: ch.Info, ChannelName: s.channelNameLocked(ch), Member: ch.Member, Me: s.me,
+		Status: s.status, CRT: crt, Focused: s.focused, Active: s.active,
+		Mentions: d.Mentions, Followers: d.Followers, SenderName: s.displayNameLocked(p.UserID),
+	}
+	if eff.Notify.SenderName == "" {
+		eff.Notify.SenderName = trimAt(d.SenderName)
+	}
+}
+
+func trimAt(s string) string {
+	if len(s) > 0 && s[0] == '@' {
+		return s[1:]
+	}
+	return s
+}
