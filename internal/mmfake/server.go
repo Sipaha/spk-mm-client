@@ -14,18 +14,27 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/spk/spk-mattermost/internal/mm/model"
 )
 
 type User struct {
-	ID       string
-	Username string
-	Password string
+	ID        string
+	Username  string
+	Password  string
+	FirstName string
+	LastName  string
 }
 
 type Options struct {
 	SiteName      string // default "Fake MM"
 	DisableGitLab bool   // GitLab SSO is advertised and served unless set
-	Users         []User // default: alice/secret
+	Users         []User // default: alice/bob/carol, password "secret"
+
+	CRT           bool // CollapsedThreads client config: always_on vs disabled
+	SeedPosts     int  // 0 -> 150 posts in Town Square; <0 -> none
+	ExtraChannels int  // open "load-NNN" channels with 20 posts each
+	SinceLimit    int  // 0 -> 1000
 }
 
 type Server struct {
@@ -34,6 +43,7 @@ type Server struct {
 	mu       sync.Mutex
 	sessions map[string]string // token -> user id
 	pending  map[string]string // oauth state -> redirect_to
+	chat     chatData
 }
 
 func Start(o Options) *Server {
@@ -41,9 +51,14 @@ func Start(o Options) *Server {
 		o.SiteName = "Fake MM"
 	}
 	if o.Users == nil {
-		o.Users = []User{{ID: "u-alice", Username: "alice", Password: "secret"}}
+		o.Users = []User{
+			{ID: "u-alice", Username: "alice", Password: "secret"},
+			{ID: "u-bob", Username: "bob", Password: "secret"},
+			{ID: "u-carol", Username: "carol", Password: "secret"},
+		}
 	}
 	s := &Server{opts: o, sessions: map[string]string{}, pending: map[string]string{}}
+	s.seed()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/system/ping", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "OK"})
@@ -55,6 +70,7 @@ func Start(o Options) *Server {
 	mux.HandleFunc("GET /oauth/gitlab/mobile_login", s.mobileLogin)
 	mux.HandleFunc("GET /mmfake/gitlab/authorize", s.gitlabAuthorize)
 	mux.HandleFunc("GET /mmfake/gitlab/complete", s.gitlabComplete)
+	s.chatRoutes(mux)
 	s.ts = httptest.NewServer(mux)
 	return s
 }
@@ -99,7 +115,9 @@ func (s *Server) userByID(id string) (User, bool) {
 	return User{}, false
 }
 
-func userJSON(u User) map[string]string { return map[string]string{"id": u.ID, "username": u.Username} }
+func userJSON(u User) model.User {
+	return model.User{ID: u.ID, Username: u.Username, FirstName: u.FirstName, LastName: u.LastName}
+}
 
 func (s *Server) newSession(userID string) string {
 	tok := newID()
@@ -121,12 +139,31 @@ func (s *Server) authed(r *http.Request) (User, string, bool) {
 	return u, tok, ok
 }
 
+// handleAuthed wraps h with session lookup: 401 api.context.session_expired.app_error
+// when the bearer token is unknown, otherwise h runs with the resolved user.
+func (s *Server) handleAuthed(h func(w http.ResponseWriter, r *http.Request, u User)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, _, ok := s.authed(r)
+		if !ok {
+			appError(w, 401, "api.context.session_expired.app_error", "Invalid or expired session, please login again.")
+			return
+		}
+		h(w, r, u)
+	}
+}
+
 func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
+	crt := "disabled"
+	if s.opts.CRT {
+		crt = "always_on"
+	}
 	writeJSON(w, 200, map[string]string{
 		"SiteName":               s.opts.SiteName,
 		"SiteURL":                s.ts.URL,
 		"Version":                "10.11.0-fake",
 		"EnableSignUpWithGitLab": fmt.Sprint(!s.opts.DisableGitLab),
+		"CollapsedThreads":       crt,
+		"TeammateNameDisplay":    "username",
 	})
 }
 
@@ -152,7 +189,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		appError(w, 401, "api.context.session_expired.app_error", "Invalid or expired session, please login again.")
 		return
 	}
-	writeJSON(w, 200, userJSON(u))
+	out := userJSON(u)
+	out.NotifyProps = map[string]string{
+		"desktop": "mention", "channel": "true", "desktop_threads": "all", "mention_keys": "", "first_name": "false",
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
