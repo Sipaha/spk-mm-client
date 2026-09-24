@@ -76,10 +76,13 @@ func (s *Service) OpenChannel(ctx context.Context, id int64, channelID string) (
 	switched := s.active != id
 	s.active = id
 	s.mu.Unlock()
-	if switched {
-		s.applyFocus() // before OpenChannel: it marks read only a focused worker's channel
-	}
+	// Open first, focus after: a worker that was in the background is still
+	// unfocused here, so OpenChannel only makes channelID active; focusing
+	// it earlier would mark its previously active channel read unseen.
 	v, _ := w.OpenChannel(channelID)
+	if switched {
+		s.applyFocus()
+	}
 	return v, nil
 }
 

@@ -298,3 +298,32 @@ func TestNotificationClickOpensChannel(t *testing.T) {
 	ev := f.nextEvent(t, EventOpenChannel)
 	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town"}, ev.Payload)
 }
+
+// Switching servers by opening a channel must view that channel only — not
+// the one the other server had open before (never shown in this session).
+func TestOpenChannelOnAnotherServerViewsOnlyThatChannel(t *testing.T) {
+	f := newChatFixture(t)
+	fakeA, fakeB := startFake(t), startFake(t)
+	a, b := f.signIn(fakeA, "alice"), f.signIn(fakeB, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.loaded(a, "c-town") && f.loaded(b, "c-offtopic") && f.loaded(b, "c-town") }, "prefetch")
+
+	_, err := f.svc.OpenChannel(ctx, b, "c-offtopic") // unfocused: B's active channel is now Y, nothing viewed
+	require.NoError(t, err)
+	_, err = f.svc.OpenChannel(ctx, a, "c-town")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetFocused(ctx, true))
+
+	fakeB.PostAs("c-offtopic", "bob", "unread on Y")
+	fakeB.PostAs("c-town", "bob", "unread on X")
+	f.eventually(func() bool { return f.has(b, "c-offtopic", "unread on Y") && f.has(b, "c-town", "unread on X") }, "posts on B")
+
+	_, err = f.svc.OpenChannel(ctx, b, "c-town")
+	require.NoError(t, err)
+	f.eventually(func() bool {
+		return fakeB.Member("c-town", "alice").MsgCount == fakeB.Channel("c-town").TotalMsgCount
+	}, "the opened channel X is viewed")
+	time.Sleep(300 * time.Millisecond)
+	assert.Less(t, fakeB.Member("c-offtopic", "alice").MsgCount, fakeB.Channel("c-offtopic").TotalMsgCount,
+		"B's previously active channel Y was never shown: stays unread")
+}

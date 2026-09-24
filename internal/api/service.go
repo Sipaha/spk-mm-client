@@ -162,9 +162,9 @@ func (s *Service) RemoveServer(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	s.sso.Cancel(id) // first: a GitLab sign-in finishing now must not start a worker
 	s.deactivate(id)
 	s.revoke(ctx, srv)
-	s.sso.Cancel(id)
 	if err := s.st.DeleteServer(ctx, id); err != nil {
 		return coded(CodeInternal, err)
 	}
@@ -208,7 +208,9 @@ func (s *Service) LoginWithPassword(ctx context.Context, id int64, login, passwo
 	}
 	// Signing in over a live session: revoke the old one (best effort) so it
 	// doesn't linger server-side. Done only after the new login succeeded, so
-	// a failed attempt leaves the existing session intact.
+	// a failed attempt leaves the existing session intact. The worker using
+	// the old token stops first, so its in-flight work never sees a 401.
+	s.deactivate(id)
 	s.revoke(ctx, srv)
 	if err := s.st.SetSession(ctx, id, tok, u.ID, u.Username); err != nil {
 		return ServerDTO{}, coded(CodeInternal, err)
@@ -227,9 +229,9 @@ func (s *Service) Logout(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	s.sso.Cancel(id) // first: a GitLab login still in flight must not sign back in
 	s.deactivate(id) // final snapshot flush happens before the cache is dropped below
 	s.revoke(ctx, srv)
-	s.sso.Cancel(id) // a GitLab login still in flight must not sign back in
 	if err := s.st.ClearSession(ctx, id); err != nil {
 		return coded(CodeInternal, err)
 	}
@@ -268,7 +270,8 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	if err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeAuthFailed, err))
 	}
-	s.revoke(ctx, srv) // replace, don't orphan, an existing session
+	s.deactivate(srv.ID) // the old token's worker stops before the token is revoked
+	s.revoke(ctx, srv)   // replace, don't orphan, an existing session
 	if err := s.st.SetSession(ctx, srv.ID, res.Token, u.ID, u.Username); err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeInternal, err))
 	}
