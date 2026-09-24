@@ -9,13 +9,14 @@
 - `make build` — фронт + бинарь для browser-режима (`build/bin/spk-mattermost`).
 - `make build-desktop` — desktop-бинарь (теги `wails gtk3`).
 - `make test-go`, `make test-front`, `make test-e2e`, `make lint`, `make cross-check`.
-- `make run-browser` — UI на http://127.0.0.1:5180 с фейковым сервером MM.
+- `make run-browser` — UI на http://127.0.0.1:5180 с фейковым сервером MM (данные во временном каталоге).
 
 ## Правила (правило — причина — тест)
 
 - `go build ./...` без тега `wails` обязан проходить: desktop-код за тегом.
 - Токены сервера не покидают Go: нет в DTO, логах, событиях. — `TestServerDTOHasNoToken`, `TestServerLogValueHidesToken`.
 - Никаких блокирующих системных вызовов на старте (урок официального клиента, завис на gnome-keyring). Токены — в SQLite.
+- Browser-режим отвечает только на loopback-`Host` (127.0.0.1, localhost, ::1), иначе 403 — защита от DNS rebinding (иначе `/` отдаст API-токен чужому сайту). — `TestNonLoopbackHostIsRejected`, `transport.LoopbackHostGuard`.
 - `events.Emitter.Emit` не блокирует: полный буфер подписчика — событие отбрасывается.
 - SQLite — одно соединение; многошаговые записи только через `Store.WithTx`.
 - Версии `github.com/wailsapp/wails/v3` и `@wailsio/runtime` совпадают.

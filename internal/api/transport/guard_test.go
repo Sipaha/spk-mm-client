@@ -166,3 +166,31 @@ func TestAuthGuard(t *testing.T) {
 		require.Equal(t, http.StatusOK, code)
 	})
 }
+
+func TestIsLoopbackHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"127.0.0.1:5180":          true,
+		"127.0.0.1":               true,
+		"localhost:5180":          true,
+		"LocalHost:5180":          true,
+		"[::1]:5180":              true,
+		"[::1]":                   true,
+		"evil.example:5180":       false,
+		"localhost.evil.com:5180": false,
+		"127.0.0.1.evil:5180":     false,
+		"":                        false,
+	} {
+		require.Equalf(t, want, isLoopbackHost(host), "host=%q", host)
+	}
+}
+
+func TestLoopbackHostGuard(t *testing.T) {
+	h := LoopbackHostGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	for host, want := range map[string]int{"127.0.0.1:1": http.StatusOK, "evil.example:1": http.StatusForbidden} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		require.Equal(t, want, rec.Code, host)
+	}
+}

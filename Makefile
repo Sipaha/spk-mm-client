@@ -64,7 +64,7 @@ run: build-desktop
 	$(BIN_DIR)/spk-mattermost-desktop
 
 run-browser: build
-	$(BIN) --browser --port=5180 --mm-fake --test-api
+	SPK_MATTERMOST_HOME=$$(mktemp -d) $(BIN) --browser --port=5180 --mm-fake --test-api
 
 install-dev-linux: build-desktop
 	bash scripts/install-dev-linux.sh $(abspath $(BIN_DIR)/spk-mattermost-desktop)

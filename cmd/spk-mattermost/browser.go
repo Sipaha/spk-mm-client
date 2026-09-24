@@ -151,5 +151,5 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
 	}
 	mux.Handle("/", frontendHandler(token, dist))
-	return mux, token
+	return transport.LoopbackHostGuard(mux), token
 }

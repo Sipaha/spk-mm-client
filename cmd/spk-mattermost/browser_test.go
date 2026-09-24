@@ -49,6 +49,62 @@ func TestIndexCarriesTokenAndIsNotCached(t *testing.T) {
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 }
 
+// DNS rebinding: evil.example resolves to 127.0.0.1, so the browser sends
+// Host: evil.example:PORT and a matching Origin. The server must not hand out
+// the token nor accept API calls for a non-loopback Host.
+func TestNonLoopbackHostIsRejected(t *testing.T) {
+	ts, token, _ := setup(t, true)
+	port := ts.URL[strings.LastIndex(ts.URL, ":")+1:]
+	evil := "evil.example:" + port
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	req.Host = evil
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.NotContains(t, string(body), token)
+
+	for _, path := range []string{"/api/ListServers", "/api/_test/deeplink"} {
+		req, _ = http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(`{}`))
+		req.Host = evil
+		req.Header.Set("Origin", "http://"+evil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, path)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events?token="+token, nil)
+	req.Host = evil
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err, "SSE stream must be refused, not opened")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "SSE")
+}
+
+func TestLoopbackHostsAreAccepted(t *testing.T) {
+	ts, token, _ := setup(t, false)
+	port := ts.URL[strings.LastIndex(ts.URL, ":")+1:]
+	for _, host := range []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port, "LOCALHOST:" + port} {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode, host)
+
+		req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/ListServers", strings.NewReader(`{}`))
+		req.Host = host
+		req.Header.Set("Origin", "http://"+host)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err = http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode, host)
+	}
+}
+
 func TestTestAPIAbsentByDefault(t *testing.T) {
 	ts, token, _ := setup(t, false)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/_test/fake-url", nil)

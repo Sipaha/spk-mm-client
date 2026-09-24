@@ -16,6 +16,30 @@ func newAuthToken() string {
 	return hex.EncodeToString(b)
 }
 
+// LoopbackHostGuard rejects (403) every request whose Host header is not a
+// loopback name (127.0.0.1, localhost, ::1; any port). It is the DNS-rebinding
+// defense: a page on evil.example that re-resolves to 127.0.0.1 sends
+// Host: evil.example, and OriginGuard alone would accept it because its Origin
+// matches that Host — while `/` would hand it the API token.
+func LoopbackHostGuard(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func isLoopbackHost(host string) bool {
+	h, _, _ := splitHostPortLoose(host)
+	switch strings.ToLower(h) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
 // OriginGuard wraps h with a CSRF check: state-changing methods (POST, PUT,
 // PATCH, DELETE) must carry an Origin OR Referer header that matches the
 // server's Host. State-reading methods (GET, HEAD) are permitted without
