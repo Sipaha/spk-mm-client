@@ -6,6 +6,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"os"
 	"runtime"
 	"sync"
 
@@ -97,7 +98,7 @@ func Run(ctx context.Context, o Options) error {
 	var single *application.SingleInstanceOptions
 	if feat.singleInstance {
 		single = &application.SingleInstanceOptions{
-			UniqueID: UniqueID,
+			UniqueID: instanceID(os.Getenv("SPK_MATTERMOST_HOME")),
 			// Linux/Windows: the OS starts a second process with the
 			// mmauth:// URL; Wails forwards its args here and exits it.
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
@@ -158,6 +159,7 @@ func Run(ctx context.Context, o Options) error {
 		BackgroundColour: application.NewRGBA(250, 250, 250, 255),
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
+		Linux:            application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MATTERMOST_GPU"))},
 	})
 	if feat.closeHides() {
 		w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
@@ -204,4 +206,16 @@ func Run(ctx context.Context, o Options) error {
 		app.Quit()
 	}()
 	return app.Run()
+}
+
+func webviewGPUPolicy(env string) application.WebviewGpuPolicy {
+	switch parseGPUPolicy(env) {
+	case gpuAlways:
+		return application.WebviewGpuPolicyAlways
+	case gpuOnDemand:
+		return application.WebviewGpuPolicyOnDemand
+	case gpuNever:
+		return application.WebviewGpuPolicyNever
+	}
+	return application.WebviewGpuPolicyAlways // Wails' zero value
 }

@@ -13,4 +13,7 @@
     make install-dev-linux  # зарегистрировать dev-сборку для mmauth:// (Linux)
     make pss PID=<pid>  # память процесса и потомков: Private_Dirty (бюджет) и PSS (Linux)
 
-Данные: `~/.spk/spk-mattermost/` (переопределяется `SPK_MATTERMOST_HOME`).
+Данные: `~/.spk/spk-mattermost/` (переопределяется `SPK_MATTERMOST_HOME`; с
+нестандартным каталогом клиент запускается как отдельный экземпляр рядом с
+основным). `SPK_MATTERMOST_GPU=always|ondemand|never` — политика аппаратного
+ускорения WebKitGTK (по умолчанию always; `never` — если GPU-драйвер сбоит).
