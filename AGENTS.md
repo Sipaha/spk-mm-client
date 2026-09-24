@@ -32,9 +32,11 @@
   `frontend/src/store.ts` (`setServers`).
 - Начало дыры в потоке событий — конец последнего **доказанного** потока: `Worker.live` (и
   `live/at` в снимке) не двигаются, пока новый поток не доказан (завершён bootstrap, событие с
-  ожидаемым seq после resume или `resumeSettle` без `hello`); иначе отказ в resume после долгого
+  ожидаемым seq после resume или `resumeSettle` без `hello` и без удержанных
+  refresh-ом событий; до первого доказательства — `live/at` из снимка); иначе отказ в resume после долгого
   офлайна догонял бы каналы только с момента переподключения и терял посты из дыры. —
-  `TestLongOfflineGapWithLossCatchesUpFromStreamEnd`, `TestLiveMarkMovesOnlyWhileProven`.
+  `TestLongOfflineGapWithLossCatchesUpFromStreamEnd`, `TestLiveMarkMovesOnlyWhileProven`,
+  `TestSettleDoesNotProveWhileRefreshHoldsTheHello`, `TestRestoreSeedsGapStart`.
 - Обновление метаданных применяет цикл событий сессии (`startRefresh`/`finishRefresh`), события
   на время REST-чтения копятся и применяются после `Bootstrap` под его guard — иначе `Bootstrap`
   откатывает счётчики, поднятые событиями. Уведомление зависит от новизны поста (seen-set), не от
