@@ -20,10 +20,14 @@ import (
 // notifications as unavailable. See notifier.ServiceStartup.
 const notifyStartupTimeout = 2 * time.Second
 
-// notifyQueueSize bounds notifications waiting for the OS backend. The D-Bus
-// Notify call has no timeout; if it hangs, later notifications are dropped
-// instead of piling up goroutines or blocking the caller.
-const notifyQueueSize = 16
+// notifyQueueSize bounds notifications waiting for the OS backend, and
+// notifySendTimeout bounds one send: the D-Bus Notify call has no timeout of
+// its own, so a hung one is detached and later notifications are dropped
+// until it returns (see asyncSender) — callers never wait.
+const (
+	notifyQueueSize   = 16
+	notifySendTimeout = 10 * time.Second
+)
 
 // notifier wraps the Wails notification service (spike S2). onClick receives
 // the Data map of the clicked notification.
@@ -50,10 +54,11 @@ type notifier struct {
 // bus already known to be unusable). Call before app.Run.
 func (n *notifier) disable() { n.disabled = true }
 
-func newNotifier(onClick func(data map[string]any)) *notifier {
+// newNotifier's sender stops with ctx or ServiceShutdown, whichever is first.
+func newNotifier(ctx context.Context, onClick func(data map[string]any)) *notifier {
 	svc := notifications.New()
 	n := &notifier{svc: svc}
-	n.out = newAsyncSender(notifyQueueSize, func(o notifications.NotificationOptions) {
+	n.out = newAsyncSender(ctx, "notification", notifyQueueSize, notifySendTimeout, func(o notifications.NotificationOptions) {
 		if err := svc.SendNotification(o); err != nil {
 			slog.Warn("notification failed", "id", o.ID, "err", err)
 		}
@@ -95,6 +100,7 @@ func (n *notifier) ServiceStartup(ctx context.Context, options application.Servi
 // that never finished (or failed) starting up may hold partially
 // initialised state its own Shutdown does not expect.
 func (n *notifier) ServiceShutdown() error {
+	n.out.stop() // no notification reaches Wails after shutdown
 	if !n.available.Load() {
 		return nil
 	}
@@ -130,7 +136,5 @@ func (n *notifier) Notify(m api.Notification) {
 }
 
 func (n *notifier) send(o notifications.NotificationOptions) {
-	if !n.out.enqueue(o) {
-		slog.Warn("notification dropped: backend is not keeping up", "id", o.ID)
-	}
+	n.out.enqueue(o) // drops are logged by the sender, once per episode
 }

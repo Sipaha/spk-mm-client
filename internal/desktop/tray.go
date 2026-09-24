@@ -74,6 +74,9 @@ func trayBadge(ctx context.Context, tray *application.SystemTray, icons trayIcon
 			case <-ctx.Done():
 				return
 			case b := <-ch:
+				if ctx.Err() != nil {
+					return
+				}
 				setTrayText(tray, trayTooltip(lang, b.Unread, b.Mentions))
 				tray.SetIcon(icons.pick(trayIconFor(b.Unread, b.Mentions)))
 			}

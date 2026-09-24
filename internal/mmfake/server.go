@@ -27,7 +27,7 @@ type User struct {
 }
 
 type Options struct {
-	SiteName      string // default "Fake MM"
+	SiteName      string // default DefaultSiteName
 	DisableGitLab bool   // GitLab SSO is advertised and served unless set
 	Users         []User // default: alice/bob/carol, password "secret"
 
@@ -47,9 +47,12 @@ type Server struct {
 	hub      wsHub
 }
 
+// DefaultSiteName is the fake's site (and so server) name unless set.
+const DefaultSiteName = "Fake MM"
+
 func Start(o Options) *Server {
 	if o.SiteName == "" {
-		o.SiteName = "Fake MM"
+		o.SiteName = DefaultSiteName
 	}
 	if o.Users == nil {
 		o.Users = []User{

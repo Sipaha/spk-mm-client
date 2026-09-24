@@ -69,14 +69,3 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		DevActions:     dev,
 	})
 }
-
-// signInToFake adds the in-process fake server and signs alice in, so a dev
-// desktop run (use a fresh SPK_MATTERMOST_HOME) shows a working chat at once.
-func signInToFake(ctx context.Context, svc *api.Service, url string) error {
-	srv, err := svc.AddServer(ctx, url)
-	if err != nil {
-		return err
-	}
-	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
-	return err
-}

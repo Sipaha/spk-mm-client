@@ -360,3 +360,27 @@ func TestFailedSessionSaveRestartsSync(t *testing.T) {
 	assert.Equal(t, CodeInternal, codeOf(err))
 	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "sync restarted with the stored token")
 }
+
+// A late subscriber (the tray registers after D-Bus probe and GTK init) must
+// get the current total at once: after startup the callbacks fire only when
+// the total changes, so a restored unread badge would otherwise never show.
+func TestOnBadgeReplaysCurrentTotal(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.loaded(id, "c-offtopic") }, "prefetch")
+	fake.PostAs("c-offtopic", "bob", "hi @alice")
+	f.eventually(func() bool {
+		f.svc.mu.Lock()
+		defer f.svc.mu.Unlock()
+		return f.svc.total.Mentions == 1
+	}, "total badge")
+
+	var mu sync.Mutex
+	var got []Badge
+	f.svc.OnBadge(func(b Badge) { mu.Lock(); got = append(got, b); mu.Unlock() })
+	mu.Lock() // the replay is synchronous: already delivered when OnBadge returns
+	defer mu.Unlock()
+	require.NotEmpty(t, got)
+	assert.Equal(t, Badge{Unread: true, Mentions: 1}, got[0])
+}

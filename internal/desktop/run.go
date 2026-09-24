@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -32,6 +33,16 @@ type Options struct {
 // back); quitting is via the tray or ctx cancellation. When the D-Bus session
 // bus is unusable on Linux there is no tray, and closing the window quits.
 func Run(ctx context.Context, o Options) error {
+	// Everything this function starts (tray badge, notification sender)
+	// follows ctx, which also ends when Wails shuts down — so nothing calls
+	// into Wails after shutdown, before the caller closes the service.
+	var shutDown atomic.Bool
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	onShutdown := func() {
+		shutDown.Store(true)
+		cancel()
+	}
 	// winMu guards both the window pointer and the "show was requested
 	// before the window existed" flag *together*, plus serializes every
 	// call into WebviewWindow.Show/Hide/Focus, under one mutex. That is
@@ -90,7 +101,7 @@ func Run(ctx context.Context, o Options) error {
 		cutOffSessionBus() // before application.New() initializes GTK
 	}
 
-	n := newNotifier(func(data map[string]any) {
+	n := newNotifier(ctx, func(data map[string]any) {
 		if id, ch, ok := clickTarget(data); ok {
 			o.Service.NotificationClicked(id, ch)
 		}
@@ -133,6 +144,7 @@ func Run(ctx context.Context, o Options) error {
 		// SingleInstance there dials the bus with no timeout and os.Exit(1)s
 		// inside application.New() on failure (see busprobe_linux.go).
 		SingleInstance: single,
+		OnShutdown:     onShutdown,
 	})
 
 	started := make(chan struct{})
@@ -220,7 +232,9 @@ func Run(ctx context.Context, o Options) error {
 
 	go func() {
 		<-ctx.Done()
-		app.Quit()
+		if !shutDown.Load() { // the caller's ctx ended; not our own shutdown
+			app.Quit()
+		}
 	}()
 	return app.Run()
 }

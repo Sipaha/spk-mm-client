@@ -60,10 +60,18 @@ func (s *Service) manager() *mmsync.Manager {
 
 // OnBadge registers fn for the badge summed over all servers; it is called
 // from a background goroutine whenever the sum changes (tray).
+//
+// fn is called at once, synchronously, with the current total: a subscriber
+// registered after startup (the tray) would otherwise miss the badge restored
+// from the cache, since later calls happen only when the total changes.
 func (s *Service) OnBadge(fn func(Badge)) {
+	s.badgeMu.Lock()
+	defer s.badgeMu.Unlock()
 	s.mu.Lock()
 	s.badgeFns = append(s.badgeFns, fn)
+	total := s.total
 	s.mu.Unlock()
+	fn(total)
 }
 
 // SetNotifier sets where notifications go; nil drops them.
@@ -186,6 +194,8 @@ func (s *Service) refreshBadges() {
 			total.Mentions += b.Mentions
 		})
 	}
+	s.badgeMu.Lock()
+	defer s.badgeMu.Unlock()
 	s.mu.Lock()
 	changed := !maps.Equal(marks, s.marks)
 	totalChanged := total != s.total

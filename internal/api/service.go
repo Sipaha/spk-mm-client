@@ -40,6 +40,12 @@ type Service struct {
 	onFocus func(serverID int64, activeChannel string)
 	focusMu sync.Mutex // serializes applyFocus
 
+	// badgeMu orders badge deliveries: the replay in OnBadge and the
+	// fan-out in refreshBadges never interleave, so a late subscriber can't
+	// get a stale total after a newer one. Never held together with a
+	// callback-reachable s.mu section.
+	badgeMu sync.Mutex
+
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
 	notifier Notifier

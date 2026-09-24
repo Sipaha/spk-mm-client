@@ -1,7 +1,10 @@
 package desktop
 
 import (
+	"context"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,7 +29,7 @@ func TestAsyncSenderRunsInOrderOffTheCaller(t *testing.T) {
 	var mu sync.Mutex
 	var got []int
 	done := make(chan struct{})
-	s := newAsyncSender(4, func(v int) {
+	s := newAsyncSender(context.Background(), "test", 4, time.Second, func(v int) {
 		mu.Lock()
 		got = append(got, v)
 		n := len(got)
@@ -35,6 +38,7 @@ func TestAsyncSenderRunsInOrderOffTheCaller(t *testing.T) {
 			close(done)
 		}
 	})
+	defer s.stop()
 	for i := 1; i <= 3; i++ {
 		assert.True(t, s.enqueue(i))
 	}
@@ -48,24 +52,53 @@ func TestAsyncSenderRunsInOrderOffTheCaller(t *testing.T) {
 	assert.Equal(t, []int{1, 2, 3}, got)
 }
 
-// A hung backend (a D-Bus Notify with no timeout) must not stall callers:
-// once the queue is full, new items are dropped immediately.
-func TestAsyncSenderDropsWhenTheBackendHangs(t *testing.T) {
-	block := make(chan struct{})
-	defer close(block)
-	started := make(chan struct{}, 1)
-	s := newAsyncSender(2, func(int) {
-		select {
-		case started <- struct{}{}:
-		default:
+// A hung backend (a D-Bus Notify with no timeout) is detached after the
+// timeout; while it stays stuck new items are dropped (no second stuck call,
+// callers never wait), and once it returns sending resumes.
+func TestAsyncSenderDetachesAHungSendAndResumes(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var got []int
+	s := newAsyncSender(context.Background(), "test", 4, 50*time.Millisecond, func(v int) {
+		mu.Lock()
+		got = append(got, v)
+		mu.Unlock()
+		if v == 1 {
+			<-release
 		}
-		<-block
 	})
+	defer s.stop()
+	sent := func(v int) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Contains(got, v)
+	}
+
 	require.True(t, s.enqueue(1))
-	<-started // 1 is stuck in send
-	assert.True(t, s.enqueue(2))
-	assert.True(t, s.enqueue(3))
+	require.Eventually(t, func() bool { return sent(1) }, time.Second, 5*time.Millisecond)
 	start := time.Now()
-	assert.False(t, s.enqueue(4), "queue full → dropped")
-	assert.Less(t, time.Since(start), 100*time.Millisecond)
+	assert.True(t, s.enqueue(2))
+	assert.Less(t, time.Since(start), 20*time.Millisecond, "enqueue never waits")
+	require.Eventually(t, func() bool { return s.dropped.Load() == 1 }, time.Second, 5*time.Millisecond,
+		"2 is dropped while 1 is stuck")
+
+	close(release)
+	require.Eventually(t, func() bool { s.enqueue(3); return sent(3) }, 2*time.Second, 20*time.Millisecond,
+		"sending resumes once the stuck call returns")
+	assert.False(t, sent(2))
+}
+
+func TestAsyncSenderStops(t *testing.T) {
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newAsyncSender(ctx, "test", 4, time.Second, func(int) { calls.Add(1) })
+	s.stop()
+	s.stop() // idempotent
+	assert.False(t, s.enqueue(1))
+
+	s2 := newAsyncSender(ctx, "test", 4, time.Second, func(int) { calls.Add(1) })
+	cancel()
+	assert.False(t, s2.enqueue(1))
+	time.Sleep(50 * time.Millisecond)
+	assert.Zero(t, calls.Load())
 }
