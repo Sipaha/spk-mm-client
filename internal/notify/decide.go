@@ -115,7 +115,9 @@ func explicitlyMentioned(in Input) bool {
 	return false
 }
 
-func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == '-' || r == '@' }
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == '-' || r == '@'
+}
 
 // containsWord finds key in text not glued to other word characters
 // ("@alice," matches; "email@alice.example" does not). A trailing '.' is

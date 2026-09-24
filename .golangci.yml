@@ -24,3 +24,10 @@ linters:
         text: "exported .* should have comment or be unexported"
       - linters: [revive]
         text: "should have a package comment"
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - frontend
+      - build

@@ -14,8 +14,8 @@ func base() Input {
 		UserNotify:   map[string]string{"desktop": "mention", "channel": "true"},
 		MemberNotify: map[string]string{"desktop": "default", "mark_unread": "all"},
 		Status:       "online", NowMs: 1_000_000,
-		Post:         model.Post{ID: "p", ChannelID: "c", UserID: "bob", Message: "hello"},
-		ChannelType:  "O",
+		Post:        model.Post{ID: "p", ChannelID: "c", UserID: "bob", Message: "hello"},
+		ChannelType: "O",
 	}
 }
 

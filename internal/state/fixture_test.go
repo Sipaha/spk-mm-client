@@ -19,10 +19,11 @@ func notify(extra ...string) map[string]string {
 }
 
 // fixture: me=u1 in team t1.
-//   town   O read              off   O 2 unread (favorite)
-//   muted  O 3 unread, muted   arch  O archived
-//   dm2    D u2, 1 unread (mention)   dm3 D u3, read, direct_channel_show=false
-//   gm     G read, group_channel_show=true
+//
+//	town   O read              off   O 2 unread (favorite)
+//	muted  O 3 unread, muted   arch  O archived
+//	dm2    D u2, 1 unread (mention)   dm3 D u3, read, direct_channel_show=false
+//	gm     G read, group_channel_show=true
 func fixture() Bootstrap {
 	ch := func(id, typ, name string, total int64, lastPost int64) model.Channel {
 		team := "t1"

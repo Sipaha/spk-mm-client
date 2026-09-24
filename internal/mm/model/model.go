@@ -100,7 +100,7 @@ type Preference struct {
 type SidebarCategory struct {
 	ID          string   `json:"id"`
 	TeamID      string   `json:"team_id"`
-	Type        string   `json:"type"`    // favorites | channels | direct_messages | custom
+	Type        string   `json:"type"` // favorites | channels | direct_messages | custom
 	DisplayName string   `json:"display_name"`
 	Sorting     string   `json:"sorting"` // "" | manual | recent | alpha
 	SortOrder   int64    `json:"sort_order"`
