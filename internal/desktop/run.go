@@ -6,6 +6,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -25,9 +26,46 @@ type Options struct {
 // Run starts the Wails loop. Closing the window hides it (tray brings it
 // back); quitting is via the tray or ctx cancellation.
 func Run(ctx context.Context, o Options) error {
-	var win *application.WebviewWindow
+	// winMu guards both the window pointer and the "show was requested
+	// before the window existed" flag *together*, plus serializes every
+	// call into WebviewWindow.Show/Hide/Focus, under one mutex. That is
+	// deliberate, not just tidiness: win is written exactly once, right
+	// after app.Window.NewWithOptions returns below, but show/deliver/
+	// toggle can run before that — the SingleInstance.OnSecondInstanceLaunch
+	// and ApplicationLaunchedWithUrl callbacks are wired in during
+	// application.New()/app.Event... below, and Wails may invoke either
+	// from its own listener goroutine before this function reaches window
+	// creation (e.g. a second instance racing the first one's startup).
+	// Splitting "read win" / "set pending" / "store win" / "read pending"
+	// across independent atomics (an earlier version of this fix did that
+	// with atomic.Pointer + atomic.Bool) leaves a TOCTOU gap: a show()
+	// call can observe win==nil and be preempted *before* it sets pending,
+	// while the window-creation code already read pending as false and
+	// moved on — silently dropping the show request. Doing "check win,
+	// maybe set pending" and "store win, maybe clear+honor pending" as two
+	// atomic critical sections under the same lock removes that gap: they
+	// can never interleave.
+	//
+	// The mutex also serializes Show()/Hide()/Focus() themselves: Wails v3
+	// beta.25's Show() and Hide() (pkg/application/webview_window.go) both
+	// write w.options.Hidden with no locking of their own, and our usage
+	// pattern — SingleInstance's OnSecondInstanceLaunch calling Show() from
+	// one goroutine while the WindowClosing hook calls Hide() from another
+	// — hits that unsynchronized field concurrently (confirmed with `go
+	// build -race`: a real data race inside the pinned, vendored library,
+	// not something we can patch). We are the only caller of
+	// Show/Hide/Focus/IsVisible for this window, so holding the same lock
+	// around every call site removes the concurrency at its source.
+	var (
+		winMu   sync.Mutex
+		win     *application.WebviewWindow
+		pending bool
+	)
 	show := func() {
+		winMu.Lock()
+		defer winMu.Unlock()
 		if win == nil {
+			pending = true
 			return
 		}
 		win.Show()
@@ -39,8 +77,7 @@ func Run(ctx context.Context, o Options) error {
 		show()
 	}
 
-	var n *notifier
-	n = newNotifier(func(data map[string]any) {
+	n := newNotifier(func(data map[string]any) {
 		slog.Info("notification clicked", "data", data)
 		show()
 	})
@@ -51,10 +88,18 @@ func Run(ctx context.Context, o Options) error {
 		Icon:        o.IconPNG,
 		Services: []application.Service{
 			application.NewService(transport.NewAPI(o.Service)),
-			application.NewService(n.svc),
+			// n, not n.svc: notifier.ServiceStartup bounds the raw
+			// notification service's startup so a broken/absent OS
+			// notification backend can never abort app.Run() (see notify.go).
+			application.NewService(n),
 		},
 		Assets: application.AssetOptions{Handler: application.AssetFileServerFS(o.FrontendFS)},
-		SingleInstance: &application.SingleInstanceOptions{
+		// singleInstanceOptions (see singleinstance_linux.go/_other.go) may
+		// return nil on Linux when D-Bus is unreachable: SingleInstance
+		// there is a hard, uninterceptable os.Exit(1) inside
+		// application.New() itself if it can't dial the session bus, so we
+		// probe first and only opt in when it's safe to.
+		SingleInstance: singleInstanceOptions(application.SingleInstanceOptions{
 			UniqueID: UniqueID,
 			// Linux/Windows: the OS starts a second process with the
 			// mmauth:// URL; Wails forwards its args here and exits it.
@@ -65,7 +110,7 @@ func Run(ctx context.Context, o Options) error {
 				}
 				show()
 			},
-		},
+		}),
 	})
 
 	// Cold start with the URL (Linux/Windows argv) and macOS open-URL events.
@@ -78,12 +123,20 @@ func Run(ctx context.Context, o Options) error {
 	go func() {
 		ch, unsub := o.Emitter.Subscribe()
 		defer unsub()
-		for ev := range ch {
-			app.Event.Emit(ev.Type, ev.Payload)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				app.Event.Emit(ev.Type, ev.Payload)
+			}
 		}
 	}()
 
-	win = app.Window.NewWithOptions(application.WebviewWindowOptions{
+	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "spk-mattermost",
 		Width:            1200,
 		Height:           800,
@@ -91,16 +144,36 @@ func Run(ctx context.Context, o Options) error {
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
 	})
-	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		e.Cancel()
+		winMu.Lock()
 		win.Hide()
+		winMu.Unlock()
 	})
 
+	// Publish the window and, in the same critical section, capture
+	// whether a show() arrived while win was still nil. Honoring it via a
+	// direct call (not a recursive show()) avoids re-locking winMu.
+	winMu.Lock()
+	win = w
+	wasPending := pending
+	pending = false
+	winMu.Unlock()
+	if wasPending {
+		show()
+	}
+
 	toggle := func() {
+		winMu.Lock()
+		defer winMu.Unlock()
+		if win == nil {
+			return
+		}
 		if win.IsVisible() {
 			win.Hide()
 		} else {
-			show()
+			win.Show()
+			win.Focus()
 		}
 	}
 	setupTray(app, o.IconPNG, show, toggle, n)
