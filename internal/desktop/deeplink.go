@@ -1,5 +1,6 @@
-// Package desktop runs the Wails window, tray and OS integration. Only this
-// file builds without the `wails` tag, so its logic is testable everywhere.
+// Package desktop runs the Wails window, tray and OS integration. The untagged
+// files (deep links, D-Bus decisions, tray labels) build without the `wails`
+// tag, so their logic is testable everywhere.
 package desktop
 
 import (

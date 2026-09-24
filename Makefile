@@ -16,9 +16,10 @@ build: build-frontend build-go
 build-frontend:
 	cd frontend && pnpm install --frozen-lockfile --silent && pnpm build
 
+# Browser-mode binary: pure Go (modernc SQLite), no cgo. Desktop keeps cgo (GTK/WebKit).
 build-go:
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mattermost)
+	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mattermost)
 
 build-desktop: build-frontend
 	mkdir -p $(BIN_DIR)
