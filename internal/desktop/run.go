@@ -6,6 +6,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"runtime"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -24,7 +25,8 @@ type Options struct {
 }
 
 // Run starts the Wails loop. Closing the window hides it (tray brings it
-// back); quitting is via the tray or ctx cancellation.
+// back); quitting is via the tray or ctx cancellation. When the D-Bus session
+// bus is unusable on Linux there is no tray, and closing the window quits.
 func Run(ctx context.Context, o Options) error {
 	// winMu guards both the window pointer and the "show was requested
 	// before the window existed" flag *together*, plus serializes every
@@ -77,10 +79,36 @@ func Run(ctx context.Context, o Options) error {
 		show()
 	}
 
+	// Probe D-Bus once; every D-Bus-backed feature follows this one result
+	// (see integrationsFor).
+	feat := integrationsFor(runtime.GOOS, sessionBusState())
+	if feat.cutOffBus {
+		cutOffSessionBus() // before application.New() initializes GTK
+	}
+
 	n := newNotifier(func(data map[string]any) {
 		slog.Info("notification clicked", "data", data)
 		show()
 	})
+	if !feat.notifications {
+		n.disable()
+	}
+
+	var single *application.SingleInstanceOptions
+	if feat.singleInstance {
+		single = &application.SingleInstanceOptions{
+			UniqueID: UniqueID,
+			// Linux/Windows: the OS starts a second process with the
+			// mmauth:// URL; Wails forwards its args here and exits it.
+			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
+				if u, ok := deepLinkFromArgs(d.Args); ok {
+					deliver(u)
+					return
+				}
+				show()
+			},
+		}
+	}
 
 	app := application.New(application.Options{
 		Name:        "spk-mattermost",
@@ -94,23 +122,10 @@ func Run(ctx context.Context, o Options) error {
 			application.NewService(n),
 		},
 		Assets: application.AssetOptions{Handler: application.AssetFileServerFS(o.FrontendFS)},
-		// singleInstanceOptions (see singleinstance_linux.go/_other.go) may
-		// return nil on Linux when D-Bus is unreachable: SingleInstance
-		// there is a hard, uninterceptable os.Exit(1) inside
-		// application.New() itself if it can't dial the session bus, so we
-		// probe first and only opt in when it's safe to.
-		SingleInstance: singleInstanceOptions(application.SingleInstanceOptions{
-			UniqueID: UniqueID,
-			// Linux/Windows: the OS starts a second process with the
-			// mmauth:// URL; Wails forwards its args here and exits it.
-			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
-				if u, ok := deepLinkFromArgs(d.Args); ok {
-					deliver(u)
-					return
-				}
-				show()
-			},
-		}),
+		// nil on Linux when the D-Bus probe failed or timed out: Wails'
+		// SingleInstance there dials the bus with no timeout and os.Exit(1)s
+		// inside application.New() on failure (see busprobe_linux.go).
+		SingleInstance: single,
 	})
 
 	// Cold start with the URL (Linux/Windows argv) and macOS open-URL events.
@@ -144,12 +159,16 @@ func Run(ctx context.Context, o Options) error {
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
 	})
-	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		e.Cancel()
-		winMu.Lock()
-		win.Hide()
-		winMu.Unlock()
-	})
+	if feat.closeHides() {
+		w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+			e.Cancel()
+			winMu.Lock()
+			w.Hide()
+			winMu.Unlock()
+		})
+	}
+	// Without a tray nothing could bring a hidden window back, so the close
+	// proceeds and Wails quits on the last window closed.
 
 	// Publish the window and, in the same critical section, capture
 	// whether a show() arrived while win was still nil. Honoring it via a
@@ -176,7 +195,9 @@ func Run(ctx context.Context, o Options) error {
 			win.Focus()
 		}
 	}
-	setupTray(app, o.IconPNG, show, toggle, n)
+	if feat.tray {
+		setupTray(app, o.IconPNG, show, toggle, n)
+	}
 
 	go func() {
 		<-ctx.Done()

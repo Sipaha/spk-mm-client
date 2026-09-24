@@ -48,25 +48,37 @@ webkit2gtk-4.1, `github.com/wailsapp/wails/v3 v3.0.0-beta.25` /
 Собрано по фактам из Task 10/11/13 (реализация browser-режима, фронтенда и
 desktop-раннера):
 
-- **`SingleInstance` на Linux требует D-Bus синхронно, без таймаута, и роняет
-  весь процесс.** `application.New()` при непустом `Options.SingleInstance`
-  сразу пытается захватить D-Bus session-bus имя; при неудаче зовёт свой
-  внутренний `fatal()` → `os.Exit(1)` ещё **до возврата** из `application.New()`
-  — это не перехватить ни `defer`, ни `recover`, ни возвратом ошибки. Нарушает
-  общее правило «никаких блокирующих обращений к системным сервисам без
-  таймаута на старте». Исправлено пробой доступности шины
-  (`internal/desktop/singleinstance_linux.go`): `dbus.ConnectSessionBus()` с
-  таймаутом 2 с через тот же `startWithTimeout`; если шина недоступна —
-  `SingleInstance: nil` (Wails просто не берёт лок, повторный запуск открывает
-  второе окно вместо падения приложения). На Windows/macOS single-instance не
-  использует D-Bus — там это чистый passthrough
-  (`internal/desktop/singleinstance_other.go`).
-- **Сервис уведомлений на Linux тоже делает синхронный, неотменяемый
-  `dbus.ConnectSessionBus()`** внутри своего `ServiceStartup` — тот же риск, в
-  другой подсистеме. Обёрнут `notifier` (реализует
-  `application.ServiceStartup`/`ServiceShutdown`) через `startWithTimeout` с
-  таймаутом 2 с; при неудаче/таймауте — `WARN`-лог и тихая деградация вместо
-  краха.
+- **На Linux D-Bus без таймаута дёргают сразу несколько мест Wails и сама
+  GLib.** (1) `SingleInstance`: `application.New()` при непустом
+  `Options.SingleInstance` делает `dbus.ConnectSessionBus()` и при неудаче
+  зовёт внутренний `fatal()` → `os.Exit(1)` ещё **до возврата** из
+  `application.New()` — не перехватить ни `defer`, ни `recover`. (2) Сервис
+  уведомлений: синхронный `dbus.ConnectSessionBus()` в `ServiceStartup`.
+  (3) Трей: `SystemTray.Run` делает `InvokeSync(dbus.SessionBus())` на
+  главном GTK-потоке — при «зависшей» шине (сокет принимает соединение и
+  молчит) замерзает весь UI. (4) GLib: `g_application_run` регистрирует
+  `GApplication` на session bus без таймаута — при зависшей шине окно не
+  появляется вообще, даже если (1)–(3) выключены (проверено: без п. ниже
+  окно не появилось за 10 с, главный поток стоял в `g_application_run`).
+  Слушатель темы Wails (`monitorThemeChanges`, gtk3) и монитор питания
+  (system bus) работают в своих горутинах на собственных соединениях и
+  главный поток не блокируют; `isDarkMode` в gtk3-сборке D-Bus не трогает.
+- **Решение — одна проба, одно решение.** `internal/desktop/busprobe_linux.go`
+  один раз пробует `dbus.ConnectSessionBus()` с таймаутом 2 с
+  (`probeBus` → `busOK` / `busUnreachable` / `busTimedOut`);
+  `integrationsFor` (`internal/desktop/integrations.go`, без тега, с
+  юнит-тестом) по результату решает: шина в порядке → single-instance,
+  уведомления и трей включены, закрытие окна прячет его в трей; шина
+  недоступна **или** не ответила → всё это выключено, `DBUS_SESSION_BUS_ADDRESS`
+  процесса подменяется мёртвым адресом (`unix:path=/dev/null/…`, до
+  инициализации GTK — GLib, a11y и дочерние процессы WebKit падают сразу, а
+  не висят), закрытие окна завершает приложение (трея нет — окно было бы не
+  вернуть). Уведомления при этом не ждут второй таймаут (`notifier.disable`).
+  На Windows/macOS D-Bus нет — проба не выполняется
+  (`internal/desktop/busprobe_other.go`). Проверено вручную: обычный запуск —
+  окно, SNI-трей на шине, закрытие прячет окно; зависшая шина — окно через
+  ~2,5 с, закрытие завершает процесс; недоступная шина — окно через ~0,5 с,
+  закрытие завершает процесс.
 - **Форма пейлоада событий.** `EventManager.Emit(name string, data ...any)`:
   при ровно одном аргументе (не слайсе) — `event.Data = data[0]`, т.е. на
   фронт приходит сам пейлоад, а не однослайсовый массив. Приложение всегда

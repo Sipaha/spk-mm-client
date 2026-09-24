@@ -35,7 +35,12 @@ const notifyStartupTimeout = 2 * time.Second
 type notifier struct {
 	svc       *notifications.NotificationService
 	available atomic.Bool
+	disabled  bool // set before app.Run when the D-Bus probe failed
 }
+
+// disable makes ServiceStartup skip the backend entirely (no second wait on a
+// bus already known to be unusable). Call before app.Run.
+func (n *notifier) disable() { n.disabled = true }
 
 func newNotifier(onClick func(data map[string]any)) *notifier {
 	svc := notifications.New()
@@ -54,6 +59,10 @@ func newNotifier(onClick func(data map[string]any)) *notifier {
 // error: a failing or slow notification backend degrades notifications to a
 // no-op instead of aborting application startup.
 func (n *notifier) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	if n.disabled {
+		slog.Warn("notifications unavailable: D-Bus session bus unusable")
+		return nil
+	}
 	available, err := startWithTimeout(ctx, func(c context.Context) error {
 		return n.svc.ServiceStartup(c, options)
 	}, notifyStartupTimeout)
