@@ -32,6 +32,12 @@ const (
 	StatusNeedsReauth  Status = "needs_reauth"
 )
 
+// Hooks report a worker's changes to its owner. They run synchronously on
+// the worker's goroutines (the event loop, fetchers, background actions),
+// so they must return quickly and must never call the Manager's Start,
+// Stop or Close synchronously: Stop waits for the worker to finish while
+// holding the manager's lock, so a hook doing that deadlocks — hand such
+// work to another goroutine.
 type Hooks struct {
 	Changed func(serverID int64, ch state.Change)
 	Status  func(serverID int64, st Status)

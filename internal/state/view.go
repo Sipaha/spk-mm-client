@@ -43,6 +43,7 @@ type ChannelView struct {
 	Header   string     `json:"header"`
 	Purpose  string     `json:"purpose"`
 	TeamName string     `json:"team_name"`
+	TeamID   string     `json:"team_id"`
 	Posts    []PostView `json:"posts"`
 	NewSince int64      `json:"new_since"`
 	HasMore  bool       `json:"has_more"`
@@ -66,7 +67,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	}
 	v := ChannelView{
 		ID: ch.Info.ID, Name: s.channelNameLocked(ch), Type: ch.Info.Type, Header: ch.Info.Header, Purpose: ch.Info.Purpose,
-		TeamName: s.teamNameLocked(ch), Loaded: ch.Win.Loaded, Syncing: !ch.Win.Loaded || ch.Win.Stale,
+		TeamName: s.teamNameLocked(ch), TeamID: ch.Info.TeamID, Loaded: ch.Win.Loaded, Syncing: !ch.Win.Loaded || ch.Win.Stale,
 		GapAfter: ch.Win.GapAfter, Draft: s.drafts[channelID], MeID: s.me.ID, CRT: s.crtLocked(), Muted: ch.Member.Muted(),
 		Posts: []PostView{},
 	}

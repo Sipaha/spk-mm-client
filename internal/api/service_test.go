@@ -330,7 +330,7 @@ func TestServerDTOHasNoToken(t *testing.T) {
 	raw, _ := json.Marshal(list)
 	var generic []map[string]any
 	require.NoError(t, json.Unmarshal(raw, &generic))
-	assert.ElementsMatch(t, []string{"id", "name", "url", "signed_in", "username", "gitlab"}, keys(generic[0]))
+	assert.ElementsMatch(t, []string{"id", "name", "url", "signed_in", "username", "gitlab", "state", "unread", "mentions"}, keys(generic[0]))
 }
 
 func keys(m map[string]any) []string {

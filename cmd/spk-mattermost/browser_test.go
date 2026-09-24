@@ -34,7 +34,11 @@ func setup(t *testing.T, testAPI bool) (*httptest.Server, string, *mmfake.Server
 	t.Cleanup(fake.Close)
 	svc := api.NewService(st, em, func(string) error { return nil }, &http.Client{Timeout: 5 * time.Second})
 	dist := fstest.MapFS{"index.html": {Data: []byte("<html><head></head><body></body></html>")}}
-	h, token := newBrowserHandler(svc, em, dist, fake, testAPI)
+	notes := &api.RecordingNotifier{}
+	svc.SetNotifier(notes)
+	require.NoError(t, svc.Start(context.Background()))
+	t.Cleanup(svc.Close)
+	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes)
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
 	return ts, token, fake
@@ -211,4 +215,35 @@ func TestGracefulShutdownEndsOpenSSEConnectionPromptly(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down within 5s with an open SSE connection")
 	}
+}
+
+func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
+	ts, token, fake := setup(t, true)
+	post := func(path, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Origin", ts.URL)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+	resp := post("/api/_test/fake/post", `{"channel_id":"c-offtopic","username":"bob","message":"from test"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	found := false
+	for _, p := range fake.VisiblePosts("c-offtopic") {
+		found = found || p.Message == "from test"
+	}
+	assert.True(t, found)
+	assert.Equal(t, 200, post("/api/_test/fake/drop", `{"lose":true}`).StatusCode)
+	assert.Equal(t, 200, post("/api/_test/fake/revoke", `{}`).StatusCode)
+	assert.Equal(t, 0, fake.ActiveSessions())
+	assert.Equal(t, 200, post("/api/_test/notification-click", `{"server_id":1,"channel_id":"c-town"}`).StatusCode)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/_test/notifications", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	var list []api.Notification
+	require.NoError(t, json.NewDecoder(r.Body).Decode(&list))
+	assert.Empty(t, list)
 }

@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/spk/spk-mattermost/internal/auth"
 	"github.com/spk/spk-mattermost/internal/events"
 	"github.com/spk/spk-mattermost/internal/mm/rest"
+	"github.com/spk/spk-mattermost/internal/mmsync"
 	"github.com/spk/spk-mattermost/internal/store"
 )
 
@@ -27,6 +30,21 @@ type Service struct {
 	// context.Background(), so without it a hung server would freeze the
 	// action for minutes.
 	callTimeout time.Duration
+
+	co      *events.Coalescer
+	nq      *notifyQueue
+	getenv  func(string) string
+	tune    func(*mmsync.Config) // tests: shorter intervals
+	focusMu sync.Mutex           // serializes applyFocus
+
+	mu       sync.Mutex
+	mgr      *mmsync.Manager
+	notifier Notifier
+	badgeFns []func(Badge)
+	active   int64 // server shown in the UI
+	focused  bool  // window focused and visible
+	marks    map[int64]serverMark
+	total    Badge
 }
 
 const defaultCallTimeout = 15 * time.Second
@@ -34,11 +52,22 @@ const defaultCallTimeout = 15 * time.Second
 var _ API = (*Service)(nil)
 
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
-	return &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, callTimeout: defaultCallTimeout}
+	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, callTimeout: defaultCallTimeout,
+		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv}
+	s.nq = newNotifyQueue(notifyBurst, s.deliver)
+	return s
 }
 
-func toDTO(s store.Server) ServerDTO {
-	return ServerDTO{ID: s.ID, Name: s.Name, URL: s.URL, SignedIn: s.SignedIn(), Username: s.Username, GitLab: s.GitLab}
+func (s *Service) dto(srv store.Server) ServerDTO {
+	d := ServerDTO{ID: srv.ID, Name: srv.Name, URL: srv.URL, SignedIn: srv.SignedIn(), Username: srv.Username,
+		GitLab: srv.GitLab, State: string(mmsync.StatusOff)}
+	if m := s.manager(); m != nil {
+		if w := m.Worker(srv.ID); w != nil {
+			b := w.State().Badge()
+			d.State, d.Unread, d.Mentions = string(w.Status()), b.Unread, b.Mentions
+		}
+	}
+	return d
 }
 
 func (s *Service) emit(typ string, payload map[string]any) {
@@ -68,7 +97,7 @@ func (s *Service) ListServers(ctx context.Context) ([]ServerDTO, error) {
 	}
 	out := make([]ServerDTO, 0, len(list))
 	for _, srv := range list {
-		out = append(out, toDTO(srv))
+		out = append(out, s.dto(srv))
 	}
 	return out, nil
 }
@@ -112,7 +141,7 @@ func (s *Service) AddServer(ctx context.Context, rawURL string) (ServerDTO, erro
 	}
 	slog.Info("server added", "srv", srv)
 	s.emit(EventServersChanged, nil)
-	return toDTO(srv), nil
+	return s.dto(srv), nil
 }
 
 // revoke logs the session out server-side, best effort: a dead server or an
@@ -133,6 +162,7 @@ func (s *Service) RemoveServer(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	s.deactivate(id)
 	s.revoke(ctx, srv)
 	s.sso.Cancel(id)
 	if err := s.st.DeleteServer(ctx, id); err != nil {
@@ -183,12 +213,13 @@ func (s *Service) LoginWithPassword(ctx context.Context, id int64, login, passwo
 	if err := s.st.SetSession(ctx, id, tok, u.ID, u.Username); err != nil {
 		return ServerDTO{}, coded(CodeInternal, err)
 	}
+	s.activate(ctx, srv)
 	s.emit(EventServersChanged, nil)
 	srv, err = s.getServer(ctx, id)
 	if err != nil {
 		return ServerDTO{}, err
 	}
-	return toDTO(srv), nil
+	return s.dto(srv), nil
 }
 
 func (s *Service) Logout(ctx context.Context, id int64) error {
@@ -196,10 +227,14 @@ func (s *Service) Logout(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	s.deactivate(id) // final snapshot flush happens before the cache is dropped below
 	s.revoke(ctx, srv)
 	s.sso.Cancel(id) // a GitLab login still in flight must not sign back in
 	if err := s.st.ClearSession(ctx, id); err != nil {
 		return coded(CodeInternal, err)
+	}
+	if err := s.st.ClearCache(ctx, id); err != nil {
+		slog.Warn("cache clear after sign-out failed", "srv", id, "err", err)
 	}
 	s.emit(EventServersChanged, nil)
 	return nil
@@ -237,6 +272,7 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	if err := s.st.SetSession(ctx, srv.ID, res.Token, u.ID, u.Username); err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeInternal, err))
 	}
+	s.activate(ctx, srv)
 	slog.Info("signed in via GitLab", "srv", srv.ID, "username", u.Username)
 	s.emit(EventServersChanged, nil)
 	return nil

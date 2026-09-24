@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -35,6 +36,10 @@ func runDesktop(ctx context.Context) error {
 	em := events.NewEmitter()
 	open := func(u string) error { return application.Get().Browser.OpenURL(u) }
 	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
+	if err := svc.Start(ctx); err != nil {
+		slog.Error("sync did not start; chats stay offline", "err", err) // never block the window on it
+	}
+	defer svc.Close()
 	return desktop.Run(ctx, desktop.Options{
 		FrontendFS: frontendFS(),
 		Service:    svc,

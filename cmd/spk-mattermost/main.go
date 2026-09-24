@@ -14,6 +14,8 @@ type browserOpts struct {
 	Port    int
 	MMFake  bool
 	TestAPI bool
+	// FakeChannels adds open channels to the fake server (memory checks).
+	FakeChannels int
 }
 
 type runners struct {
@@ -42,6 +44,7 @@ func newRootCmd(run runners) *cobra.Command {
 	root.Flags().BoolVar(&browser, "browser", false, "Serve the UI over HTTP on localhost instead of opening a window")
 	root.Flags().IntVar(&o.Port, "port", 5180, "HTTP port for --browser")
 	root.Flags().BoolVar(&o.MMFake, "mm-fake", false, "Start an in-process fake Mattermost server (browser mode, development/e2e only)")
+	root.Flags().IntVar(&o.FakeChannels, "mm-fake-channels", 0, "Extra open channels (20 posts each) in the fake server — memory checks")
 	root.Flags().BoolVar(&o.TestAPI, "test-api", false, "Expose /api/_test/* automation routes (development/e2e only)")
 	return root
 }

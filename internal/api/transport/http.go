@@ -87,6 +87,16 @@ type idReq struct {
 	ID int64 `json:"id"`
 }
 
+type chanReq struct {
+	ID        int64  `json:"id"`
+	ChannelID string `json:"channel_id"`
+}
+
+type postReq struct {
+	ID     int64  `json:"id"`
+	PostID string `json:"post_id"`
+}
+
 func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/ListServers", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return h.api.ListServers(ctx)
@@ -111,6 +121,81 @@ func (h *HTTP) routes() {
 	}))
 	h.mux.HandleFunc("POST /api/Logout", handle(func(ctx context.Context, r *idReq) (any, error) {
 		return nil, h.api.Logout(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/AppInfo", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.AppInfo(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/SelectServer", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return nil, h.api.SelectServer(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/SetFocused", handle(func(ctx context.Context, r *struct {
+		Focused bool `json:"focused"`
+	}) (any, error) {
+		return nil, h.api.SetFocused(ctx, r.Focused)
+	}))
+	h.mux.HandleFunc("POST /api/NetworkChanged", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return nil, h.api.NetworkChanged(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/OpenURL", handle(func(ctx context.Context, r *struct {
+		URL string `json:"url"`
+	}) (any, error) {
+		return nil, h.api.OpenURL(ctx, r.URL)
+	}))
+	h.mux.HandleFunc("POST /api/Sidebar", handle(func(ctx context.Context, r *struct {
+		ID     int64  `json:"id"`
+		TeamID string `json:"team_id"`
+	}) (any, error) {
+		return h.api.Sidebar(ctx, r.ID, r.TeamID)
+	}))
+	h.mux.HandleFunc("POST /api/OpenChannel", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.OpenChannel(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/GetChannel", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.GetChannel(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/LoadOlder", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return nil, h.api.LoadOlder(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/SendPost", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		Message   string `json:"message"`
+	}) (any, error) {
+		return nil, h.api.SendPost(ctx, r.ID, r.ChannelID, r.Message)
+	}))
+	h.mux.HandleFunc("POST /api/RetryPost", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		PendingID string `json:"pending_id"`
+	}) (any, error) {
+		return nil, h.api.RetryPost(ctx, r.ID, r.ChannelID, r.PendingID)
+	}))
+	h.mux.HandleFunc("POST /api/DiscardPost", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		PendingID string `json:"pending_id"`
+	}) (any, error) {
+		return nil, h.api.DiscardPost(ctx, r.ID, r.ChannelID, r.PendingID)
+	}))
+	h.mux.HandleFunc("POST /api/EditPost", handle(func(ctx context.Context, r *struct {
+		ID      int64  `json:"id"`
+		PostID  string `json:"post_id"`
+		Message string `json:"message"`
+	}) (any, error) {
+		return nil, h.api.EditPost(ctx, r.ID, r.PostID, r.Message)
+	}))
+	h.mux.HandleFunc("POST /api/DeletePost", handle(func(ctx context.Context, r *postReq) (any, error) {
+		return nil, h.api.DeletePost(ctx, r.ID, r.PostID)
+	}))
+	h.mux.HandleFunc("POST /api/MarkUnread", handle(func(ctx context.Context, r *postReq) (any, error) {
+		return nil, h.api.MarkUnread(ctx, r.ID, r.PostID)
+	}))
+	h.mux.HandleFunc("POST /api/SaveDraft", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		Text      string `json:"text"`
+	}) (any, error) {
+		return nil, h.api.SaveDraft(ctx, r.ID, r.ChannelID, r.Text)
 	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }

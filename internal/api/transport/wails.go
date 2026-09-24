@@ -26,4 +26,42 @@ func (w *API) StartGitLabLogin(id int64) error { return w.a.StartGitLabLogin(con
 func (w *API) LoginWithPassword(id int64, login, password string) (api.ServerDTO, error) {
 	return w.a.LoginWithPassword(context.Background(), id, login, password)
 }
-func (w *API) Logout(id int64) error { return w.a.Logout(context.Background(), id) }
+func (w *API) Logout(id int64) error         { return w.a.Logout(context.Background(), id) }
+func (w *API) AppInfo() (api.AppInfo, error) { return w.a.AppInfo(context.Background()) }
+func (w *API) SelectServer(id int64) error   { return w.a.SelectServer(context.Background(), id) }
+func (w *API) SetFocused(focused bool) error { return w.a.SetFocused(context.Background(), focused) }
+func (w *API) NetworkChanged() error         { return w.a.NetworkChanged(context.Background()) }
+func (w *API) OpenURL(url string) error      { return w.a.OpenURL(context.Background(), url) }
+func (w *API) Sidebar(id int64, teamID string) (api.SidebarDTO, error) {
+	return w.a.Sidebar(context.Background(), id, teamID)
+}
+func (w *API) OpenChannel(id int64, channelID string) (api.ChannelDTO, error) {
+	return w.a.OpenChannel(context.Background(), id, channelID)
+}
+func (w *API) GetChannel(id int64, channelID string) (api.ChannelDTO, error) {
+	return w.a.GetChannel(context.Background(), id, channelID)
+}
+func (w *API) LoadOlder(id int64, channelID string) error {
+	return w.a.LoadOlder(context.Background(), id, channelID)
+}
+func (w *API) SendPost(id int64, channelID, message string) error {
+	return w.a.SendPost(context.Background(), id, channelID, message)
+}
+func (w *API) RetryPost(id int64, channelID, pendingID string) error {
+	return w.a.RetryPost(context.Background(), id, channelID, pendingID)
+}
+func (w *API) DiscardPost(id int64, channelID, pendingID string) error {
+	return w.a.DiscardPost(context.Background(), id, channelID, pendingID)
+}
+func (w *API) EditPost(id int64, postID, message string) error {
+	return w.a.EditPost(context.Background(), id, postID, message)
+}
+func (w *API) DeletePost(id int64, postID string) error {
+	return w.a.DeletePost(context.Background(), id, postID)
+}
+func (w *API) MarkUnread(id int64, postID string) error {
+	return w.a.MarkUnread(context.Background(), id, postID)
+}
+func (w *API) SaveDraft(id int64, channelID, text string) error {
+	return w.a.SaveDraft(context.Background(), id, channelID, text)
+}

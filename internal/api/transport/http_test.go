@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,9 +16,23 @@ import (
 
 	"github.com/spk/spk-mattermost/internal/api"
 	"github.com/spk/spk-mattermost/internal/events"
+	"github.com/spk/spk-mattermost/internal/state"
 )
 
-type fakeAPI struct{ added string }
+type fakeAPI struct {
+	api.API // unimplemented methods panic: tests call only what they set up
+	added   string
+	sent    []string
+}
+
+func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message string) error {
+	f.sent = append(f.sent, fmt.Sprintf("%d/%s/%s", id, channelID, message))
+	return nil
+}
+
+func (f *fakeAPI) GetChannel(_ context.Context, _ int64, channelID string) (api.ChannelDTO, error) {
+	return api.ChannelDTO{ID: channelID, Name: "Town", Posts: []state.PostView{}}, nil
+}
 
 func (f *fakeAPI) ListServers(context.Context) ([]api.ServerDTO, error) {
 	return []api.ServerDTO{{ID: 1, Name: "A"}}, nil
@@ -144,4 +159,21 @@ func TestSSEDeliversEvents(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestChatRoutes(t *testing.T) {
+	f := &fakeAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "SendPost", `{"id":3,"channel_id":"c1","message":"hi"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/c1/hi"}, f.sent)
+
+	resp = call(t, h, ts.URL, "GetChannel", `{"id":3,"channel_id":"c1"}`)
+	var ch map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ch))
+	assert.Equal(t, "c1", ch["id"])
+	assert.Equal(t, []any{}, ch["posts"])
 }

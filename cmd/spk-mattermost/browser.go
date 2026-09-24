@@ -62,7 +62,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 
 	var fake *mmfake.Server
 	if o.MMFake {
-		fake = mmfake.Start(mmfake.Options{})
+		fake = mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels})
 		closers = append(closers, fake.Close)
 		slog.Warn("fake Mattermost server started (development only)", "url", fake.URL())
 	}
@@ -75,7 +75,14 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		return nil
 	}
 	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
-	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI)
+	notes := &api.RecordingNotifier{} // browser mode has no OS notifications; e2e reads them via test-API
+	svc.SetNotifier(notes)
+	if err := svc.Start(ctx); err != nil {
+		cleanup()
+		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
+	}
+	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
+	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI, notes)
 
 	// Request contexts derive from baseCtx (via Server.BaseContext) instead
 	// of the default context.Background(), so cancelBase can cancel in-flight
@@ -114,7 +121,7 @@ func serveWithGracefulShutdown(ctx context.Context, srv *http.Server, cancelBase
 	return nil
 }
 
-func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool) (http.Handler, string) {
+func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool, notes *api.RecordingNotifier) (http.Handler, string) {
 	mux := http.NewServeMux()
 	httpAPI := transport.NewHTTP(svc, em)
 	token := httpAPI.AuthToken()
@@ -147,6 +154,55 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"url": u})
 		})
+		writeJSON := func(w http.ResponseWriter, status int, v any) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(v)
+		}
+		withFake := func(fn func(w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if fake == nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"code": "no_fake_server"})
+					return
+				}
+				fn(w, r)
+			}
+		}
+		tm.HandleFunc("GET /api/_test/notifications", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, notes.List())
+		})
+		tm.HandleFunc("POST /api/_test/notification-click", func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ServerID  int64  `json:"server_id"`
+				ChannelID string `json:"channel_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			svc.NotificationClicked(in.ServerID, in.ChannelID)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		})
+		tm.HandleFunc("POST /api/_test/fake/post", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ChannelID string `json:"channel_id"`
+				Username  string `json:"username"`
+				Message   string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			p := fake.PostAs(in.ChannelID, in.Username, in.Message)
+			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/drop", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Lose bool `json:"lose"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.DropConnections(in.Lose)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/revoke", withFake(func(w http.ResponseWriter, _ *http.Request) {
+			fake.RevokeAll()
+			fake.DropConnections(true)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
 		mux.Handle("/api/_test/", transport.AuthGuard(token, transport.OriginGuard(tm)))
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
 	}
