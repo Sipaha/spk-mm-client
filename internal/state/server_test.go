@@ -68,6 +68,33 @@ func TestBadgeSkipsMutedAndArchived(t *testing.T) {
 	assert.Equal(t, 1, b.Mentions)
 }
 
+// TestBadgeSkipsDeactivatedDMPartner: dm2's mention (u2) must not count once
+// u2 is known to be deactivated (api-facts: team/server sums skip DMs with a
+// deactivated user), but "off" still makes the badge unread.
+func TestBadgeSkipsDeactivatedDMPartner(t *testing.T) {
+	s := newFixture()
+	s.SetUsers([]model.User{{ID: "u2", Username: "bob", DeleteAt: 1}})
+	b := s.Badge()
+	assert.True(t, b.Unread, "off is still unread")
+	assert.Equal(t, 0, b.Mentions, "dm2's mention is excluded: its partner is deactivated")
+}
+
+// TestExcludedFromSumsLockedDeactivatedDMPartner exercises the shared helper
+// excludedFromSumsLocked directly: it is what both Badge() and
+// teamItemsLocked() (per-team TeamItem sums) rely on to skip a DM whose
+// partner is deactivated, while an unloaded partner still counts.
+func TestExcludedFromSumsLockedDeactivatedDMPartner(t *testing.T) {
+	s := newFixture()
+	s.mu.Lock()
+	assert.False(t, s.excludedFromSumsLocked(s.chans["dm2"]), "partner loaded and active: counts")
+	s.mu.Unlock()
+
+	s.SetUsers([]model.User{{ID: "u2", Username: "bob", DeleteAt: 1}})
+	s.mu.Lock()
+	assert.True(t, s.excludedFromSumsLocked(s.chans["dm2"]), "partner deactivated: excluded")
+	s.mu.Unlock()
+}
+
 func TestNameFormat(t *testing.T) {
 	s := newFixture()
 	sb := s.Sidebar("t1")

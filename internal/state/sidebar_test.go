@@ -31,6 +31,28 @@ func TestSidebarTeamsAggregateWithoutDMs(t *testing.T) {
 	assert.Equal(t, 0, sb.Teams[0].Mentions, "dm2 mention is not a team mention")
 }
 
+// TestTeamItemSkipsDeactivatedDMPartner: teamItemsLocked shares
+// excludedFromSumsLocked with Badge, so a DM whose partner is deactivated
+// must not contribute to the TeamItem sums either. Real DM channels always
+// carry an empty team_id (so they never reach this loop), but the shared
+// helper must behave identically regardless of call site.
+func TestTeamItemSkipsDeactivatedDMPartner(t *testing.T) {
+	b := fixture()
+	b.Channels = append(b.Channels, model.Channel{ID: "dmT", TeamID: "t1", Type: model.ChannelDirect, Name: "u1__u4", TotalMsgCount: 2})
+	b.Members = append(b.Members, model.ChannelMember{ChannelID: "dmT", UserID: "u1", MentionCount: 2, NotifyProps: notify()})
+	s := New(fixedNow)
+	s.Bootstrap(b)
+	s.SetUsers([]model.User{{ID: "u4", Username: "dave"}})
+
+	sb := s.Sidebar("")
+	require.Len(t, sb.Teams, 1)
+	assert.Equal(t, 2, sb.Teams[0].Mentions, "active partner: dmT's mentions count")
+
+	s.SetUsers([]model.User{{ID: "u4", Username: "dave", DeleteAt: 1}})
+	sb = s.Sidebar("")
+	assert.Equal(t, 0, sb.Teams[0].Mentions, "deactivated partner: dmT is excluded")
+}
+
 func TestUncategorizedChannelsAreAppended(t *testing.T) {
 	b := fixture()
 	b.Channels = append(b.Channels, model.Channel{ID: "new", TeamID: "t1", Type: model.ChannelOpen, DisplayName: "Brand New"})

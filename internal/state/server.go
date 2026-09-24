@@ -280,14 +280,30 @@ func (s *Server) unreadLocked(c *Chan) (unread bool, mentions int) {
 	return ment > 0 || (!c.Member.Muted() && msgs > 0), int(ment)
 }
 
+// excludedFromSumsLocked reports whether c must be skipped when summing
+// unread/mentions for a badge or a team (the webapp's getUnreadStatus):
+// muted channels, archived channels, and DMs whose partner is known to be
+// deactivated. A DM partner not loaded yet still counts.
+func (s *Server) excludedFromSumsLocked(c *Chan) bool {
+	if c.Info.DeleteAt != 0 || c.Member.Muted() {
+		return true
+	}
+	if c.Info.IsDM() {
+		if u, ok := s.users[c.Info.DMPartner(s.me.ID)]; ok && u.DeleteAt != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Badge sums mentions across the server, skipping muted and archived
-// channels (the webapp's getUnreadStatus).
+// channels and DMs with a deactivated partner (the webapp's getUnreadStatus).
 func (s *Server) Badge() Badge {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var b Badge
 	for _, c := range s.chans {
-		if c.Info.DeleteAt != 0 || c.Member.Muted() {
+		if s.excludedFromSumsLocked(c) {
 			continue
 		}
 		u, m := s.unreadLocked(c)

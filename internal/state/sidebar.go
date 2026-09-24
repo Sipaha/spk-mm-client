@@ -64,7 +64,7 @@ func (s *Server) teamItemsLocked() []TeamItem {
 	for _, t := range s.teams {
 		it := TeamItem{ID: t.ID, Name: t.Name, DisplayName: t.DisplayName}
 		for _, c := range s.chans {
-			if c.Info.TeamID != t.ID || c.Info.DeleteAt != 0 || c.Member.Muted() {
+			if c.Info.TeamID != t.ID || s.excludedFromSumsLocked(c) {
 				continue
 			}
 			u, m := s.unreadLocked(c)
