@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -76,8 +77,10 @@ func retryAfter(h http.Header, fallback time.Duration) time.Duration {
 }
 
 // do sends one API call. 429 is retried for every method (the server
-// rejected it before doing anything); transport errors only for GET, since
-// replaying a POST could post a message twice. out may be nil.
+// rejected it before doing anything); fast transport errors (refused, reset)
+// only for GET, since replaying a POST could post a message twice. A timed-out
+// attempt is never retried: a server that accepts and never answers would
+// otherwise hold the caller for maxAttempts × the client timeout. out may be nil.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (http.Header, error) {
 	var body []byte
 	if in != nil {
@@ -104,7 +107,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 			if ctx.Err() != nil {
 				return nil, &Error{Kind: KindNetwork, Err: ctx.Err()}
 			}
-			if method == http.MethodGet && attempt < maxAttempts {
+			if method == http.MethodGet && attempt < maxAttempts && !isTimeout(err) {
 				if serr := c.sleep(ctx, backoff(attempt)); serr != nil {
 					return nil, &Error{Kind: KindNetwork, Err: serr}
 				}
@@ -131,6 +134,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 		}
 		return resp.Header, nil
 	}
+}
+
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
 }
 
 func classify(resp *http.Response) error {

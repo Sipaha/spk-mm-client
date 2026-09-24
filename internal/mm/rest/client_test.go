@@ -2,8 +2,10 @@ package rest
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,4 +108,45 @@ func TestContextCancelStopsRetries(t *testing.T) {
 	c.sleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
 	err := c.Ping(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// stallingServer accepts TCP connections and never answers — the shape of a
+// hung server behind a load balancer.
+func stallingServer(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var accepted atomic.Int32
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return "http://" + ln.Addr().String(), &accepted
+}
+
+func TestTimeoutIsNotRetried(t *testing.T) {
+	url, accepted := stallingServer(t)
+	c := New(url, "", &http.Client{Timeout: 100 * time.Millisecond})
+	c.sleep = func(context.Context, time.Duration) error { return nil }
+	err := c.Ping(context.Background())
+	assert.True(t, IsNetwork(err))
+	assert.Equal(t, int32(1), accepted.Load(), "a timed-out GET must not be replayed")
 }

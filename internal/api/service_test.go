@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,6 +125,66 @@ func TestAddServerUnreachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := f.svc.AddServer(ctx, u)
+	assert.Equal(t, CodeUnreachable, codeOf(err))
+}
+
+// stallingURL returns the URL of a listener that accepts connections and
+// never answers.
+func stallingURL(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return "http://" + ln.Addr().String()
+}
+
+func addServerWithin(t *testing.T, svc *Service, u string, bound time.Duration) error {
+	t.Helper()
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { _, err := svc.AddServer(context.Background(), u); done <- err }()
+	select {
+	case err := <-done:
+		t.Logf("AddServer returned after %v", time.Since(start))
+		return err
+	case <-time.After(bound):
+		t.Fatalf("AddServer against a stalling server did not return within %v", bound)
+		return nil
+	}
+}
+
+func TestAddServerStallingServerIsNotRetried(t *testing.T) {
+	f := newFixture(t)
+	f.svc.hc = &http.Client{Timeout: 200 * time.Millisecond}
+	err := addServerWithin(t, f.svc, stallingURL(t), 1500*time.Millisecond)
+	assert.Equal(t, CodeUnreachable, codeOf(err))
+}
+
+func TestAddServerIsBoundedByCallTimeout(t *testing.T) {
+	f := newFixture(t)
+	f.svc.hc = &http.Client{} // no client timeout: only the service bound applies
+	f.svc.callTimeout = 300 * time.Millisecond
+	err := addServerWithin(t, f.svc, stallingURL(t), 3*time.Second)
 	assert.Equal(t, CodeUnreachable, codeOf(err))
 }
 

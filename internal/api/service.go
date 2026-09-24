@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/spk/spk-mattermost/internal/auth"
 	"github.com/spk/spk-mattermost/internal/events"
@@ -21,12 +22,19 @@ type Service struct {
 	sso  *auth.SSO
 	open Opener
 	hc   *http.Client
+	// callTimeout bounds each interactive call to a Mattermost server as a
+	// whole (all REST requests and retries): Wails bindings pass
+	// context.Background(), so without it a hung server would freeze the
+	// action for minutes.
+	callTimeout time.Duration
 }
+
+const defaultCallTimeout = 15 * time.Second
 
 var _ API = (*Service)(nil)
 
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
-	return &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc}
+	return &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, callTimeout: defaultCallTimeout}
 }
 
 func toDTO(s store.Server) ServerDTO {
@@ -35,6 +43,11 @@ func toDTO(s store.Server) ServerDTO {
 
 func (s *Service) emit(typ string, payload map[string]any) {
 	s.em.Emit(events.Event{Type: typ, Payload: payload})
+}
+
+// bounded limits one interactive exchange with a Mattermost server.
+func (s *Service) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, s.callTimeout)
 }
 
 func (s *Service) getServer(ctx context.Context, id int64) (store.Server, error) {
@@ -66,13 +79,15 @@ func (s *Service) AddServer(ctx context.Context, rawURL string) (ServerDTO, erro
 		return ServerDTO{}, coded(CodeInvalidURL, err)
 	}
 	c := rest.New(norm, "", s.hc)
-	if err := c.Ping(ctx); err != nil {
+	rctx, cancel := s.bounded(ctx)
+	defer cancel()
+	if err := c.Ping(rctx); err != nil {
 		if rest.IsNetwork(err) {
 			return ServerDTO{}, coded(CodeUnreachable, err)
 		}
 		return ServerDTO{}, coded(CodeNotMattermost, err)
 	}
-	cfg, err := c.ClientConfig(ctx)
+	cfg, err := c.ClientConfig(rctx)
 	if err != nil {
 		return ServerDTO{}, coded(CodeNotMattermost, err)
 	}
@@ -106,7 +121,9 @@ func (s *Service) revoke(ctx context.Context, srv store.Server) {
 	if !srv.SignedIn() {
 		return
 	}
-	if err := rest.New(srv.URL, srv.Token, s.hc).Logout(ctx); err != nil {
+	rctx, cancel := s.bounded(ctx)
+	defer cancel()
+	if err := rest.New(srv.URL, srv.Token, s.hc).Logout(rctx); err != nil {
 		slog.Warn("server-side logout failed; clearing locally", "srv", srv, "err", err)
 	}
 }
@@ -146,7 +163,9 @@ func (s *Service) LoginWithPassword(ctx context.Context, id int64, login, passwo
 	if err != nil {
 		return ServerDTO{}, err
 	}
-	tok, u, err := rest.New(srv.URL, "", s.hc).Login(ctx, login, password)
+	rctx, cancel := s.bounded(ctx)
+	tok, u, err := rest.New(srv.URL, "", s.hc).Login(rctx, login, password)
+	cancel()
 	if err != nil {
 		var re *rest.Error
 		if errors.As(err, &re) && (re.Kind == rest.KindAuth || re.Status == http.StatusBadRequest) {
@@ -199,7 +218,9 @@ func (s *Service) HandleDeepLink(ctx context.Context, raw string) error {
 	if err != nil {
 		return s.loginFailed(res.ServerID, err.(*CodedError))
 	}
-	u, err := rest.New(srv.URL, res.Token, s.hc).Me(ctx)
+	rctx, cancel := s.bounded(ctx)
+	u, err := rest.New(srv.URL, res.Token, s.hc).Me(rctx)
+	cancel()
 	if err != nil {
 		return s.loginFailed(res.ServerID, coded(CodeAuthFailed, err))
 	}
