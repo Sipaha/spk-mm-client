@@ -25,6 +25,7 @@ vi.mock('./api/client', async (orig) => {
       listServers: vi.fn(async () => h.list),
       selectServer: vi.fn().mockResolvedValue(undefined),
       setFocused: vi.fn().mockResolvedValue(undefined),
+      networkChanged: vi.fn().mockResolvedValue(undefined),
       sidebar: vi.fn(async () => sb),
       openChannel: vi.fn(async () => town),
       getChannel: vi.fn(async () => town),
@@ -81,4 +82,17 @@ test('needs_reauth keeps the chat and offers the sign-in form', async () => {
   expect(screen.getByText('Session expired — showing saved messages.')).toBeInTheDocument()
   await act(async () => screen.getAllByRole('button', { name: 'Sign in again' })[0].click())
   expect(screen.getByText('Your session on this server expired — sign in again')).toBeInTheDocument()
+})
+
+test('window focus and network changes are reported to Go', async () => {
+  const { client } = await import('./api/client')
+  h.list = []
+  render(<App />)
+  vi.mocked(client.setFocused).mockClear()
+  await act(async () => window.dispatchEvent(new Event('blur')))
+  expect(client.setFocused).toHaveBeenLastCalledWith(false)
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(client.setFocused).toHaveBeenLastCalledWith(true)
+  await act(async () => window.dispatchEvent(new Event('online')))
+  expect(client.networkChanged).toHaveBeenCalled()
 })

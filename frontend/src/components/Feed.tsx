@@ -11,6 +11,7 @@ interface Props {
   me: { id: string; username: string }
   locale: string
   actions: PostActions
+  editingId: string | null
   onLoadOlder(): Promise<boolean>
 }
 
@@ -49,7 +50,7 @@ export function pickAnchor(boxes: RowBox[], viewTop: number): { key: string; off
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
+export function Feed({ channel, me, locale, actions, editingId, onLoadOlder }: Props) {
   const rows = useMemo(() => buildRows(channel), [channel])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
@@ -185,6 +186,16 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
     fillViewportIfShort()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
 
+  // Scrolls the post being edited into view when editing starts. Matched by
+  // the post's real id, not the row key: a just-confirmed own post keeps its
+  // earlier pending_post_id as its row key (see feedRows), but editingId —
+  // set by edit()/editLastOwn() — is always the real post id.
+  useLayoutEffect(() => {
+    if (!editingId) return
+    const i = rows.findIndex((r) => r.kind === 'post' && r.post.id === editingId)
+    if (i >= 0) v.scrollToIndex(i, { align: 'auto' })
+  }, [editingId]) // only when editing starts, not on every new post
+
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
@@ -224,7 +235,7 @@ export function Feed({ channel, me, locale, actions, onLoadOlder }: Props) {
       case 'gap':
         return <div role="status" className="py-2 text-center text-xs text-neutral-500">{t('feed.gap')}</div>
       case 'post':
-        return <PostItem post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} />
+        return <PostItem post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} editing={r.post.id === editingId} />
     }
   }
 

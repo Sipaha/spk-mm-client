@@ -66,6 +66,17 @@ const ru = {
   'post.failed': 'Не отправлено.',
   'post.retry': 'Повторить',
   'post.discard': 'Удалить',
+  'composer.label': 'Сообщение',
+  'composer.placeholder': 'Написать в {name}',
+  'post.actions': 'Действия с сообщением',
+  'post.edit': 'Изменить',
+  'post.delete': 'Удалить сообщение',
+  'post.deleteConfirm': 'Удалить это сообщение?',
+  'post.markUnread': 'Отметить непрочитанным',
+  'post.copyLink': 'Копировать ссылку',
+  'post.editLabel': 'Правка сообщения',
+  'post.save': 'Сохранить',
+  'post.cancel': 'Отмена',
 } as const
 
 type Key = keyof typeof ru
@@ -138,6 +149,17 @@ const en: Record<Key, string> = {
   'post.failed': 'Not sent.',
   'post.retry': 'Retry',
   'post.discard': 'Discard',
+  'composer.label': 'Message',
+  'composer.placeholder': 'Write to {name}',
+  'post.actions': 'Message actions',
+  'post.edit': 'Edit',
+  'post.delete': 'Delete',
+  'post.deleteConfirm': 'Delete this message?',
+  'post.markUnread': 'Mark as unread',
+  'post.copyLink': 'Copy link',
+  'post.editLabel': 'Edit message',
+  'post.save': 'Save',
+  'post.cancel': 'Cancel',
 }
 
 export const dict = { ru, en }

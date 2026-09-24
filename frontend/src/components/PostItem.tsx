@@ -1,5 +1,6 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { Attachment, PostView } from '../api/types'
+import { errorMessage } from '../errors'
 import { formatSize, formatTime } from '../format'
 import { t } from '../i18n'
 import { emojiFor } from './emoji'
@@ -9,6 +10,12 @@ export interface PostActions {
   link(href: string): void
   retry(post: PostView): void
   discard(post: PostView): void
+  edit(post: PostView): void
+  saveEdit(post: PostView, message: string): Promise<void>
+  cancelEdit(): void
+  remove(post: PostView): void
+  markUnread(post: PostView): void
+  copyLink(post: PostView): void
 }
 
 interface Props {
@@ -18,6 +25,7 @@ interface Props {
   locale: string
   crt: boolean
   actions: PostActions
+  editing: boolean
 }
 
 const COLORS = ['bg-rose-500', 'bg-orange-500', 'bg-amber-600', 'bg-lime-600', 'bg-emerald-600', 'bg-teal-600', 'bg-sky-600', 'bg-indigo-500', 'bg-violet-500', 'bg-fuchsia-600']
@@ -65,7 +73,67 @@ function AttachmentView({ a, me, onLink }: { a: Attachment; me: string; onLink(h
   )
 }
 
-export const PostItem = memo(function PostItem({ post, head, me, locale, crt, actions }: Props) {
+function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
+  const [text, setText] = useState(post.message)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const save = async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await actions.saveEdit(post, text)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mt-1">
+      <textarea
+        aria-label={t('post.editLabel')}
+        autoFocus
+        value={text}
+        rows={Math.min(10, text.split('\n').length + 1)}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            actions.cancelEdit()
+          } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            void save()
+          }
+        }}
+        className="w-full resize-none rounded border border-blue-400 px-2 py-1 focus:outline-none"
+      />
+      <div className="flex items-center gap-3 text-xs">
+        <button className="rounded bg-blue-600 px-2 py-0.5 text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>
+          {t('post.save')}
+        </button>
+        <button className="underline" onClick={actions.cancelEdit}>
+          {t('post.cancel')}
+        </button>
+        {error && (
+          <span role="alert" className="text-red-600">
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ToolButton({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
+  return (
+    <button aria-label={label} title={label} onClick={onClick} className="rounded px-1.5 py-0.5 text-neutral-600 hover:bg-neutral-100">
+      {children}
+    </button>
+  )
+}
+
+export const PostItem = memo(function PostItem({ post, head, me, locale, crt, actions, editing }: Props) {
   const time = formatTime(post.create_at, locale)
   return (
     <article
@@ -83,10 +151,14 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
             <time className="text-xs text-neutral-500">{time}</time>
           </header>
         )}
-        <div className={post.system ? 'italic text-neutral-500' : ''}>
-          {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} />}
-          {post.edit_at ? <span className="text-xs text-neutral-400">{t('post.edited')}</span> : null}
-        </div>
+        {editing ? (
+          <EditBox post={post} actions={actions} />
+        ) : (
+          <div className={post.system ? 'italic text-neutral-500' : ''}>
+            {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} />}
+            {post.edit_at ? <span className="text-xs text-neutral-400">{t('post.edited')}</span> : null}
+          </div>
+        )}
         {post.attachments?.map((a, i) => <AttachmentView key={i} a={a} me={me.username} onLink={actions.link} />)}
         {post.files && post.files.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
@@ -118,6 +190,22 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
           </div>
         )}
       </div>
+      {!post.pending && !post.failed && !editing && (
+        <div
+          role="toolbar"
+          aria-label={t('post.actions')}
+          className="absolute -top-3 right-3 hidden gap-0.5 rounded border border-neutral-200 bg-white px-1 shadow-sm group-focus-within:flex group-hover:flex"
+        >
+          {post.user_id === me.id && !post.system && (
+            <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}>✎</ToolButton>
+          )}
+          <ToolButton label={t('post.markUnread')} onClick={() => actions.markUnread(post)}>◉</ToolButton>
+          <ToolButton label={t('post.copyLink')} onClick={() => actions.copyLink(post)}>🔗</ToolButton>
+          {post.user_id === me.id && !post.system && (
+            <ToolButton label={t('post.delete')} onClick={() => actions.remove(post)}>🗑</ToolButton>
+          )}
+        </div>
+      )}
     </article>
   )
 })

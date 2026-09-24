@@ -1,4 +1,5 @@
 import { client } from './api/client'
+import type { ChannelDTO } from './api/types'
 import { errorMessage } from './errors'
 import { useStore } from './store'
 
@@ -133,4 +134,38 @@ export const retryPost = (serverId: number, channelId: string, pendingId: string
 
 export const discardPost = (serverId: number, channelId: string, pendingId: string) => {
   client.discardPost(serverId, channelId, pendingId).catch(report)
+}
+
+export const sendPost = (serverId: number, channelId: string, message: string) => client.sendPost(serverId, channelId, message)
+
+export const saveDraft = (serverId: number, channelId: string, text: string) => {
+  client.saveDraft(serverId, channelId, text).catch(() => {}) // a lost draft is not worth an error banner
+}
+
+export async function editPost(serverId: number, postId: string, message: string) {
+  await client.editPost(serverId, postId, message)
+  useStore.getState().setEditing(null)
+}
+
+export const deletePost = (serverId: number, postId: string) => {
+  client.deletePost(serverId, postId).catch(report)
+}
+
+export const markUnread = (serverId: number, postId: string) => {
+  client.markUnread(serverId, postId).catch(report)
+}
+
+// Same permalink form as Mattermost: <server>/<team>/pl/<post id>.
+export const copyLink = (serverURL: string, teamName: string, postId: string) => {
+  navigator.clipboard?.writeText(`${serverURL}/${teamName}/pl/${postId}`).catch(report)
+}
+
+export function editLastOwn(ch: ChannelDTO) {
+  for (let i = ch.posts.length - 1; i >= 0; i--) {
+    const p = ch.posts[i]
+    if (p.user_id === ch.me_id && !p.pending && !p.failed && !p.system) {
+      useStore.getState().setEditing(p.id)
+      return
+    }
+  }
 }

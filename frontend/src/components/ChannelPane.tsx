@@ -1,22 +1,34 @@
 import { useMemo } from 'react'
 import type { ChannelDTO, ServerDTO } from '../api/types'
-import { discardPost, loadOlder, openLink, retryPost } from '../chat'
+import { copyLink, deletePost, discardPost, editLastOwn, editPost, loadOlder, markUnread, openLink, retryPost, saveDraft, sendPost } from '../chat'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
+import { useStore } from '../store'
+import { Composer } from './Composer'
 import { Feed } from './Feed'
 import { channelGlyph } from './glyph'
 import type { PostActions } from './PostItem'
 
 export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; channel: ChannelDTO | null; onReauth(): void }) {
   const channelId = channel?.id ?? ''
+  const teamName = channel?.team_name ?? ''
+  const editingId = useStore((s) => s.editingId)
   // Stable per channel: PostItem is memoized on its props.
   const actions = useMemo<PostActions>(
     () => ({
       link: openLink,
       retry: (p) => retryPost(server.id, channelId, p.id),
       discard: (p) => discardPost(server.id, channelId, p.id),
+      edit: (p) => useStore.getState().setEditing(p.id),
+      saveEdit: (p, message) => editPost(server.id, p.id, message),
+      cancelEdit: () => useStore.getState().setEditing(null),
+      remove: (p) => {
+        if (confirm(t('post.deleteConfirm'))) deletePost(server.id, p.id)
+      },
+      markUnread: (p) => markUnread(server.id, p.id),
+      copyLink: (p) => copyLink(server.url, teamName, p.id),
     }),
-    [server.id, channelId],
+    [server.id, server.url, channelId, teamName],
   )
   const me = useMemo(() => ({ id: channel?.me_id ?? '', username: server.username }), [channel?.me_id, server.username])
   if (!channel) {
@@ -48,7 +60,14 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           {t('channel.syncing')}
         </div>
       )}
-      <Feed key={channel.id} channel={channel} me={me} locale={formatLocale()} actions={actions} onLoadOlder={() => loadOlder(server.id, channel.id)} />
+      <Feed key={`feed-${channel.id}`} channel={channel} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} />
+      <Composer
+        key={`composer-${channel.id}`}
+        channel={channel}
+        onSend={(m) => sendPost(server.id, channel.id, m)}
+        onDraft={(text) => saveDraft(server.id, channel.id, text)}
+        onEditLast={() => editLastOwn(channel)}
+      />
     </section>
   )
 }

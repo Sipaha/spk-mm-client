@@ -37,7 +37,12 @@ const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
 })
 const props = (o: Partial<ChannelDTO> = {}, onLoadOlder = vi.fn().mockResolvedValue(true)) => ({
   channel: channel(o), me: { id: 'me', username: 'me' }, locale: 'en-US',
-  actions: { link: vi.fn(), retry: vi.fn(), discard: vi.fn() }, onLoadOlder,
+  actions: {
+    link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
+    cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
+  },
+  editingId: null,
+  onLoadOlder,
 })
 
 test('renders posts, the day separator and the new-messages line', () => {

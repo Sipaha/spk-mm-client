@@ -12,3 +12,17 @@ vi.mock('@wailsio/runtime', () => ({
   Call: { ByName: vi.fn() },
   Events: { On: vi.fn(() => () => {}) },
 }))
+
+// @testing-library/react's asyncWrapper (used to await interactions from
+// userEvent, e.g. inside act()) drains the microtask queue with a bare
+// `setTimeout(..., 0)` that it only pairs with an explicit fake-timer
+// advance when it detects *Jest's* fake timers (dist/pure.js
+// jestFakeTimersAreEnabled: `typeof jest !== 'undefined' && ...`). This
+// project uses Vitest, so with `vi.useFakeTimers()` active and no `jest`
+// global, that setTimeout(0) is never advanced and any `await
+// userEvent.type(...)/click(...)` hangs forever. Aliasing a minimal `jest`
+// global to Vitest's fake-timer API makes RTL's own detection branch fire,
+// closing the gap between the two fake-timer implementations.
+;(globalThis as unknown as { jest?: { advanceTimersByTime(ms: number): void } }).jest = {
+  advanceTimersByTime: (ms) => vi.advanceTimersByTime(ms),
+}

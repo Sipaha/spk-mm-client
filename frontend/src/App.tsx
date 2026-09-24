@@ -46,6 +46,27 @@ export function App() {
     })
   }, [setInfo, loginFailed])
 
+  useEffect(() => {
+    // Go marks the open channel read only while the window is focused and visible.
+    const set = (focused: boolean) => void client.setFocused(focused).catch(() => {})
+    const visible = () => document.visibilityState === 'visible'
+    const onFocus = () => set(visible())
+    const onBlur = () => set(false)
+    const onVisibility = () => set(visible() && document.hasFocus())
+    const onOnline = () => void client.networkChanged().catch(() => {})
+    set(visible() && document.hasFocus())
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('online', onOnline)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [])
+
   const selected = servers.find((s) => s.id === selectedId)
   const chat = selected && selected.signed_in && signInFor !== selected.id
   const signOut = (s: ServerDTO) => client.logout(s.id).catch(report)
