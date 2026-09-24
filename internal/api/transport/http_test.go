@@ -82,6 +82,38 @@ func TestMissingTokenIs401(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 }
 
+// TestWrongTokenIs401 locks in that a bearer token that doesn't match the
+// server's authToken is rejected, not just a missing one (TestMissingTokenIs401
+// covers the missing case).
+func TestWrongTokenIs401(t *testing.T) {
+	h := NewHTTP(&fakeAPI{}, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/ListServers", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	req.Header.Set("Origin", ts.URL)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+// TestQueryTokenOnlyAcceptedOnEventsRoute locks in that the ?token= query
+// fallback (needed because EventSource cannot set headers) is honored ONLY
+// on /api/events; any other /api/* route must reject a bare, even valid,
+// query token and demand the Authorization header instead.
+func TestQueryTokenOnlyAcceptedOnEventsRoute(t *testing.T) {
+	h := NewHTTP(&fakeAPI{}, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/ListServers?token="+h.AuthToken(), strings.NewReader(`{}`))
+	req.Header.Set("Origin", ts.URL)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
 func TestSSEDeliversEvents(t *testing.T) {
 	em := events.NewEmitter()
 	h := NewHTTP(&fakeAPI{}, em)
