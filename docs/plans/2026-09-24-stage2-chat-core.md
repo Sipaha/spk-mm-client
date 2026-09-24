@@ -10,6 +10,29 @@
 
 **Spec:** `docs/specs/2026-09-24-spk-mattermost-design.md`. Проверенные факты API Mattermost 10.11 (поля, события, ловушки `since`, resume, правила непрочитанного и уведомлений): `docs/research/2026-09-24-mattermost-api-facts.md`. **Исполнитель каждой задачи читает оба документа.**
 
+## Execution notes
+
+Этап реализован и проверен (2026-09-24); чекбоксы ниже отражают факт, текст задач не переписан. Полный ход ревью — `.superpowers/sdd/2026-09-24-stage2-chat-core/progress.md` (ledger), `final-findings.md`, `final-fix-report.md`.
+
+Добавленная к плану задача: **Task 14b — тёмная тема по умолчанию** (запрос пользователя 2026-09-24, «сделай еще чтобы темная тема была из коробки»), между Task 14 и Task 15.
+
+Заметные отклонения от текста плана, принятые в ревью (по одной строке, детали — Ruling в ledger):
+
+- Task 5: `readLoop` продвигает `NextSeq`/hello-состояние только после успешной доставки события — иначе тихая потеря при отмене контекста во время отправки.
+- Task 6: бейдж и суммы непрочитанного по команде исключают DM с деактивированным партнёром (`User.DeleteAt != 0`).
+- Task 7: счёт «новый/просмотрен» — через seen-set, отдельно от guard-счётчиков (без двойного счёта на границе снимок/событие); при активном канале обрезка окна переносит посты в конец `older`, а не выбрасывает; `HasMore` следует за `olderComplete`.
+- Task 8: инвариант stale/`GapAfter`/`SyncedAt` факторизован в один helper (`MarkStale` и `Restore`); `TakeSnapshot` документирует контракт повтора при неудачной записи.
+- Task 10: `ws.Dial` получает ограниченный по времени контекст на хендшейк; неудавшийся flush сохраняет дельту и сливает её со следующей; события, не доставленные к моменту `Resume()`, дочитываются перед вызовом; `Manager.Start/Stop/Close` сериализованы мьютексом; финальный flush — после drain, а не до.
+- Task 11: `OpenChannel` сначала переключает канал воркера, потом фокус (иначе фоновый сервер помечал канал прочитанным); при повторном входе старый воркер останавливается до отзыва старого токена; выход/удаление сервера сначала отменяют SSO в процессе.
+- Task 12: бейдж непрочитанного/упоминаний свёрнут в `aria-label` кнопки рейла, а не оставлен только в соседнем `<span>`.
+- Task 13: якорь подгрузки истории — первая реально видимая в DOM строка поста, не индекс виртуализатора; посты ключуются по `pending_post_id`, чтобы не перемонтироваться после эха; после `loadOlder` повторно проверяется, не короче ли лента вьюпорта.
+- Task 14: `editingId` сбрасывается при смене канала; после отказа отправки текст восстанавливается в поле и сохраняется как черновик.
+- Task 15: `OnBadge` воспроизводит текущий бейдж вновь подписавшемуся колбэку; зависшая отправка D-Bus-уведомления ограничена таймаутом и не блокирует остальные; dev `--mm-fake` пропускает добавление фейкового сервера, если такой уже есть, вместо ошибки.
+- Task 16: живая проверка (Step 5) разделена от остального шага — реализатор делает шаги 1–4 и 6, контроллер проводит живую проверку с пользователем отдельно и затем пушит; в этом плане Step 5 оставлен невыполненным (см. ниже), Step 7 (коммит и пуш) отмечен выполненным.
+- Финальное сквозное ревью и три волны фиксов после Task 16 (до пуша) изменили дизайн синхронизации: начало дыры (`gapStart`) — момент конца последнего доказанного потока; метка «живы до» не двигается, пока новый поток не доказан (resume с ожидаемым seq, hello без reset, либо 3-секундный тихий resume без hello и без удержанных обновлением метаданных событий); обновление метаданных выполняется на цикле событий, события на время REST-чтения копятся и переигрываются под guard; после «неустоявшегося» чтения — не больше одного дополнительного обновления; обновление целиком ограничено 45 с (частичное не применяется), повтор — 5 с с удвоением до 60 с; команда, чьи категории не прочитались, сохраняет прежние; посты в ещё неизвестном канале хранятся (`orphans`, до 100) и переигрываются после обновления; уведомление зависит от новизны поста, а не от guard'а; три подряд отказанных resume — новое подключение с полным ресинком; `SetWindow` на активном канале выбрасывает подгруженную историю, только если новая страница не достаёт до начала старого окна.
+
+Task 16, Step 5 (живая проверка на mm.citeck.ru) — в очереди, выполняется отдельно вместе с пользователем; не отмечен выполненным.
+
 ## Объём этапа
 
 Приоритет пользователя — рабочий клиент, которым можно заменить официальный (2026-09-24). Поэтому в этап 2 из этапа 3 перенесены **уведомления** и **бейдж трея**: без них с официального клиента не уйти.
@@ -108,7 +131,7 @@ tests/e2e/{helpers.ts,chat.spec.ts,reconnect.spec.ts}
 - Produces (пакет `model`): `Team`, `Channel` (+ `IsDM()`, `IsGroup()`, `DMPartner(me string) string`), `ChannelMember` (+ `Muted()`), `User` (+ `FullName()`), `Preference`, `SidebarCategory`, `OrderedCategories`, `Post`, `PostProps`, `Attachment`, `AttachmentField`, `PostMetadata`, `FileInfo`, `Reaction`, `PostList` (+ `Ascending() []Post`), `ChannelUnreadAt`, `Status`, `Flag`, `FlexString`; константы `ChannelOpen/Private/Direct/Group`.
 - Produces (пакет `rest`): `type User = model.User`; `ClientConfig` + `CollapsedThreads`, `TeammateNameDisplay`, `LockTeammateNameDisplay`; `(*Client).WithLimiter(*rate.Limiter) *Client`; `NewLimiter() *rate.Limiter` (10/с, burst 20); `MyTeams`, `MyChannels`, `MyChannelMembers`, `Categories(ctx, teamID)`, `MyPreferences`, `MyStatus`, `UsersByIDs(ctx, ids)`, `ChannelPosts(ctx, channelID, PostsQuery)`; `type PostsQuery struct{ PerPage int; Before string; Since int64; CollapsedThreads bool }`; `const SinceLimit = 1000`.
 
-- [ ] **Step 1: Тест модели (терпимый разбор props, порядок PostList, DM-партнёр)**
+- [x] **Step 1: Тест модели (терпимый разбор props, порядок PostList, DM-партнёр)**
 
 `internal/mm/model/model_test.go`:
 ```go
@@ -182,12 +205,12 @@ func TestDMPartnerAndMuted(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mm/model/`
 Expected: FAIL (пакета нет).
 
-- [ ] **Step 3: Реализация модели**
+- [x] **Step 3: Реализация модели**
 
 `internal/mm/model/model.go`:
 ```go
@@ -484,12 +507,12 @@ func (p *PostProps) UnmarshalJSON(b []byte) error {
 ```
 (`json.Unmarshal(nil, …)` для отсутствующего ключа возвращает ошибку, и поле остаётся нулевым — это ожидаемо.)
 
-- [ ] **Step 4: Тест модели проходит**
+- [x] **Step 4: Тест модели проходит**
 
 Run: `go test ./internal/mm/model/`
 Expected: PASS.
 
-- [ ] **Step 5: Падающие тесты REST-чтения и лимитера**
+- [x] **Step 5: Падающие тесты REST-чтения и лимитера**
 
 `internal/mm/rest/chat_test.go` (использует `newTestClient` из `client_test.go`):
 ```go
@@ -647,12 +670,12 @@ func TestLimiterWaitHonoursContext(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Запустить — падает**
+- [x] **Step 6: Запустить — падает**
 
 Run: `go get golang.org/x/time@v0.16.0 && go test ./internal/mm/rest/`
 Expected: FAIL (нет `MyTeams`, `WithLimiter` и т.д.).
 
-- [ ] **Step 7: Реализация**
+- [x] **Step 7: Реализация**
 
 В `client.go`: поле `lim *rate.Limiter` в `Client`; метод
 ```go
@@ -799,12 +822,12 @@ func (c *Client) ChannelPosts(ctx context.Context, channelID string, q PostsQuer
 ```
 Поправить места, где использовался `rest.User` с полями (`internal/auth`, `internal/api`) — поля `ID`/`Username` сохранились, правки не нужны; `go build ./...` это подтвердит.
 
-- [ ] **Step 8: Тесты проходят, сборка чистая**
+- [x] **Step 8: Тесты проходят, сборка чистая**
 
 Run: `go test ./internal/mm/... && go build ./... && go vet ./...`
 Expected: PASS, без ошибок.
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 git add go.mod go.sum internal/mm
@@ -822,7 +845,7 @@ git commit -m "mm: wire model, REST read endpoints for chat, per-server rate lim
 - Consumes: Task 1 (`model.*`, `Client.do`).
 - Produces: `CreatePost(ctx, model.Post) (model.Post, error)`; `PatchPost(ctx, postID, message string) (model.Post, error)`; `DeletePost(ctx, postID string) error`; `ViewChannel(ctx, channelID string) error`; `SetUnread(ctx, postID string) (model.ChannelUnreadAt, error)`; `SavePreferences(ctx, []model.Preference) error`.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/mm/rest/write_test.go`:
 ```go
@@ -909,12 +932,12 @@ func TestPatchDeleteViewUnreadPrefs(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mm/rest/ -run 'Create|Patch'`
 Expected: FAIL (нет методов).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/mm/rest/write.go`:
 ```go
@@ -978,12 +1001,12 @@ func (c *Client) SavePreferences(ctx context.Context, prefs []model.Preference) 
 }
 ```
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go test -race ./internal/mm/rest/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/mm/rest
@@ -1011,7 +1034,7 @@ git commit -m "mm/rest: create/patch/delete post, view channel, set unread, save
   - Управление из тестов (потокобезопасно): `(*Server).PostAs(channelID, username, message string) model.Post`, `ReplyAs(channelID, rootID, username, message string) model.Post`, `EditAs(postID, message string)`, `DeleteAs(postID string)`, `AddChannel(id, display string, usernames ...string)`, `Member(channelID, username string) model.ChannelMember`, `Channel(channelID string) model.Channel`, `VisiblePosts(channelID string) []model.Post`, `SetStatus(username, status string)`, `Events() []RecordedEvent` (`RecordedEvent{Name string; To []string}`).
   - Внутренний крючок публикации для Task 4: `(*Server).publishLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions []string)`; тип `wsBroadcast{UserID, ChannelID, TeamID string}` с json-тегами `user_id/channel_id/team_id`.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/mmfake/chat_test.go`:
 ```go
@@ -1238,12 +1261,12 @@ func TestUsersPrefsStatus(t *testing.T) {
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mmfake/`
 Expected: FAIL (нет `Channel`, `PostAs`, маршрутов).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `server.go`:
 - `User` дополнить `FirstName, LastName string`; пользователи по умолчанию — alice/bob/carol (`u-alice`/`u-bob`/`u-carol`, пароль `secret`).
@@ -1993,12 +2016,12 @@ func (s *Server) allMembersLocked() []*model.ChannelMember {
 ```
 (Поле `chat chatData` добавить в `Server`.)
 
-- [ ] **Step 4: Тесты проходят (включая старые тесты входа)**
+- [x] **Step 4: Тесты проходят (включая старые тесты входа)**
 
 Run: `go test -race ./internal/mmfake/ ./cmd/... ./internal/api/...`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/mmfake
@@ -2017,7 +2040,7 @@ git commit -m "mmfake: chat data, REST for channels/posts/members/categories, te
 - Consumes: Task 3 (`publishLocked`, `wsBroadcast`, `authed`).
 - Produces: `GET /api/v4/websocket` — авторизация `Authorization: Bearer` (иначе 401 до upgrade); `?connection_id=&sequence_number=` — resume по семантике сервера (досылка из dead queue на 128 событий / без потерь / новый `connection_id` + `hello` seq 0); `(*Server).DropConnections(lose bool)` — закрыть все сокеты; `lose=true` забывает сессии, и следующий resume получает новый `hello`. Событие: `{"event","data","broadcast","seq"}`; у `posted` в `data.mentions` — JSON-строка `["<id получателя>"]`, только если получатель упомянут.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/mmfake/ws_test.go`:
 ```go
@@ -2163,12 +2186,12 @@ func TestWSOnlyMembersGetChannelEvents(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mmfake/ -run WS`
 Expected: FAIL (нет маршрута, `DropConnections`).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/mmfake/ws.go`:
 ```go
@@ -2352,12 +2375,12 @@ func (s *Server) DropConnections(lose bool) {
 ```
 В `server.go`: поле `hub wsHub` (инициализировать `sessions: map[string]*wsSession{}` в `Start`), маршрут `mux.HandleFunc("GET /api/v4/websocket", s.websocketHandler)`; в `Close()` перед `s.ts.Close()` вызвать `s.DropConnections(true)`, иначе `httptest.Server.Close` ждёт висящие сокеты.
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go mod tidy && go test -race ./internal/mmfake/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add go.mod go.sum internal/mmfake
@@ -2383,7 +2406,7 @@ git commit -m "mmfake: websocket with hello, seq, dead-queue resume and drop con
   - `func URL(base string, r Resume) (string, error)`.
   - Декодеры: `DecodePosted(Event) (Posted, error)` (`Posted{Post model.Post; ChannelType, ChannelName, TeamID, SenderName string; Mentions, Followers []string}`), `DecodePost`, `DecodeReaction`, `DecodeChannelTimes`, `DecodePostUnread` (`model.ChannelUnreadAt`, channel/team из broadcast), `DecodeChannel`, `DecodeMember`, `DecodePreferences`, `DecodeUser`, `(Event).Str(key string) string`.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/mm/ws/conn_test.go`:
 ```go
@@ -2651,12 +2674,12 @@ func TestDecodePostedRejectsGarbage(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mm/ws/`
 Expected: FAIL (пакета нет).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/mm/ws/conn.go`:
 ```go
@@ -3001,12 +3024,12 @@ func DecodeUser(e Event) (model.User, error) {
 }
 ```
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go test -race ./internal/mm/ws/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/mm/ws go.mod go.sum
@@ -3032,7 +3055,7 @@ git commit -m "mm/ws: websocket client with bearer auth, seq tracking, resume an
   - `type Badge struct{ Unread bool; Mentions int }`; `type SidebarView struct{ TeamID string; SelectedChannelID string; Teams []TeamItem; Categories []CategoryView }`; `type TeamItem struct{ ID, Name, DisplayName string; Unread bool; Mentions int }`; `type CategoryView struct{ ID, Type, Name string; Collapsed bool; Channels []ChannelItem }`; `type ChannelItem struct{ ID, Name, Type string; Unread bool; Mentions int; Muted bool }` — все с json-тегами snake_case, это DTO для UI.
   - Внутренние (для Task 7/8): `mu`, `chans map[string]*Chan`, `prefs map[prefKey]string`, `users`, `nav Nav`, `active`, `focused`, `dirty dirtySet`, `unreadLocked(*Chan) (bool, int)`, `crtLocked()`, `displayNameLocked(userID)`, `channelNameLocked(*Chan)`, `prefLocked(cat, name, def)`.
 
-- [ ] **Step 1: Фикстура и падающие тесты**
+- [x] **Step 1: Фикстура и падающие тесты**
 
 `internal/state/fixture_test.go`:
 ```go
@@ -3352,12 +3375,12 @@ func TestSelectedChannelDefaultsAndSticks(t *testing.T) {
 ```
 (Правило выбора по умолчанию: последний открытый канал команды, иначе канал команды с `Name == "town-square"`, иначе первый канал первой непустой категории.)
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/state/`
 Expected: FAIL (пакета нет).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/state/server.go`:
 ```go
@@ -4048,12 +4071,12 @@ func (d *dirtySet) dropChan(id string) { delete(d.chans, id); delete(d.posts, id
 ```
 Task 7 и 8 заменяют их полными версиями. Поля `Server`, которые использует только Task 7 (`newSince`, `older`, `olderComplete`, `suppressView`, `focused`), можно добавить в Task 7, если `golangci-lint` (`unused`) ругается на них здесь.)
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go test -race ./internal/state/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/state
@@ -4084,7 +4107,7 @@ git commit -m "state: hot metadata layer — unread (CRT-aware), badges, sidebar
 - Окно ≤ 60 постов; при обрезке `Complete = false`. Страница `SetWindow` сливается с постами окна, которые **новее** страницы (пришли по WS во время запроса).
 - `MergeSince`: `original_id != ""` пропустить; `delete_at > 0` — удалить из окна (и ответы под ним); новые — вставить, если не старше самого старого поста окна (или окно `Complete`/пустое); известные — заменить, если `update_at` не меньше.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/state/posts_test.go`:
 ```go
@@ -4531,12 +4554,12 @@ func TestChannelViewDMNameAndUnknownChannel(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/state/`
 Expected: FAIL (нет `SetWindow`, `ApplyEvent`, `ChannelView`, …).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/state/posts.go` (полностью заменяет заглушку Task 6):
 ```go
@@ -5509,12 +5532,12 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 }
 ```
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go test -race ./internal/state/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/state
@@ -5536,7 +5559,7 @@ git commit -m "state: post windows, pending posts, WS event application, channel
   - Виды записей: `meta/server` (me, status, config, prefs, teams, categories, nav, version), `live/at` (мс последнего живого WS — отдельной крошечной записью, чтобы не переписывать meta каждые 3 с), `chan/<id>` (канал, членство, черновик), `posts/<id>` (окно), `user/<id>`.
   - После `Restore` каждое окно помечено `Stale`, а `SyncedAt` окна, которое было свежим в момент снимка, поднят до `live/at`. Воркер догоняет такие окна через `since`.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/store/cache_test.go`:
 ```go
@@ -5682,12 +5705,12 @@ func TestRestoreRejectsMissingOrForeignVersion(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/store/ ./internal/state/`
 Expected: FAIL (нет `SaveCache`, `TakeSnapshot`, …).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/store/migrations/0002_cache.sql`:
 ```sql
@@ -5979,12 +6002,12 @@ func (s *Server) Restore(entries []store.CacheEntry) error {
 ```
 В `Server` (server.go) добавить поле `liveAt int64`.
 
-- [ ] **Step 4: Тесты проходят**
+- [x] **Step 4: Тесты проходят**
 
 Run: `go test -race ./internal/store/ ./internal/state/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/store internal/state
@@ -6004,7 +6027,7 @@ git commit -m "store+state: write-behind cache snapshot (cache_entries), restore
 
 Порядок правил — `docs/research/…` §6 (веб-клиент `notification_actions.tsx`); исключение «вас добавили в канал» для системных постов не реализуем.
 
-- [ ] **Step 1: Падающий тест**
+- [x] **Step 1: Падающий тест**
 
 `internal/notify/decide_test.go`:
 ```go
@@ -6115,12 +6138,12 @@ func TestDecide(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/notify/`
 Expected: FAIL (пакета нет).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `internal/notify/decide.go`:
 ```go
@@ -6276,12 +6299,12 @@ func lastRune(s string) rune {
 }
 ```
 
-- [ ] **Step 4: Тест проходит**
+- [x] **Step 4: Тест проходит**
 
 Run: `go test -race ./internal/notify/`
 Expected: PASS.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add internal/notify
@@ -6317,7 +6340,7 @@ git commit -m "notify: desktop notification rules mirroring the Mattermost webap
 - Снимок: каждые `FlushEvery` в состоянии `live` — `SetLiveAt(now)`, затем `TakeSnapshot` → `SaveCache`; финальный сброс при остановке. Холодный старт: `LoadCache` → `Restore`; `ErrSnapshotVersion` → `ClearCache`.
 - Прочтение: `OpenChannel` и `SetFocused(true)` зовут `view`, если окно в фокусе и канал непрочитан. Одновременно — не больше одного запроса на канал; после ответа проверка повторяется (пришло новое, пока шёл запрос).
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `internal/mmsync/harness_test.go`:
 ```go
@@ -6755,12 +6778,12 @@ func TestManagerStartsSignedInServersOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/mmsync/`
 Expected: FAIL (пакета нет).
 
-- [ ] **Step 3: Дополнения в state и mmfake**
+- [x] **Step 3: Дополнения в state и mmfake**
 
 `internal/state/posts.go`:
 ```go
@@ -6811,7 +6834,7 @@ func (s *Server) FailPosts(n int) {
 	s.mu.Unlock()
 ```
 
-- [ ] **Step 4: Реализация воркера**
+- [x] **Step 4: Реализация воркера**
 
 `internal/mmsync/worker.go`:
 ```go
@@ -7761,12 +7784,12 @@ func (m *Manager) Close() {
 ```
 (Импорт `store` в manager.go.)
 
-- [ ] **Step 5: Тесты проходят (и под -race стабильно)**
+- [x] **Step 5: Тесты проходят (и под -race стабильно)**
 
 Run: `go test -race -count=3 ./internal/mmsync/ ./internal/state/ ./internal/mmfake/`
 Expected: PASS все три прогона.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add internal/mmsync internal/state internal/mmfake
@@ -7810,7 +7833,7 @@ git commit -m "mmsync: per-server sync worker — session FSM, WS resume/resync,
 - `OpenURL` пропускает только `http`/`https` с хостом и `mailto`; остальное — `invalid_url`.
 - `AppInfo.FormatLocale` — из `LC_ALL`, `LC_TIME`, `LANG` (первое непустое): `ru_RU.UTF-8` → `ru-RU`; `C`/`POSIX`/пусто → `""` (UI берёт `navigator.language`).
 
-- [ ] **Step 1: Падающие тесты схлопывания**
+- [x] **Step 1: Падающие тесты схлопывания**
 
 `internal/events/coalesce_test.go`:
 ```go
@@ -7901,12 +7924,12 @@ func TestCoalescerCloseDropsPending(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Запустить — падает**
+- [x] **Step 2: Запустить — падает**
 
 Run: `go test ./internal/events/`
 Expected: FAIL (`undefined: NewCoalescer`).
 
-- [ ] **Step 3: Реализация схлопывания**
+- [x] **Step 3: Реализация схлопывания**
 
 `internal/events/coalesce.go`:
 ```go
@@ -7985,7 +8008,7 @@ func (c *Coalescer) Close() {
 Run: `go test -race ./internal/events/`
 Expected: PASS.
 
-- [ ] **Step 4: Падающие тесты сервиса**
+- [x] **Step 4: Падающие тесты сервиса**
 
 `internal/api/locale_test.go`:
 ```go
@@ -8407,12 +8430,12 @@ func TestNotificationClickOpensChannel(t *testing.T) {
 ```
 (`newFixture`, `codeOf`, `nextEvent` — из существующего `service_test.go`. `TestSigningInAsAnotherUserDropsCache` вызывает `Start` второй раз — `Start` обязан сначала закрыть прежний менеджер, см. Step 6.)
 
-- [ ] **Step 5: Запустить — падает**
+- [x] **Step 5: Запустить — падает**
 
 Run: `go test ./internal/api/`
 Expected: FAIL (компиляция: нет `formatLocale`, `notificationFor`, `newNotifyQueue`, `Start`, …).
 
-- [ ] **Step 6: Реализация**
+- [x] **Step 6: Реализация**
 
 `internal/state/view.go` — поле и заполнение:
 ```go
@@ -9178,12 +9201,12 @@ func (s *Service) OpenURL(_ context.Context, raw string) error {
 }
 ```
 
-- [ ] **Step 7: Тесты сервиса проходят**
+- [x] **Step 7: Тесты сервиса проходят**
 
 Run: `go test -race -count=2 ./internal/api/ ./internal/events/ ./internal/state/`
 Expected: PASS (включая старые тесты этапа 1).
 
-- [ ] **Step 8: Транспорты — тест HTTP-маршрутов**
+- [x] **Step 8: Транспорты — тест HTTP-маршрутов**
 
 `internal/api/transport/http_test.go`: `fakeAPI` встраивает интерфейс, чтобы не реализовывать всё, и запоминает вызовы чата:
 ```go
@@ -9225,7 +9248,7 @@ func TestChatRoutes(t *testing.T) {
 Run: `go test ./internal/api/transport/`
 Expected: FAIL (`404` на `SendPost`).
 
-- [ ] **Step 9: Транспорты — реализация**
+- [x] **Step 9: Транспорты — реализация**
 
 `internal/api/transport/http.go` — типы запросов и маршруты (добавить в `routes()` перед `GET /api/events`):
 ```go
@@ -9362,7 +9385,7 @@ func (w *API) SaveDraft(id int64, channelID, text string) error {
 Run: `go test ./internal/api/... && go vet -tags wails ./internal/api/...`
 Expected: PASS.
 
-- [ ] **Step 10: Браузерный режим — тест test-API фейка**
+- [x] **Step 10: Браузерный режим — тест test-API фейка**
 
 `cmd/spk-mattermost/browser_test.go`: в `setup` сервис запускается и закрывается, в хендлер передаётся записывающий notifier:
 ```go
@@ -9409,7 +9432,7 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 Run: `go test ./cmd/spk-mattermost/`
 Expected: FAIL (сигнатура `newBrowserHandler`, маршрутов нет).
 
-- [ ] **Step 11: Браузерный режим и desktop-раннер — реализация**
+- [x] **Step 11: Браузерный режим и desktop-раннер — реализация**
 
 `cmd/spk-mattermost/main.go`: поле `FakeChannels int` в `browserOpts` и флаг
 ```go
@@ -9493,12 +9516,12 @@ Expected: FAIL (сигнатура `newBrowserHandler`, маршрутов не�
 ```
 (импорт `log/slog`). Notifier и бейдж трея подключает Task 15.
 
-- [ ] **Step 12: Всё зелёное**
+- [x] **Step 12: Всё зелёное**
 
 Run: `go test -race ./... && go vet -tags "wails gtk3" ./... && golangci-lint run --build-tags "wails gtk3"`
 Expected: PASS, без замечаний линтера.
 
-- [ ] **Step 13: Коммит**
+- [x] **Step 13: Коммит**
 
 ```bash
 git add internal/events internal/api internal/state/view.go cmd/spk-mattermost
@@ -9533,7 +9556,7 @@ git commit -m "api: chat methods over sync workers, coalesced change events, not
 - `needs_reauth`: чат остаётся на экране (кэш читаем), в сайдбаре строка «Сессия истекла» и «Войти снова», в канале баннер; «Войти снова» открывает форму входа поверх (`signInFor`), «Назад» возвращает.
 - Свёрнутая категория показывает только непрочитанные каналы и открытый канал (как веб-клиент). Имена стандартных категорий — локализованные по типу; пользовательские — как на сервере.
 
-- [ ] **Step 1: Типы и клиент**
+- [x] **Step 1: Типы и клиент**
 
 `frontend/src/api/types.ts` (целиком):
 ```ts
@@ -9852,7 +9875,7 @@ test('http client chat methods post snake_case bodies', async () => {
 Run: `cd frontend && pnpm test src/api`
 Expected: PASS.
 
-- [ ] **Step 2: Падающие тесты store и контроллера**
+- [x] **Step 2: Падающие тесты store и контроллера**
 
 `frontend/src/store.test.ts`:
 ```ts
@@ -10014,7 +10037,7 @@ test('opening a channel of another team switches the sidebar team', async () => 
 Run: `cd frontend && pnpm test src/store.test.ts src/chat.test.ts`
 Expected: FAIL (нет `chat.ts`, новых полей store).
 
-- [ ] **Step 3: store и контроллер**
+- [x] **Step 3: store и контроллер**
 
 `frontend/src/store.ts` (целиком):
 ```ts
@@ -10205,7 +10228,7 @@ export function openFromNotification(serverId: number, channelId: string) {
 Run: `cd frontend && pnpm test src/store.test.ts src/chat.test.ts`
 Expected: PASS.
 
-- [ ] **Step 4: Строки i18n**
+- [x] **Step 4: Строки i18n**
 
 В `frontend/src/i18n.ts` добавить в `ru`:
 ```ts
@@ -10260,7 +10283,7 @@ Expected: PASS.
   'err.forbidden': 'You are not allowed to do that',
 ```
 
-- [ ] **Step 5: Падающие тесты компонентов**
+- [x] **Step 5: Падающие тесты компонентов**
 
 `frontend/src/components/ServerRail.test.tsx`:
 ```tsx
@@ -10489,7 +10512,7 @@ test('needs_reauth keeps the chat and offers the sign-in form', async () => {
 Run: `cd frontend && pnpm test`
 Expected: FAIL (нет `Sidebar`, `ChannelPane`, новых пропсов).
 
-- [ ] **Step 6: Компоненты**
+- [x] **Step 6: Компоненты**
 
 `frontend/src/components/glyph.ts`:
 ```ts
@@ -10874,16 +10897,16 @@ export function App() {
 ```
 (`AddServerForm.onAdded` после добавления вызывает `selectServer(id)`; сервер ещё без входа — сайдбар не грузится, показывается форма входа.)
 
-- [ ] **Step 7: Тесты, типы, линт**
+- [x] **Step 7: Тесты, типы, линт**
 
 Run: `cd frontend && pnpm test && pnpm build && pnpm lint`
 Expected: PASS; `tsc` без ошибок.
 
-- [ ] **Step 8: Проверка глазами (browser mode)**
+- [x] **Step 8: Проверка глазами (browser mode)**
 
 Run: `make build && SPK_MATTERMOST_HOME=$(mktemp -d) build/bin/spk-mattermost --browser --port 5182 --mm-fake --test-api` (порт проверить `ss -lptn 'sport = :5182'`), в браузере через Playwright: добавить сервер из `/api/_test/fake-url`, войти alice/secret, дождаться сайдбара, сделать скриншот `/tmp/spkmm-stage2-t12.png` и посмотреть его. Ожидается: рейл с сервером, сайдбар (Каналы: Town Square, Off-Topic, Secret; Личные сообщения: bob, группа), шапка Town Square. Отправить через test-API `fake/post` в `c-offtopic` с `@alice` — в рейле и сайдбаре появляется «1».
 
-- [ ] **Step 9: Коммит**
+- [x] **Step 9: Коммит**
 
 ```bash
 git add frontend
@@ -10923,12 +10946,12 @@ git commit -m "frontend: chat API client, navigation store with stale-response g
 - Markdown: GFM (таблицы, зачёркивание, списки задач), **одиночный перевод строки — перенос** (как в Mattermost, `remark-breaks`), сырой HTML не рендерится (`skipHtml`), картинки не загружаются — ссылка «🖼 alt», все ссылки открываются через `OpenURL` в системном браузере. `@имя` подсвечивается; `@моё_имя`, `@channel`, `@here`, `@all` — ярче. Внутри кода и ссылок упоминания не трогаются.
 - Вложения ботов: цветная полоса (`good`/`warning`/`danger` или `#hex`, иначе серая), pretext, автор, заголовок (ссылка, если есть), текст и поля (markdown; `short` — в две колонки), footer. Файлы — карточка «📎 имя размер» (скачивание — этап 3). Реакции — чипы «эмодзи счётчик», свои выделены (ставить — этап 3). Под CRT у корня — «Ответов: N».
 
-- [ ] **Step 1: Зависимости**
+- [x] **Step 1: Зависимости**
 
 Run: `cd frontend && pnpm add @tanstack/react-virtual@^3.14.13 react-markdown@^10.1.0 remark-gfm@^4.0.1 remark-breaks@^4.0.0`
 Expected: `package.json` и `pnpm-lock.yaml` обновлены.
 
-- [ ] **Step 2: Падающие тесты — формат, строки, упоминания**
+- [x] **Step 2: Падающие тесты — формат, строки, упоминания**
 
 `frontend/src/format.test.ts`:
 ```ts
@@ -11056,7 +11079,7 @@ test('mentions: me and @channel stand out, others are plain highlights, code is 
 Run: `cd frontend && pnpm test src/format.test.ts src/components/feedRows.test.ts src/components/Markdown.test.tsx`
 Expected: FAIL (модулей нет).
 
-- [ ] **Step 3: Реализация — формат, строки, markdown**
+- [x] **Step 3: Реализация — формат, строки, markdown**
 
 `frontend/src/format.ts`:
 ```ts
@@ -11330,7 +11353,7 @@ export const Markdown = memo(function Markdown({ text, me, onLink }: { text: str
 Run: `cd frontend && pnpm test src/format.test.ts src/components/feedRows.test.ts src/components/Markdown.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 4: Падающие тесты поста и ленты**
+- [x] **Step 4: Падающие тесты поста и ленты**
 
 `frontend/src/components/PostItem.test.tsx`:
 ```tsx
@@ -11474,7 +11497,7 @@ test('empty channel says so', () => {
 Run: `cd frontend && pnpm test src/components/PostItem.test.tsx src/components/Feed.test.tsx`
 Expected: FAIL (компонентов нет).
 
-- [ ] **Step 5: Реализация поста и ленты**
+- [x] **Step 5: Реализация поста и ленты**
 
 `frontend/src/components/emoji.ts`:
 ```ts
@@ -11840,16 +11863,16 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
 }
 ```
 
-- [ ] **Step 6: Тесты, сборка, линт**
+- [x] **Step 6: Тесты, сборка, линт**
 
 Run: `cd frontend && pnpm test && pnpm build && pnpm lint`
 Expected: PASS.
 
-- [ ] **Step 7: Проверка глазами и памяти ленты (browser mode)**
+- [x] **Step 7: Проверка глазами и памяти ленты (browser mode)**
 
 Собрать и запустить browser mode с `--mm-fake --mm-fake-channels 100 --test-api` на свободном порту, войти alice/secret, открыть Town Square, скриншот → посмотреть: разделитель дня, группировка bob/carol, ссылки в `load-NNN` синие, `**some**` жирное. Прокрутить наверх до «Message #1» (история подгружается, прыжков нет — второй скриншот в середине подгрузки). Отправить через test-API пост с таблицей, списком, `@alice`, ссылкой-картинкой — скриншот. Замерить `scripts/pss.sh <pid Go-процесса>` после предзагрузки 100 каналов и записать в `docs/spikes/2026-09-24-stage1-spikes.md` S4 (раздел «Этап 2») — Go-часть должна быть заметно меньше 75 МБ.
 
-- [ ] **Step 8: Коммит**
+- [x] **Step 8: Коммит**
 
 ```bash
 git add frontend docs/spikes
@@ -11881,7 +11904,7 @@ git commit -m "frontend: virtualized feed with day separators, author groups, ne
 - Панель действий появляется при наведении или фокусе внутри поста: «Изменить» и «Удалить» — только свои несистемные; «Отметить непрочитанным» и «Копировать ссылку» — любые. Удаление — с подтверждением. Ссылка — `${server.url}/${team_name}/pl/${post_id}` (как у Mattermost).
 - Фокус: `focus` → `SetFocused(document.visibilityState === 'visible')`, `blur` → `SetFocused(false)`, `visibilitychange` → видно и `document.hasFocus()`; при старте — текущее состояние. `online` → `NetworkChanged()`.
 
-- [ ] **Step 1: Падающие тесты**
+- [x] **Step 1: Падающие тесты**
 
 `frontend/src/components/Composer.test.tsx`:
 ```tsx
@@ -12017,7 +12040,7 @@ test('window focus and network changes are reported to Go', async () => {
 Run: `cd frontend && pnpm test`
 Expected: FAIL (нет `Composer`, новых действий, обработчиков фокуса).
 
-- [ ] **Step 2: Строки i18n**
+- [x] **Step 2: Строки i18n**
 
 `ru`:
 ```ts
@@ -12048,7 +12071,7 @@ Expected: FAIL (нет `Composer`, новых действий, обработч
   'post.cancel': 'Cancel',
 ```
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `frontend/src/components/Composer.tsx`:
 ```tsx
@@ -12344,16 +12367,16 @@ export function editLastOwn(ch: ChannelDTO) {
   }, [])
 ```
 
-- [ ] **Step 4: Тесты, сборка, линт**
+- [x] **Step 4: Тесты, сборка, линт**
 
 Run: `cd frontend && pnpm test && pnpm build && pnpm lint`
 Expected: PASS.
 
-- [ ] **Step 5: Проверка глазами (browser mode)**
+- [x] **Step 5: Проверка глазами (browser mode)**
 
 Browser mode с фейком: отправить сообщение с переносом строки (Shift+Enter) — скриншот; ↑ — правка последнего своего, Enter — «(изменено)»; удалить с подтверждением; «Отметить непрочитанным» на старом посте Town Square — в рейле точка непрочитанного и она не исчезает, пока канал открыт; переключиться в другой канал и обратно — черновик на месте. Скриншоты посмотреть.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add frontend
@@ -12387,7 +12410,7 @@ git commit -m "frontend: composer with drafts and edit-last, post actions (edit/
 - Одинаковый `ID` (`mm-<server>-<channel>`) на Linux заменяет прежнее уведомление канала (`replaces_id`), а не плодит новые.
 - Бейдж трея: подсказка «spk-mattermost — 3 упоминания» / «— есть непрочитанные» / просто имя; иконка — с красной точкой при упоминаниях, с жёлтой — при непрочитанном, обычная — иначе. `SetIcon`/`SetTooltip` уходят в `InvokeSync` (главный поток GTK), поэтому обновление идёт в своей горутине и только после `ApplicationStarted` + 200 мс (S3); из очереди берётся только последнее значение — вызывающая горутина сервиса никогда не ждёт GTK.
 
-- [ ] **Step 1: Падающие тесты (без тега `wails`)**
+- [x] **Step 1: Падающие тесты (без тега `wails`)**
 
 `internal/desktop/notifyclick_test.go`:
 ```go
@@ -12470,7 +12493,7 @@ func TestDesktopDevFakeFlags(t *testing.T) {
 Run: `go test ./internal/desktop/ ./cmd/spk-mattermost/`
 Expected: FAIL (нет `clickTarget`, `trayTooltip`, `desktopOpts`).
 
-- [ ] **Step 2: Реализация чистой логики**
+- [x] **Step 2: Реализация чистой логики**
 
 `internal/desktop/notifyclick.go`:
 ```go
@@ -12572,7 +12595,7 @@ type runners struct {
 Run: `go test ./internal/desktop/ ./cmd/spk-mattermost/`
 Expected: PASS.
 
-- [ ] **Step 3: Иконки с точкой**
+- [x] **Step 3: Иконки с точкой**
 
 `scripts/gen-icon.go` — рисование вынести в функцию и писать три файла:
 ```go
@@ -12676,7 +12699,7 @@ var IconUnreadPNG []byte
 var IconMentionPNG []byte
 ```
 
-- [ ] **Step 4: Wails-часть — notifier, трей, запуск**
+- [x] **Step 4: Wails-часть — notifier, трей, запуск**
 
 `internal/desktop/devtools_dev.go` / `devtools_prod.go` — добавить в блок констант `DevBuild = true` / `DevBuild = false` (экспорт для `cmd`).
 
@@ -12912,12 +12935,12 @@ func signInToFake(ctx context.Context, svc *api.Service, url string) error {
 }
 ```
 
-- [ ] **Step 5: Сборки и проверки**
+- [x] **Step 5: Сборки и проверки**
 
 Run: `go test -race ./... && go vet -tags "wails gtk3" ./... && golangci-lint run --build-tags "wails gtk3" && make build-desktop && make cross-check`
 Expected: всё проходит.
 
-- [ ] **Step 6: Проверка десктопа на этой машине (dev-режим с фейком)**
+- [x] **Step 6: Проверка десктопа на этой машине (dev-режим с фейком)**
 
 Не трогать официальный клиент и живой dev-клиент пользователя (PID в `/tmp/spkmm-live.pid`); у тестового экземпляра — свой `SPK_MATTERMOST_HOME` (свой single-instance ID, Task S4-решение):
 ```bash
@@ -12930,7 +12953,7 @@ H=$(mktemp -d); SPK_MATTERMOST_HOME=$H build/bin/spk-mattermost-desktop --mm-fak
 5. Память: `scripts/pss.sh $(cat /tmp/spkmm-t15.pid)` после предзагрузки 100 каналов — Private_Dirty ≤ 150 МБ; записать в `docs/spikes/…` S4 («Этап 2»).
 6. Остановить только свой экземпляр: `kill $(cat /tmp/spkmm-t15.pid)`.
 
-- [ ] **Step 7: Коммит**
+- [x] **Step 7: Коммит**
 
 ```bash
 git add internal/desktop internal/appfiles scripts/gen-icon.go cmd/spk-mattermost docs/spikes
@@ -12952,7 +12975,7 @@ git commit -m "desktop: chat notifications open their channel, tray badge (toolt
 
 Как устроены e2e: один экземпляр приложения и один фейк на прогон (`workers: 1`), состояние фейка копится между тестами. Каждый тест добавляет сервер заново и удаляет его в конце, поэтому проверки опираются на собственные сообщения теста (уникальный текст), а не на счётчики «с нуля».
 
-- [ ] **Step 1: Хелперы и сценарии**
+- [x] **Step 1: Хелперы и сценарии**
 
 `tests/e2e/helpers.ts`:
 ```ts
@@ -13162,23 +13185,23 @@ for (const lose of [false, true]) {
 }
 ```
 
-- [ ] **Step 2: Прогон e2e**
+- [x] **Step 2: Прогон e2e**
 
 Run: `make test-e2e`
 Expected: все спеки (login, chat, reconnect) — PASS. Упавший сценарий разбирать по trace (`pnpm exec playwright show-trace`), не подбирать таймауты вслепую.
 
-- [ ] **Step 3: Полный набор ворот**
+- [x] **Step 3: Полный набор ворот**
 
 Run: `make lint && golangci-lint run --build-tags "wails gtk3" && make test-go && make test-front && make build-desktop && make cross-check`
 Expected: всё зелёное.
 
-- [ ] **Step 4: Память**
+- [x] **Step 4: Память**
 
 1. Браузерный режим, 100 каналов: `SPK_MATTERMOST_HOME=$(mktemp -d) build/bin/spk-mattermost --browser --port <свободный> --mm-fake --mm-fake-channels 100 --test-api`, войти alice через API (`AddServer`, `LoginWithPassword` через `curl` с токеном из `<meta>`), дождаться окончания предзагрузки (все `GetChannel` → `loaded && !syncing`), `scripts/pss.sh <pid>` сразу и через 10 минут с инъекцией поста раз в секунду в разные каналы (`fake/post`) — роста нет.
 2. Десктоп dev-режим с фейком (как в Task 15 Step 6) — Private_Dirty всех процессов ≤ 150 МБ.
 3. Результаты — в `docs/spikes/2026-09-24-stage1-spikes.md`, S4, подраздел «Этап 2» (что мерили, цифры, вывод).
 
-- [ ] **Step 5: Живая проверка на mm.citeck.ru вместе с пользователем**
+- [ ] **Step 5: Живая проверка на mm.citeck.ru вместе с пользователем** — pending, with the user (в очереди, см. Execution notes и статус в спецификации)
 
 Собрать `make build-desktop` и попросить пользователя перезапустить его dev-клиент (PID в `/tmp/spkmm-live.pid`; самим не убивать, официальный клиент `/opt/Mattermost` не трогать). Сценарий для пользователя и что смотреть в логе (`slog` в stderr) и памяти:
 - сайдбар и бейджи совпадают с официальным веб-клиентом; открытие канала мгновенное;
@@ -13188,14 +13211,14 @@ Expected: всё зелёное.
 - через час работы — `scripts/pss.sh <pid>` (Private_Dirty ≤ 150 МБ) и отсутствие роста.
 Найденные проблемы — чинить в рамках этапа (TDD, отдельные коммиты), мелочи вне этапа — в `docs/backlog.md`.
 
-- [ ] **Step 6: Документация**
+- [x] **Step 6: Документация**
 
 - `docs/specs/…`: статус «Этап 2 реализован и проверен (дата)», в «Этапы» — уведомления и трей в этапе 2 (решение пользователя 2026-09-24), этап 3 — без них; раздел «Прочтение» — фокус учитывается только для активного сервера.
 - `AGENTS.md`, «Правила»/«Things that bite»: хуки воркера не блокируют, всё тяжёлое — в горутинах, UI-события схлопываются (`events.Coalescer`, 100 мс); `servers_changed` частое — UI не сбрасывает по нему ошибки и выбор; фокус — только активному серверу; действия записи при `needs_reauth` отказывают сразу; test-API фейка (`/api/_test/fake/*`, `notifications`, `notification-click`) и `--mm-fake-channels`; десктоп `--mm-fake` (только dev) с отдельным `SPK_MATTERMOST_HOME`; jsdom-техника для теста виртуализированной ленты (`offsetHeight`/`scrollTo`).
 - `README.md`: что умеет клиент после этапа 2, флаги `--mm-fake-channels` и десктопный `--mm-fake`.
 - `docs/backlog.md`: оставшиеся мелочи из живой проверки; удалить пункты, которые этап закрыл.
 
-- [ ] **Step 7: Коммит и пуш**
+- [x] **Step 7: Коммит и пуш**
 
 ```bash
 git add tests/e2e docs AGENTS.md README.md

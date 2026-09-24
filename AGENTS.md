@@ -14,6 +14,8 @@
 ## Правила (правило — причина — тест)
 
 - `go build ./...` без тега `wails` обязан проходить: desktop-код за тегом.
+- `gofmt` — часть `make lint` (`golangci-lint` с `formatters: gofmt` в `.golangci.yml`), отдельно
+  гонять `gofmt -l .` не обязательно, но неотформатированный файл роняет линт.
 - Токены сервера не покидают Go: нет в DTO, логах, событиях. — `TestServerDTOHasNoToken`, `TestServerLogValueHidesToken`.
 - Никаких блокирующих системных вызовов на старте (урок официального клиента, завис на gnome-keyring). Токены — в SQLite.
 - Browser-режим отвечает только на loopback-`Host` (127.0.0.1, localhost, ::1), иначе 403 — защита от DNS rebinding (иначе `/` отдаст API-токен чужому сайту). — `TestNonLoopbackHostIsRejected`, `transport.LoopbackHostGuard`.
@@ -51,6 +53,10 @@
 - Действия записи (`SendPost`, `EditPost`, `DeletePost`, `MarkUnread`, …) при `needs_reauth`
   отказывают сразу кодом `session_expired`, не уходя в воркер — see `s.writer()` seam. —
   `internal/api/chat.go`.
+- Каждый созданный Playwright-контекст/страница (в `browser_run_code_unsafe` или в скриптах)
+  закрывается в том же вызове (`try`/`finally` → `ctx.close()`); окна не оставляются открытыми.
+  После работы с браузером проверить, что не осталось висящих контекстов — пользователь уже
+  жаловался на «наплодил pw окон» (Task 14, ledger).
 
 ## Things that bite
 
