@@ -5,7 +5,6 @@ package desktop
 import (
 	"context"
 	"io/fs"
-	"log/slog"
 	"os"
 	"runtime"
 	"sync"
@@ -23,6 +22,10 @@ type Options struct {
 	Service    *api.Service
 	Emitter    *mmevents.Emitter
 	IconPNG    []byte
+
+	IconUnreadPNG  []byte
+	IconMentionPNG []byte
+	DevActions     []DevAction // dev builds: extra tray items (fake server controls)
 }
 
 // Run starts the Wails loop. Closing the window hides it (tray brings it
@@ -88,12 +91,15 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	n := newNotifier(func(data map[string]any) {
-		slog.Info("notification clicked", "data", data)
+		if id, ch, ok := clickTarget(data); ok {
+			o.Service.NotificationClicked(id, ch)
+		}
 		show()
 	})
 	if !feat.notifications {
 		n.disable()
 	}
+	o.Service.SetNotifier(n)
 
 	var single *application.SingleInstanceOptions
 	if feat.singleInstance {
@@ -129,6 +135,12 @@ func Run(ctx context.Context, o Options) error {
 		SingleInstance: single,
 	})
 
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		startedOnce.Do(func() { close(started) })
+	})
+
 	// Cold start with the URL (Linux/Windows argv) and macOS open-URL events.
 	app.Event.OnApplicationEvent(events.Common.ApplicationLaunchedWithUrl, func(e *application.ApplicationEvent) {
 		if u := e.Context().URL(); u != "" {
@@ -153,9 +165,9 @@ func Run(ctx context.Context, o Options) error {
 	}()
 
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "spk-mattermost",
-		Width:            1200,
-		Height:           800,
+		Title:  "spk-mattermost",
+		Width:  1200,
+		Height: 800,
 		// Matches --color-app (#1f1f23) in frontend/src/index.css: the app is
 		// dark by default, so the window background must not flash white/light
 		// before the webview paints.
@@ -201,7 +213,9 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}
 	if feat.tray {
-		setupTray(app, o.IconPNG, show, toggle, n)
+		icons := trayIcons{plain: o.IconPNG, unread: o.IconUnreadPNG, mention: o.IconMentionPNG}
+		tray := setupTray(app, icons, show, toggle, n, o.DevActions)
+		o.Service.OnBadge(trayBadge(ctx, tray, icons, messagesLanguage(os.Getenv), started))
 	}
 
 	go func() {

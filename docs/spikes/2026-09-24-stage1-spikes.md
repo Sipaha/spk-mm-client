@@ -104,6 +104,19 @@ desktop-раннера):
   `window is not defined`. Исправлено глобальным `vi.mock('@wailsio/runtime', …)`
   в `frontend/vitest.setup.ts`; тесты `wailsClient` переопределяют мок локально.
 
+- Этап 2, задача 15 (dev-режим с фейком, `dbus-monitor`): уведомление чата
+  уходит с `x-notification-id` = `mm-<server>-<channel>` и данными
+  `{"channel_id":…,"server_id":…}`; повторное уведомление того же канала идёт
+  с `replaces_id` прежнего (одно уведомление на канал). Клик (сигнал
+  `ActionInvoked … default`, отправленный `dbus-send` — Wails отправителя не
+  проверяет) показывает окно и открывает канал; упоминание прочитано, иконка
+  трея без точки. На Linux `UserInfo` клика — исходные Go-значения (`int64`).
+- Трей Wails beta.25 на Linux: `SetTooltip` — no-op (`setTooltip` «TBD»), а
+  `Id`/`ToolTip` элемента StatusNotifierItem фиксируются по label в момент
+  старта трея (без label — «Wails»). Поэтому на Linux текст бейджа уходит ещё
+  и в `SetLabel` (свойство `Title`), `internal/desktop/tray.go` `setTrayText`.
+  Иконка (`IconPixmap`) обновляется штатно.
+
 ## S4. Память оболочки
 
 Бюджетная метрика — **Private_Dirty** всех процессов клиента (память, которую
@@ -152,6 +165,24 @@ TOTAL PRIVATE: 16.6 MB (budgeted)   TOTAL PSS: 27.8 MB (reference)
 бюджета в 75 МБ, оценённого в замере выше. Виртуализация ленты (React,
 не Go) и `react-markdown`/`remark-*` живут во фронтенд-процессе (WebKit в
 desktop-режиме), в этот замер не входят.
+
+### Этап 2, задача 15: десктоп с фейком и 100 каналами (2026-09-24)
+
+Dev-сборка (`make build-desktop`), свежий `SPK_MATTERMOST_HOME`,
+`--mm-fake --mm-fake-channels 100` (вход alice автоматически, предзагрузка
+каналов синком), открыт Town Square, затем Off-Topic по клику уведомления;
+~1,5 мин после старта:
+
+```
+   PRIVATE        PSS  PID CMD
+   48.7 MB    88.4 MB  build/bin/spk-mattermost-desktop --mm-fake --mm-fake-channels 100
+    7.4 MB    12.3 MB  webkit2gtk-4.1/WebKitNetworkProcess
+   56.5 MB    90.5 MB  webkit2gtk-4.1/WebKitWebProcess
+TOTAL PRIVATE: 112.6 MB (budgeted)   TOTAL PSS: 191.2 MB (reference)
+```
+
+Итог: 112.6 МБ ≤ 150 МБ. Главный процесс здесь включает и сам фейковый
+сервер (его 100×20 постов в памяти), так что у реального клиента запас больше.
 
 ### Release-сборка и GPU-политика WebKitGTK (2026-09-24)
 

@@ -11,12 +11,19 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
+
+	"github.com/spk/spk-mattermost/internal/api"
 )
 
 // notifyStartupTimeout bounds how long we wait for the OS notification
 // backend (e.g. the D-Bus session bus on Linux) to come up before treating
 // notifications as unavailable. See notifier.ServiceStartup.
 const notifyStartupTimeout = 2 * time.Second
+
+// notifyQueueSize bounds notifications waiting for the OS backend. The D-Bus
+// Notify call has no timeout; if it hangs, later notifications are dropped
+// instead of piling up goroutines or blocking the caller.
+const notifyQueueSize = 16
 
 // notifier wraps the Wails notification service (spike S2). onClick receives
 // the Data map of the clicked notification.
@@ -34,6 +41,7 @@ const notifyStartupTimeout = 2 * time.Second
 // and marks notifications unavailable, degrading test()/sends to no-ops.
 type notifier struct {
 	svc       *notifications.NotificationService
+	out       *asyncSender[notifications.NotificationOptions] // sends off the caller's goroutine
 	available atomic.Bool
 	disabled  bool // set before app.Run when the D-Bus probe failed
 }
@@ -45,6 +53,11 @@ func (n *notifier) disable() { n.disabled = true }
 func newNotifier(onClick func(data map[string]any)) *notifier {
 	svc := notifications.New()
 	n := &notifier{svc: svc}
+	n.out = newAsyncSender(notifyQueueSize, func(o notifications.NotificationOptions) {
+		if err := svc.SendNotification(o); err != nil {
+			slog.Warn("notification failed", "id", o.ID, "err", err)
+		}
+	})
 	svc.OnNotificationResponse(func(r notifications.NotificationResult) {
 		if r.Error != nil {
 			slog.Warn("notification response error", "err", r.Error)
@@ -94,13 +107,30 @@ func (n *notifier) test() {
 		return
 	}
 	id := fmt.Sprintf("test-%d", time.Now().UnixNano())
-	err := n.svc.SendNotification(notifications.NotificationOptions{
+	n.send(notifications.NotificationOptions{
 		ID:    id,
 		Title: "spk-mattermost",
 		Body:  "Тестовое уведомление — кликните, чтобы открыть окно",
 		Data:  map[string]any{"target": "test", "id": id},
 	})
-	if err != nil {
-		slog.Warn("test notification failed", "err", err)
+}
+
+// Notify implements api.Notifier: chat notifications carry the channel to
+// open on click; the same ID replaces the channel's previous notification.
+// It never blocks: the D-Bus call runs on the notifier's sender goroutine.
+func (n *notifier) Notify(m api.Notification) {
+	if !n.available.Load() {
+		slog.Debug("notification dropped: notifications unavailable", "id", m.ID)
+		return
+	}
+	n.send(notifications.NotificationOptions{
+		ID: m.ID, Title: m.Title, Body: m.Body,
+		Data: map[string]any{"server_id": m.ServerID, "channel_id": m.ChannelID},
+	})
+}
+
+func (n *notifier) send(o notifications.NotificationOptions) {
+	if !n.out.enqueue(o) {
+		slog.Warn("notification dropped: backend is not keeping up", "id", o.ID)
 	}
 }

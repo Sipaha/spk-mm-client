@@ -6,4 +6,5 @@ package desktop
 const (
 	devToolsEnabled = true
 	devMenu         = true
+	DevBuild        = true // exported for cmd: dev-only flags such as --mm-fake
 )

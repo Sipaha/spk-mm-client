@@ -18,9 +18,14 @@ type browserOpts struct {
 	FakeChannels int
 }
 
+type desktopOpts struct {
+	MMFake       bool // dev builds only: in-process fake server, signed in as alice
+	FakeChannels int
+}
+
 type runners struct {
 	browser func(ctx context.Context, o browserOpts) error
-	desktop func(ctx context.Context) error
+	desktop func(ctx context.Context, o desktopOpts) error
 }
 
 func newRootCmd(run runners) *cobra.Command {
@@ -38,12 +43,12 @@ func newRootCmd(run runners) *cobra.Command {
 			if browser {
 				return run.browser(cmd.Context(), o)
 			}
-			return run.desktop(cmd.Context())
+			return run.desktop(cmd.Context(), desktopOpts{MMFake: o.MMFake, FakeChannels: o.FakeChannels})
 		},
 	}
 	root.Flags().BoolVar(&browser, "browser", false, "Serve the UI over HTTP on localhost instead of opening a window")
 	root.Flags().IntVar(&o.Port, "port", 5180, "HTTP port for --browser")
-	root.Flags().BoolVar(&o.MMFake, "mm-fake", false, "Start an in-process fake Mattermost server (browser mode, development/e2e only)")
+	root.Flags().BoolVar(&o.MMFake, "mm-fake", false, "Start an in-process fake Mattermost server (development/e2e only; desktop: dev builds, signs in as alice)")
 	root.Flags().IntVar(&o.FakeChannels, "mm-fake-channels", 0, "Extra open channels (20 posts each) in the fake server — memory checks")
 	root.Flags().BoolVar(&o.TestAPI, "test-api", false, "Expose /api/_test/* automation routes (development/e2e only)")
 	return root

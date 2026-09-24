@@ -5,4 +5,5 @@ package desktop
 const (
 	devToolsEnabled = false
 	devMenu         = false
+	DevBuild        = false
 )
