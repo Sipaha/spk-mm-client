@@ -11,12 +11,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/api/transport"
-	"github.com/spk/spk-mattermost/internal/events"
-	"github.com/spk/spk-mattermost/internal/mmfake"
-	"github.com/spk/spk-mattermost/internal/paths"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/api/transport"
+	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/paths"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for active
@@ -96,7 +96,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 	}
-	slog.Info("spk-mattermost browser mode", "url", "http://"+srv.Addr, "data", p.DataDir)
+	slog.Info("spk-mm-client browser mode", "url", "http://"+srv.Addr, "data", p.DataDir)
 	return srv, cancelBase, token, cleanup, nil
 }
 

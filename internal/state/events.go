@@ -3,8 +3,8 @@ package state
 import (
 	"slices"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
-	"github.com/spk/spk-mattermost/internal/mm/ws"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
 )
 
 // Change tells the API layer which UI views to refresh.

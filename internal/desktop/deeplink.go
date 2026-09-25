@@ -6,11 +6,11 @@ package desktop
 import (
 	"strings"
 
-	"github.com/spk/spk-mattermost/internal/auth"
+	"github.com/spk/spk-mm-client/internal/auth"
 )
 
 // UniqueID identifies the app for Wails single-instance locking.
-const UniqueID = "ru.spk.spk-mattermost"
+const UniqueID = "ru.spk.spk-mm-client"
 
 // deepLinkFromArgs finds an mmauth:// callback among process args, tolerating
 // surrounding quotes some Windows launchers keep.

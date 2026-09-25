@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 test('http client sends bearer token from meta tag and JSON body', async () => {
-  document.head.innerHTML = '<meta name="spk-mattermost-api-token" content="tok123">'
+  document.head.innerHTML = '<meta name="spk-mm-client-api-token" content="tok123">'
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(JSON.stringify({ id: 1, name: 'A', url: 'u', signed_in: false, username: '', gitlab: true }), {
       headers: { 'content-type': 'application/json' },

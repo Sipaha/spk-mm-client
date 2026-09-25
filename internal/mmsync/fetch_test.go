@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/state"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 func TestFetchQueuePriorityDedupAndCancel(t *testing.T) {

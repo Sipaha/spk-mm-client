@@ -1,5 +1,5 @@
 {
-  "name": "spk-mattermost-e2e",
+  "name": "spk-mm-client-e2e",
   "private": true,
   "devDependencies": { "@playwright/test": "^1.58.0" }
 }

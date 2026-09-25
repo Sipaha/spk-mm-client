@@ -11,9 +11,9 @@ export default defineConfig({
   workers: 1, // one app instance, shared DB — tests clean up after themselves
   use: { baseURL: `http://127.0.0.1:${port}`, locale: 'en-US' },
   webServer: {
-    command: `../../build/bin/spk-mattermost --browser --port ${port} --mm-fake --test-api`,
+    command: `../../build/bin/spk-mm-client --browser --port ${port} --mm-fake --test-api`,
     url: `http://127.0.0.1:${port}/`,
-    env: { SPK_MATTERMOST_HOME: home },
+    env: { SPK_MM_CLIENT_HOME: home },
     reuseExistingServer: false,
   },
 })

@@ -34,7 +34,7 @@ export interface Client {
 }
 
 const tokenMeta = () =>
-  document.querySelector('meta[name="spk-mattermost-api-token"]')?.getAttribute('content') ?? ''
+  document.querySelector('meta[name="spk-mm-client-api-token"]')?.getAttribute('content') ?? ''
 
 async function post<T>(method: string, body: unknown): Promise<T> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -94,7 +94,7 @@ export function parseWailsError(err: unknown): ApiError {
   return i < 0 ? new ApiError(msg, '') : new ApiError(msg.slice(0, i), msg.slice(i + 2))
 }
 
-const FQN = 'github.com/spk/spk-mattermost/internal/api/transport.API.'
+const FQN = 'github.com/spk/spk-mm-client/internal/api/transport.API.'
 
 async function wcall<T>(method: string, ...args: unknown[]): Promise<T> {
   try {

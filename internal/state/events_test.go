@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
-	"github.com/spk/spk-mattermost/internal/mm/ws"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
 )
 
 func counts(s *Server, id string) (model.Channel, model.ChannelMember) {

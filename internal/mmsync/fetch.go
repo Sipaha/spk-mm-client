@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
-	"github.com/spk/spk-mattermost/internal/mm/rest"
-	"github.com/spk/spk-mattermost/internal/state"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 // fetchQueue holds channels whose window must be loaded or caught up,

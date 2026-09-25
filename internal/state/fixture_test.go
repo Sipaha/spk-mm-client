@@ -3,7 +3,7 @@ package state
 import (
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 var t0 = time.UnixMilli(1_000_000)

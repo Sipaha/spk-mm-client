@@ -12,13 +12,13 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/appfiles"
-	"github.com/spk/spk-mattermost/internal/desktop"
-	"github.com/spk/spk-mattermost/internal/events"
-	"github.com/spk/spk-mattermost/internal/mmfake"
-	"github.com/spk/spk-mattermost/internal/paths"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/appfiles"
+	"github.com/spk/spk-mm-client/internal/desktop"
+	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/paths"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 func runDesktop(ctx context.Context, o desktopOpts) error {

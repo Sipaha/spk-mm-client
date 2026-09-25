@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/mmfake"
 )
 
 // fakeChurn drives a dev desktop run for memory soak tests

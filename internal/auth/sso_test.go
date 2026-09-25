@@ -97,10 +97,10 @@ func TestPendingExpires(t *testing.T) {
 }
 
 func TestFindCallbackArg(t *testing.T) {
-	u, ok := FindCallbackArg([]string{"/usr/bin/spk-mattermost", "MMAUTH://callback?MMAUTHTOKEN=x"})
+	u, ok := FindCallbackArg([]string{"/usr/bin/spk-mm-client", "MMAUTH://callback?MMAUTHTOKEN=x"})
 	assert.True(t, ok)
 	assert.Equal(t, "MMAUTH://callback?MMAUTHTOKEN=x", u)
-	_, ok = FindCallbackArg([]string{"/usr/bin/spk-mattermost", "--browser"})
+	_, ok = FindCallbackArg([]string{"/usr/bin/spk-mm-client", "--browser"})
 	assert.False(t, ok)
 }
 

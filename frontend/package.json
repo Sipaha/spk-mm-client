@@ -1,5 +1,5 @@
 {
-  "name": "spk-mattermost-frontend",
+  "name": "spk-mm-client-frontend",
   "private": true,
   "type": "module",
   "scripts": {

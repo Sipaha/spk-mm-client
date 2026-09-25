@@ -20,7 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/spk/spk-mattermost/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
 )
 
 const (

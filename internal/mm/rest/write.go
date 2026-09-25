@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 // createPostReq is the subset of a Post the server needs; sending the whole

@@ -10,11 +10,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/mm/rest"
-	"github.com/spk/spk-mattermost/internal/mm/ws"
-	"github.com/spk/spk-mattermost/internal/mmfake"
-	"github.com/spk/spk-mattermost/internal/state"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
+	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/state"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 type harness struct {

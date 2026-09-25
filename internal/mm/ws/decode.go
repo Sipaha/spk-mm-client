@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 // Str returns a string field of the event data ("" if absent or not a string).

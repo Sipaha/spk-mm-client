@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
-	"github.com/spk/spk-mattermost/internal/mm/rest"
-	"github.com/spk/spk-mattermost/internal/mm/ws"
-	"github.com/spk/spk-mattermost/internal/state"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
+	"github.com/spk/spk-mm-client/internal/state"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 // Status is the connection state of a server shown in the UI.

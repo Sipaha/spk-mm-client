@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 type Manager struct {

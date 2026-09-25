@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/spk/spk-mattermost/internal/mm/rest"
-	"github.com/spk/spk-mattermost/internal/mmsync"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mmsync"
 )
 
 // worker returns the sync worker of a signed-in server.

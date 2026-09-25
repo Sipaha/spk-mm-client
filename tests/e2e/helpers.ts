@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 
 export async function apiToken(page: Page) {
-  return (await page.locator('meta[name="spk-mattermost-api-token"]').getAttribute('content'))!
+  return (await page.locator('meta[name="spk-mm-client-api-token"]').getAttribute('content'))!
 }
 
 async function headers(page: Page) {

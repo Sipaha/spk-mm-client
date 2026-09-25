@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/events"
-	"github.com/spk/spk-mattermost/internal/mmfake"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
-// Each dev run starts the fake on a new port; reusing SPK_MATTERMOST_HOME
+// Each dev run starts the fake on a new port; reusing SPK_MM_CLIENT_HOME
 // must not pile up fake servers (the old ones point at dead ports), and a
 // real server stays untouched.
 func TestSignInToFakeKeepsOneFakeServer(t *testing.T) {

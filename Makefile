@@ -1,8 +1,8 @@
 .PHONY: build build-frontend build-go build-desktop release test test-go test-front test-e2e lint fmt tidy clean run run-browser cross-check install-dev-linux pss
 
 BIN_DIR := build/bin
-BIN     := $(BIN_DIR)/spk-mattermost
-DIST    := cmd/spk-mattermost/dist
+BIN     := $(BIN_DIR)/spk-mm-client
+DIST    := cmd/spk-mm-client/dist
 DESKTOP_TAGS := wails gtk3
 
 define with_dist
@@ -19,21 +19,21 @@ build-frontend:
 # Browser-mode binary: pure Go (modernc SQLite), no cgo. Desktop keeps cgo (GTK/WebKit).
 build-go:
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mattermost)
+	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mm-client)
 
 build-desktop: build-frontend
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mattermost-desktop ./cmd/spk-mattermost)
+	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-desktop ./cmd/spk-mm-client)
 
 release: build-frontend
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS) production" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mattermost-release ./cmd/spk-mattermost)
+	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS) production" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-release ./cmd/spk-mm-client)
 
 # Windows desktop build needs no cgo (WebView2 via pure Go) — cross-compiles
 # from Linux and catches Windows-only compile errors early. macOS needs cgo +
 # SDK and is covered by CI in stage 4.
 cross-check:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags wails -o /dev/null ./cmd/spk-mattermost
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags wails -o /dev/null ./cmd/spk-mm-client
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet -tags wails ./...
 
 test: test-go test-front test-e2e
@@ -62,13 +62,13 @@ clean:
 	rm -rf build frontend/dist
 
 run: build-desktop
-	$(BIN_DIR)/spk-mattermost-desktop
+	$(BIN_DIR)/spk-mm-client-desktop
 
 run-browser: build
-	SPK_MATTERMOST_HOME=$$(mktemp -d) $(BIN) --browser --port=5180 --mm-fake --test-api
+	SPK_MM_CLIENT_HOME=$$(mktemp -d) $(BIN) --browser --port=5180 --mm-fake --test-api
 
 install-dev-linux: build-desktop
-	bash scripts/install-dev-linux.sh $(abspath $(BIN_DIR)/spk-mattermost-desktop)
+	bash scripts/install-dev-linux.sh $(abspath $(BIN_DIR)/spk-mm-client-desktop)
 
 pss:
 	bash scripts/pss.sh $(PID)

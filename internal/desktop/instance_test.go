@@ -10,7 +10,7 @@ func TestInstanceID(t *testing.T) {
 	assert.Equal(t, UniqueID, instanceID(""))
 	a, b := instanceID("/tmp/a"), instanceID("/tmp/b")
 	assert.NotEqual(t, a, b)
-	assert.Regexp(t, `^ru\.spk\.spk-mattermost\.h[0-9a-f]{8}$`, a)
+	assert.Regexp(t, `^ru\.spk\.spk-mm-client\.h[0-9a-f]{8}$`, a)
 	assert.Equal(t, a, instanceID("/tmp/a"))
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"github.com/spk/spk-mattermost/internal/api"
+	"github.com/spk/spk-mm-client/internal/api"
 )
 
 // notifyStartupTimeout bounds how long we wait for the OS notification
@@ -115,7 +115,7 @@ func (n *notifier) test() {
 	id := fmt.Sprintf("test-%d", time.Now().UnixNano())
 	n.send(notifications.NotificationOptions{
 		ID:    id,
-		Title: "spk-mattermost",
+		Title: "spk-mm-client",
 		Body:  "Тестовое уведомление — кликните, чтобы открыть окно",
 		Data:  map[string]any{"target": "test", "id": id},
 	})

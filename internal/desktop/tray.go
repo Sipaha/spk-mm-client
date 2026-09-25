@@ -10,7 +10,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/spk/spk-mattermost/internal/api"
+	"github.com/spk/spk-mm-client/internal/api"
 )
 
 type trayIcons struct{ plain, unread, mention []byte }
@@ -46,7 +46,7 @@ func setupTray(app *application.App, icons trayIcons, show, toggle func(), n *no
 
 	tray := app.SystemTray.New()
 	tray.SetIcon(icons.plain)
-	setTrayText(tray, "spk-mattermost")
+	setTrayText(tray, "spk-mm-client")
 	tray.SetMenu(menu)
 	tray.OnClick(toggle)
 	return tray

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/events"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/events"
 )
 
 const (

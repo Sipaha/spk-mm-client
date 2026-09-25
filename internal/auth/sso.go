@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
 )
 
 const (

@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/events"
-	"github.com/spk/spk-mattermost/internal/mmfake"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 func setup(t *testing.T, testAPI bool) (*httptest.Server, string, *mmfake.Server) {
@@ -49,7 +49,7 @@ func TestIndexCarriesTokenAndIsNotCached(t *testing.T) {
 	resp, err := http.Get(ts.URL + "/")
 	require.NoError(t, err)
 	body, _ := io.ReadAll(resp.Body)
-	assert.Contains(t, string(body), `<meta name="spk-mattermost-api-token" content="`+token+`">`)
+	assert.Contains(t, string(body), `<meta name="spk-mm-client-api-token" content="`+token+`">`)
 	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 }
 
@@ -153,7 +153,7 @@ func TestTestAPIFakeURLAndDeeplink(t *testing.T) {
 // whether the open SSE connection itself gets torn down, which is only
 // observable by reading past its still-open body on the client.
 func TestGracefulShutdownEndsOpenSSEConnectionPromptly(t *testing.T) {
-	t.Setenv("SPK_MATTERMOST_HOME", t.TempDir())
+	t.Setenv("SPK_MM_CLIENT_HOME", t.TempDir())
 
 	// Reserve a free port up front (listen-then-close) so the client below
 	// can dial it as soon as the server goroutine starts.

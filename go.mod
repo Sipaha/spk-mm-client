@@ -1,4 +1,4 @@
-module github.com/spk/spk-mattermost
+module github.com/spk/spk-mm-client
 
 go 1.26.0
 

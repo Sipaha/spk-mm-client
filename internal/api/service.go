@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/auth"
-	"github.com/spk/spk-mattermost/internal/events"
-	"github.com/spk/spk-mattermost/internal/mm/rest"
-	"github.com/spk/spk-mattermost/internal/mmsync"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/auth"
+	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/mmsync"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 type Opener func(url string) error

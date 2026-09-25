@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 func defaultNotify() map[string]string {

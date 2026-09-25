@@ -8,7 +8,7 @@ import (
 )
 
 // instanceID is the single-instance lock ID. The default data dir uses
-// UniqueID; a custom SPK_MATTERMOST_HOME gets its own ID, so a dev/test
+// UniqueID; a custom SPK_MM_CLIENT_HOME gets its own ID, so a dev/test
 // instance can run next to the user's client instead of forwarding to it
 // (mmauth:// deep links still go to the default instance).
 func instanceID(customHome string) string {
@@ -33,7 +33,7 @@ const (
 	gpuNever
 )
 
-// parseGPUPolicy reads SPK_MATTERMOST_GPU (always|ondemand|never); anything
+// parseGPUPolicy reads SPK_MM_CLIENT_GPU (always|ondemand|never); anything
 // else keeps the default. An escape hatch for broken GPU drivers.
 func parseGPUPolicy(v string) gpuPolicy {
 	switch strings.ToLower(strings.TrimSpace(v)) {

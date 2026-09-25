@@ -77,7 +77,7 @@ func ruPlural(n int, one, few, many string) string {
 }
 
 func trayTooltip(lang string, unread bool, mentions int) string {
-	const app = "spk-mattermost"
+	const app = "spk-mm-client"
 	switch {
 	case mentions > 0 && lang == "ru":
 		return fmt.Sprintf("%s — %d %s", app, mentions, ruPlural(mentions, "упоминание", "упоминания", "упоминаний"))

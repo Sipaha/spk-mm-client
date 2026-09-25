@@ -1,5 +1,5 @@
 const ru = {
-  'app.title': 'spk-mattermost',
+  'app.title': 'spk-mm-client',
   'rail.add': 'Добавить сервер',
   'add.title': 'Добавить сервер Mattermost',
   'add.urlLabel': 'Адрес сервера',
@@ -82,7 +82,7 @@ const ru = {
 type Key = keyof typeof ru
 
 const en: Record<Key, string> = {
-  'app.title': 'spk-mattermost',
+  'app.title': 'spk-mm-client',
   'rail.add': 'Add server',
   'add.title': 'Add a Mattermost server',
   'add.urlLabel': 'Server address',

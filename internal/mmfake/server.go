@@ -1,5 +1,5 @@
 // Package mmfake is an in-process fake of the Mattermost server subset
-// spk-mattermost talks to, plus a fake GitLab consent page for the mobile
+// spk-mm-client talks to, plus a fake GitLab consent page for the mobile
 // SSO flow. Used by Go tests and by browser mode (--mm-fake) for e2e.
 package mmfake
 
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 type User struct {

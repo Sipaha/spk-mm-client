@@ -5,7 +5,7 @@ package api
 import (
 	"context"
 
-	"github.com/spk/spk-mattermost/internal/state"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 type ServerDTO struct {

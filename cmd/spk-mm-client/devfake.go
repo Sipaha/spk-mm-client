@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/mmfake"
 )
 
 // signInToFake adds the in-process fake servers and signs alice in on each,

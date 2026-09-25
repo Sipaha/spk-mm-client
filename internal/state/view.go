@@ -3,7 +3,7 @@ package state
 import (
 	"sort"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 type FileView struct {

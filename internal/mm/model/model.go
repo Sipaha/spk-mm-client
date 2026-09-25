@@ -1,4 +1,4 @@
-// Package model holds the Mattermost wire types spk-mattermost uses, trimmed
+// Package model holds the Mattermost wire types spk-mm-client uses, trimmed
 // to the fields the client reads (see docs/research/2026-09-24-mattermost-api-facts.md).
 // The same types serialize the local cache snapshot, so json tags matter.
 package model

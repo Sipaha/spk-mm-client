@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spk/spk-mattermost/internal/mm/model"
-	"github.com/spk/spk-mattermost/internal/mm/ws"
-	"github.com/spk/spk-mattermost/internal/state"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
+	"github.com/spk/spk-mm-client/internal/state"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 func TestMergeDeltaNewerWins(t *testing.T) {

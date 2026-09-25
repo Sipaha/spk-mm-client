@@ -37,7 +37,7 @@ func newRootCmd(run runners) *cobra.Command {
 	var fakeServers int
 	var fakeChurn time.Duration
 	root := &cobra.Command{
-		Use:           "spk-mattermost [mmauth://callback?...]",
+		Use:           "spk-mm-client [mmauth://callback?...]",
 		Short:         "Lightweight Mattermost desktop client",
 		SilenceUsage:  true,
 		SilenceErrors: true,

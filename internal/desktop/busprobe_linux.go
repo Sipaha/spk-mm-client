@@ -15,7 +15,7 @@ const dbusProbeTimeout = 2 * time.Second
 
 // deadBusAddress can never be connected to (a path under /dev/null), so every
 // D-Bus client fails immediately instead of waiting on a hung bus.
-const deadBusAddress = "unix:path=/dev/null/spk-mattermost-dbus-disabled"
+const deadBusAddress = "unix:path=/dev/null/spk-mm-client-dbus-disabled"
 
 // sessionBusState probes the D-Bus session bus once, bounded by
 // dbusProbeTimeout; run.go feeds the result to integrationsFor.

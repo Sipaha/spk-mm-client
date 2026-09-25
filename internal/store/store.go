@@ -1,4 +1,4 @@
-// Package store is spk-mattermost's SQLite persistence.
+// Package store is spk-mm-client's SQLite persistence.
 package store
 
 import (

@@ -2,7 +2,7 @@ import { Call, Events } from '@wailsio/runtime'
 import { afterEach, expect, test, vi } from 'vitest'
 import { ApiError, wailsClient } from './client'
 
-const FQN = 'github.com/spk/spk-mattermost/internal/api/transport.API.'
+const FQN = 'github.com/spk/spk-mm-client/internal/api/transport.API.'
 
 // The module-level @wailsio/runtime mock (frontend/vitest.setup.ts) provides
 // bare vi.fn()s for Call.ByName / Events.On; these tests drive them directly

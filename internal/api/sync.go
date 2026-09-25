@@ -8,10 +8,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/spk/spk-mattermost/internal/mmsync"
-	"github.com/spk/spk-mattermost/internal/notify"
-	"github.com/spk/spk-mattermost/internal/state"
-	"github.com/spk/spk-mattermost/internal/store"
+	"github.com/spk/spk-mm-client/internal/mmsync"
+	"github.com/spk/spk-mm-client/internal/notify"
+	"github.com/spk/spk-mm-client/internal/state"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 const coalesceDelay = 100 * time.Millisecond

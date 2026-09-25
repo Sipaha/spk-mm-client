@@ -27,7 +27,7 @@ func serveIndex(w http.ResponseWriter, dist fs.FS, token string) {
 		http.Error(w, "UI not built: run `make build`", http.StatusInternalServerError)
 		return
 	}
-	tag := fmt.Sprintf(`<meta name="spk-mattermost-api-token" content="%s">`, token)
+	tag := fmt.Sprintf(`<meta name="spk-mm-client-api-token" content="%s">`, token)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The token changes every run; a cached index would 401 every call.
 	w.Header().Set("Cache-Control", "no-store")

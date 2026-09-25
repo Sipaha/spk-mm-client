@@ -5,12 +5,12 @@ package transport
 import (
 	"context"
 
-	"github.com/spk/spk-mattermost/internal/api"
+	"github.com/spk/spk-mm-client/internal/api"
 )
 
 // API is the Wails service. Bindings are addressed by Go FQN:
 //
-//	github.com/spk/spk-mattermost/internal/api/transport.API.<Method>
+//	github.com/spk/spk-mm-client/internal/api/transport.API.<Method>
 //
 // (mirrored in frontend/src/api/client.ts).
 type API struct{ a api.API }

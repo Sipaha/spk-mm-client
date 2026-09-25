@@ -13,9 +13,9 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"github.com/spk/spk-mattermost/internal/api"
-	"github.com/spk/spk-mattermost/internal/api/transport"
-	mmevents "github.com/spk/spk-mattermost/internal/events"
+	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/api/transport"
+	mmevents "github.com/spk/spk-mm-client/internal/events"
 )
 
 type Options struct {
@@ -115,7 +115,7 @@ func Run(ctx context.Context, o Options) error {
 	var single *application.SingleInstanceOptions
 	if feat.singleInstance {
 		single = &application.SingleInstanceOptions{
-			UniqueID: instanceID(os.Getenv("SPK_MATTERMOST_HOME")),
+			UniqueID: instanceID(os.Getenv("SPK_MM_CLIENT_HOME")),
 			// Linux/Windows: the OS starts a second process with the
 			// mmauth:// URL; Wails forwards its args here and exits it.
 			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
@@ -129,7 +129,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	app := application.New(application.Options{
-		Name:        "spk-mattermost",
+		Name:        "spk-mm-client",
 		Description: "Lightweight Mattermost client",
 		Icon:        o.IconPNG,
 		Services: []application.Service{
@@ -177,7 +177,7 @@ func Run(ctx context.Context, o Options) error {
 	}()
 
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "spk-mattermost",
+		Title:  "spk-mm-client",
 		Width:  1200,
 		Height: 800,
 		// Matches --color-app (#1f1f23) in frontend/src/index.css: the app is
@@ -186,7 +186,7 @@ func Run(ctx context.Context, o Options) error {
 		BackgroundColour: application.NewRGBA(31, 31, 35, 255),
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
-		Linux:            application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MATTERMOST_GPU"))},
+		Linux:            application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MM_CLIENT_GPU"))},
 	})
 	if feat.closeHides() {
 		w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
