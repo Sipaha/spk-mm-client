@@ -18,12 +18,12 @@ const me = { id: 'u-alice', username: 'alice' }
 beforeEach(() => setLocale('en'))
 
 test('head shows author, time and bot badge; follow-up hides them', () => {
-  const { rerender } = render(<PostItem post={post({ bot: true, edit_at: 1 })} head me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
+  const { rerender } = render(<PostItem serverId={1} post={post({ bot: true, edit_at: 1 })} head me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
   expect(screen.getByText('bob')).toBeInTheDocument()
   expect(screen.getByText('BOT')).toBeInTheDocument()
   expect(screen.getAllByText('13:05')).toHaveLength(1)
   expect(screen.getByText('(edited)')).toBeInTheDocument()
-  rerender(<PostItem post={post()} head={false} me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
+  rerender(<PostItem serverId={1} post={post()} head={false} me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
   expect(screen.queryByText('bob')).toBeNull()
 })
 
@@ -31,6 +31,7 @@ test('attachments, files, reactions and reply count', async () => {
   const a = actions()
   render(
     <PostItem
+      serverId={1}
       post={post({
         message: '',
         attachments: [{ color: 'danger', pretext: 'Build', title: 'Pipeline #7', title_link: 'https://ci/7', text: 'failed on **test**', fields: [{ title: 'Branch', value: 'main', short: true }] }],
@@ -59,10 +60,10 @@ test('attachments, files, reactions and reply count', async () => {
 
 test('pending and failed posts', async () => {
   const a = actions()
-  const { rerender } = render(<PostItem post={post({ pending: true, user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const { rerender } = render(<PostItem serverId={1} post={post({ pending: true, user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   expect(screen.getByText('Sending…')).toBeInTheDocument()
   const failed = post({ failed: true, user_id: 'u-alice' })
-  rerender(<PostItem post={failed} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  rerender(<PostItem serverId={1} post={failed} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(a.retry).toHaveBeenCalledWith(failed)
   await userEvent.click(screen.getByRole('button', { name: 'Discard' }))
@@ -72,13 +73,13 @@ test('pending and failed posts', async () => {
 test('own post offers edit and delete; others only mark unread and copy link', async () => {
   const a = actions()
   const own = post({ user_id: 'u-alice' })
-  const { rerender } = render(<PostItem post={own} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const { rerender } = render(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
   expect(a.edit).toHaveBeenCalledWith(own)
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
   expect(a.remove).toHaveBeenCalledWith(own)
   const other = post()
-  rerender(<PostItem post={other} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  rerender(<PostItem serverId={1} post={other} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Mark as unread' }))
@@ -90,7 +91,7 @@ test('own post offers edit and delete; others only mark unread and copy link', a
 test('inline edit: Enter saves, Escape cancels, errors stay visible', async () => {
   const a = actions()
   const own = post({ user_id: 'u-alice', message: 'v1' })
-  const { rerender } = render(<PostItem post={own} head me={me} locale="en-US" crt={false} actions={a} editing />)
+  const { rerender } = render(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={a} editing />)
   const box = screen.getByRole('textbox', { name: 'Edit message' })
   expect(box).toHaveValue('v1')
   expect(screen.queryByRole('toolbar')).toBeNull()
@@ -99,7 +100,16 @@ test('inline edit: Enter saves, Escape cancels, errors stay visible', async () =
   await userEvent.type(box, '{Escape}')
   expect(a.cancelEdit).toHaveBeenCalled()
   a.saveEdit = vi.fn().mockRejectedValue(new ApiError('forbidden', ''))
-  rerender(<PostItem post={own} head me={me} locale="en-US" crt={false} actions={{ ...a }} editing />)
+  rerender(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={{ ...a }} editing />)
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('You are not allowed to do that')
+})
+
+test('head shows the author picture with presence; an unknown author gets initials', () => {
+  const { container, rerender } = render(<PostItem serverId={2} post={post({ avatar: '9', status: 'dnd' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(container.querySelector('img')).toHaveAttribute('src', '/media/2/avatar/u-bob?v=9')
+  expect(container.querySelector('[data-status="dnd"]')).toHaveAttribute('title', 'Do not disturb')
+  rerender(<PostItem serverId={2} post={post({ author: '' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(container.querySelector('img')).toBeNull()
+  expect(container).toHaveTextContent('?')
 })

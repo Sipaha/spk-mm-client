@@ -31,6 +31,10 @@ export interface ChannelItem {
   unread: boolean
   mentions: number
   muted: boolean
+  user_id?: string // DMs: the partner
+  avatar?: string // DMs: picture version ('' / absent: profile not loaded)
+  status?: string // DMs: presence
+  bot?: boolean
 }
 
 // Go nil slices arrive as null.
@@ -83,6 +87,8 @@ export interface PostView {
   id: string
   user_id: string
   author: string
+  avatar?: string // picture version of the author; absent: profile not loaded
+  status?: string // presence of the author (online | away | dnd | offline | ooo)
   root_id?: string
   message: string
   create_at: number

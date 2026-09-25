@@ -8,6 +8,7 @@ import { PostItem, type PostActions } from './PostItem'
 
 interface Props {
   channel: ChannelDTO
+  serverId: number
   me: { id: string; username: string }
   locale: string
   actions: PostActions
@@ -50,7 +51,7 @@ export function pickAnchor(boxes: RowBox[], viewTop: number): { key: string; off
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ channel, me, locale, actions, editingId, onLoadOlder }: Props) {
+export function Feed({ channel, serverId, me, locale, actions, editingId, onLoadOlder }: Props) {
   const rows = useMemo(() => buildRows(channel), [channel])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
@@ -235,7 +236,7 @@ export function Feed({ channel, me, locale, actions, editingId, onLoadOlder }: P
       case 'gap':
         return <div role="status" className="py-2 text-center text-xs text-fg-muted">{t('feed.gap')}</div>
       case 'post':
-        return <PostItem post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} editing={r.post.id === editingId} />
+        return <PostItem serverId={serverId} post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} editing={r.post.id === editingId} />
     }
   }
 

@@ -91,3 +91,24 @@ test('server menu signs out and removes', async () => {
   await userEvent.click(screen.getByRole('menuitem', { name: 'Remove server' }))
   expect(p.onRemove).toHaveBeenCalled()
 })
+
+test('DM rows show the partner picture with presence; bots have no dot; groups keep their mark', () => {
+  const dms: SidebarDTO = {
+    ...sb,
+    categories: [{
+      id: 'dm', type: 'direct_messages', name: 'Direct Messages', collapsed: false,
+      channels: [
+        { id: 'c-dm', name: 'bob', type: 'D', unread: false, mentions: 0, muted: false, user_id: 'u-bob', avatar: '5', status: 'online' },
+        { id: 'c-bot', name: 'ci', type: 'D', unread: false, mentions: 0, muted: false, user_id: 'u-ci', avatar: '0', bot: true },
+        { id: 'c-gm', name: 'alice, bob, carol', type: 'G', unread: false, mentions: 0, muted: false },
+      ],
+    }],
+  }
+  renderSidebar({ sidebar: dms })
+  const bob = screen.getByRole('button', { name: 'bob, Online' })
+  expect(bob.querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-bob?v=5')
+  expect(bob.querySelector('[data-status="online"]')).not.toBeNull()
+  const ci = screen.getByRole('button', { name: 'ci' })
+  expect(ci.querySelector('[data-status]')).toBeNull()
+  expect(screen.getByRole('button', { name: /alice, bob, carol/ })).toHaveTextContent('👥')
+})

@@ -3,6 +3,7 @@ import type { Attachment, PostView } from '../api/types'
 import { errorMessage } from '../errors'
 import { formatSize, formatTime } from '../format'
 import { t } from '../i18n'
+import { Avatar } from './Avatar'
 import { emojiFor } from './emoji'
 import { Markdown } from './Markdown'
 
@@ -19,6 +20,7 @@ export interface PostActions {
 }
 
 interface Props {
+  serverId: number
   post: PostView
   head: boolean
   me: { id: string; username: string }
@@ -26,19 +28,6 @@ interface Props {
   crt: boolean
   actions: PostActions
   editing: boolean
-}
-
-const COLORS = ['bg-rose-500', 'bg-orange-500', 'bg-amber-600', 'bg-lime-600', 'bg-emerald-600', 'bg-teal-600', 'bg-sky-600', 'bg-indigo-500', 'bg-violet-500', 'bg-fuchsia-600']
-
-// Initials until avatars (stage 3); the color is stable per user.
-function Avatar({ id, name }: { id: string; name: string }) {
-  let h = 0
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
-  return (
-    <div aria-hidden className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-white ${COLORS[Math.abs(h) % COLORS.length]}`}>
-      {(name[0] ?? '?').toUpperCase()}
-    </div>
-  )
 }
 
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
@@ -133,7 +122,7 @@ function ToolButton({ label, onClick, children }: { label: string; onClick(): vo
   )
 }
 
-export const PostItem = memo(function PostItem({ post, head, me, locale, crt, actions, editing }: Props) {
+export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, crt, actions, editing }: Props) {
   const time = formatTime(post.create_at, locale)
   return (
     <article
@@ -141,7 +130,11 @@ export const PostItem = memo(function PostItem({ post, head, me, locale, crt, ac
       className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''} ${post.pending ? 'opacity-60' : ''}`}
     >
       <div className="w-9 shrink-0 pt-0.5">
-        {head ? <Avatar id={post.user_id} name={post.author} /> : <time className="invisible block pt-1 text-right text-[10px] text-fg-subtle group-hover:visible">{time}</time>}
+        {head ? (
+          <Avatar serverId={serverId} userId={post.user_id} version={post.avatar} name={post.author} status={post.status} size={36} surface="app" />
+        ) : (
+          <time className="invisible block pt-1 text-right text-[10px] text-fg-subtle group-hover:visible">{time}</time>
+        )}
       </div>
       <div className="min-w-0 flex-1">
         {head && (

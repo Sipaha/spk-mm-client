@@ -77,6 +77,10 @@ const ru = {
   'post.editLabel': 'Правка сообщения',
   'post.save': 'Сохранить',
   'post.cancel': 'Отмена',
+  'presence.online': 'В сети',
+  'presence.away': 'Отошёл',
+  'presence.dnd': 'Не беспокоить',
+  'presence.offline': 'Не в сети',
 } as const
 
 type Key = keyof typeof ru
@@ -160,6 +164,10 @@ const en: Record<Key, string> = {
   'post.editLabel': 'Edit message',
   'post.save': 'Save',
   'post.cancel': 'Cancel',
+  'presence.online': 'Online',
+  'presence.away': 'Away',
+  'presence.dnd': 'Do not disturb',
+  'presence.offline': 'Offline',
 }
 
 export const dict = { ru, en }

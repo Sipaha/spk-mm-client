@@ -60,7 +60,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           {t('channel.syncing')}
         </div>
       )}
-      <Feed key={`feed-${channel.id}`} channel={channel} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} />
+      <Feed key={`feed-${channel.id}`} serverId={server.id} channel={channel} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} />
       <Composer
         key={`composer-${channel.id}`}
         channel={channel}

@@ -17,6 +17,9 @@
   --color-mention-fg: #fcd34d;
   --color-danger: #f87171;
   --color-code-bg: #2a2a30;
+  --color-online: #06d6a0;
+  --color-away: #ffbc1f;
+  --color-dnd: #d24b4e;
 }
 
 /* Message markdown: Tailwind's preflight resets these elements. */

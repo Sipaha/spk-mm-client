@@ -36,7 +36,7 @@ const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   ...o,
 })
 const props = (o: Partial<ChannelDTO> = {}, onLoadOlder = vi.fn().mockResolvedValue(true)) => ({
-  channel: channel(o), me: { id: 'me', username: 'me' }, locale: 'en-US',
+  channel: channel(o), serverId: 1, me: { id: 'me', username: 'me' }, locale: 'en-US',
   actions: {
     link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
     cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),

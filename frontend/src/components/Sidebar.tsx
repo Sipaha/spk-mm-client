@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CategoryView, ChannelItem, ServerDTO, SidebarDTO } from '../api/types'
 import { t } from '../i18n'
+import { Avatar, presenceLabel } from './Avatar'
 import { channelGlyph } from './glyph'
 
 interface Props {
@@ -35,15 +36,28 @@ function MentionPill({ n }: { n: number }) {
   )
 }
 
-function ChannelRow({ item, active, onClick }: { item: ChannelItem; active: boolean; onClick(): void }) {
+function ChannelRow({ serverId, item, active, onClick }: { serverId: number; item: ChannelItem; active: boolean; onClick(): void }) {
   const tone = active ? 'bg-blue-700 text-white' : item.unread ? 'font-semibold text-fg' : 'text-fg-subtle'
+  const person = item.type === 'D' && item.user_id
+  const status = item.bot ? '' : (item.status ?? '')
+  // The presence goes into the button's name as a whole label: a visually
+  // hidden span would be joined with a stray space by Chromium ("bob , Online").
+  const label =
+    person && status
+      ? [item.name, presenceLabel(status), ...(item.mentions > 0 ? [t('rail.mentions', { n: String(item.mentions) })] : [])].join(', ')
+      : undefined
   return (
     <button
       aria-current={active}
+      aria-label={label}
       onClick={onClick}
       className={`flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-hover ${tone} ${item.muted ? 'opacity-50' : ''}`}
     >
-      <span className="w-4 shrink-0 text-center text-xs opacity-70">{channelGlyph(item.type)}</span>
+      {person ? (
+        <Avatar serverId={serverId} userId={item.user_id!} version={item.avatar} name={item.name} status={status} size={20} surface="sidebar" />
+      ) : (
+        <span className="w-4 shrink-0 text-center text-xs opacity-70">{channelGlyph(item.type)}</span>
+      )}
       <span className="truncate">{item.name}</span>
       {item.mentions > 0 && <MentionPill n={item.mentions} />}
     </button>
@@ -127,7 +141,7 @@ export function Sidebar(p: Props) {
               <ul>
                 {shown.map((c) => (
                   <li key={c.id}>
-                    <ChannelRow item={c} active={c.id === p.activeChannelId} onClick={() => p.onChannel(c.id)} />
+                    <ChannelRow serverId={p.server.id} item={c} active={c.id === p.activeChannelId} onClick={() => p.onChannel(c.id)} />
                   </li>
                 ))}
               </ul>
