@@ -36,6 +36,8 @@ type Options struct {
 	SeedPosts     int  // 0 -> 150 posts in Town Square; <0 -> none
 	ExtraChannels int  // open "load-NNN" channels with 20 posts each
 	SinceLimit    int  // 0 -> 1000
+
+	DisableCustomEmoji bool // custom emoji endpoints answer 501 and the config says false
 }
 
 type Server struct {
@@ -52,6 +54,7 @@ type Server struct {
 	latency       map[string]time.Duration
 	failures      map[string]int
 	rejectResumes bool
+	hits          map[string]int
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.
@@ -83,6 +86,7 @@ func Start(o Options) *Server {
 	mux.HandleFunc("GET /mmfake/gitlab/complete", s.gitlabComplete)
 	mux.HandleFunc("GET /api/v4/websocket", s.websocketHandler)
 	s.chatRoutes(mux)
+	s.mediaRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }
@@ -179,6 +183,7 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 		"EnableSignUpWithGitLab": fmt.Sprint(!s.opts.DisableGitLab),
 		"CollapsedThreads":       crt,
 		"TeammateNameDisplay":    "username",
+		"EnableCustomEmoji":      fmt.Sprint(!s.opts.DisableCustomEmoji),
 	})
 }
 
@@ -208,6 +213,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	out.NotifyProps = map[string]string{
 		"desktop": "mention", "channel": "true", "desktop_threads": "all", "mention_keys": "", "first_name": "false",
 	}
+	s.mu.Lock()
+	if pic := s.chat.pictures[u.ID]; pic != nil {
+		out.LastPictureUpdate = pic.at
+	}
+	s.mu.Unlock()
 	writeJSON(w, 200, out)
 }
 

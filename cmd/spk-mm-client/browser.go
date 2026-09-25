@@ -203,6 +203,22 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			fake.DropConnections(true)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		}))
+		tm.HandleFunc("POST /api/_test/fake/status", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Username string `json:"username"`
+				Status   string `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.SetStatus(in.Username, in.Status)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/picture", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Username string `json:"username"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			writeJSON(w, http.StatusOK, map[string]int64{"at": fake.SetPicture(in.Username)})
+		}))
 		mux.Handle("/api/_test/", transport.AuthGuard(token, transport.OriginGuard(tm)))
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
 	}

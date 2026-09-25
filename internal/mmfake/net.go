@@ -23,6 +23,10 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 				delay = max(delay, d)
 			}
 		}
+		if s.hits == nil {
+			s.hits = map[string]int{}
+		}
+		s.hits[r.Method+" "+r.URL.Path]++
 		s.mu.Unlock()
 		if down {
 			http.Error(w, "fake server is down", http.StatusServiceUnavailable)
@@ -89,4 +93,11 @@ func (s *Server) SetFailure(part string, status int) {
 		return
 	}
 	s.failures[part] = status
+}
+
+// Hits counts requests by method and path (query excluded) since Start.
+func (s *Server) Hits(method, path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hits[method+" "+path]
 }

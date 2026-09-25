@@ -72,6 +72,10 @@ func TestSeedVisibleToAlice(t *testing.T) {
 	assert.ElementsMatch(t, []string{"c-town", "c-offtopic", "c-secret"}, byType["channels"])
 	assert.ElementsMatch(t, []string{"c-dm-bob", "c-gm"}, byType["direct_messages"])
 	assert.Len(t, cats.Order, 3)
+
+	off := s.Channel("c-offtopic")
+	assert.Equal(t, int64(5), off.TotalMsgCount, "welcome + four posts with files")
+	assert.Equal(t, off.TotalMsgCount, s.Member("c-offtopic", "alice").MsgCount, "seed is read")
 }
 
 func TestPostsPagingAndBefore(t *testing.T) {

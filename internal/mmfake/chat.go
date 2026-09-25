@@ -31,6 +31,11 @@ type chatData struct {
 	lastMs     int64
 	sinceLimit int
 	failPosts  int
+
+	files      map[string]*ffile
+	emoji      map[string]*femoji // by id
+	pictures   map[string]*picture
+	pictureSeq int
 }
 
 type RecordedEvent struct {
@@ -204,9 +209,15 @@ func (s *Server) usersByIDs(w http.ResponseWriter, r *http.Request, _ User) {
 	var ids []string
 	_ = json.NewDecoder(r.Body).Decode(&ids)
 	out := []model.User{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, id := range ids {
 		if u, ok := s.userByID(id); ok {
-			out = append(out, userJSON(u))
+			mu := userJSON(u)
+			if pic := s.chat.pictures[id]; pic != nil {
+				mu.LastPictureUpdate = pic.at
+			}
+			out = append(out, mu)
 		}
 	}
 	writeJSON(w, 200, out)
@@ -338,6 +349,10 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	now := s.nowLocked()
 	p := &fpost{Post: model.Post{ID: newID(), ChannelID: c.ID, UserID: userID, RootID: in.RootID,
 		Message: in.Message, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
+	if len(in.FileIDs) > 0 {
+		p.FileIDs = append([]string(nil), in.FileIDs...)
+		p.Metadata = &model.PostMetadata{Files: s.fileInfosLocked(in.FileIDs)}
+	}
 	root := in.RootID == ""
 	c.LastPostAt = now
 	c.TotalMsgCount++
