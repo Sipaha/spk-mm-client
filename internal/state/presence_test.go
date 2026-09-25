@@ -99,3 +99,16 @@ func TestAvatarVersionFollowsUserUpdated(t *testing.T) {
 	assert.Equal(t, "-42", v.Posts[0].Avatar, "a reset picture has a negative version")
 	assert.Equal(t, "-42", sidebarItem(s, "dm2").Avatar)
 }
+
+func TestRestoreSeedsMyPresence(t *testing.T) {
+	s := newFixture()
+	s.SetPresence([]model.Status{{UserID: "u1", Status: "dnd"}})
+	put, _ := s.TakeSnapshot()
+	r := New(fixedNow)
+	require.NoError(t, r.Restore(put))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	assert.Equal(t, "dnd", r.status.Status)
+	assert.Equal(t, "dnd", r.presence["u1"], "my own status shows before the first poll, as after Bootstrap")
+	assert.Len(t, r.presence, 1, "others' presence is not in the snapshot")
+}

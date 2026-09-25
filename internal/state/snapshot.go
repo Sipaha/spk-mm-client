@@ -176,6 +176,7 @@ func (s *Server) Restore(entries []store.CacheEntry) error {
 		s.prefs[prefKey{p.Category, p.Name}] = p.Value
 	}
 	s.users[s.me.ID] = s.me
+	s.presence[s.me.ID] = s.status.Status
 	var liveAt int64
 	wins := map[string]Window{}
 	for _, e := range entries {

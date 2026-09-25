@@ -73,6 +73,9 @@ func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
 	}
 	w.st.AppendOlder(channelID, l.Ascending(), l.PrevPostID == "")
 	w.loadUsers(ctx)
+	if channelID == w.st.Active() {
+		w.requestStatuses() // authors of the older posts
+	}
 	w.changed(state.Change{Channels: []string{channelID}})
 	return nil
 }
