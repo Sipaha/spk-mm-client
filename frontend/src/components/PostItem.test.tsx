@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
@@ -13,6 +13,7 @@ const actions = (): PostActions => ({
   link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
   cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
   view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
+  emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
 })
 const me = { id: 'u-alice', username: 'alice' }
 
@@ -106,6 +107,31 @@ test('inline edit: Enter saves, Escape cancels, errors stay visible', async () =
   rerender(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={{ ...a }} editing />)
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('You are not allowed to do that')
+})
+
+test('the reaction button opens the picker; picking reacts, one already ours is not sent again', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue({ recent: ['tada'], custom: [], custom_enabled: false })
+  render(<PostItem serverId={1} post={post({ reactions: [{ emoji: 'tada', count: 1, mine: true }] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await userEvent.click(screen.getAllByRole('button', { name: 'Add reaction' })[0])
+  const dialog = await screen.findByRole('dialog', { name: 'Emoji picker' })
+  expect(a.emojiInfo).toHaveBeenCalled()
+  await userEvent.click(await within(dialog).findByRole('button', { name: ':rocket:' }))
+  expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'rocket', true)
+  expect(screen.queryByRole('dialog')).toBeNull()
+
+  await userEvent.click(screen.getAllByRole('button', { name: 'Add reaction' })[0])
+  const again = await screen.findByRole('dialog', { name: 'Emoji picker' })
+  const recent = await within(again).findByRole('region', { name: 'Recently used' })
+  await userEvent.click(within(recent).getByRole('button', { name: ':tada:' }))
+  expect(a.react).toHaveBeenCalledTimes(1)
+})
+
+test('system and pending posts offer no reaction button', () => {
+  const { rerender } = render(<PostItem serverId={1} post={post({ system: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByRole('button', { name: 'Add reaction' })).toBeNull()
+  rerender(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByRole('button', { name: 'Add reaction' })).toBeNull()
 })
 
 test('head shows the author picture with presence; an unknown author gets initials', () => {

@@ -1,5 +1,6 @@
-import { memo, useState } from 'react'
-import type { Attachment, FileView, PostView } from '../api/types'
+import { lazy, memo, Suspense, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { Attachment, EmojiDTO, FileView, PostView } from '../api/types'
 import { errorMessage } from '../errors'
 import { formatTime } from '../format'
 import { t } from '../i18n'
@@ -7,6 +8,8 @@ import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
 import { Markdown } from './Markdown'
 import { Reactions } from './Reactions'
+
+const EmojiPicker = lazy(() => import('./EmojiPicker'))
 
 export interface PostActions {
   link(href: string): void
@@ -22,6 +25,7 @@ export interface PostActions {
   download(file: FileView): void
   open(file: FileView): void
   react(post: PostView, emoji: string, add: boolean): void
+  emojiInfo(): Promise<EmojiDTO>
 }
 
 interface Props {
@@ -119,7 +123,7 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
   )
 }
 
-function ToolButton({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
+function ToolButton({ label, onClick, children }: { label: string; onClick(e: React.MouseEvent<HTMLButtonElement>): void; children: React.ReactNode }) {
   return (
     <button aria-label={label} title={label} onClick={onClick} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-hover">
       {children}
@@ -129,6 +133,25 @@ function ToolButton({ label, onClick, children }: { label: string; onClick(): vo
 
 export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, crt, actions, editing }: Props) {
   const time = formatTime(post.create_at, locale)
+  const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
+  const trigger = useRef<HTMLElement | null>(null)
+  const canReact = !post.system && !post.pending && !post.failed
+  const openPicker = (el: HTMLElement) => {
+    trigger.current = el
+    setPicker({ anchor: el.getBoundingClientRect(), info: null })
+    actions.emojiInfo().then(
+      (info) => setPicker((p) => (p ? { ...p, info } : p)),
+      () => {},
+    )
+  }
+  const closePicker = () => {
+    setPicker(null)
+    trigger.current?.focus()
+  }
+  const pick = (name: string) => {
+    closePicker()
+    if (!post.reactions?.some((r) => r.emoji === name && r.mine)) actions.react(post, name, true)
+  }
   return (
     <article
       data-post-id={post.id}
@@ -162,7 +185,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           <Attachments serverId={serverId} files={post.files} onView={(f) => actions.view(post, f.id)} onDownload={actions.download} onOpen={actions.open} />
         )}
         {post.reactions && post.reactions.length > 0 && (
-          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} />
+          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />
         )}
         {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
         {post.pending && <div className="text-xs text-fg-muted">{t('post.sending')}</div>}
@@ -180,6 +203,11 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           aria-label={t('post.actions')}
           className="absolute -top-3 right-3 hidden gap-0.5 rounded border border-line bg-panel px-1 shadow-sm group-focus-within:flex group-hover:flex"
         >
+          {canReact && (
+            <ToolButton label={t('reaction.add')} onClick={(e) => openPicker(e.currentTarget)}>
+              ☺
+            </ToolButton>
+          )}
           {post.user_id === me.id && !post.system && (
             <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}>✎</ToolButton>
           )}
@@ -190,6 +218,13 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           )}
         </div>
       )}
+      {picker &&
+        createPortal(
+          <Suspense fallback={null}>
+            <EmojiPicker serverId={serverId} anchor={picker.anchor} info={picker.info} onPick={pick} onClose={closePicker} />
+          </Suspense>,
+          document.body,
+        )}
     </article>
   )
 })

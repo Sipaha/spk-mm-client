@@ -41,6 +41,7 @@ const props = (o: Partial<ChannelDTO> = {}, onLoadOlder = vi.fn().mockResolvedVa
     link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
     cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
     view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
+    emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
   },
   editingId: null,
   onLoadOlder,
