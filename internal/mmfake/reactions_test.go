@@ -109,6 +109,12 @@ func TestReactionRepeatedAddReturnsOriginalCreateAt(t *testing.T) {
 	require.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, &first))
 	require.NotZero(t, first.CreateAt)
 
+	// Advance the fake clock (s.chat.lastMs) with an unrelated action between
+	// the original add and the no-op re-add, so a re-add that (bug) reported
+	// the current clock instead of the stored reaction's create_at would show
+	// a different, later timestamp here — making the assertion discriminating.
+	s.ReactAs("bob", id, "wave")
+
 	var second model.Reaction
 	require.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, &second))
 	assert.Equal(t, first.CreateAt, second.CreateAt, "a repeated add returns the existing reaction's real create_at, not a fresh timestamp")
