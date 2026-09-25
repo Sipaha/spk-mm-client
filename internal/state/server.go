@@ -70,16 +70,17 @@ type Server struct {
 	mu  sync.Mutex
 	now func() time.Time
 
-	me     model.User
-	status model.Status
-	cfg    Config
-	prefs  map[prefKey]string
-	teams  []model.Team
-	chans  map[string]*Chan
-	cats   map[string]model.OrderedCategories
-	users  map[string]model.User
-	emoji  map[string]string // custom emoji name → id (not in the snapshot)
-	nav    Nav
+	me       model.User
+	status   model.Status
+	presence map[string]string // user id → online|away|dnd|offline|ooo; not in the snapshot
+	cfg      Config
+	prefs    map[prefKey]string
+	teams    []model.Team
+	chans    map[string]*Chan
+	cats     map[string]model.OrderedCategories
+	users    map[string]model.User
+	emoji    map[string]string // custom emoji name → id (not in the snapshot)
+	nav      Nav
 
 	// Task 7: posts, pending, active channel.
 	pending       map[string][]Pending
@@ -104,7 +105,7 @@ func New(now func() time.Time) *Server {
 	}
 	return &Server{
 		now: now, prefs: map[prefKey]string{}, chans: map[string]*Chan{}, cats: map[string]model.OrderedCategories{},
-		users: map[string]model.User{}, emoji: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
+		users: map[string]model.User{}, emoji: map[string]string{}, presence: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
 		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), dirty: newDirtySet(),
 	}
 }
@@ -115,6 +116,7 @@ func (s *Server) Bootstrap(b Bootstrap) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.me, s.status, s.cfg = b.Me, b.Status, b.Config
+	s.presence[b.Me.ID] = b.Status.Status
 	s.users[b.Me.ID] = b.Me
 	s.prefs = map[prefKey]string{}
 	for _, p := range b.Prefs {

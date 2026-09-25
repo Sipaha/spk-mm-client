@@ -23,6 +23,7 @@ func (w *Worker) OpenChannel(channelID string) (state.ChannelView, bool) {
 	if w.st.Focused() {
 		w.view(channelID)
 	}
+	w.requestStatuses() // the open channel's authors
 	w.changed(state.Change{Sidebar: true})
 	return w.st.ChannelView(channelID)
 }

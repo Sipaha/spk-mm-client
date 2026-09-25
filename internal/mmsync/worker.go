@@ -45,16 +45,17 @@ type Hooks struct {
 }
 
 type Config struct {
-	Store      *store.Store
-	HTTPClient *http.Client
-	Hooks      Hooks
-	Now        func() time.Time
-	FlushEvery time.Duration
-	MinBackoff time.Duration
-	MaxBackoff time.Duration
-	WakeCheck  time.Duration
-	Fetchers   int
-	WS         func(*ws.Options) // test seam (ping intervals)
+	Store       *store.Store
+	HTTPClient  *http.Client
+	Hooks       Hooks
+	Now         func() time.Time
+	FlushEvery  time.Duration
+	MinBackoff  time.Duration
+	MaxBackoff  time.Duration
+	WakeCheck   time.Duration
+	Fetchers    int
+	StatusEvery time.Duration     // presence poll period; 0 → 1 min
+	WS          func(*ws.Options) // test seam (ping intervals)
 
 	sinceLimit int // test seam: the server's since= cap; 0 → rest.SinceLimit
 	// test seams: 0 → refreshTimeout / refreshRetryFirst
@@ -80,6 +81,9 @@ func (c *Config) defaults() {
 	}
 	if c.Fetchers <= 0 {
 		c.Fetchers = 3
+	}
+	if c.StatusEvery <= 0 {
+		c.StatusEvery = defaultStatusEvery
 	}
 	if c.refreshTimeout <= 0 {
 		c.refreshTimeout = refreshTimeout
@@ -149,6 +153,7 @@ type Worker struct {
 	authFail   chan struct{}
 	metaReq    chan struct{}
 	metaDue    chan struct{} // debounced metaReq, served by the session's event loop
+	statusDue  chan struct{} // a presence poll is wanted soon
 	queue      *fetchQueue
 	viewing    sync.Map    // channel id → in-flight view
 	emojiLoad  atomic.Bool // custom emoji list read (or being read) by this worker
@@ -189,6 +194,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		authFail:  make(chan struct{}, 1),
 		metaReq:   make(chan struct{}, 1),
 		metaDue:   make(chan struct{}, 1),
+		statusDue: make(chan struct{}, 1),
 		queue:     newFetchQueue(),
 		emojiMiss: map[string]time.Time{},
 	}
@@ -254,7 +260,7 @@ func (w *Worker) Run(ctx context.Context) {
 	defer context.AfterFunc(ctx, w.cancelLife)()
 	w.restore(ctx)
 	var wg sync.WaitGroup
-	for _, loop := range []func(context.Context){w.flushLoop, w.fetchLoop, w.metaLoop, w.wakeLoop} {
+	for _, loop := range []func(context.Context){w.flushLoop, w.fetchLoop, w.metaLoop, w.wakeLoop, w.statusLoop} {
 		wg.Add(1)
 		go func() { defer wg.Done(); loop(ctx) }()
 	}
@@ -375,6 +381,7 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 		w.proveLive()
 	}
 	w.setStatus(StatusLive)
+	w.requestStatuses()
 	onLive()
 	var settle <-chan time.Time
 	if !w.live.proven() {

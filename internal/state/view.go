@@ -22,6 +22,8 @@ type PostView struct {
 	ID            string             `json:"id"`
 	UserID        string             `json:"user_id"`
 	Author        string             `json:"author"`
+	Avatar        string             `json:"avatar,omitempty"` // picture version; "" = profile not loaded
+	Status        string             `json:"status,omitempty"` // presence of the author; "" for bots
 	RootID        string             `json:"root_id,omitempty"`
 	Message       string             `json:"message"`
 	CreateAt      int64              `json:"create_at"`
@@ -90,6 +92,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	sort.SliceStable(pend, func(i, j int) bool { return pend[i].CreateAt < pend[j].CreateAt })
 	for _, p := range pend {
 		v.Posts = append(v.Posts, PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
+			Avatar: s.avatarLocked(s.me.ID), Status: s.presenceLocked(s.me.ID),
 			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
 			// Keys the feed row across confirmation: the eventual real post
 			// echoes this same id back as its own PendingPostID.
@@ -121,6 +124,10 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 	}
 	if u, ok := s.users[p.UserID]; ok && u.IsBot {
 		v.Bot = true
+	}
+	v.Avatar = s.avatarLocked(p.UserID)
+	if !v.Bot {
+		v.Status = s.presenceLocked(p.UserID)
 	}
 	if p.Metadata != nil {
 		for _, f := range p.Metadata.Files {

@@ -23,6 +23,11 @@ type ChannelItem struct {
 	Unread   bool   `json:"unread"`
 	Mentions int    `json:"mentions"`
 	Muted    bool   `json:"muted"`
+	// DMs only: the partner, their picture version and presence.
+	UserID string `json:"user_id,omitempty"`
+	Avatar string `json:"avatar,omitempty"`
+	Status string `json:"status,omitempty"`
+	Bot    bool   `json:"bot,omitempty"`
 }
 
 type CategoryView struct {
@@ -166,8 +171,18 @@ func (s *Server) categoriesLocked(teamID string) []CategoryView {
 		for _, id := range ids {
 			ch := s.chans[id]
 			u, m := s.unreadLocked(ch)
-			cv.Channels = append(cv.Channels, ChannelItem{ID: id, Name: s.channelNameLocked(ch), Type: ch.Info.Type,
-				Unread: u, Mentions: m, Muted: ch.Member.Muted()})
+			it := ChannelItem{ID: id, Name: s.channelNameLocked(ch), Type: ch.Info.Type,
+				Unread: u, Mentions: m, Muted: ch.Member.Muted()}
+			if ch.Info.IsDM() {
+				partner := ch.Info.DMPartner(s.me.ID)
+				it.UserID, it.Avatar = partner, s.avatarLocked(partner)
+				if pu, ok := s.users[partner]; ok && pu.IsBot {
+					it.Bot = true
+				} else {
+					it.Status = s.presenceLocked(partner)
+				}
+			}
+			cv.Channels = append(cv.Channels, it)
 		}
 		out = append(out, cv)
 	}

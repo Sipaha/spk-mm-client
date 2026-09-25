@@ -157,8 +157,15 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 			s.addEmojiLocked(e)
 		}
 	case "status_change":
-		if ev.Str("user_id") == s.me.ID {
-			s.status.Status = ev.Str("status")
+		// Only our own arrives (the server sends it to that user alone);
+		// the rest is polled — see StatusTargets.
+		uid, st := ev.Str("user_id"), ev.Str("status")
+		if uid == s.me.ID {
+			s.status.Status = st
+		}
+		if uid != "" && s.presence[uid] != st {
+			s.presence[uid] = st
+			eff.Change = s.presenceChangeLocked()
 		}
 	}
 	return eff
