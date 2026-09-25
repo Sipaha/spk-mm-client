@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
+
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 func TestMyChannelsAndTeams(t *testing.T) {
@@ -149,4 +151,60 @@ func TestLimiterWaitHonoursContext(t *testing.T) {
 	err := c.Ping(ctx)
 	require.Error(t, err)
 	assert.True(t, IsNetwork(err))
+}
+
+func TestStatusesByIDsChunksBy100(t *testing.T) {
+	var sizes []int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v4/users/status/ids", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		var ids []string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&ids))
+		sizes = append(sizes, len(ids))
+		out := make([]map[string]any, len(ids))
+		for i, id := range ids {
+			out[i] = map[string]any{"user_id": id, "status": "away", "manual": false, "last_activity_at": 1, "dnd_end_time": 0}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	ids := make([]string, 250)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("u%03d", i)
+	}
+	list, err := c.StatusesByIDs(context.Background(), ids)
+	require.NoError(t, err)
+	assert.Equal(t, []int{100, 100, 50}, sizes)
+	require.Len(t, list, 250)
+	assert.Equal(t, "u249", list[249].UserID)
+	assert.Equal(t, "away", list[249].Status)
+}
+
+func TestFileInfoAndCustomEmojiCalls(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/files/f1/info":
+			_, _ = w.Write([]byte(`{"id":"f1","name":"a.png","extension":"png","size":10,"mime_type":"image/png","width":640,"height":480,"has_preview_image":true,"mini_preview":"AAAA"}`))
+		case "/api/v4/emoji":
+			assert.Equal(t, "2", r.URL.Query().Get("page"))
+			assert.Equal(t, "200", r.URL.Query().Get("per_page"))
+			assert.Equal(t, "name", r.URL.Query().Get("sort"))
+			_, _ = w.Write([]byte(`[{"id":"e1","name":"parrot","creator_id":"u1","create_at":5}]`))
+		case "/api/v4/emoji/name/parrot":
+			_, _ = w.Write([]byte(`{"id":"e1","name":"parrot"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	ctx := context.Background()
+	fi, err := c.FileInfo(ctx, "f1")
+	require.NoError(t, err)
+	assert.Equal(t, 640, fi.Width)
+	assert.Equal(t, 480, fi.Height)
+	assert.True(t, fi.HasPreviewImage)
+	list, err := c.CustomEmojiPage(ctx, 2, 200)
+	require.NoError(t, err)
+	assert.Equal(t, []model.Emoji{{ID: "e1", Name: "parrot", CreatorID: "u1"}}, list)
+	e, err := c.EmojiByName(ctx, "parrot")
+	require.NoError(t, err)
+	assert.Equal(t, "e1", e.ID)
 }

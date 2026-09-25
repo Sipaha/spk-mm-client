@@ -76,16 +76,19 @@ type ChannelMember struct {
 func (m ChannelMember) Muted() bool { return m.NotifyProps["mark_unread"] == "mention" }
 
 type User struct {
-	ID          string            `json:"id"`
-	Username    string            `json:"username"`
-	FirstName   string            `json:"first_name,omitempty"`
-	LastName    string            `json:"last_name,omitempty"`
-	Nickname    string            `json:"nickname,omitempty"`
-	Locale      string            `json:"locale,omitempty"`
-	IsBot       bool              `json:"is_bot,omitempty"`
-	DeleteAt    int64             `json:"delete_at,omitempty"`
-	UpdateAt    int64             `json:"update_at,omitempty"`
-	NotifyProps map[string]string `json:"notify_props,omitempty"`
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Nickname  string `json:"nickname,omitempty"`
+	Locale    string `json:"locale,omitempty"`
+	IsBot     bool   `json:"is_bot,omitempty"`
+	DeleteAt  int64  `json:"delete_at,omitempty"`
+	UpdateAt  int64  `json:"update_at,omitempty"`
+	// LastPictureUpdate versions the profile picture: it changes on every
+	// upload and reset, and is negative for a generated default picture.
+	LastPictureUpdate int64             `json:"last_picture_update,omitempty"`
+	NotifyProps       map[string]string `json:"notify_props,omitempty"`
 }
 
 func (u User) FullName() string { return strings.TrimSpace(u.FirstName + " " + u.LastName) }
@@ -120,6 +123,8 @@ type FileInfo struct {
 	Extension       string `json:"extension,omitempty"`
 	Size            int64  `json:"size"`
 	MimeType        string `json:"mime_type,omitempty"`
+	Width           int    `json:"width,omitempty"`
+	Height          int    `json:"height,omitempty"`
 	HasPreviewImage bool   `json:"has_preview_image,omitempty"`
 }
 
@@ -128,6 +133,14 @@ type Reaction struct {
 	PostID    string `json:"post_id"`
 	EmojiName string `json:"emoji_name"`
 	CreateAt  int64  `json:"create_at,omitempty"`
+}
+
+// Emoji is a server's custom emoji.
+type Emoji struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatorID string `json:"creator_id,omitempty"`
+	DeleteAt  int64  `json:"delete_at,omitempty"`
 }
 
 // PostMetadata keeps only files and reactions; embeds/images/emojis are

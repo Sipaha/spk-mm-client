@@ -16,6 +16,7 @@ const SinceLimit = 1000
 const (
 	membersPageSize = 200
 	usersChunk      = 100
+	statusChunk     = 100
 )
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
@@ -108,4 +109,37 @@ func (c *Client) ChannelPosts(ctx context.Context, channelID string, q PostsQuer
 	var out model.PostList
 	err := c.get(ctx, "/api/v4/channels/"+url.PathEscape(channelID)+"/posts?"+v.Encode(), &out)
 	return out, err
+}
+
+// StatusesByIDs fetches presence in chunks. The server answers "offline" for
+// users it has no status for, and an empty list if statuses are disabled.
+func (c *Client) StatusesByIDs(ctx context.Context, ids []string) ([]model.Status, error) {
+	var all []model.Status
+	for start := 0; start < len(ids); start += statusChunk {
+		end := min(start+statusChunk, len(ids))
+		var out []model.Status
+		if _, err := c.do(ctx, http.MethodPost, "/api/v4/users/status/ids", ids[start:end], &out); err != nil {
+			return nil, err
+		}
+		all = append(all, out...)
+	}
+	return all, nil
+}
+
+func (c *Client) FileInfo(ctx context.Context, fileID string) (model.FileInfo, error) {
+	var out model.FileInfo
+	return out, c.get(ctx, "/api/v4/files/"+url.PathEscape(fileID)+"/info", &out)
+}
+
+// CustomEmojiPage lists custom emoji by name; perPage ≤ 200 (server cap).
+func (c *Client) CustomEmojiPage(ctx context.Context, page, perPage int) ([]model.Emoji, error) {
+	q := url.Values{"page": {strconv.Itoa(page)}, "per_page": {strconv.Itoa(perPage)}, "sort": {"name"}}
+	var out []model.Emoji
+	return out, c.get(ctx, "/api/v4/emoji?"+q.Encode(), &out)
+}
+
+// EmojiByName fetches a custom emoji; 404 when there is none with that name.
+func (c *Client) EmojiByName(ctx context.Context, name string) (model.Emoji, error) {
+	var out model.Emoji
+	return out, c.get(ctx, "/api/v4/emoji/name/"+url.PathEscape(name), &out)
 }

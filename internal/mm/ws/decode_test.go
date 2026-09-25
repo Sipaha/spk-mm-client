@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
 func ev(typ, data string, b Broadcast) Event {
@@ -60,4 +62,10 @@ func TestDecoders(t *testing.T) {
 func TestDecodePostedRejectsGarbage(t *testing.T) {
 	_, err := DecodePosted(ev("posted", `{"post":"not json"}`, Broadcast{}))
 	assert.Error(t, err)
+}
+
+func TestDecodeEmoji(t *testing.T) {
+	e, err := DecodeEmoji(ev("emoji_added", `{"emoji":"{\"id\":\"e1\",\"name\":\"parrot\",\"creator_id\":\"u1\"}"}`, Broadcast{}))
+	require.NoError(t, err)
+	assert.Equal(t, model.Emoji{ID: "e1", Name: "parrot", CreatorID: "u1"}, e)
 }

@@ -64,3 +64,12 @@ func TestMe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, User{ID: "u1", Username: "alice", FirstName: "Alice"}, u)
 }
+
+func TestClientConfigCustomEmojiFlag(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"SiteName":"MM","EnableCustomEmoji":"true"}`))
+	})
+	cfg, err := c.ClientConfig(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "true", cfg.EnableCustomEmoji)
+}

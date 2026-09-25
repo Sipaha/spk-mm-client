@@ -104,3 +104,9 @@ func DecodeUser(e Event) (model.User, error) {
 	err := json.Unmarshal(e.Data, &d)
 	return d.User, err
 }
+
+// DecodeEmoji decodes emoji_added (data.emoji is a JSON string).
+func DecodeEmoji(e Event) (model.Emoji, error) {
+	var out model.Emoji
+	return out, embedded(e, "emoji", &out)
+}

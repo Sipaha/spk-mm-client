@@ -17,6 +17,7 @@ type ClientConfig struct {
 	CollapsedThreads        string `json:"CollapsedThreads"`
 	TeammateNameDisplay     string `json:"TeammateNameDisplay"`
 	LockTeammateNameDisplay string `json:"LockTeammateNameDisplay"`
+	EnableCustomEmoji       string `json:"EnableCustomEmoji"`
 }
 
 func (c ClientConfig) GitLabEnabled() bool { return c.EnableSignUpWithGitLab == "true" }
