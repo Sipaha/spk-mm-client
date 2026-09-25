@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
-import { copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, loadOlder, markUnread, openFile, openLink, retryPost, saveDraft, sendPost } from '../chat'
+import { copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, loadOlder, markUnread, openFile, openLink, react, retryPost, saveDraft, sendPost } from '../chat'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
 import { useStore } from '../store'
@@ -38,6 +38,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       },
       download: (f) => void downloadFile(server.id, f.id),
       open: (f) => void openFile(server.id, f.id),
+      react: (p, emoji, add) => react(server.id, p.id, emoji, add),
     }),
     [server.id, server.url, channelId, teamName],
   )

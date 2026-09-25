@@ -183,6 +183,12 @@ export async function openFile(serverId: number, fileId: string) {
   }
 }
 
+export const react = (serverId: number, postId: string, emoji: string, add: boolean) => {
+  ;(add ? client.addReaction(serverId, postId, emoji) : client.removeReaction(serverId, postId, emoji)).catch(report)
+}
+
+export const emojiInfo = (serverId: number) => client.emojiInfo(serverId)
+
 export function editLastOwn(ch: ChannelDTO) {
   for (let i = ch.posts.length - 1; i >= 0; i--) {
     const p = ch.posts[i]

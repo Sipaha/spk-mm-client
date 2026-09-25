@@ -98,6 +98,11 @@ const ru = {
   'viewer.download': 'Скачать',
   'viewer.open': 'Открыть',
   'err.no_file': 'Файл не найден',
+  'reaction.chip': '{emoji} {n}',
+  'reaction.chipMine': '{emoji} {n}, ваша реакция',
+  'reaction.add': 'Добавить реакцию',
+  'err.too_many_reactions': 'У сообщения слишком много разных реакций',
+  'err.no_post': 'Сообщение не найдено',
 } as const
 
 type Key = keyof typeof ru
@@ -202,6 +207,11 @@ const en: Record<Key, string> = {
   'viewer.download': 'Download',
   'viewer.open': 'Open',
   'err.no_file': 'File not found',
+  'reaction.chip': '{emoji} {n}',
+  'reaction.chipMine': '{emoji} {n}, you reacted',
+  'reaction.add': 'Add reaction',
+  'err.too_many_reactions': 'This message has too many different reactions',
+  'err.no_post': 'Message not found',
 }
 
 export const dict = { ru, en }

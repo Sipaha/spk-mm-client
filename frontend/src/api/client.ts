@@ -1,5 +1,5 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, AppInfo, ChannelDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
+import type { ApiEvent, AppInfo, ChannelDTO, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -32,6 +32,9 @@ export interface Client {
   saveDraft(id: number, channelId: string, text: string): Promise<void>
   downloadFile(id: number, fileId: string): Promise<SavedFile>
   openFile(id: number, fileId: string): Promise<SavedFile>
+  addReaction(id: number, postId: string, emoji: string): Promise<void>
+  removeReaction(id: number, postId: string, emoji: string): Promise<void>
+  emojiInfo(id: number): Promise<EmojiDTO>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -84,6 +87,9 @@ export const httpClient: Client = {
   saveDraft: (id, channel_id, text) => done(post('SaveDraft', { id, channel_id, text })),
   downloadFile: (id, file_id) => post('DownloadFile', { id, file_id }),
   openFile: (id, file_id) => post('OpenFile', { id, file_id }),
+  addReaction: (id, post_id, emoji) => done(post('AddReaction', { id, post_id, emoji })),
+  removeReaction: (id, post_id, emoji) => done(post('RemoveReaction', { id, post_id, emoji })),
+  emojiInfo: (id) => post('EmojiInfo', { id }),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -142,6 +148,9 @@ export const wailsClient: Client = {
   saveDraft: (id, channelId, text) => wcall('SaveDraft', id, channelId, text),
   downloadFile: (id, fileId) => wcall('DownloadFile', id, fileId),
   openFile: (id, fileId) => wcall('OpenFile', id, fileId),
+  addReaction: (id, postId, emoji) => wcall('AddReaction', id, postId, emoji),
+  removeReaction: (id, postId, emoji) => wcall('RemoveReaction', id, postId, emoji),
+  emojiInfo: (id) => wcall('EmojiInfo', id),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

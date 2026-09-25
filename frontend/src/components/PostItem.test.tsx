@@ -12,7 +12,7 @@ const post = (o: Partial<PostView> = {}): PostView => ({
 const actions = (): PostActions => ({
   link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
   cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
-  view: vi.fn(), download: vi.fn(), open: vi.fn(),
+  view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
 })
 const me = { id: 'u-alice', username: 'alice' }
 
@@ -52,11 +52,13 @@ test('attachments, files, reactions and reply count', async () => {
   expect(screen.getByText('Branch')).toBeInTheDocument()
   expect(screen.getByText('report.pdf')).toBeInTheDocument()
   expect(screen.getByText('2.0 KB')).toBeInTheDocument()
-  expect(screen.getByTitle(':+1:')).toHaveTextContent('👍 2')
-  expect(screen.getByTitle(':custom_party:')).toHaveTextContent(':custom_party: 1')
+  expect(screen.getByRole('button', { name: '👍 2, you reacted' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: ':custom_party: 1' })).toBeInTheDocument()
   expect(screen.getByText('Replies: 3')).toBeInTheDocument()
   await userEvent.click(screen.getByRole('link', { name: 'Pipeline #7' }))
   expect(a.link).toHaveBeenCalledWith('https://ci/7')
+  await userEvent.click(screen.getByRole('button', { name: '👍 2, you reacted' }))
+  expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), '+1', false)
 })
 
 test('pending and failed posts', async () => {

@@ -5,8 +5,8 @@ import { formatTime } from '../format'
 import { t } from '../i18n'
 import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
-import { emojiFor } from './emoji'
 import { Markdown } from './Markdown'
+import { Reactions } from './Reactions'
 
 export interface PostActions {
   link(href: string): void
@@ -21,6 +21,7 @@ export interface PostActions {
   view(post: PostView, fileId: string): void
   download(file: FileView): void
   open(file: FileView): void
+  react(post: PostView, emoji: string, add: boolean): void
 }
 
 interface Props {
@@ -161,13 +162,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           <Attachments serverId={serverId} files={post.files} onView={(f) => actions.view(post, f.id)} onDownload={actions.download} onOpen={actions.open} />
         )}
         {post.reactions && post.reactions.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {post.reactions.map((r) => (
-              <span key={r.emoji} title={`:${r.emoji}:`} className={`rounded-full border px-1.5 text-xs ${r.mine ? 'border-accent bg-accent/15' : 'border-line'}`}>
-                {emojiFor(r.emoji)} {r.count}
-              </span>
-            ))}
-          </div>
+          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} />
         )}
         {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
         {post.pending && <div className="text-xs text-fg-muted">{t('post.sending')}</div>}

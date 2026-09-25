@@ -93,6 +93,12 @@ export interface ReactionView {
   mine: boolean
 }
 
+export interface EmojiDTO {
+  recent: string[] // most used first
+  custom: string[]
+  custom_enabled: boolean
+}
+
 export interface PostView {
   id: string
   user_id: string
