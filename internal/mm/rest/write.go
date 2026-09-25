@@ -56,3 +56,19 @@ func (c *Client) SavePreferences(ctx context.Context, prefs []model.Preference) 
 	_, err := c.do(ctx, http.MethodPut, "/api/v4/users/me/preferences", prefs, nil)
 	return err
 }
+
+// SaveReaction adds a reaction as r.UserID (must be the session's user).
+// Not retried on transport errors, like every POST; adding an existing
+// reaction is harmless anyway.
+func (c *Client) SaveReaction(ctx context.Context, r model.Reaction) (model.Reaction, error) {
+	var out model.Reaction
+	_, err := c.do(ctx, http.MethodPost, "/api/v4/reactions",
+		map[string]string{"user_id": r.UserID, "post_id": r.PostID, "emoji_name": r.EmojiName}, &out)
+	return out, err
+}
+
+func (c *Client) DeleteReaction(ctx context.Context, userID, postID, emoji string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/api/v4/users/"+url.PathEscape(userID)+"/posts/"+url.PathEscape(postID)+
+		"/reactions/"+url.PathEscape(emoji), nil, nil)
+	return err
+}

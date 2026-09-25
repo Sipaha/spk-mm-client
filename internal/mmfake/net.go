@@ -6,15 +6,22 @@ import (
 	"time"
 )
 
+// failure is an injected error response: status and the AppError id the
+// client sees in the body.
+type failure struct {
+	status int
+	id     string
+}
+
 // conditions applies the simulated network conditions to every request.
 func (s *Server) conditions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		down := s.down
-		fail := 0
-		for part, code := range s.failures {
+		var fail failure
+		for part, f := range s.failures {
 			if strings.Contains(r.URL.Path, part) {
-				fail = code
+				fail = f
 			}
 		}
 		var delay time.Duration
@@ -32,8 +39,8 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 			http.Error(w, "fake server is down", http.StatusServiceUnavailable)
 			return
 		}
-		if fail != 0 {
-			appError(w, fail, "mmfake.injected_failure", "injected failure")
+		if fail.status != 0 {
+			appError(w, fail.status, fail.id, "injected failure")
 			return
 		}
 		if delay > 0 {
@@ -83,16 +90,22 @@ func (s *Server) RejectResumes(reject bool) {
 // SetFailure makes every request whose path contains part fail with the
 // given status (0 removes the failure).
 func (s *Server) SetFailure(part string, status int) {
+	s.FailWith(part, status, "mmfake.injected_failure")
+}
+
+// FailWith is SetFailure with the AppError id the client gets (e.g.
+// app.reaction.save.save.too_many_reactions).
+func (s *Server) FailWith(part string, status int, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failures == nil {
-		s.failures = map[string]int{}
+		s.failures = map[string]failure{}
 	}
 	if status == 0 {
 		delete(s.failures, part)
 		return
 	}
-	s.failures[part] = status
+	s.failures[part] = failure{status: status, id: id}
 }
 
 // Hits counts requests by method and path (query excluded) since Start.

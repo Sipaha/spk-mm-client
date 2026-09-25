@@ -249,6 +249,27 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			writeJSON(w, http.StatusOK, map[string]int64{"at": fake.SetPicture(in.Username)})
 		}))
+		tm.HandleFunc("POST /api/_test/fake/react", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ChannelID string `json:"channel_id"`
+				Message   string `json:"message"`
+				Username  string `json:"username"`
+				Emoji     string `json:"emoji"`
+				Remove    bool   `json:"remove"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			id := fake.FindPost(in.ChannelID, in.Message)
+			if id == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"code": "no_post"})
+				return
+			}
+			if in.Remove {
+				fake.UnreactAs(in.Username, id, in.Emoji)
+			} else {
+				fake.ReactAs(in.Username, id, in.Emoji)
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"post_id": id})
+		}))
 		mux.Handle("/api/_test/", transport.AuthGuard(token, transport.OriginGuard(tm)))
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
 	}

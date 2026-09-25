@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -78,4 +79,26 @@ func TestPatchDeleteViewUnreadPrefs(t *testing.T) {
 		"PUT /api/v4/posts/p1/patch", "DELETE /api/v4/posts/p1", "POST /api/v4/channels/members/me/view",
 		"POST /api/v4/users/me/posts/p1/set_unread", "PUT /api/v4/users/me/preferences",
 	}, seen)
+}
+
+func TestReactionCalls(t *testing.T) {
+	var got []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, r.Method+" "+r.URL.EscapedPath()+" "+string(b))
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"user_id":"u1","post_id":"p1","emoji_name":"+1","create_at":5}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"OK"}`))
+	})
+	ctx := context.Background()
+	r, err := c.SaveReaction(ctx, model.Reaction{UserID: "u1", PostID: "p1", EmojiName: "+1"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), r.CreateAt)
+	require.NoError(t, c.DeleteReaction(ctx, "u1", "p1", "+1"))
+	assert.Equal(t, []string{
+		`POST /api/v4/reactions {"emoji_name":"+1","post_id":"p1","user_id":"u1"}`,
+		`DELETE /api/v4/users/u1/posts/p1/reactions/+1 `,
+	}, got)
 }

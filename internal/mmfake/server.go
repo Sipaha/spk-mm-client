@@ -52,7 +52,7 @@ type Server struct {
 	// network conditions (test controls, see net.go)
 	down          bool
 	latency       map[string]time.Duration
-	failures      map[string]int
+	failures      map[string]failure
 	rejectResumes bool
 	hits          map[string]int
 }
@@ -87,6 +87,7 @@ func Start(o Options) *Server {
 	mux.HandleFunc("GET /api/v4/websocket", s.websocketHandler)
 	s.chatRoutes(mux)
 	s.mediaRoutes(mux)
+	s.reactionRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }

@@ -59,7 +59,13 @@ func (s *Server) seed() {
 	for i := 1; i <= seedPosts; i++ {
 		s.seedPostLocked("c-town", authors[i%2], fmt.Sprintf("Message #%d", i))
 	}
-	s.seedPostLocked("c-offtopic", "u-bob", "Welcome to off-topic")
+	welcome := s.seedPostLocked("c-offtopic", "u-bob", "Welcome to off-topic")
+	react := func(user, emoji string) model.Reaction {
+		return model.Reaction{UserID: user, PostID: welcome.ID, EmojiName: emoji, CreateAt: welcome.CreateAt}
+	}
+	welcome.Metadata = &model.PostMetadata{Reactions: []model.Reaction{
+		react("u-bob", "+1"), react("u-carol", "+1"), react("u-carol", "tada"), react("u-bob", "partyparrot"),
+	}}
 	img := seedImages()
 	s.seedFilePostLocked("c-offtopic", "u-bob", "Build screenshot",
 		s.newFileLocked("f-build", "c-offtopic", "build.png", "image/png", img["build.png"]))
