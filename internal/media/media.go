@@ -1,0 +1,506 @@
+// Package media serves pictures and file snippets of Mattermost servers to
+// the UI from a bounded on-disk cache. The UI never talks to a Mattermost
+// server itself: it requests /media/<server id>/<kind>/<key> on its own
+// origin, and the cache fetches the object through the server's REST client
+// (Origin — the token and the per-server rate limiter stay in Go), checks
+// what came back, keeps it on disk and serves it with long-lived headers.
+package media
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/spk/spk-mm-client/internal/mm/rest"
+)
+
+// Kind is the second segment of a /media/ URL: what is served.
+type Kind string
+
+// Kinds of media objects.
+const (
+	KindAvatar Kind = "avatar" // user picture; key user id, ?v=last_picture_update
+	KindThumb  Kind = "thumb"  // file thumbnail (server: JPEG ≤120×100)
+	KindFeed   Kind = "feed"   // image in the feed: preview or original, scaled to ≤ FeedMax
+	KindFull   Kind = "full"   // image in the viewer: preview or original as is
+	KindText   Kind = "text"   // first TextLimit bytes of a text file
+	KindEmoji  Kind = "emoji"  // custom emoji picture; key emoji name
+)
+
+// Limits of the cache and of what it accepts.
+const (
+	DefaultMaxBytes = 256 << 20
+	FeedMax         = 960      // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
+	TextLimit       = 64 << 10 // bytes of a text file shown
+	maxPixels       = 50_000_000
+	negTTL          = 5 * time.Minute  // 403/404/413/415: will not change soon
+	negTTLTransient = 30 * time.Second // network trouble
+	maxNeg          = 1000
+)
+
+var (
+	// ErrNoServer means the server id is unknown or not signed in (404).
+	ErrNoServer = errors.New("media: server not signed in")
+	errTooLarge = errors.New("media: object too large")
+	errType     = errors.New("media: content type not allowed")
+	errUpstream = errors.New("media: unexpected upstream status")
+	errStore    = errors.New("media: cache write failed")
+)
+
+// Origin fetches objects from signed-in servers (implemented by api.Service).
+type Origin interface {
+	// Get GETs an API path through the server's REST client; the caller
+	// closes the body.
+	Get(ctx context.Context, serverID int64, path string, hdr http.Header) (*http.Response, error)
+	// EmojiID resolves a custom emoji name; "" and no error: no such emoji.
+	EmojiID(ctx context.Context, serverID int64, name string) (string, error)
+}
+
+type Options struct {
+	Dir      string
+	MaxBytes int64 // total size cap; 0 → DefaultMaxBytes
+	Origin   Origin
+	Fetches  int           // concurrent upstream fetches; 0 → 6
+	Timeout  time.Duration // per upstream fetch; 0 → 60 s
+	Now      func() time.Time
+}
+
+type entry struct {
+	size int64
+	used time.Time
+}
+
+type negEntry struct {
+	status int
+	until  time.Time
+}
+
+type call struct {
+	done   chan struct{}
+	status int
+}
+
+type Cache struct {
+	o        Options
+	sem      chan struct{}
+	mu       sync.Mutex
+	index    map[string]*entry // file name → entry
+	total    int64
+	neg      map[string]negEntry // cache key → recent failure
+	inflight map[string]*call    // cache key → fetch in progress
+}
+
+// New opens (creating) the cache directory: leftovers of interrupted writes
+// are removed, existing objects are indexed (last use = mtime) and trimmed
+// to the cap.
+func New(o Options) (*Cache, error) {
+	if o.Dir == "" || o.Origin == nil {
+		return nil, errors.New("media: Dir and Origin are required")
+	}
+	if o.MaxBytes <= 0 {
+		o.MaxBytes = DefaultMaxBytes
+	}
+	if o.Fetches <= 0 {
+		o.Fetches = 6
+	}
+	if o.Timeout <= 0 {
+		o.Timeout = 60 * time.Second
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if err := os.MkdirAll(o.Dir, 0o700); err != nil {
+		return nil, err
+	}
+	des, err := os.ReadDir(o.Dir)
+	if err != nil {
+		return nil, err
+	}
+	c := &Cache{o: o, sem: make(chan struct{}, o.Fetches), index: map[string]*entry{},
+		neg: map[string]negEntry{}, inflight: map[string]*call{}}
+	for _, de := range des {
+		name := de.Name()
+		switch {
+		case strings.HasSuffix(name, ".tmp"):
+			_ = os.Remove(filepath.Join(o.Dir, name))
+		case strings.HasSuffix(name, ".bin"):
+			if fi, err := de.Info(); err == nil {
+				c.index[name] = &entry{size: fi.Size(), used: fi.ModTime()}
+				c.total += fi.Size()
+			}
+		}
+	}
+	c.mu.Lock()
+	c.evictLocked("")
+	c.mu.Unlock()
+	return c, nil
+}
+
+// Size is the total size of cached objects.
+func (c *Cache) Size() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total
+}
+
+type request struct {
+	server  int64
+	kind    Kind
+	key     string // user id, file id or emoji name
+	variant string // avatar: picture version; feed/full: "preview" | "file"
+}
+
+var (
+	idRe    = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	emojiRe = regexp.MustCompile(`^[a-zA-Z0-9_+-]{1,64}$`)
+)
+
+func parse(u *url.URL) (request, bool) {
+	tail, ok := strings.CutPrefix(u.Path, "/media/")
+	parts := strings.Split(tail, "/")
+	if !ok || len(parts) != 3 {
+		return request{}, false
+	}
+	srv, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || srv <= 0 {
+		return request{}, false
+	}
+	q := request{server: srv, kind: Kind(parts[1]), key: parts[2]}
+	switch q.kind {
+	case KindAvatar:
+		q.variant = u.Query().Get("v")
+		if q.variant == "" {
+			q.variant = "0"
+		}
+		if _, err := strconv.ParseInt(q.variant, 10, 64); err != nil {
+			return request{}, false
+		}
+	case KindFeed, KindFull:
+		q.variant = u.Query().Get("src")
+		if q.variant == "" {
+			q.variant = "preview"
+		}
+		if q.variant != "preview" && q.variant != "file" {
+			return request{}, false
+		}
+	case KindThumb, KindText:
+	case KindEmoji:
+		return q, emojiRe.MatchString(q.key)
+	default:
+		return request{}, false
+	}
+	return q, idRe.MatchString(q.key)
+}
+
+// spec is what to fetch for a request and how much of it to accept.
+type spec struct {
+	path  string
+	hdr   http.Header
+	max   int64
+	text  bool
+	scale bool
+}
+
+func (q request) spec(id string) spec {
+	esc := url.PathEscape(id)
+	switch q.kind {
+	case KindAvatar:
+		p := "/api/v4/users/" + esc + "/image"
+		if q.variant != "0" {
+			p += "?_=" + url.QueryEscape(q.variant)
+		}
+		return spec{path: p, max: 2 << 20}
+	case KindThumb:
+		return spec{path: "/api/v4/files/" + esc + "/thumbnail", max: 2 << 20}
+	case KindFeed, KindFull:
+		p := "/api/v4/files/" + esc
+		if q.variant == "preview" {
+			p += "/preview"
+		}
+		return spec{path: p, max: 25 << 20, scale: q.kind == KindFeed}
+	case KindText:
+		return spec{path: "/api/v4/files/" + esc, max: TextLimit, text: true,
+			hdr: http.Header{"Range": {fmt.Sprintf("bytes=0-%d", TextLimit-1)}}}
+	default: // KindEmoji: id is the resolved emoji id
+		return spec{path: "/api/v4/emoji/" + esc + "/image", max: 1 << 20}
+	}
+}
+
+func fileName(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:]) + ".bin"
+}
+
+func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q, ok := parse(r.URL)
+	if !ok {
+		http.Error(w, "bad media path", http.StatusBadRequest)
+		return
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		name, status := c.get(r.Context(), q)
+		if status != 0 {
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
+		f, err := os.Open(filepath.Join(c.o.Dir, name))
+		if errors.Is(err, fs.ErrNotExist) { // evicted between get and open
+			c.forget(name)
+			continue
+		}
+		if err != nil {
+			http.Error(w, "cache read failed", http.StatusInternalServerError)
+			return
+		}
+		c.serve(w, r, q, f)
+		_ = f.Close()
+		return
+	}
+	http.Error(w, "cache busy", http.StatusServiceUnavailable)
+}
+
+func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, f *os.File) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if q.kind == KindEmoji {
+		h.Set("Cache-Control", "private, max-age=3600") // by name: may be re-created
+	} else {
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		http.Error(w, "cache read failed", http.StatusInternalServerError)
+		return
+	}
+	var body io.ReadSeeker = f
+	if q.kind == KindText {
+		var flag [1]byte
+		if _, err := io.ReadFull(f, flag[:]); err != nil {
+			http.Error(w, "cache read failed", http.StatusInternalServerError)
+			return
+		}
+		if flag[0] == 'T' {
+			h.Set("X-Truncated", "1")
+		}
+		h.Set("Content-Type", "text/plain; charset=utf-8")
+		body = io.NewSectionReader(f, 1, fi.Size()-1)
+	} else {
+		head := make([]byte, 512)
+		n, _ := io.ReadFull(f, head)
+		h.Set("Content-Type", http.DetectContentType(head[:n]))
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			http.Error(w, "cache read failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	http.ServeContent(w, r, "", time.Time{}, body)
+}
+
+// get makes sure the object is on disk and returns its file name, or an
+// HTTP status for why it is not.
+func (c *Cache) get(ctx context.Context, q request) (string, int) {
+	id := q.key
+	if q.kind == KindEmoji {
+		var status int
+		if id, status = c.emojiID(ctx, q); status != 0 {
+			return "", status
+		}
+	}
+	key := fmt.Sprintf("%d/%s/%s/%s", q.server, q.kind, id, q.variant)
+	name := fileName(key)
+	now := c.o.Now()
+	c.mu.Lock()
+	if e := c.index[name]; e != nil {
+		e.used = now
+		c.mu.Unlock()
+		return name, 0
+	}
+	if n, ok := c.neg[key]; ok && now.Before(n.until) {
+		c.mu.Unlock()
+		return "", n.status
+	}
+	cl := c.inflight[key]
+	if cl == nil {
+		cl = &call{done: make(chan struct{})}
+		c.inflight[key] = cl
+		go c.fill(key, name, q, id, cl)
+	}
+	c.mu.Unlock()
+	select {
+	case <-cl.done:
+		if cl.status != 0 {
+			return "", cl.status
+		}
+		return name, 0
+	case <-ctx.Done():
+		return "", http.StatusServiceUnavailable
+	}
+}
+
+func (c *Cache) emojiID(ctx context.Context, q request) (string, int) {
+	ctx, cancel := context.WithTimeout(ctx, c.o.Timeout)
+	defer cancel()
+	id, err := c.o.Origin.EmojiID(ctx, q.server, q.key)
+	switch {
+	case err != nil:
+		return "", statusFor(err)
+	case id == "" || !idRe.MatchString(id):
+		return "", http.StatusNotFound
+	}
+	return id, 0
+}
+
+// fill runs one upstream fetch for everyone waiting on cl. It does not use
+// a requester's context: the first viewer scrolling away must not waste a
+// fetch the next one needs.
+func (c *Cache) fill(key, name string, q request, id string, cl *call) {
+	c.sem <- struct{}{}
+	err := c.fetch(q, id, name)
+	<-c.sem
+	status := 0
+	if err != nil {
+		status = statusFor(err)
+	}
+	c.mu.Lock()
+	delete(c.inflight, key)
+	// A server that is not signed in yet is not remembered: its pictures
+	// must appear as soon as it signs in (asking again costs no network).
+	if status != 0 && !errors.Is(err, ErrNoServer) {
+		ttl := negTTLTransient
+		switch status {
+		case http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
+			ttl = negTTL
+		}
+		if len(c.neg) >= maxNeg {
+			c.neg = map[string]negEntry{}
+		}
+		c.neg[key] = negEntry{status: status, until: c.o.Now().Add(ttl)}
+	}
+	cl.status = status
+	c.mu.Unlock()
+	close(cl.done)
+}
+
+func (c *Cache) fetch(q request, id, name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.o.Timeout)
+	defer cancel()
+	sp := q.spec(id)
+	resp, err := c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return errUpstream
+	}
+	tmp, err := os.CreateTemp(c.o.Dir, "*.tmp")
+	if err != nil {
+		slog.Warn("media cache write failed", "err", err)
+		return errStore
+	}
+	var size int64
+	if sp.text {
+		size, err = writeText(tmp, resp.Body, resp.Header.Get("Content-Range"))
+	} else {
+		size, err = writeImage(tmp, resp.Body, sp)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), filepath.Join(c.o.Dir, name))
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	c.mu.Lock()
+	if old := c.index[name]; old != nil {
+		c.total -= old.size
+	}
+	c.index[name] = &entry{size: size, used: c.o.Now()}
+	c.total += size
+	c.evictLocked(name)
+	c.mu.Unlock()
+	return nil
+}
+
+// evictLocked drops least recently used objects until the cache fits its
+// cap; keep (the object just written) is never dropped.
+func (c *Cache) evictLocked(keep string) {
+	for c.total > c.o.MaxBytes {
+		victim := ""
+		var oldest time.Time
+		for name, e := range c.index {
+			if name != keep && (victim == "" || e.used.Before(oldest)) {
+				victim, oldest = name, e.used
+			}
+		}
+		if victim == "" {
+			return
+		}
+		if err := os.Remove(filepath.Join(c.o.Dir, victim)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Debug("media eviction failed", "err", err) // e.g. open on Windows: retried on the next write
+			return
+		}
+		c.total -= c.index[victim].size
+		delete(c.index, victim)
+	}
+}
+
+// forget drops the index entry of an object whose file is gone (deleted
+// behind our back). The file is checked again under the lock: the object may
+// have been fetched anew since the failed open, and dropping that entry would
+// leave its file uncounted.
+func (c *Cache) forget(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := os.Stat(filepath.Join(c.o.Dir, name)); !errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if e := c.index[name]; e != nil {
+		c.total -= e.size
+		delete(c.index, name)
+	}
+}
+
+func statusFor(err error) int {
+	var re *rest.Error
+	switch {
+	case errors.Is(err, ErrNoServer):
+		return http.StatusNotFound
+	case errors.Is(err, errTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, errType):
+		return http.StatusUnsupportedMediaType
+	case errors.Is(err, errStore):
+		return http.StatusInternalServerError
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.As(err, &re) && (re.Status == http.StatusUnauthorized || re.Status == http.StatusForbidden):
+		return http.StatusForbidden
+	case errors.As(err, &re) && (re.Status == http.StatusBadRequest || re.Status == http.StatusNotFound || re.Status == http.StatusNotImplemented):
+		return http.StatusNotFound // no thumbnail/preview, deleted file, custom emoji off
+	}
+	return http.StatusBadGateway
+}
