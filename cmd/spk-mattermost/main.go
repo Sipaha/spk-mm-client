@@ -62,6 +62,7 @@ func newRootCmd(run runners) *cobra.Command {
 }
 
 func main() {
+	tuneGoMemory(os.Getenv)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	cmd := newRootCmd(runners{browser: runBrowser, desktop: runDesktop})
