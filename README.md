@@ -1,4 +1,4 @@
-# spk-mattermost
+# spk-mm-client
 
 Лёгкий десктопный клиент Mattermost (Linux, Windows, macOS) на Wails v3 + React.
 Спецификация — `docs/specs/2026-09-24-spk-mattermost-design.md`.
@@ -25,10 +25,12 @@ markdown и подгрузкой истории, отправка/правка/�
     make install-dev-linux  # зарегистрировать dev-сборку для mmauth:// (Linux)
     make pss PID=<pid>  # память процесса и потомков: Private_Dirty (бюджет) и PSS (Linux)
 
-Данные: `~/.spk/spk-mattermost/` (переопределяется `SPK_MATTERMOST_HOME`; с
+Данные: `~/.spk/mm-client/` (переопределяется `SPK_MM_CLIENT_HOME`; с
 нестандартным каталогом клиент запускается как отдельный экземпляр рядом с
-основным). `SPK_MATTERMOST_GPU=always|ondemand|never` — политика аппаратного
-ускорения WebKitGTK (по умолчанию always; `never` — если GPU-драйвер сбоит).
+основным; при первом запуске после переименования проекта данные один раз
+переезжают из старого `~/.spk/spk-mattermost/`, см. AGENTS.md).
+`SPK_MM_CLIENT_GPU=always|ondemand|never` — политика аппаратного ускорения
+WebKitGTK (по умолчанию always; `never` — если GPU-драйвер сбоит).
 
 Фейковый Mattermost-сервер для разработки и замеров памяти (development only,
 не для продакшн-сборок):
@@ -40,7 +42,7 @@ markdown и подгрузкой истории, отправка/правка/�
 - `--mm-fake` в browser- и desktop-режиме поднимает фейковый сервер в
   процессе (`--test-api` в browser-режиме открывает ещё `/api/_test/*` для
   e2e — см. AGENTS.md); в desktop-сборке — только dev-сборки, не `release` —
-  сразу входит как alice. Запускать с отдельным `SPK_MATTERMOST_HOME`
+  сразу входит как alice. Запускать с отдельным `SPK_MM_CLIENT_HOME`
   (временный каталог), чтобы не задеть данные боевого клиента — при старте
   он сам убирает устаревшие записи фейкового сервера из предыдущего
   dev-запуска и добавляет свежую.

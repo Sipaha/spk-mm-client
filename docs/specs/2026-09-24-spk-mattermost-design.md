@@ -1,4 +1,4 @@
-# spk-mattermost — лёгкий десктопный клиент Mattermost
+# spk-mm-client — лёгкий десктопный клиент Mattermost
 
 Дата: 2026-09-24. Статус: Этап 2 реализован и проверен e2e (Playwright против
 браузерного режима с mmfake — 2026-09-24) и сквозным финальным ревью (все
@@ -78,7 +78,7 @@
 
 | Пакет | Ответственность | Основа |
 |---|---|---|
-| `cmd/spk-mattermost` | main, desktop/browser-раннеры, `go:embed` фронта | spk-mail |
+| `cmd/spk-mm-client` | main, desktop/browser-раннеры, `go:embed` фронта | spk-mail |
 | `internal/mm/rest` | Типизированный клиент REST v4: ретраи на 429/транспорт с учётом `Retry-After`, классификация ошибок auth/network, таймауты, лимит ~10 req/s на сервер | HTTP-ядро `chatfeed/source/mattermost/client/api.go` из spk-cockpit, расширяем |
 | `internal/mm/ws` | WebSocket: `authentication_challenge`, keepalive, **resume по `connection_id`+`sequence_number`**, детект пропуска seq, типизированные события | `client/listener.go` из spk-cockpit + доработка |
 | `internal/auth` | Вход через браузер + `mmauth://`, вход по паролю, проверка токена, revoke | новое; revoke из spk-cockpit |

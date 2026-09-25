@@ -1,12 +1,28 @@
-# spk-mattermost — гид для агентов
+# spk-mm-client — гид для агентов
 
 Лёгкий десктопный клиент Mattermost (Wails v3 + React). Спецификация:
 `docs/specs/2026-09-24-spk-mattermost-design.md`. Планы: `docs/plans/`.
 Результаты спайков: `docs/spikes/`.
 
+## Переименование (Task 0, 2026-09-25)
+
+Проект был переименован из spk-mattermost в **spk-mm-client** по запросу
+пользователя: Go-модуль `github.com/spk/spk-mm-client`, каталог
+`cmd/spk-mm-client`, бинарники `spk-mm-client`/`spk-mm-client-desktop`/
+`spk-mm-client-release`, переменные окружения `SPK_MM_CLIENT_*`, app id
+`ru.spk.spk-mm-client`. Каталог данных стал `~/.spk/mm-client` (короче, чем
+`~/.spk/spk-mm-client`, — он и так уже под `.spk`); `internal/paths.Resolve`
+один раз переносит `~/.spk/spk-mattermost` в `~/.spk/mm-client`
+(`os.Rename`, только для дефолтного расположения, ошибки не блокируют
+старт — см. `internal/paths/paths.go`, `migrate`). Имя файла спецификации
+(`docs/specs/2026-09-24-spk-mattermost-design.md`) и завершённые планы
+(`docs/plans/2026-09-24-stage1-skeleton.md`,
+`docs/plans/2026-09-24-stage2-chat-core.md`) намеренно не переименованы —
+это история; читать в них старые имена как новые.
+
 ## Сборка и тесты
 
-- `make build` — фронт + бинарь для browser-режима (`build/bin/spk-mattermost`).
+- `make build` — фронт + бинарь для browser-режима (`build/bin/spk-mm-client`).
 - `make build-desktop` — desktop-бинарь (теги `wails gtk3`).
 - `make test-go`, `make test-front`, `make test-e2e`, `make lint`, `make cross-check`.
 - `make run-browser` — UI на http://127.0.0.1:5180 с фейковым сервером MM (данные во временном каталоге).
@@ -77,11 +93,11 @@
 - Frontend toolchain resolved newer than the stage-1 briefs assumed (TypeScript 6, Vite 8, Vitest 4): bare CSS side-effect imports need `"vite/client"` in `tsconfig.json`'s `"types"`, and `vite.config.ts` must `import { defineConfig } from 'vitest/config'` (not `'vite'`) — a triple-slash `vitest` types reference no longer reliably pulls in the `UserConfig.test` augmentation.
 - Memory budget is **Private_Dirty** of all app processes (a guideline target of ~150 MB with 2–3 servers/~100 channels — usability comes first, no growth over time is the hard requirement), not PSS: PSS includes a share of WebKit/GTK/ICU libraries shared with other apps and swings with what else runs (150–196 MB PSS vs ~73–80 MB Private_Dirty for the empty shell; release build and WebKit GPU policy don't change it). Measure with `scripts/pss.sh <pid>` (prints both). — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Wails beta.25 Linux tray: `SystemTray.SetTooltip` is a no-op and the StatusNotifierItem `Id`/`ToolTip` are frozen to the label when the tray starts (default "Wails"); only `SetLabel` (SNI `Title`) and `SetIcon` update live. Tray/notification calls reach GTK/D-Bus with no timeout — keep them off service goroutines (`offerLatest`, `asyncSender`). — `internal/desktop/tray.go` (`setTrayText`, `trayBadge`), `internal/desktop/async.go` (`TestAsyncSenderDetachesAHungSendAndResumes`).
-- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mattermost/browser.go`.
+- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
 - Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello), `SetFailure(pathPart, status)` (inject an HTTP error); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTimeout`, `refreshRetry`, `sinceLimit`). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
-- `--mm-fake-channels N` (browser mode) seeds N extra open channels (`c-load-001`…, 20 posts each) in the fake server for memory/perf checks; the desktop `--mm-fake` flag (dev builds only) starts the same fake server in-process and signs in as alice automatically — always point it at its own `SPK_MATTERMOST_HOME` (a fresh temp dir), never at the live client's data dir, and it clears any stale fake-mode server entries from a previous dev run before adding the live one. — `cmd/spk-mattermost/main.go`, `cmd/spk-mattermost/run_desktop_wails.go`.
+- `--mm-fake-channels N` (browser mode) seeds N extra open channels (`c-load-001`…, 20 posts each) in the fake server for memory/perf checks; the desktop `--mm-fake` flag (dev builds only) starts the same fake server in-process and signs in as alice automatically — always point it at its own `SPK_MM_CLIENT_HOME` (a fresh temp dir), never at the live client's data dir, and it clears any stale fake-mode server entries from a previous dev run before adding the live one. — `cmd/spk-mm-client/main.go`, `cmd/spk-mm-client/run_desktop_wails.go`.
 - Testing the virtualized feed under Vitest/jsdom needs a manual layout stub: jsdom never computes real layout, so `HTMLElement.prototype.offsetHeight` (row height for the virtualizer) and `scrollTo` (history-load anchor) must be overridden in `beforeEach`/restored in `afterEach`, not left at jsdom's defaults (0 / no-op that doesn't move `scrollTop`). — `frontend/src/components/Feed.test.tsx`.
 - `ServerRail`'s per-server button folds the unread/mention badge into its own accessible name ("`<name> — Mentions: N`" or "`<name> — Unread messages`"), not just the sibling badge `<span>` (Task 12 fix). Playwright's `getByLabel`/`getByRole(name:)` match is a substring by default, so `page.getByRole('navigation').getByLabel('Mentions: 1')` also matches that button (whose name contains "Mentions: 1") in addition to the intended badge — two hits trip strict mode. e2e assertions on these badge labels need `{ exact: true }`. — `frontend/src/components/ServerRail.tsx`, `tests/e2e/chat.spec.ts`.
 - Wails beta.25 exposes no WebKit memory knobs: it uses the default `WebKitWebContext` (`webkit_web_view_new_with_user_content_manager`), so the cache model and — in the 4.1 API — the web process's memory-pressure settings (a construct-only property of a web context) are out of reach; `webkit_website_data_manager_set_memory_pressure_settings` only covers the network process. The only lever over the web process engine is its environment (`JSC_*` options, read by JavaScriptCore at start; set with `os.Setenv` before the webview exists — WebKit launches the web process with our environment). Measured JIT-tier options all cost UI speed and were rejected (spike doc S4).
-- Memory soak runs: `--mm-fake-servers N` (dev desktop, `--mm-fake`) starts N in-process fakes (each seeded the same, `--mm-fake-channels` each) and signs alice in on all; `--mm-fake-churn 2s` makes bob post to a random channel every interval (no @mentions — no OS notifications) and asks the UI to open a random channel every 5th tick (the notification-click path), and logs Go heap figures (`go memory …`) once a minute. The fakes live in the main process, so its numbers are pessimistic. — `cmd/spk-mattermost/devchurn.go`, `TestFakeChurnPostsAndSwitchesChannels`.
+- Memory soak runs: `--mm-fake-servers N` (dev desktop, `--mm-fake`) starts N in-process fakes (each seeded the same, `--mm-fake-channels` each) and signs alice in on all; `--mm-fake-churn 2s` makes bob post to a random channel every interval (no @mentions — no OS notifications) and asks the UI to open a random channel every 5th tick (the notification-click path), and logs Go heap figures (`go memory …`) once a minute. The fakes live in the main process, so its numbers are pessimistic. — `cmd/spk-mm-client/devchurn.go`, `TestFakeChurnPostsAndSwitchesChannels`.
 - Engine-specific frontend timing (JIT tiers etc.): Playwright's own WebKit build does not start on this host (missing `libavif16`/`libjxl` without sudo) and is not the system engine anyway; drive the system WebKitGTK 4.1 through PyGObject (`gi.require_version('WebKit2', '4.1')`, a `WebView` in a `Gtk.Window`, `evaluate_javascript` — an async IIFE's Promise result is unsupported, stash results on `window` and poll). `JSC_*` variables in the script's environment reach its web process.
