@@ -1,6 +1,10 @@
 package mmfake
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,4 +77,58 @@ func TestReactAsPreferenceAndFailWith(t *testing.T) {
 	require.Equal(t, 400, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, &e))
 	s.SetFailure("/api/v4/reactions", 0)
 	require.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, nil))
+}
+
+// jsonCall is like authed.call but decodes the body regardless of status —
+// needed to inspect the AppError id on 4xx responses (call only decodes
+// below 300).
+func jsonCall(t *testing.T, a authed, method, path string, body any) (int, map[string]any) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, a.s.URL()+path, rd)
+	req.Header.Set("Authorization", "Bearer "+a.tok)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var out map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return resp.StatusCode, out
+}
+
+func TestReactionRepeatedAddReturnsOriginalCreateAt(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	id := s.FindPost("c-offtopic", "Welcome to off-topic")
+
+	var first model.Reaction
+	require.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, &first))
+	require.NotZero(t, first.CreateAt)
+
+	var second model.Reaction
+	require.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, &second))
+	assert.Equal(t, first.CreateAt, second.CreateAt, "a repeated add returns the existing reaction's real create_at, not a fresh timestamp")
+}
+
+func TestReactionArchivedChannelErrorIDDiffersBySaveAndDelete(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	id := s.FindPost("c-offtopic", "Welcome to off-topic")
+
+	s.mu.Lock()
+	s.chat.channels["c-offtopic"].DeleteAt = 1
+	s.mu.Unlock()
+
+	status, saveErr := jsonCall(t, a, "POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"})
+	require.Equal(t, 403, status)
+	assert.Equal(t, "api.reaction.save.archived_channel.app_error", saveErr["id"])
+
+	status, delErr := jsonCall(t, a, "DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/+1", nil)
+	require.Equal(t, 403, status)
+	assert.Equal(t, "api.reaction.delete.archived_channel.app_error", delErr["id"])
 }

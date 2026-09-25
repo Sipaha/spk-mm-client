@@ -18,20 +18,26 @@ func (s *Server) reactionRoutes(mux *http.ServeMux) {
 
 // reactLocked adds or removes userID's reaction like the server: the post's
 // update_at moves and the channel gets the event. A no-op (adding what is
-// there, removing what is not) changes nothing and sends nothing.
-func (s *Server) reactLocked(userID, postID, name string, add bool) *apiErr {
+// there, removing what is not) changes nothing and sends nothing, and
+// returns the existing reaction (its real create_at, not a fresh
+// timestamp) so callers never fabricate one.
+func (s *Server) reactLocked(userID, postID, name string, add bool) (model.Reaction, *apiErr) {
 	p := s.chat.byID[postID]
 	if p == nil || p.DeleteAt != 0 {
-		return &apiErr{404, "app.post.get.app_error"}
+		return model.Reaction{}, &apiErr{404, "app.post.get.app_error"}
 	}
 	if !s.isMemberLocked(p.ChannelID, userID) {
-		return &apiErr{403, "api.context.permissions.app_error"}
+		return model.Reaction{}, &apiErr{403, "api.context.permissions.app_error"}
 	}
 	if s.chat.channels[p.ChannelID].DeleteAt != 0 {
-		return &apiErr{403, "api.reaction.save.archived_channel.app_error"}
+		id := "api.reaction.save.archived_channel.app_error"
+		if !add {
+			id = "api.reaction.delete.archived_channel.app_error"
+		}
+		return model.Reaction{}, &apiErr{403, id}
 	}
 	if !emojiNameRe.MatchString(name) {
-		return &apiErr{400, "api.reaction.save_reaction.invalid.app_error"}
+		return model.Reaction{}, &apiErr{400, "api.reaction.save_reaction.invalid.app_error"}
 	}
 	var list []model.Reaction
 	var files []model.FileInfo
@@ -40,7 +46,10 @@ func (s *Server) reactLocked(userID, postID, name string, add bool) *apiErr {
 	}
 	i := slices.IndexFunc(list, func(r model.Reaction) bool { return r.UserID == userID && r.EmojiName == name })
 	if add == (i >= 0) {
-		return nil
+		if i >= 0 {
+			return list[i], nil
+		}
+		return model.Reaction{}, nil
 	}
 	now := s.nowLocked()
 	r := model.Reaction{UserID: userID, PostID: postID, EmojiName: name, CreateAt: now}
@@ -59,7 +68,7 @@ func (s *Server) reactLocked(userID, postID, name string, add bool) *apiErr {
 		ev = "reaction_removed"
 	}
 	s.publishLocked(ev, map[string]any{"reaction": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil)
-	return nil
+	return r, nil
 }
 
 func (s *Server) saveReaction(w http.ResponseWriter, r *http.Request, u User) {
@@ -73,14 +82,13 @@ func (s *Server) saveReaction(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	s.mu.Lock()
-	e := s.reactLocked(u.ID, in.PostID, in.EmojiName, true)
-	in.CreateAt = s.chat.lastMs
+	out, e := s.reactLocked(u.ID, in.PostID, in.EmojiName, true)
 	s.mu.Unlock()
 	if e != nil {
 		writeAPIErr(w, e)
 		return
 	}
-	writeJSON(w, 200, in)
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request, u User) {
@@ -89,7 +97,7 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request, u User) 
 		return
 	}
 	s.mu.Lock()
-	e := s.reactLocked(u.ID, r.PathValue("pid"), r.PathValue("name"), false)
+	_, e := s.reactLocked(u.ID, r.PathValue("pid"), r.PathValue("name"), false)
 	s.mu.Unlock()
 	if e != nil {
 		writeAPIErr(w, e)
@@ -103,7 +111,7 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request, u User) 
 func (s *Server) ReactAs(username, postID, emoji string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e := s.reactLocked(s.userIDByName(username), postID, emoji, true); e != nil {
+	if _, e := s.reactLocked(s.userIDByName(username), postID, emoji, true); e != nil {
 		panic("mmfake: ReactAs: " + e.id)
 	}
 }
@@ -111,7 +119,7 @@ func (s *Server) ReactAs(username, postID, emoji string) {
 func (s *Server) UnreactAs(username, postID, emoji string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e := s.reactLocked(s.userIDByName(username), postID, emoji, false); e != nil {
+	if _, e := s.reactLocked(s.userIDByName(username), postID, emoji, false); e != nil {
 		panic("mmfake: UnreactAs: " + e.id)
 	}
 }
