@@ -55,10 +55,12 @@
   `internal/api/chat.go`.
 - Go-рантайм стартует с `GOGC=50` и мягким лимитом 64 MiB (`tuneGoMemory`, первым делом в
   `main`; `GOGC`/`GOMEMLIMIT` из окружения приоритетнее): живая куча клиента 5–10 МБ, и при
-  GOGC=100 RSS кучи держится около её удвоения — это запас GC, не данные. Удобство важнее
-  экономии: настройки, замедляющие UI (напр. `JSC_useDFGJIT=false` — −13 МБ web process, но
-  открытие канала с тяжёлым markdown ~120 мс вместо ~75), отвергнуты. — `TestTuneGoMemoryDefaults`,
-  `TestTuneGoMemoryRespectsEnvironment`; замеры — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
+  GOGC=100 RSS кучи держится около её удвоения — это запас GC, не данные. Soak-тесты на
+  3 серверах × 100 каналов показали кучу ~20 МБ, дающую ~3× запас; если куча приближается
+  к 64 MiB, Go runtime учащает сборки мусора и ограничивает CPU GC до ~50%, замедляя app вместо
+  краша. Туннинг работает до dispatch режима, охватывая оба режима (desktop и --browser).
+  — `TestTuneGoMemoryDefaults`, `TestTuneGoMemoryRespectsEnvironment`;
+  замеры — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Каждый созданный Playwright-контекст/страница (в `browser_run_code_unsafe` или в скриптах)
   закрывается в том же вызове (`try`/`finally` → `ctx.close()`); окна не оставляются открытыми.
   После работы с браузером проверить, что не осталось висящих контекстов — пользователь уже
