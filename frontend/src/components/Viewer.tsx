@@ -37,6 +37,9 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
   // feed (e.g. it changed on the server); track failures by file id so a
   // fallback survives ←/→ back to the same file without another decode.
   const [failedId, setFailedId] = useState<string | null>(null)
+  // The full image can be large; show a loading indicator until it decodes
+  // instead of an empty dim backdrop.
+  const [loadedId, setLoadedId] = useState<string | null>(null)
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
@@ -94,13 +97,19 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
         )}
         {fileKind(file) === 'image' ? (
           showImage ? (
-            <img
-              key={file.id}
-              src={mediaURL(serverId, 'full', file.id, { src: src! })}
-              alt={file.name}
-              className="max-h-full max-w-full object-contain"
-              onError={() => setFailedId(file.id)}
-            />
+            <div className="relative flex h-full w-full items-center justify-center">
+              <img
+                key={file.id}
+                src={mediaURL(serverId, 'full', file.id, { src: src! })}
+                alt={file.name}
+                className="max-h-full max-w-full object-contain"
+                onLoad={() => setLoadedId(file.id)}
+                onError={() => setFailedId(file.id)}
+              />
+              {loadedId !== file.id && (
+                <p className="absolute inset-0 flex items-center justify-center text-sm text-fg-muted">{t('file.loading')}</p>
+              )}
+            </div>
           ) : (
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )

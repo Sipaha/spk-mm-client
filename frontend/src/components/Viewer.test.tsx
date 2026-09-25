@@ -52,6 +52,15 @@ test('download and open act on the shown file; focus returns to the opener', asy
   expect(screen.getByRole('button', { name: 'opener' })).toHaveFocus()
 })
 
+test('a loading indicator shows until the image loads', async () => {
+  render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  const el = screen.getByRole('img', { name: 'build.png' })
+  expect(screen.getByText('Loading…')).toBeInTheDocument()
+  fireEvent.load(el)
+  expect(screen.queryByText('Loading…')).toBeNull()
+  expect(screen.getByRole('img', { name: 'build.png' })).toBeInTheDocument()
+})
+
 test('an image that fails to load falls back to a card with download/open, not a broken image', async () => {
   const onDownload = vi.fn()
   render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />)
