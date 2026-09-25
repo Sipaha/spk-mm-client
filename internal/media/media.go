@@ -4,6 +4,11 @@
 // origin, and the cache fetches the object through the server's REST client
 // (Origin — the token and the per-server rate limiter stay in Go), checks
 // what came back, keeps it on disk and serves it with long-lived headers.
+//
+// UI contract for images in the feed: feed/{fileId} uses src=preview
+// whenever the file has a preview (the server's is ≤1920 px, cheap to
+// scale); src=file is only for originals without one, and those above
+// scaleMaxPixels are refused (413) rather than decoded or passed through.
 package media
 
 import (
@@ -44,9 +49,10 @@ const (
 // Limits of the cache and of what it accepts.
 const (
 	DefaultMaxBytes = 256 << 20
-	FeedMax         = 960      // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
-	TextLimit       = 64 << 10 // bytes of a text file shown
-	maxPixels       = 50_000_000
+	FeedMax         = 960              // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
+	TextLimit       = 64 << 10         // bytes of a text file shown
+	maxPixels       = 50_000_000       // decompression-bomb guard for every image
+	scaleMaxPixels  = 24_000_000       // largest feed image decoded to scale (~96 MB bitmap)
 	negTTL          = 5 * time.Minute  // 403/404/413/415: will not change soon
 	negTTLTransient = 30 * time.Second // network trouble
 	maxNeg          = 1000
@@ -90,8 +96,9 @@ type negEntry struct {
 }
 
 type call struct {
-	done   chan struct{}
-	status int
+	done    chan struct{}
+	waiters int
+	status  int
 }
 
 type Cache struct {
@@ -182,12 +189,13 @@ func parse(u *url.URL) (request, bool) {
 	q := request{server: srv, kind: Kind(parts[1]), key: parts[2]}
 	switch q.kind {
 	case KindAvatar:
-		q.variant = u.Query().Get("v")
-		if q.variant == "" {
-			q.variant = "0"
-		}
-		if _, err := strconv.ParseInt(q.variant, 10, 64); err != nil {
-			return request{}, false
+		q.variant = "0"
+		if v := u.Query().Get("v"); v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return request{}, false
+			}
+			q.variant = strconv.FormatInt(n, 10) // "+5", "05" and "5" are one object
 		}
 	case KindFeed, KindFull:
 		q.variant = u.Query().Get("src")
@@ -271,31 +279,29 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "cache read failed", http.StatusInternalServerError)
 			return
 		}
-		c.serve(w, r, q, f)
+		c.serve(w, r, q, name, f)
 		_ = f.Close()
 		return
 	}
 	http.Error(w, "cache busy", http.StatusServiceUnavailable)
 }
 
-func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, f *os.File) {
-	h := w.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	if q.kind == KindEmoji {
-		h.Set("Cache-Control", "private, max-age=3600") // by name: may be re-created
-	} else {
-		h.Set("Cache-Control", "private, max-age=31536000, immutable")
-	}
+// serve answers with a cached object. A corrupt one (a text entry without
+// its flag, an image entry that does not sniff as raster) is dropped and
+// the request fails; the next one fetches it anew. Cache headers are set
+// only on success.
+func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name string, f *os.File) {
 	fi, err := f.Stat()
 	if err != nil {
 		http.Error(w, "cache read failed", http.StatusInternalServerError)
 		return
 	}
+	h := w.Header()
 	var body io.ReadSeeker = f
 	if q.kind == KindText {
 		var flag [1]byte
-		if _, err := io.ReadFull(f, flag[:]); err != nil {
+		if _, err := io.ReadFull(f, flag[:]); err != nil || (flag[0] != 'T' && flag[0] != 'F') {
+			c.drop(name)
 			http.Error(w, "cache read failed", http.StatusInternalServerError)
 			return
 		}
@@ -305,13 +311,26 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, f *os.F
 		h.Set("Content-Type", "text/plain; charset=utf-8")
 		body = io.NewSectionReader(f, 1, fi.Size()-1)
 	} else {
-		head := make([]byte, 512)
+		head := make([]byte, sniffLen)
 		n, _ := io.ReadFull(f, head)
-		h.Set("Content-Type", http.DetectContentType(head[:n]))
+		ctype := http.DetectContentType(head[:n])
+		if !rasterTypes[ctype] {
+			c.drop(name)
+			http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+			return
+		}
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			http.Error(w, "cache read failed", http.StatusInternalServerError)
 			return
 		}
+		h.Set("Content-Type", ctype)
+	}
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if q.kind == KindEmoji {
+		h.Set("Cache-Control", "private, max-age=3600") // by name: may be re-created
+	} else {
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, "", time.Time{}, body)
 }
@@ -345,6 +364,7 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 		c.inflight[key] = cl
 		go c.fill(key, name, q, id, cl)
 	}
+	cl.waiters++
 	c.mu.Unlock()
 	select {
 	case <-cl.done:
@@ -353,6 +373,9 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 		}
 		return name, 0
 	case <-ctx.Done():
+		c.mu.Lock()
+		cl.waiters--
+		c.mu.Unlock()
 		return "", http.StatusServiceUnavailable
 	}
 }
@@ -372,9 +395,21 @@ func (c *Cache) emojiID(ctx context.Context, q request) (string, int) {
 
 // fill runs one upstream fetch for everyone waiting on cl. It does not use
 // a requester's context: the first viewer scrolling away must not waste a
-// fetch the next one needs.
+// fetch the next one needs. But a fetch nobody waits for any more when its
+// turn comes is skipped (not remembered as a failure): the server's request
+// budget is shared with synchronisation.
 func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	c.sem <- struct{}{}
+	c.mu.Lock()
+	if cl.waiters == 0 {
+		delete(c.inflight, key)
+		cl.status = http.StatusServiceUnavailable
+		c.mu.Unlock()
+		<-c.sem
+		close(cl.done)
+		return
+	}
+	c.mu.Unlock()
 	err := c.fetch(q, id, name)
 	<-c.sem
 	status := 0
@@ -465,6 +500,20 @@ func (c *Cache) evictLocked(keep string) {
 		}
 		c.total -= c.index[victim].size
 		delete(c.index, victim)
+	}
+}
+
+// drop removes a corrupt object: its file and its index entry.
+func (c *Cache) drop(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := os.Remove(filepath.Join(c.o.Dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		slog.Debug("media drop failed", "err", err)
+		return
+	}
+	if e := c.index[name]; e != nil {
+		c.total -= e.size
+		delete(c.index, name)
 	}
 }
 

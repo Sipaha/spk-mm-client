@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"hash/crc32"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,9 +111,11 @@ func pngOf(w, h int) []byte {
 	return b.Bytes()
 }
 
-// fakePNG has a PNG signature and n bytes in total (not decodable).
+// fakePNG is a 1×1 PNG padded with zeros to n bytes: its header is
+// readable, its size is exact.
 func fakePNG(n int) []byte {
-	return append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, n-8)...)
+	b := pngOf(1, 1)
+	return append(b, make([]byte, n-len(b))...)
 }
 
 // hugePNG is a valid PNG header claiming w×h pixels.
@@ -405,7 +409,7 @@ func TestNotSignedInIsNotRemembered(t *testing.T) {
 
 func TestEmptyTextFile(t *testing.T) {
 	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeContent(w, r, "x.txt", time.Time{}, strings.NewReader("")) // a range of nothing: 416
+		http.ServeContent(w, r, "x.txt", time.Time{}, strings.NewReader("")) // ServeContent answers 200 with an empty body
 	})
 	resp, body := e.get("/media/1/text/empty")
 	require.Equal(t, 200, resp.StatusCode)
@@ -425,4 +429,222 @@ func TestFileDeletedBehindOurBackIsFetchedAgain(t *testing.T) {
 	fi, err := os.Stat(files[0])
 	require.NoError(t, err)
 	assert.Equal(t, fi.Size(), e.cache.Size(), "the refetched object is counted once")
+}
+
+// webpOf is a VP8X WebP header claiming w×h pixels (not decodable).
+func webpOf(w, h uint32) []byte {
+	chunk := []byte("VP8X")
+	chunk = binary.LittleEndian.AppendUint32(chunk, 10)
+	chunk = append(chunk, 0, 0, 0, 0)
+	chunk = append(chunk, byte(w-1), byte((w-1)>>8), byte((w-1)>>16), byte(h-1), byte((h-1)>>8), byte((h-1)>>16))
+	b := []byte("RIFF")
+	b = binary.LittleEndian.AppendUint32(b, uint32(4+len(chunk)))
+	return append(append(b, "WEBP"...), chunk...)
+}
+
+// bmpOf is a 24-bit BMP header claiming w×h pixels followed by n bytes.
+func bmpOf(w, h uint32, n int) []byte {
+	b := []byte("BM")
+	b = binary.LittleEndian.AppendUint32(b, uint32(54+n))
+	b = binary.LittleEndian.AppendUint32(b, 0)
+	b = binary.LittleEndian.AppendUint32(b, 54) // pixel data offset
+	b = binary.LittleEndian.AppendUint32(b, 40) // BITMAPINFOHEADER
+	b = binary.LittleEndian.AppendUint32(b, w)
+	b = binary.LittleEndian.AppendUint32(b, h)
+	b = binary.LittleEndian.AppendUint16(b, 1)  // planes
+	b = binary.LittleEndian.AppendUint16(b, 24) // bpp
+	b = append(b, make([]byte, 24)...)          // no compression, sizes, palette
+	return append(b, make([]byte, n)...)
+}
+
+// jpegWithApp is a small JPEG with two APP segments (~120 KiB) before its
+// frame header; w×h > 0 rewrites the frame's dimensions.
+func jpegWithApp(t *testing.T, w, h uint16) []byte {
+	var enc bytes.Buffer
+	require.NoError(t, jpeg.Encode(&enc, image.NewRGBA(image.Rect(0, 0, 8, 8)), nil))
+	src := enc.Bytes()
+	out := append([]byte{}, src[:2]...) // SOI
+	for i := 0; i < 2; i++ {
+		seg := []byte{0xFF, 0xE9}
+		seg = binary.BigEndian.AppendUint16(seg, 60000)
+		out = append(append(out, seg...), make([]byte, 60000-2)...)
+	}
+	out = append(out, src[2:]...)
+	if w > 0 {
+		sof := bytes.Index(out, []byte{0xFF, 0xC0})
+		require.Positive(t, sof)
+		binary.BigEndian.PutUint16(out[sof+5:], h)
+		binary.BigEndian.PutUint16(out[sof+7:], w)
+	}
+	require.Greater(t, len(out), 64<<10)
+	return out
+}
+
+func TestPixelLimitCoversEveryRasterFormat(t *testing.T) {
+	files := map[string][]byte{
+		"/api/v4/files/webp": webpOf(10000, 10000), "/api/v4/files/bmp": bmpOf(10000, 10000, 16),
+		"/api/v4/files/jpeg": jpegWithApp(t, 20000, 20000), "/api/v4/files/okjpeg": jpegWithApp(t, 0, 0),
+		"/api/v4/files/okbmp": bmpOf(2, 2, 16), "/api/v4/files/okwebp": webpOf(4, 4),
+	}
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(files[r.URL.Path]) })
+	for _, id := range []string{"webp", "bmp", "jpeg"} {
+		resp, _ := e.get("/media/1/full/" + id + "?src=file")
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, id)
+	}
+	for id, ctype := range map[string]string{"okjpeg": "image/jpeg", "okbmp": "image/bmp", "okwebp": "image/webp"} {
+		resp, body := e.get("/media/1/full/" + id + "?src=file")
+		require.Equal(t, 200, resp.StatusCode, id)
+		assert.Equal(t, ctype, resp.Header.Get("Content-Type"), id)
+		assert.Equal(t, files["/api/v4/files/"+id], body, id)
+	}
+}
+
+func TestUnreadableImageIsRefused(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 1000)...))
+	})
+	for _, p := range []string{"/media/1/thumb/f1", "/media/1/full/f1", "/media/1/feed/f1"} {
+		resp, _ := e.get(p)
+		assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode, p)
+	}
+	assert.Zero(t, e.cache.Size())
+}
+
+func TestFeedRefusesOriginalsTooLargeToScale(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(hugePNG(5000, 5000)) })
+	resp, _ := e.get("/media/1/feed/f1?src=file")
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode, "25 Mpix is above the scaling cap")
+	resp, _ = e.get("/media/1/full/f1?src=file")
+	assert.Equal(t, 200, resp.StatusCode, "the viewer still gets it")
+}
+
+func TestDownscalesRunOneAtATime(t *testing.T) {
+	var cur, peak atomic.Int32
+	decodeHook = func() {
+		n := cur.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		cur.Add(-1)
+	}
+	t.Cleanup(func() { decodeHook = func() {} })
+	big := pngOf(1000, 200)
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(big) })
+	var wg sync.WaitGroup
+	codes := make([]int, 4)
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, _ := e.get(fmt.Sprintf("/media/1/feed/f%d", i))
+			codes[i] = resp.StatusCode
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, []int{200, 200, 200, 200}, codes)
+	assert.Equal(t, int32(1), peak.Load())
+}
+
+func TestErrorsCarryNoCacheHeaders(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("hello")) })
+	bad := filepath.Join(e.dir, fileName("1/text/t1/"))
+	require.NoError(t, os.WriteFile(bad, nil, 0o600)) // no flag byte: corrupt
+	e.open(0, time.Minute)
+	resp, _ := e.get("/media/1/text/t1")
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("Cache-Control"))
+	_, err := os.Stat(bad)
+	assert.ErrorIs(t, err, os.ErrNotExist, "the corrupt entry is dropped")
+	resp, body := e.get("/media/1/text/t1")
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "hello", string(body))
+}
+
+func TestNonRasterCacheFileIsNeverServed(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(pngOf(2, 2)) })
+	bad := filepath.Join(e.dir, fileName("1/avatar/u1/0"))
+	require.NoError(t, os.WriteFile(bad, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 0o600))
+	e.open(0, time.Minute)
+	resp, body := e.get("/media/1/avatar/u1")
+	assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode)
+	assert.NotContains(t, string(body), "svg")
+	assert.Empty(t, resp.Header.Get("Cache-Control"))
+	assert.Zero(t, e.cache.Size())
+	_, err := os.Stat(bad)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	resp, _ = e.get("/media/1/avatar/u1")
+	assert.Equal(t, 200, resp.StatusCode, "the next request fetches it anew")
+	assert.Equal(t, 1, e.origin.count("/api/v4/users/u1/image"))
+}
+
+func TestAbandonedQueuedFetchIsSkipped(t *testing.T) {
+	release := make(chan struct{})
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/files/f1/thumbnail" {
+			<-release
+		}
+		_, _ = w.Write(pngOf(2, 2))
+	})
+	c, err := New(Options{Dir: t.TempDir(), Origin: e.origin, Fetches: 1, Now: e.clock.now})
+	require.NoError(t, err)
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	first := make(chan int)
+	go func() {
+		resp, err := http.Get(srv.URL + "/media/1/thumb/f1")
+		if err != nil {
+			first <- 0
+			return
+		}
+		_ = resp.Body.Close()
+		first <- resp.StatusCode
+	}()
+	require.Eventually(t, func() bool { return e.origin.count("/api/v4/files/f1/thumbnail") == 1 }, 5*time.Second, 5*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/media/1/thumb/f2", nil)
+	go func() {
+		require.Eventually(t, func() bool {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return c.inflight["1/thumb/f2/"] != nil
+		}, 5*time.Second, time.Millisecond)
+		cancel() // the viewer scrolled away while f2 waited for a fetch slot
+	}()
+	_, err = http.DefaultClient.Do(req)
+	require.Error(t, err)
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.inflight["1/thumb/f2/"].waiters == 0
+	}, 5*time.Second, time.Millisecond)
+	close(release)
+	assert.Equal(t, 200, <-first)
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.inflight) == 0
+	}, 5*time.Second, time.Millisecond)
+	assert.Zero(t, e.origin.count("/api/v4/files/f2/thumbnail"), "nobody waits: no request spent")
+	resp, err := http.Get(srv.URL + "/media/1/thumb/f2")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode, "the skip is not remembered as a failure")
+}
+
+func TestAvatarVersionIsNormalised(t *testing.T) {
+	var queries []string
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		_, _ = w.Write(pngOf(2, 2))
+	})
+	for _, v := range []string{"5", "+5", "05", "-0"} {
+		resp, _ := e.get("/media/1/avatar/u1?v=" + url.QueryEscape(v))
+		assert.Equal(t, 200, resp.StatusCode, v)
+	}
+	e.get("/media/1/avatar/u1")
+	assert.Equal(t, []string{"_=5", ""}, queries)
 }

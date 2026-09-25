@@ -14,21 +14,45 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	_ "golang.org/x/image/bmp" // DecodeConfig of BMP headers
 	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp" // DecodeConfig of WebP headers
 )
 
 // rasterTypes are what http.DetectContentType may say for an accepted
 // image. SVG (text/xml) is never among them: it can carry scripts.
 var rasterTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true, "image/bmp": true}
 
-const headPeek = 64 << 10
+// sniffLen is what http.DetectContentType looks at.
+const sniffLen = 512
+
+// decodeSem lets one feed image be decoded and scaled at a time: a decode
+// holds the whole bitmap (up to scaleMaxPixels × 4 bytes) in memory.
+var decodeSem = make(chan struct{}, 1)
+
+// decodeHook runs inside decodeSem before a decode (tests watch overlap).
+var decodeHook = func() {}
+
+// countWriter counts what went through to w.
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
 
 // writeImage copies an image to dst after checking it: a raster type by
-// sniffing, at most sp.max bytes, at most maxPixels when the header is
-// readable. Feed PNG/JPEG larger than FeedMax are scaled down.
+// sniffing, at most sp.max bytes, a readable header (fail closed: an image
+// whose dimensions cannot be read is refused) of at most maxPixels. Feed
+// images above scaleMaxPixels are refused; feed PNG/JPEG larger than FeedMax
+// are scaled down.
 func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
-	br := bufio.NewReaderSize(src, headPeek)
-	head, err := br.Peek(headPeek)
+	br := bufio.NewReaderSize(src, sniffLen)
+	head, err := br.Peek(sniffLen)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
@@ -36,11 +60,9 @@ func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
 	if len(head) == 0 || !rasterTypes[ctype] {
 		return 0, errType
 	}
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(head)); err == nil && int64(cfg.Width)*int64(cfg.Height) > maxPixels {
-		return 0, errTooLarge
-	}
+	body := io.LimitReader(br, sp.max+1)
 	if sp.scale && (ctype == "image/png" || ctype == "image/jpeg") {
-		data, err := io.ReadAll(io.LimitReader(br, sp.max+1))
+		data, err := io.ReadAll(body)
 		if err != nil {
 			return 0, err
 		}
@@ -57,14 +79,37 @@ func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
 		n, err := dst.Write(data)
 		return int64(n), err
 	}
-	n, err := io.Copy(dst, io.LimitReader(br, sp.max+1))
-	if err != nil {
-		return n, err
+	// The header is read from the stream itself (a JPEG may carry EXIF far
+	// beyond the first 64 KiB); what the decoder reads goes on to dst.
+	cw := &countWriter{w: dst}
+	cfg, _, err := image.DecodeConfig(io.TeeReader(body, cw))
+	switch {
+	case cw.n > sp.max:
+		return 0, errTooLarge
+	case err != nil:
+		return 0, errType
 	}
-	if n > sp.max {
+	if err := checkPixels(cfg, sp); err != nil {
+		return 0, err
+	}
+	if _, err := io.Copy(cw, body); err != nil {
+		return 0, err
+	}
+	if cw.n > sp.max {
 		return 0, errTooLarge
 	}
-	return n, nil
+	return cw.n, nil
+}
+
+// checkPixels refuses decompression bombs, and feed images too large to
+// scale (the UI asks for the original in the feed only when the file has no
+// preview).
+func checkPixels(cfg image.Config, sp spec) error {
+	px := int64(cfg.Width) * int64(cfg.Height)
+	if px > maxPixels || (sp.scale && px > scaleMaxPixels) {
+		return errTooLarge
+	}
+	return nil
 }
 
 // downscale fits a PNG/JPEG into FeedMax×FeedMax, keeping its format (PNG
@@ -74,12 +119,15 @@ func downscale(data []byte, ctype string) ([]byte, error) {
 	if err != nil {
 		return nil, errType
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > maxPixels {
-		return nil, errTooLarge
+	if err := checkPixels(cfg, spec{scale: true}); err != nil {
+		return nil, err
 	}
 	if cfg.Width <= FeedMax && cfg.Height <= FeedMax {
 		return nil, nil
 	}
+	decodeSem <- struct{}{}
+	defer func() { <-decodeSem }()
+	decodeHook()
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, errType
