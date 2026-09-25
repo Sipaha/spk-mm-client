@@ -61,6 +61,31 @@ test('a loading indicator shows until the image loads', async () => {
   expect(screen.getByRole('img', { name: 'build.png' })).toBeInTheDocument()
 })
 
+test('clicking the backdrop closes the viewer around an image, while loading and after load; clicking the image itself does not', async () => {
+  const onClose = vi.fn()
+  render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const dialog = screen.getByRole('dialog', { name: 'File viewer' })
+  // The content div wrapping the image and its nav buttons — this is the
+  // "backdrop" a user clicks around the image to dismiss the viewer.
+  const backdrop = dialog.children[1] as HTMLElement
+  const el = screen.getByRole('img', { name: 'build.png' })
+  expect(screen.getByText('Loading…')).toBeInTheDocument() // still loading
+
+  await userEvent.click(el)
+  expect(onClose).not.toHaveBeenCalled()
+  fireEvent.click(backdrop)
+  expect(onClose).toHaveBeenCalledTimes(1)
+
+  onClose.mockClear()
+  fireEvent.load(el)
+  expect(screen.queryByText('Loading…')).toBeNull() // loaded now
+
+  await userEvent.click(el)
+  expect(onClose).not.toHaveBeenCalled()
+  fireEvent.click(backdrop)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
 test('an image that fails to load falls back to a card with download/open, not a broken image', async () => {
   const onDownload = vi.fn()
   render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />)

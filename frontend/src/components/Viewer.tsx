@@ -34,12 +34,17 @@ function FullText({ serverId, file }: { serverId: number; file: FileView }) {
 export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, onOpen }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null)
   // The media endpoint can 404/413/415 an image that looked fine in the
-  // feed (e.g. it changed on the server); track failures by file id so a
-  // fallback survives ←/→ back to the same file without another decode.
-  const [failedId, setFailedId] = useState<string | null>(null)
+  // feed (e.g. it changed on the server); track failures by file id (all of
+  // them, for the life of the viewer) so a fallback survives ←/→ back to a
+  // file already known to fail, and an earlier failure elsewhere in the
+  // post isn't forgotten when a later one comes in.
+  const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set())
   // The full image can be large; show a loading indicator until it decodes
-  // instead of an empty dim backdrop.
-  const [loadedId, setLoadedId] = useState<string | null>(null)
+  // instead of an empty dim backdrop. Also kept for the whole session so
+  // going A → B → back to A doesn't replay the loading flash.
+  const [loadedIds, setLoadedIds] = useState<ReadonlySet<string>>(new Set())
+  const addFailed = (id: string) => setFailedIds((s) => (s.has(id) ? s : new Set(s).add(id)))
+  const addLoaded = (id: string) => setLoadedIds((s) => (s.has(id) ? s : new Set(s).add(id)))
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
@@ -68,7 +73,7 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
     if (e.target === e.currentTarget) onClose()
   }
   const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
-  const showImage = fileKind(file) === 'image' && src && failedId !== file.id
+  const showImage = fileKind(file) === 'image' && src && !failedIds.has(file.id)
   return (
     <div role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
@@ -97,19 +102,23 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
         )}
         {fileKind(file) === 'image' ? (
           showImage ? (
-            <div className="relative flex h-full w-full items-center justify-center">
+            <>
               <img
                 key={file.id}
                 src={mediaURL(serverId, 'full', file.id, { src: src! })}
                 alt={file.name}
                 className="max-h-full max-w-full object-contain"
-                onLoad={() => setLoadedId(file.id)}
-                onError={() => setFailedId(file.id)}
+                onLoad={() => addLoaded(file.id)}
+                onError={() => addFailed(file.id)}
               />
-              {loadedId !== file.id && (
-                <p className="absolute inset-0 flex items-center justify-center text-sm text-fg-muted">{t('file.loading')}</p>
+              {!loadedIds.has(file.id) && (
+                // pointer-events-none: this sits over the whole backdrop
+                // while the image decodes, but a click on it must still
+                // close the viewer like a click on the bare backdrop does
+                // (it falls through to the content div's own onClick).
+                <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-fg-muted">{t('file.loading')}</p>
               )}
-            </div>
+            </>
           ) : (
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )
