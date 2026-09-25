@@ -14,6 +14,7 @@ var emojiNameRe = regexp.MustCompile(`^[a-zA-Z0-9+_-]{1,64}$`)
 func (s *Server) reactionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v4/reactions", s.handleAuthed(s.saveReaction))
 	mux.HandleFunc("DELETE /api/v4/users/{uid}/posts/{pid}/reactions/{name}", s.handleAuthed(s.deleteReaction))
+	mux.HandleFunc("GET /api/v4/posts/{pid}/reactions", s.handleAuthed(s.postReactions))
 }
 
 // reactLocked adds or removes userID's reaction like the server: the post's
@@ -104,6 +105,27 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request, u User) 
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "OK"})
+}
+
+func (s *Server) postReactions(w http.ResponseWriter, r *http.Request, u User) {
+	s.mu.Lock()
+	p := s.chat.byID[r.PathValue("pid")]
+	if p == nil || p.DeleteAt != 0 {
+		s.mu.Unlock()
+		appError(w, 404, "app.post.get.app_error", "no such post")
+		return
+	}
+	if !s.isMemberLocked(p.ChannelID, u.ID) {
+		s.mu.Unlock()
+		appError(w, 403, "api.context.permissions.app_error", "not a member")
+		return
+	}
+	list := []model.Reaction{}
+	if p.Metadata != nil {
+		list = append(list, p.Metadata.Reactions...)
+	}
+	s.mu.Unlock()
+	writeJSON(w, 200, list)
 }
 
 // ---- test controls ----

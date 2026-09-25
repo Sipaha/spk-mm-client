@@ -105,3 +105,41 @@ func TestRecentEmojisSurviveABadPreference(t *testing.T) {
 	s.BumpRecentEmoji("+1")
 	assert.Equal(t, []string{"+1"}, s.RecentEmojis())
 }
+
+func TestReactLocalWasReportsOurPreviousReaction(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	_, was, ok := s.ReactLocalWas("p", "+1", true)
+	require.True(t, ok)
+	assert.False(t, was)
+	_, was, _ = s.ReactLocalWas("p", "+1", true) // a second add: it was there
+	assert.True(t, was)
+	_, was, _ = s.ReactLocalWas("p", "+1", false)
+	assert.True(t, was)
+	_, was, _ = s.ReactLocalWas("p", "+1", false)
+	assert.False(t, was)
+}
+
+func TestSetMyReactionIsExplicitAndEndsTheIntent(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetMyReaction("p", "+1", true))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "sets, does not toggle")
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	assert.Empty(t, reactions(s, "p"), "no intent left to drop the event")
+	s.SetMyReaction("p", "+1", false)
+	s.SetMyReaction("p", "+1", false)
+	assert.Empty(t, reactions(s, "p"))
+	assert.Equal(t, Change{}, s.SetMyReaction("nope", "+1", true))
+}
+
+func TestForgetReactIntent(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	s.ReactLocal("p", "+1", false) // cancelled before it was sent
+	s.ForgetReactIntent("p", "+1")
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1")) // from another device
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+}

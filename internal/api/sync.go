@@ -25,7 +25,7 @@ type serverMark struct {
 // local database — network work happens in the workers' goroutines — so it
 // never delays application startup. Calling it again replaces the manager.
 func (s *Service) Start(ctx context.Context) error {
-	cfg := mmsync.Config{Store: s.st, HTTPClient: s.hc, Hooks: mmsync.Hooks{
+	cfg := mmsync.Config{Store: s.st, HTTPClient: s.hc, CallTimeout: s.callTimeout, Hooks: mmsync.Hooks{
 		Changed: s.onChanged, Status: s.onStatus, Notify: s.onNotify,
 	}}
 	if s.tune != nil {

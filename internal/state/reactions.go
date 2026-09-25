@@ -41,11 +41,18 @@ func (s *Server) channelOfPostLocked(postID string) (string, bool) {
 // server answers — and records it as the intent for the post+emoji; false
 // if the post is not in memory.
 func (s *Server) ReactLocal(postID, emoji string, add bool) (Change, bool) {
+	ch, _, ok := s.ReactLocalWas(postID, emoji, add)
+	return ch, ok
+}
+
+// ReactLocalWas is ReactLocal that also reports whether our reaction was
+// there before the click.
+func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ch, ok := s.channelOfPostLocked(postID)
+	id, ok := s.channelOfPostLocked(postID)
 	if !ok {
-		return Change{}, false
+		return Change{}, false, false
 	}
 	now := s.now()
 	if len(s.intents) >= maxIntents {
@@ -56,12 +63,21 @@ func (s *Server) ReactLocal(postID, emoji string, add bool) (Change, bool) {
 		}
 	}
 	s.intents[intentKey(postID, emoji)] = intent{add: add, until: now.Add(intentTTL)}
-	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add)
-	return Change{Channels: []string{ch}}, true
+	changed := s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add)
+	// The post is in memory, so an add that changed nothing found ours
+	// there and a remove that changed something removed it.
+	return Change{Channels: []string{id}}, changed != add, true
 }
 
 // UndoReactLocal rolls back a ReactLocal the server refused.
 func (s *Server) UndoReactLocal(postID, emoji string, add bool) Change {
+	return s.SetMyReaction(postID, emoji, !add)
+}
+
+// SetMyReaction sets our reaction on a post to a state known from the
+// server (a rollback, a reconcile) and ends the intent for the pair: the
+// post shows exactly mine, whatever clicks were applied before.
+func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.intents, intentKey(postID, emoji))
@@ -69,8 +85,16 @@ func (s *Server) UndoReactLocal(postID, emoji string, add bool) Change {
 	if !ok {
 		return Change{}
 	}
-	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji}, !add)
+	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: s.now().UnixMilli()}, mine)
 	return Change{Channels: []string{ch}}
+}
+
+// ForgetReactIntent drops the intent of a click that was never sent (a
+// later click cancelled it before the request went out): no echo will end it.
+func (s *Server) ForgetReactIntent(postID, emoji string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.intents, intentKey(postID, emoji))
 }
 
 // staleEchoLocked: an event about our own reaction that contradicts our

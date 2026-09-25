@@ -138,3 +138,24 @@ func TestReactionArchivedChannelErrorIDDiffersBySaveAndDelete(t *testing.T) {
 	require.Equal(t, 403, status)
 	assert.Equal(t, "api.reaction.delete.archived_channel.app_error", delErr["id"])
 }
+
+func TestPostReactionsAndBrokenReply(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	id := s.FindPost("c-offtopic", "Welcome to off-topic")
+	var list []model.Reaction
+	require.Equal(t, 200, a.call("GET", "/api/v4/posts/"+id+"/reactions", nil, &list))
+	assert.Len(t, list, 4)
+	assert.Equal(t, 404, a.call("GET", "/api/v4/posts/nope/reactions", nil, nil))
+
+	s.BreakReplies("/api/v4/reactions", true)
+	body, _ := json.Marshal(map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"})
+	req, _ := http.NewRequest("POST", s.URL()+"/api/v4/reactions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+a.tok)
+	_, err := http.DefaultClient.Do(req)
+	require.Error(t, err, "the connection is closed without a reply")
+	assert.Contains(t, reactionNames(s, id), "u-alice:fire", "…after the server applied it")
+	s.BreakReplies("/api/v4/reactions", false)
+	assert.Equal(t, 200, a.call("POST", "/api/v4/reactions", map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"}, nil))
+}

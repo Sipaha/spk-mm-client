@@ -2,6 +2,7 @@ package mmfake
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"time"
 )
@@ -22,6 +23,12 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 		for part, f := range s.failures {
 			if strings.Contains(r.URL.Path, part) {
 				fail = f
+			}
+		}
+		broken := false
+		for part := range s.broken {
+			if strings.Contains(r.URL.Path, part) {
+				broken = true
 			}
 		}
 		var delay time.Duration
@@ -50,8 +57,38 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 				return
 			}
 		}
+		if broken {
+			next.ServeHTTP(httptest.NewRecorder(), r)
+			time.Sleep(brokenReplyDelay) // lets the event go out first, as a lost reply would
+			if hj, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hj.Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			}
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// brokenReplyDelay: how long a broken reply holds the connection after the
+// request was applied before closing it.
+const brokenReplyDelay = 50 * time.Millisecond
+
+// BreakReplies makes every request whose path contains part be applied and
+// then answered with a closed connection instead of a response — the client
+// cannot know whether it went through (false restores replies).
+func (s *Server) BreakReplies(part string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broken == nil {
+		s.broken = map[string]bool{}
+	}
+	if !on {
+		delete(s.broken, part)
+		return
+	}
+	s.broken[part] = true
 }
 
 // SetDown makes every request (REST and WebSocket upgrades) fail with 503

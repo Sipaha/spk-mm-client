@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,15 @@ func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message strin
 func (f *fakeAPI) AddReaction(_ context.Context, id int64, postID, emoji string) error {
 	f.reacted = append(f.reacted, fmt.Sprintf("%d/%s/%s", id, postID, emoji))
 	return nil
+}
+
+func (f *fakeAPI) RemoveReaction(_ context.Context, id int64, postID, emoji string) error {
+	f.reacted = append(f.reacted, fmt.Sprintf("-%d/%s/%s", id, postID, emoji))
+	return nil
+}
+
+func (f *fakeAPI) EmojiInfo(_ context.Context, id int64) (api.EmojiDTO, error) {
+	return api.EmojiDTO{Recent: []string{fmt.Sprint(id), "+1"}, Custom: []string{"partyparrot"}, CustomEnabled: true}, nil
 }
 
 func (f *fakeAPI) DownloadFile(_ context.Context, id int64, fileID string) (api.SavedFile, error) {
@@ -195,4 +205,14 @@ func TestChatRoutes(t *testing.T) {
 	resp = call(t, h, ts.URL, "AddReaction", `{"id":3,"post_id":"p1","emoji":"+1"}`)
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, []string{"3/p1/+1"}, f.reacted)
+
+	resp = call(t, h, ts.URL, "RemoveReaction", `{"id":3,"post_id":"p1","emoji":"+1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/p1/+1", "-3/p1/+1"}, f.reacted)
+
+	resp = call(t, h, ts.URL, "EmojiInfo", `{"id":3}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"recent":["3","+1"],"custom":["partyparrot"],"custom_enabled":true}`, string(raw))
 }

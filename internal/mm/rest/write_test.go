@@ -102,3 +102,15 @@ func TestReactionCalls(t *testing.T) {
 		`DELETE /api/v4/users/u1/posts/p1/reactions/+1 `,
 	}, got)
 }
+
+func TestPostReactions(t *testing.T) {
+	var path string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.Method + " " + r.URL.EscapedPath()
+		_, _ = w.Write([]byte(`[{"user_id":"u1","post_id":"p1","emoji_name":"+1"}]`))
+	})
+	rs, err := c.PostReactions(context.Background(), "p1")
+	require.NoError(t, err)
+	assert.Equal(t, "GET /api/v4/posts/p1/reactions", path)
+	assert.Equal(t, []model.Reaction{{UserID: "u1", PostID: "p1", EmojiName: "+1"}}, rs)
+}

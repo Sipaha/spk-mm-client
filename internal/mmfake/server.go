@@ -53,6 +53,7 @@ type Server struct {
 	down          bool
 	latency       map[string]time.Duration
 	failures      map[string]failure
+	broken        map[string]bool // BreakReplies
 	rejectResumes bool
 	hits          map[string]int
 }

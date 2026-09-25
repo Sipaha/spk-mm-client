@@ -137,3 +137,57 @@ func TestReactionConcurrentClicksConverge(t *testing.T) {
 	assert.Empty(t, h.w.reactWant, "no pair left in flight")
 	h.w.reactMu.Unlock()
 }
+
+func TestReactionLostReplyIsReconciledFromTheServer(t *testing.T) {
+	h, id := welcomeHarness(t)
+	ctx := context.Background()
+	h.fake.BreakReplies("/api/v4/reactions", true) // the server applies it, the reply is lost
+	require.NoError(t, h.w.React(ctx, id, "fire", true), "the server has what was asked")
+	assert.True(t, serverHas(h, id, "u-alice", "fire"))
+	assert.Equal(t, state.ReactionView{Emoji: "fire", Count: 1, Mine: true}, reactionOf(h, id, "fire"))
+	assert.Equal(t, 1, h.fake.Hits("GET", "/api/v4/posts/"+id+"/reactions"), "reconciled")
+	time.Sleep(100 * time.Millisecond) // the echo has come (it beat the lost reply) and changed nothing
+	assert.True(t, reactionOf(h, id, "fire").Mine)
+	h.eventually(func() bool {
+		return strings.Contains(h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"fire"`)
+	}, "recent emoji not saved")
+}
+
+func TestReactionTimeoutNotAppliedIsRolledBack(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	h.tune = func(c *Config) { c.CallTimeout = 150 * time.Millisecond }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	id := h.fake.FindPost("c-offtopic", "Welcome to off-topic")
+	h.fake.SetLatency("/api/v4/reactions", time.Second) // times out before the server applies it
+	err := h.w.React(context.Background(), id, "fire", true)
+	var re *rest.Error
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, rest.KindNetwork, re.Kind)
+	assert.False(t, serverHas(h, id, "u-alice", "fire"))
+	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"), "rolled back to what the server has")
+	assert.Equal(t, 1, h.fake.Hits("GET", "/api/v4/posts/"+id+"/reactions"), "reconciled")
+}
+
+func TestReactionQueuedRequestOutlivesTheFirstCaller(t *testing.T) {
+	h, id := welcomeHarness(t)
+	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.w.React(ctx, id, "fire", true) }()
+	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "not applied at once")
+	cancel() // the page that clicked went away
+	require.NoError(t, <-done)
+	assert.True(t, serverHas(h, id, "u-alice", "fire"))
+	assert.True(t, reactionOf(h, id, "fire").Mine)
+}
+
+func TestReactionOnItsOwnStateSendsNothing(t *testing.T) {
+	h, id := welcomeHarness(t)
+	ctx := context.Background()
+	require.NoError(t, h.w.React(ctx, id, "tada", false), "not ours: nothing to remove")
+	assert.Zero(t, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/tada"))
+	h.fake.ReactAs("alice", id, "tada") // from another device: must not be taken for a stale echo
+	h.eventually(func() bool { return reactionOf(h, id, "tada").Mine }, "the intent of the unsent click was not dropped")
+}

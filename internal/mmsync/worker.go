@@ -55,6 +55,7 @@ type Config struct {
 	WakeCheck   time.Duration
 	Fetchers    int
 	StatusEvery time.Duration     // presence poll period; 0 → 1 min
+	CallTimeout time.Duration     // bounds each request of an action run past its caller (reactions); 0 → 15 s
 	WS          func(*ws.Options) // test seam (ping intervals)
 
 	sinceLimit int // test seam: the server's since= cap; 0 → rest.SinceLimit
@@ -84,6 +85,9 @@ func (c *Config) defaults() {
 	}
 	if c.StatusEvery <= 0 {
 		c.StatusEvery = defaultStatusEvery
+	}
+	if c.CallTimeout <= 0 {
+		c.CallTimeout = defaultCallTimeout
 	}
 	if c.refreshTimeout <= 0 {
 		c.refreshTimeout = refreshTimeout
@@ -123,6 +127,9 @@ const (
 	// dialTimeout bounds the WebSocket handshake only; the established
 	// connection lives as long as the session.
 	dialTimeout = 30 * time.Second
+	// defaultCallTimeout: Config.CallTimeout when unset (the api layer's
+	// per-call bound).
+	defaultCallTimeout = 15 * time.Second
 )
 
 var errNudged = errors.New("mmsync: reconnect requested")
