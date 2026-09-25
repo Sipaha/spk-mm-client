@@ -65,7 +65,10 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 			}
 		}
 	}
-	s.intents[intentKey(postID, emoji)] = intent{add: add, until: now.Add(intentTTL)}
+	k := intentKey(postID, emoji)
+	// A pinned intent's request waits for a retry, which will send this
+	// click: it stays pinned.
+	s.intents[k] = intent{add: add, until: now.Add(intentTTL), pinned: s.intents[k].pinned}
 	changed := s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add)
 	// The post is in memory, so an add that changed nothing found ours
 	// there and a remove that changed something removed it.

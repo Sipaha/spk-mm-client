@@ -183,20 +183,44 @@ func TestReactionFailingOnIsRolledBackAfterTheLastAttempt(t *testing.T) {
 	assert.Equal(t, reactAttempts, h.fake.Hits("POST", "/api/v4/reactions"))
 }
 
-func TestReactionToggledBackWhileWaitingSendsNothing(t *testing.T) {
+func TestReactionToggledBackWhileWaitingIsSentAtOnce(t *testing.T) {
 	h, id := retryHarness(t, time.Hour)
-	h.fake.SetFailure("/api/v4/reactions", 503)
+	h.fake.SetFailure("/api/v4/reactions", 503) // the add may or may not have landed
 	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
 	h.fake.SetFailure("/api/v4/reactions", 0)
-	require.NoError(t, h.w.React(context.Background(), id, "fire", false), "back to what the server has")
+	require.NoError(t, h.w.React(context.Background(), id, "fire", false), "back to what the server had")
 	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"))
-	assert.Empty(t, h.pairs(), "the retry is dropped")
-	h.w.retryReactionsNow() // even a live transition finds nothing to send
-	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, 1, h.fake.Hits("POST", "/api/v4/reactions"))
+	del := "/api/v4/users/u-alice/posts/" + id + "/reactions/fire"
+	h.eventually(func() bool { return h.fake.Hits("DELETE", del) == 1 && len(h.pairs()) == 0 }, "the unsure add was not undone at once")
+	assert.Equal(t, 1, h.fake.Hits("POST", "/api/v4/reactions"), "the add is not retried")
+	assert.False(t, serverHas(h, id, "u-alice", "fire"))
+	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"))
+}
+
+func TestReactionToggledBackAfterALostReplyUndoesIt(t *testing.T) {
+	h, id := retryHarness(t, time.Hour)
+	h.fake.BreakReplies("/api/v4/reactions", true) // the add lands, its reply is lost
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	require.True(t, serverHas(h, id, "u-alice", "fire"))
+	time.Sleep(200 * time.Millisecond) // its echo has come and ended the intent
+	require.NoError(t, h.w.React(context.Background(), id, "fire", false))
+	h.fake.BreakReplies("/api/v4/reactions", false)
+	h.eventually(func() bool { return !serverHas(h, id, "u-alice", "fire") }, "the server kept the reaction the user took back")
+	h.eventually(func() bool { return len(h.pairs()) == 0 }, "the pair is done")
+	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"))
+}
+
+func TestReactionToggledBackInFlightWithoutDoubtSendsNothingMore(t *testing.T) {
+	h, id := welcomeHarness(t)
+	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- h.w.React(context.Background(), id, "fire", true) }()
+	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "not applied at once")
+	require.NoError(t, h.w.React(context.Background(), id, "fire", false))
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	require.NoError(t, <-done)
 	assert.Zero(t, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/fire"))
-	h.fake.ReactAs("alice", id, "fire") // another device: the intent is gone, not taken for a stale echo
-	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "the intent was not cleared")
+	assert.Equal(t, 1, h.fake.Hits("POST", "/api/v4/reactions"))
 }
 
 func TestReactionRetriedWhenTheWorkerIsLiveAgain(t *testing.T) {

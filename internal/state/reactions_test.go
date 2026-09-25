@@ -162,3 +162,17 @@ func TestPinnedIntentDoesNotExpire(t *testing.T) {
 	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
 }
+
+func TestAClickKeepsThePinOfAWaitingIntent(t *testing.T) {
+	now := t0
+	s := New(func() time.Time { return now })
+	s.Bootstrap(fixture())
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	s.PinReactIntent("p", "+1", true) // its request waits for a retry
+	s.ReactLocal("p", "+1", false)    // a click meanwhile: the retry will send it
+	s.ReactLocal("p", "+1", true)
+	now = now.Add(time.Hour)
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "still pinned")
+}

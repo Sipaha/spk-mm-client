@@ -33,6 +33,7 @@ type reactPair struct {
 	want          bool      // the user's last click
 	server        bool      // the state the server last confirmed
 	running       bool      // a React call or the retry loop is sending it
+	unsure        bool      // the last request's outcome is unknown: server may be either state
 	attempts      int       // tries that ended with an unknown outcome
 	due           time.Time // waiting: the next try while live
 }
@@ -41,8 +42,10 @@ type reactPair struct {
 // echo is idempotent and a late echo of an earlier click is dropped (state
 // intents). Clicks on a post+emoji whose request is in flight or waiting for
 // a retry are not sent in parallel: the last one wins and is sent afterwards
-// (add, remove, add while the first add runs → nothing more to send; a click
-// back to the server's state while waiting drops the retry).
+// (add, remove, add while the first add runs → nothing more to send). After
+// a request with an unknown outcome the server may hold either state, so
+// even a click back to the confirmed state is sent — at once when the pair
+// is waiting — and the pinned intent drops the late echo of the earlier one.
 //
 // The local change and the want it queues are made together under reactMu,
 // so concurrent clicks cannot leave the post showing one click while another
@@ -69,12 +72,15 @@ func (w *Worker) React(ctx context.Context, postID, emoji string, add bool) erro
 	switch p := w.reactPairs[key]; {
 	case p != nil && p.running: // its sender picks the new want up
 		p.want = add
-	case p != nil && add == p.server: // waiting: nothing left to send
-		delete(w.reactPairs, key)
-		w.st.ForgetReactIntent(postID, emoji)
-	case p != nil: // waiting: the retry sends this click
+	case p != nil: // waiting (unsure): the retry sends this click
 		p.want = add
 		w.st.PinReactIntent(postID, emoji, true)
+		if add == p.server {
+			// Back to the confirmed state, but the earlier request may have
+			// landed: its opposite goes out now, not after the backoff.
+			p.due = time.Now()
+			w.pokeReactions()
+		}
 	case add == was: // nothing to send: no echo will end the intent
 		w.st.ForgetReactIntent(postID, emoji)
 	default:
@@ -97,7 +103,7 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 	for {
 		w.reactMu.Lock()
 		want := p.want
-		if want == p.server {
+		if want == p.server && !p.unsure {
 			delete(w.reactPairs, key)
 			if !sentAny { // no request of this run carries the last click's echo
 				w.st.ForgetReactIntent(p.postID, p.emoji)
@@ -121,7 +127,7 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 				w.bumpRecent(p.emoji)
 			}
 			w.reactMu.Lock()
-			p.server, p.attempts = want, 0
+			p.server, p.attempts, p.unsure = want, 0, false
 			w.st.PinReactIntent(p.postID, p.emoji, false) // its echo is due now
 			w.reactMu.Unlock()
 			sentAny = true
@@ -140,7 +146,7 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 			return w.actionErr(err)
 		}
 		backoff := w.cfg.reactBackoff[min(p.attempts, len(w.cfg.reactBackoff))-1]
-		p.running, p.due = false, time.Now().Add(backoff)
+		p.running, p.due, p.unsure = false, time.Now().Add(backoff), true
 		w.st.PinReactIntent(p.postID, p.emoji, true)
 		w.reactMu.Unlock()
 		slog.Info("reaction outcome unknown, will retry", "srv", w.srv.ID, "post", p.postID, "in", backoff, "err", err)
