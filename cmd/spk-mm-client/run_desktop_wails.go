@@ -16,6 +16,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/appfiles"
 	"github.com/spk/spk-mm-client/internal/desktop"
 	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/paths"
 	"github.com/spk/spk-mm-client/internal/store"
@@ -45,6 +46,15 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		slog.Error("sync did not start; chats stay offline", "err", err) // never keep the window from opening
 	}
 	defer svc.Close()
+
+	// A nil *media.Cache in the interface would not be a nil handler:
+	// mediaH stays a nil interface when the cache cannot be opened.
+	var mediaH http.Handler
+	if mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc}); err != nil {
+		slog.Warn("media cache unavailable; pictures will not load", "err", err)
+	} else {
+		mediaH = mc
+	}
 
 	var dev []desktop.DevAction
 	if o.MMFake {
@@ -82,5 +92,6 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		IconUnreadPNG:  appfiles.IconUnreadPNG,
 		IconMentionPNG: appfiles.IconMentionPNG,
 		DevActions:     dev,
+		Media:          mediaH,
 	})
 }

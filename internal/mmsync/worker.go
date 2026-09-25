@@ -150,7 +150,10 @@ type Worker struct {
 	metaReq    chan struct{}
 	metaDue    chan struct{} // debounced metaReq, served by the session's event loop
 	queue      *fetchQueue
-	viewing    sync.Map // channel id → in-flight view
+	viewing    sync.Map    // channel id → in-flight view
+	emojiLoad  atomic.Bool // custom emoji list read (or being read) by this worker
+	missMu     sync.Mutex
+	emojiMiss  map[string]time.Time // custom emoji names the server does not have
 	usersMu    sync.Mutex
 	bg         sync.WaitGroup
 	live       liveMark
@@ -180,13 +183,14 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 	cfg.defaults()
 	w := &Worker{
 		cfg: cfg, srv: srv,
-		rc:       rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(rest.NewLimiter()),
-		st:       state.New(cfg.Now),
-		nudge:    make(chan struct{}, 1),
-		authFail: make(chan struct{}, 1),
-		metaReq:  make(chan struct{}, 1),
-		metaDue:  make(chan struct{}, 1),
-		queue:    newFetchQueue(),
+		rc:        rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(rest.NewLimiter()),
+		st:        state.New(cfg.Now),
+		nudge:     make(chan struct{}, 1),
+		authFail:  make(chan struct{}, 1),
+		metaReq:   make(chan struct{}, 1),
+		metaDue:   make(chan struct{}, 1),
+		queue:     newFetchQueue(),
+		emojiMiss: map[string]time.Time{},
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)
@@ -564,6 +568,7 @@ func (w *Worker) finishRefresh(r metaResult) error {
 	w.replayOrphans()
 	w.goBG(w.loadUsers)
 	w.enqueueAll()
+	w.startEmojiLoad()
 	w.changed(state.Change{Sidebar: true, Badge: true})
 	return nil
 }
@@ -625,6 +630,7 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	w.booted, w.needResync = true, false
 	w.loadUsers(ctx)
 	w.enqueueAll()
+	w.startEmojiLoad()
 	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}})
 	return nil
 }
@@ -654,7 +660,9 @@ func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool
 		return b, false, err
 	}
 	b.Config = state.Config{CollapsedThreads: cfg.CollapsedThreads, TeammateNameDisplay: cfg.TeammateNameDisplay,
-		LockTeammateNameDisplay: cfg.LockTeammateNameDisplay == "true"}
+		LockTeammateNameDisplay: cfg.LockTeammateNameDisplay == "true",
+		CustomEmoji:             cfg.EnableCustomEmoji == "true",
+	}
 	if b.Me, err = w.rc.Me(ctx); err != nil {
 		return b, false, err
 	}

@@ -22,6 +22,7 @@ type Config struct {
 	CollapsedThreads        string `json:"collapsed_threads"`
 	TeammateNameDisplay     string `json:"teammate_name_display"`
 	LockTeammateNameDisplay bool   `json:"lock_teammate_name_display"`
+	CustomEmoji             bool   `json:"custom_emoji,omitempty"`
 }
 
 type Bootstrap struct {
@@ -77,6 +78,7 @@ type Server struct {
 	chans  map[string]*Chan
 	cats   map[string]model.OrderedCategories
 	users  map[string]model.User
+	emoji  map[string]string // custom emoji name → id (not in the snapshot)
 	nav    Nav
 
 	// Task 7: posts, pending, active channel.
@@ -102,7 +104,7 @@ func New(now func() time.Time) *Server {
 	}
 	return &Server{
 		now: now, prefs: map[prefKey]string{}, chans: map[string]*Chan{}, cats: map[string]model.OrderedCategories{},
-		users: map[string]model.User{}, pending: map[string][]Pending{}, drafts: map[string]string{},
+		users: map[string]model.User{}, emoji: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
 		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), dirty: newDirtySet(),
 	}
 }

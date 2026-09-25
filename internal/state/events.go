@@ -152,6 +152,10 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 			s.dirty.users[u.ID] = true
 			eff.Sidebar = true
 		}
+	case "emoji_added":
+		if e, err := ws.DecodeEmoji(ev); err == nil {
+			s.addEmojiLocked(e)
+		}
 	case "status_change":
 		if ev.Str("user_id") == s.me.ID {
 			s.status.Status = ev.Str("status")

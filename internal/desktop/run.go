@@ -5,6 +5,7 @@ package desktop
 import (
 	"context"
 	"io/fs"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
@@ -26,7 +27,8 @@ type Options struct {
 
 	IconUnreadPNG  []byte
 	IconMentionPNG []byte
-	DevActions     []DevAction // dev builds: extra tray items (fake server controls)
+	DevActions     []DevAction  // dev builds: extra tray items (fake server controls)
+	Media          http.Handler // /media/ (internal/media); nil: pictures are not served
 }
 
 // Run starts the Wails loop. Closing the window hides it (tray brings it
@@ -139,7 +141,7 @@ func Run(ctx context.Context, o Options) error {
 			// notification backend can never abort app.Run() (see notify.go).
 			application.NewService(n),
 		},
-		Assets: application.AssetOptions{Handler: application.AssetFileServerFS(o.FrontendFS)},
+		Assets: application.AssetOptions{Handler: withMedia(application.AssetFileServerFS(o.FrontendFS), o.Media)},
 		// nil on Linux when the D-Bus probe failed or timed out: Wails'
 		// SingleInstance there dials the bus with no timeout and os.Exit(1)s
 		// inside application.New() on failure (see busprobe_linux.go).

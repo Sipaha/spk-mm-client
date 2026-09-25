@@ -27,6 +27,10 @@ func serveIndex(w http.ResponseWriter, dist fs.FS, token string) {
 		http.Error(w, "UI not built: run `make build`", http.StatusInternalServerError)
 		return
 	}
+	// <img> cannot send the bearer token: the page's own media requests
+	// carry this cookie instead. HttpOnly: scripts never read it;
+	// SameSite=Strict: another site embedding our /media/ URL does not send it.
+	http.SetCookie(w, &http.Cookie{Name: mediaCookie, Value: token, Path: "/media/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	tag := fmt.Sprintf(`<meta name="spk-mm-client-api-token" content="%s">`, token)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The token changes every run; a cached index would 401 every call.

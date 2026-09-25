@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/api/transport"
 	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/paths"
 	"github.com/spk/spk-mm-client/internal/store"
@@ -82,7 +84,12 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
 	}
 	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
-	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI, notes)
+	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc})
+	if err != nil {
+		cleanup()
+		return nil, nil, "", nil, fmt.Errorf("media cache: %w", err)
+	}
+	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI, notes, mc)
 
 	// Request contexts derive from baseCtx (via Server.BaseContext) instead
 	// of the default context.Background(), so cancelBase can cancel in-flight
@@ -121,7 +128,25 @@ func serveWithGracefulShutdown(ctx context.Context, srv *http.Server, cancelBase
 	return nil
 }
 
-func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool, notes *api.RecordingNotifier) (http.Handler, string) {
+const mediaCookie = "spk_media"
+
+// mediaGuard admits the page's own requests (the cookie serveIndex set) and
+// API-style callers with the bearer token.
+func mediaGuard(token string, next http.Handler) http.Handler {
+	want := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(mediaCookie)
+		ok := err == nil && subtle.ConstantTimeCompare([]byte(c.Value), want) == 1
+		ok = ok || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) == 1
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool, notes *api.RecordingNotifier, mediaH http.Handler) (http.Handler, string) {
 	mux := http.NewServeMux()
 	httpAPI := transport.NewHTTP(svc, em)
 	token := httpAPI.AuthToken()
@@ -221,6 +246,9 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		}))
 		mux.Handle("/api/_test/", transport.AuthGuard(token, transport.OriginGuard(tm)))
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
+	}
+	if mediaH != nil {
+		mux.Handle("/media/", mediaGuard(token, mediaH))
 	}
 	mux.Handle("/", frontendHandler(token, dist))
 	return transport.LoopbackHostGuard(mux), token

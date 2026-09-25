@@ -20,11 +20,12 @@ import (
 type Opener func(url string) error
 
 type Service struct {
-	st   *store.Store
-	em   *events.Emitter
-	sso  *auth.SSO
-	open Opener
-	hc   *http.Client
+	st       *store.Store
+	em       *events.Emitter
+	sso      *auth.SSO
+	open     Opener
+	hc       *http.Client
+	transfer *http.Client // media and downloads: no whole-request timeout
 	// callTimeout bounds each interactive call to a Mattermost server as a
 	// whole (all REST requests and retries): Wails bindings pass
 	// context.Background(), so without it a hung server would freeze the
@@ -61,7 +62,7 @@ const defaultCallTimeout = 15 * time.Second
 var _ API = (*Service)(nil)
 
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
-	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, callTimeout: defaultCallTimeout,
+	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
 		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv}
 	s.nq = newNotifyQueue(notifyBurst, s.deliver)
 	return s

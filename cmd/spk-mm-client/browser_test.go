@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -20,11 +21,17 @@ import (
 
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/events"
+	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/store"
 )
 
 func setup(t *testing.T, testAPI bool) (*httptest.Server, string, *mmfake.Server) {
+	ts, token, fake, _ := setupWithService(t, testAPI)
+	return ts, token, fake
+}
+
+func setupWithService(t *testing.T, testAPI bool) (*httptest.Server, string, *mmfake.Server, *api.Service) {
 	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "db.sqlite"))
 	require.NoError(t, err)
@@ -38,10 +45,56 @@ func setup(t *testing.T, testAPI bool) (*httptest.Server, string, *mmfake.Server
 	svc.SetNotifier(notes)
 	require.NoError(t, svc.Start(context.Background()))
 	t.Cleanup(svc.Close)
-	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes)
+	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: svc})
+	require.NoError(t, err)
+	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes, mc)
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
-	return ts, token, fake
+	return ts, token, fake, svc
+}
+
+func TestMediaNeedsThePageCookie(t *testing.T) {
+	ts, token, fake, svc := setupWithService(t, false)
+	ctx := context.Background()
+	srv, err := svc.AddServer(ctx, fake.URL())
+	require.NoError(t, err)
+	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
+	require.NoError(t, err)
+	u := fmt.Sprintf("%s/media/%d/avatar/u-bob?v=0", ts.URL, srv.ID)
+
+	resp, err := http.Get(u)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "no cookie, no token")
+
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	resp, err = c.Get(ts.URL + "/")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	var ck *http.Cookie
+	for _, x := range resp.Cookies() {
+		if x.Name == "spk_media" {
+			ck = x
+		}
+	}
+	require.NotNil(t, ck, "the page sets the media cookie")
+	assert.True(t, ck.HttpOnly)
+	assert.Equal(t, http.SameSiteStrictMode, ck.SameSite)
+	assert.Equal(t, "/media/", ck.Path)
+
+	resp, err = c.Get(u)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
+
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode, "API-style callers may use the bearer token")
 }
 
 func TestIndexCarriesTokenAndIsNotCached(t *testing.T) {
