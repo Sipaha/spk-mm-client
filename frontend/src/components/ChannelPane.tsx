@@ -1,18 +1,22 @@
-import { useMemo } from 'react'
-import type { ChannelDTO, ServerDTO } from '../api/types'
-import { copyLink, deletePost, discardPost, editLastOwn, editPost, loadOlder, markUnread, openLink, retryPost, saveDraft, sendPost } from '../chat'
+import { useMemo, useState } from 'react'
+import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
+import { copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, loadOlder, markUnread, openFile, openLink, retryPost, saveDraft, sendPost } from '../chat'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
 import { useStore } from '../store'
 import { Composer } from './Composer'
 import { Feed } from './Feed'
+import { fileKind } from './files'
 import { channelGlyph } from './glyph'
 import type { PostActions } from './PostItem'
+import { Viewer } from './Viewer'
 
 export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; channel: ChannelDTO | null; onReauth(): void }) {
   const channelId = channel?.id ?? ''
   const teamName = channel?.team_name ?? ''
   const editingId = useStore((s) => s.editingId)
+  // The viewer belongs to the channel it was opened in.
+  const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
   // Stable per channel: PostItem is memoized on its props.
   const actions = useMemo<PostActions>(
     () => ({
@@ -27,6 +31,13 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       },
       markUnread: (p) => markUnread(server.id, p.id),
       copyLink: (p) => copyLink(server.url, teamName, p.id),
+      view: (p, fileId) => {
+        const files = (p.files ?? []).filter((f) => fileKind(f) !== 'other')
+        const index = files.findIndex((f) => f.id === fileId)
+        if (index >= 0) setViewer({ channelId, files, index })
+      },
+      download: (f) => void downloadFile(server.id, f.id),
+      open: (f) => void openFile(server.id, f.id),
     }),
     [server.id, server.url, channelId, teamName],
   )
@@ -68,6 +79,17 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         onDraft={(text) => saveDraft(server.id, channel.id, text)}
         onEditLast={() => editLastOwn(channel)}
       />
+      {viewer && viewer.channelId === channel.id && (
+        <Viewer
+          serverId={server.id}
+          files={viewer.files}
+          index={viewer.index}
+          onIndex={(index) => setViewer({ ...viewer, index })}
+          onClose={() => setViewer(null)}
+          onDownload={(f) => void downloadFile(server.id, f.id)}
+          onOpen={(f) => void openFile(server.id, f.id)}
+        />
+      )}
     </section>
   )
 }

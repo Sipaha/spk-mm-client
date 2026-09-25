@@ -1,8 +1,9 @@
 import { memo, useState } from 'react'
-import type { Attachment, PostView } from '../api/types'
+import type { Attachment, FileView, PostView } from '../api/types'
 import { errorMessage } from '../errors'
-import { formatSize, formatTime } from '../format'
+import { formatTime } from '../format'
 import { t } from '../i18n'
+import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
 import { emojiFor } from './emoji'
 import { Markdown } from './Markdown'
@@ -17,6 +18,9 @@ export interface PostActions {
   remove(post: PostView): void
   markUnread(post: PostView): void
   copyLink(post: PostView): void
+  view(post: PostView, fileId: string): void
+  download(file: FileView): void
+  open(file: FileView): void
 }
 
 interface Props {
@@ -154,15 +158,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
         )}
         {post.attachments?.map((a, i) => <AttachmentView key={i} a={a} me={me.username} onLink={actions.link} />)}
         {post.files && post.files.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-2">
-            {post.files.map((f, i) => (
-              <div key={i} className="flex items-center gap-2 rounded border border-line px-2 py-1 text-xs">
-                <span aria-hidden>📎</span>
-                <span className="max-w-64 truncate">{f.name}</span>
-                <span className="text-fg-muted">{formatSize(f.size)}</span>
-              </div>
-            ))}
-          </div>
+          <Attachments serverId={serverId} files={post.files} onView={(f) => actions.view(post, f.id)} onDownload={actions.download} onOpen={actions.open} />
         )}
         {post.reactions && post.reactions.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">

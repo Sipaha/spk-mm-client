@@ -1,6 +1,7 @@
 import { client } from './api/client'
 import type { ChannelDTO } from './api/types'
 import { errorMessage } from './errors'
+import { t } from './i18n'
 import { useStore } from './store'
 
 // Responses can land out of order (a click while a refresh is in flight):
@@ -160,6 +161,26 @@ export const markUnread = (serverId: number, postId: string) => {
 // Same permalink form as Mattermost: <server>/<team>/pl/<post id>.
 export const copyLink = (serverURL: string, teamName: string, postId: string) => {
   navigator.clipboard?.writeText(`${serverURL}/${teamName}/pl/${postId}`).catch(report)
+}
+
+export async function downloadFile(serverId: number, fileId: string) {
+  try {
+    const r = await client.downloadFile(serverId, fileId)
+    useStore.getState().setNotice(t('file.saved', { path: r.path }))
+  } catch (e) {
+    report(e)
+  }
+}
+
+// openFile saves and opens with the system app; Go refuses to open
+// launchers (.desktop, scripts…) — then the user is told where the file is.
+export async function openFile(serverId: number, fileId: string) {
+  try {
+    const r = await client.openFile(serverId, fileId)
+    if (!r.opened) useStore.getState().setNotice(t('file.savedNotOpened', { path: r.path }))
+  } catch (e) {
+    report(e)
+  }
 }
 
 export function editLastOwn(ch: ChannelDTO) {

@@ -12,6 +12,7 @@ interface State {
   sidebar: SidebarDTO | null // of the selected server
   channel: ChannelDTO | null // open channel of the selected server
   editingId: string | null // post being edited inline
+  notice: string | null // info banner (e.g. where a download went)
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -21,6 +22,7 @@ interface State {
   setSidebar(serverId: number, sb: SidebarDTO): void
   setChannel(serverId: number, ch: ChannelDTO): void
   setEditing(id: string | null): void
+  setNotice(msg: string | null): void
 }
 
 const cleared = { sidebar: null, channel: null, editingId: null }
@@ -36,6 +38,7 @@ export const useStore = create<State>((set, get) => ({
   sidebar: null,
   channel: null,
   editingId: null,
+  notice: null,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -69,4 +72,5 @@ export const useStore = create<State>((set, get) => ({
     set({ channel: ch, ...(switchedChannel ? { editingId: null } : {}) })
   },
   setEditing: (id) => set({ editingId: id }),
+  setNotice: (msg) => set({ notice: msg }),
 }))

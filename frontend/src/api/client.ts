@@ -1,5 +1,5 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, AppInfo, ChannelDTO, EventType, ServerDTO, SidebarDTO } from './types'
+import type { ApiEvent, AppInfo, ChannelDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -30,6 +30,8 @@ export interface Client {
   deletePost(id: number, postId: string): Promise<void>
   markUnread(id: number, postId: string): Promise<void>
   saveDraft(id: number, channelId: string, text: string): Promise<void>
+  downloadFile(id: number, fileId: string): Promise<SavedFile>
+  openFile(id: number, fileId: string): Promise<SavedFile>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -80,6 +82,8 @@ export const httpClient: Client = {
   deletePost: (id, post_id) => done(post('DeletePost', { id, post_id })),
   markUnread: (id, post_id) => done(post('MarkUnread', { id, post_id })),
   saveDraft: (id, channel_id, text) => done(post('SaveDraft', { id, channel_id, text })),
+  downloadFile: (id, file_id) => post('DownloadFile', { id, file_id }),
+  openFile: (id, file_id) => post('OpenFile', { id, file_id }),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -136,6 +140,8 @@ export const wailsClient: Client = {
   deletePost: (id, postId) => wcall('DeletePost', id, postId),
   markUnread: (id, postId) => wcall('MarkUnread', id, postId),
   saveDraft: (id, channelId, text) => wcall('SaveDraft', id, channelId, text),
+  downloadFile: (id, fileId) => wcall('DownloadFile', id, fileId),
+  openFile: (id, fileId) => wcall('OpenFile', id, fileId),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

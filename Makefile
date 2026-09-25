@@ -65,7 +65,7 @@ run: build-desktop
 	$(BIN_DIR)/spk-mm-client-desktop
 
 run-browser: build
-	SPK_MM_CLIENT_HOME=$$(mktemp -d) $(BIN) --browser --port=5180 --mm-fake --test-api
+	H=$$(mktemp -d); SPK_MM_CLIENT_HOME=$$H SPK_MM_CLIENT_DOWNLOADS=$$H/dl $(BIN) --browser --port=5180 --mm-fake --test-api
 
 install-dev-linux: build-desktop
 	bash scripts/install-dev-linux.sh $(abspath $(BIN_DIR)/spk-mm-client-desktop)

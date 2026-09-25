@@ -72,9 +72,19 @@ export interface Attachment {
 }
 
 export interface FileView {
+  id: string
   name: string
+  ext?: string
   size: number
   mime: string
+  width?: number
+  height?: number
+  has_preview?: boolean
+}
+
+export interface SavedFile {
+  path: string
+  opened: boolean
 }
 
 export interface ReactionView {

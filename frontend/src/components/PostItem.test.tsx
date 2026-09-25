@@ -12,6 +12,7 @@ const post = (o: Partial<PostView> = {}): PostView => ({
 const actions = (): PostActions => ({
   link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
   cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
+  view: vi.fn(), download: vi.fn(), open: vi.fn(),
 })
 const me = { id: 'u-alice', username: 'alice' }
 
@@ -35,7 +36,7 @@ test('attachments, files, reactions and reply count', async () => {
       post={post({
         message: '',
         attachments: [{ color: 'danger', pretext: 'Build', title: 'Pipeline #7', title_link: 'https://ci/7', text: 'failed on **test**', fields: [{ title: 'Branch', value: 'main', short: true }] }],
-        files: [{ name: 'report.pdf', size: 2048, mime: 'application/pdf' }],
+        files: [{ id: 'f1', name: 'report.pdf', size: 2048, mime: 'application/pdf' }],
         reactions: [{ emoji: '+1', count: 2, mine: true }, { emoji: 'custom_party', count: 1, mine: false }],
         reply_count: 3,
       })}

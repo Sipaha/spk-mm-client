@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import type { ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
+import { setLocale } from './i18n'
 import { useStore } from './store'
 
 vi.mock('./api/client', () => ({
@@ -10,11 +11,13 @@ vi.mock('./api/client', () => ({
     selectServer: vi.fn().mockResolvedValue(undefined),
     listServers: vi.fn(),
     editPost: vi.fn(),
+    downloadFile: vi.fn(),
+    openFile: vi.fn(),
   },
 }))
 
 const { client } = await import('./api/client')
-const { editPost, loadSidebar, openChannel, refreshChannel, resetChat, selectServer } = await import('./chat')
+const { downloadFile, editPost, loadSidebar, openChannel, openFile, refreshChannel, resetChat, selectServer } = await import('./chat')
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -108,4 +111,18 @@ test('opening a channel of another team switches the sidebar team', async () => 
   await openChannel(1, 'x')
   await vi.waitFor(() => expect(useStore.getState().sidebar?.team_id).toBe('t2'))
   expect(client.sidebar).toHaveBeenLastCalledWith(1, 't2')
+})
+
+test('a download says where the file went; an unopened one says why', async () => {
+  setLocale('en')
+  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/home/a/Downloads/spec.pdf', opened: false })
+  await downloadFile(1, 'f-spec')
+  expect(useStore.getState().notice).toBe('Saved to /home/a/Downloads/spec.pdf')
+  vi.mocked(client.openFile).mockResolvedValue({ path: '/d/run.desktop', opened: false })
+  await openFile(1, 'f-x')
+  expect(useStore.getState().notice).toBe('Saved to /d/run.desktop. Files of this type are not opened automatically.')
+  useStore.getState().setNotice(null)
+  vi.mocked(client.openFile).mockResolvedValue({ path: '/d/a.log', opened: true })
+  await openFile(1, 'f-log')
+  expect(useStore.getState().notice).toBeNull()
 })
