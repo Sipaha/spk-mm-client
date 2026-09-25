@@ -80,6 +80,39 @@
   ~120 мс вместо ~75), отвергнуты.
   — `TestTuneGoMemoryDefaults`, `TestTuneGoMemoryRespectsEnvironment`;
   замеры — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
+- Картинки и фрагменты файлов UI берёт только с `/media/<srv>/<kind>/<key>`; путь строится
+  только из проверенных ключей, открытого прокси к серверу Mattermost нет — обслуживает
+  `internal/media`. — `TestBadRequests`.
+- Browser-режим: доступ к `/media/` закрыт за cookie `spk_media` (HttpOnly, SameSite=Strict)
+  или bearer-токеном — иначе картинку мог бы утащить любой сайт в браузере пользователя. —
+  `TestMediaNeedsThePageCookie`.
+- SVG и не-растровые типы не отображаются, размер файла и число пикселей ограничены (пиксельный
+  гард отказывает закрыто, если конфиг картинки не читается). — `TestSVGIsRefused`,
+  `TestHugeDimensionsAreRefused`.
+- Рамка картинки и текстового фрагмента имеет окончательный размер до загрузки содержимого —
+  лента со скролл-якорем не прыгает при догрузке превью. —
+  `frontend/src/components/Attachments.test.tsx` («the image box has its final size before the
+  image loads»).
+- Чужие статусы присутствия приходят только опросом (`status_change` рассылается только самому
+  пользователю, не наблюдателям) — опрос идёт по участникам DM и авторам открытого канала, а
+  не по всем пользователям сразу. — `TestStatusesArePolledOnLiveAndOnOpenChannel`,
+  `TestStatusesArePolledWhenTheOpenChannelLoads`.
+- Реакция применяется сразу (оптимистично) и откатывается немедленно только при явном отказе
+  сервера (4xx); клики во время запроса — «последний побеждает»; устаревшее эхо своего отменённого
+  клика отбрасывается. Сохранение/снятие реакции — идемпотентные запросы на сервере Mattermost и
+  документированное исключение из правила «POST не повторяются при сетевых ошибках» (решение
+  пользователя 2026-09-25): при неоднозначном исходе (сетевая ошибка, таймаут, 5xx) оптимистичное
+  состояние сохраняется и повторяется с бэкоффом 2/5/15 с, откат — только после 4 попыток;
+  переключение обратно во время неуверенного ожидания сразу шлёт второй, тоже идемпотентный,
+  запрос. — `TestLateEchoOfUndoneReactionIsIgnored`, `TestReactionRefusedIsRolledBack`,
+  `TestReactionClicksWhileInFlightAreQueuedLastWins`,
+  `TestReactionNetworkFailureIsRetriedKeepingTheClick`,
+  `TestReactionFailingOnIsRolledBackAfterTheLastAttempt`,
+  `TestReactionToggledBackWhileWaitingIsSentAtOnce`.
+- «Открыть» запускает системным приложением только инертные типы из allowlist (растровые
+  картинки, PDF, текст/лог/csv/json/md, макро-свободные офисные документы, аудио/видео,
+  распространённые архивы); всё остальное (включая `.html`/`.svg`/лаунчеры) — только сохраняется.
+  — `TestOpenFileOpensSafeTypesOnly`.
 - Каждый созданный Playwright-контекст/страница (в `browser_run_code_unsafe` или в скриптах)
   закрывается в том же вызове (`try`/`finally` → `ctx.close()`); окна не оставляются открытыми.
   После работы с браузером проверить, что не осталось висящих контекстов — пользователь уже
@@ -93,7 +126,7 @@
 - Frontend toolchain resolved newer than the stage-1 briefs assumed (TypeScript 6, Vite 8, Vitest 4): bare CSS side-effect imports need `"vite/client"` in `tsconfig.json`'s `"types"`, and `vite.config.ts` must `import { defineConfig } from 'vitest/config'` (not `'vite'`) — a triple-slash `vitest` types reference no longer reliably pulls in the `UserConfig.test` augmentation.
 - Memory budget is **Private_Dirty** of all app processes (a guideline target of ~150 MB with 2–3 servers/~100 channels — usability comes first, no growth over time is the hard requirement), not PSS: PSS includes a share of WebKit/GTK/ICU libraries shared with other apps and swings with what else runs (150–196 MB PSS vs ~73–80 MB Private_Dirty for the empty shell; release build and WebKit GPU policy don't change it). Measure with `scripts/pss.sh <pid>` (prints both). — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Wails beta.25 Linux tray: `SystemTray.SetTooltip` is a no-op and the StatusNotifierItem `Id`/`ToolTip` are frozen to the label when the tray starts (default "Wails"); only `SetLabel` (SNI `Title`) and `SetIcon` update live. Tray/notification calls reach GTK/D-Bus with no timeout — keep them off service goroutines (`offerLatest`, `asyncSender`). — `internal/desktop/tray.go` (`setTrayText`, `trayBadge`), `internal/desktop/async.go` (`TestAsyncSenderDetachesAHungSendAndResumes`).
-- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
+- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), `/api/_test/fake/status` (set a user's presence status), `/api/_test/fake/picture` (bump a user's avatar version), `/api/_test/fake/react` (react as another user, `remove:true` to undo), `/api/_test/opened-files` (files the fake file opener was asked to open) and `SPK_MM_CLIENT_DOWNLOADS` (downloads directory override for e2e), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
 - Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello), `SetFailure(pathPart, status)` (inject an HTTP error); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTimeout`, `refreshRetry`, `sinceLimit`). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
 - `--mm-fake-channels N` (browser mode) seeds N extra open channels (`c-load-001`…, 20 posts each) in the fake server for memory/perf checks; the desktop `--mm-fake` flag (dev builds only) starts the same fake server in-process and signs in as alice automatically — always point it at its own `SPK_MM_CLIENT_HOME` (a fresh temp dir), never at the live client's data dir, and it clears any stale fake-mode server entries from a previous dev run before adding the live one. — `cmd/spk-mm-client/main.go`, `cmd/spk-mm-client/run_desktop_wails.go`.
 - Testing the virtualized feed under Vitest/jsdom needs a manual layout stub: jsdom never computes real layout, so `HTMLElement.prototype.offsetHeight` (row height for the virtualizer) and `scrollTo` (history-load anchor) must be overridden in `beforeEach`/restored in `afterEach`, not left at jsdom's defaults (0 / no-op that doesn't move `scrollTop`). — `frontend/src/components/Feed.test.tsx`.
@@ -101,3 +134,8 @@
 - Wails beta.25 exposes no WebKit memory knobs: it uses the default `WebKitWebContext` (`webkit_web_view_new_with_user_content_manager`), so the cache model and — in the 4.1 API — the web process's memory-pressure settings (a construct-only property of a web context) are out of reach; `webkit_website_data_manager_set_memory_pressure_settings` only covers the network process. The only lever over the web process engine is its environment (`JSC_*` options, read by JavaScriptCore at start; set with `os.Setenv` before the webview exists — WebKit launches the web process with our environment). Measured JIT-tier options all cost UI speed and were rejected (spike doc S4).
 - Memory soak runs: `--mm-fake-servers N` (dev desktop, `--mm-fake`) starts N in-process fakes (each seeded the same, `--mm-fake-channels` each) and signs alice in on all; `--mm-fake-churn 2s` makes bob post to a random channel every interval (no @mentions — no OS notifications) and asks the UI to open a random channel every 5th tick (the notification-click path), and logs Go heap figures (`go memory …`) once a minute. The fakes live in the main process, so its numbers are pessimistic. — `cmd/spk-mm-client/devchurn.go`, `TestFakeChurnPostsAndSwitchesChannels`.
 - Engine-specific frontend timing (JIT tiers etc.): Playwright's own WebKit build does not start on this host (missing `libavif16`/`libjxl` without sudo) and is not the system engine anyway; drive the system WebKitGTK 4.1 through PyGObject (`gi.require_version('WebKit2', '4.1')`, a `WebView` in a `Gtk.Window`, `evaluate_javascript` — an async IIFE's Promise result is unsupported, stash results on `window` and poll). `JSC_*` variables in the script's environment reach its web process.
+- `position: fixed` inside a feed row does not position against the viewport: the row has a `transform` (the virtualizer), which turns `fixed` into `absolute`-like behaviour relative to that row, so a popover clips to the row's box. The emoji picker opened from a `PostItem` renders through a portal into `document.body` instead. — `frontend/src/components/PostItem.tsx`, `frontend/src/components/EmojiPicker.tsx`.
+- A `nil *media.Cache` stored in an `http.Handler` interface variable is not a nil interface (the classic Go gotcha) — when the media cache fails to open, the desktop runner keeps the interface itself `nil` (never assigns the typed nil pointer to it), so `withMedia` can tell "no cache" apart from "a broken cache handle". — `cmd/spk-mm-client/run_desktop_wails.go`.
+- Two `http.ServeMux` patterns `/emoji/name/{name}` and `/emoji/{id}/image` overlap on `/emoji/name/image` and Go's `ServeMux` panics at registration time, not at request time — the fake server merges them into one pattern `/emoji/{a}/{b}` and dispatches by shape inside the handler. — `internal/mmfake/media.go`.
+- The real Mattermost `POST /users/status/ids` rejects the **whole** request with 400 if even one id in the array isn't exactly 26 characters (`docs/research/2026-09-24-mattermost-api-facts.md` §7.2); the fake is more lenient (short ids like `u-bob` are accepted) — don't rely on the fake's leniency when writing new status tests, and expect real-server integration to need real 26-char ids.
+- The Mattermost webapp's emoji set (`frontend/src/emoji/data.ts`) is generated, not hand-written — regenerate with `scripts/gen-emoji.mjs` (sources and the exact command are in the script's header comment); editing `data.ts` by hand will be overwritten by the next regeneration and drift from the webapp's names/order.

@@ -3,8 +3,8 @@ import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, te
 
 test('sidebar, feed and sending once', async ({ page }) => {
   await signInAlice(page)
-  // ^@…$: the group "alice, bob, carol" also contains "bob"
-  for (const name of [/Town Square/, /Off-Topic/, /Secret/, /^@\s*bob$/]) await expect(channel(page, name)).toBeVisible()
+  // the DM row is now "avatar + bob, <status>"; the group "👥 alice, bob, carol" does not start with "bob"
+  for (const name of [/Town Square/, /Off-Topic/, /Secret/, /^bob(,|$)/]) await expect(channel(page, name)).toBeVisible()
   await expect(feed(page).getByText('Message #150', { exact: true })).toBeVisible()
 
   const text = unique('hello e2e')

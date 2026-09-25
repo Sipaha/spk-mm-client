@@ -13,7 +13,7 @@ export default defineConfig({
   webServer: {
     command: `../../build/bin/spk-mm-client --browser --port ${port} --mm-fake --test-api`,
     url: `http://127.0.0.1:${port}/`,
-    env: { SPK_MM_CLIENT_HOME: home },
+    env: { SPK_MM_CLIENT_HOME: home, SPK_MM_CLIENT_DOWNLOADS: join(home, 'downloads') },
     reuseExistingServer: false,
   },
 })
