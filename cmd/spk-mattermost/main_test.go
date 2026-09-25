@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,5 +54,16 @@ func TestDesktopDevFakeFlags(t *testing.T) {
 	})
 	cmd.SetArgs([]string{"--mm-fake", "--mm-fake-channels", "100"})
 	require.NoError(t, cmd.ExecuteContext(context.Background()))
-	assert.Equal(t, desktopOpts{MMFake: true, FakeChannels: 100}, got)
+	assert.Equal(t, desktopOpts{MMFake: true, FakeChannels: 100, FakeServers: 1}, got)
+}
+
+func TestDesktopSoakFlags(t *testing.T) {
+	var got desktopOpts
+	cmd := newRootCmd(runners{
+		browser: func(context.Context, browserOpts) error { t.Fatal("browser runner called"); return nil },
+		desktop: func(_ context.Context, o desktopOpts) error { got = o; return nil },
+	})
+	cmd.SetArgs([]string{"--mm-fake", "--mm-fake-servers", "3", "--mm-fake-churn", "2s"})
+	require.NoError(t, cmd.ExecuteContext(context.Background()))
+	assert.Equal(t, desktopOpts{MMFake: true, FakeServers: 3, FakeChurn: 2 * time.Second}, got)
 }

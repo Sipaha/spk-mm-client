@@ -4,33 +4,41 @@ import (
 	"context"
 	"net"
 	"net/url"
+	"slices"
 
 	"github.com/spk/spk-mattermost/internal/api"
 	"github.com/spk/spk-mattermost/internal/mmfake"
 )
 
-// signInToFake adds the in-process fake server and signs alice in, so a dev
-// desktop run shows a working chat at once. The fake listens on a new port
-// every run, so fake servers left in the store by earlier runs (same home)
-// point at dead ports: they are removed rather than piling up.
-func signInToFake(ctx context.Context, svc *api.Service, fakeURL string) error {
+// signInToFake adds the in-process fake servers and signs alice in on each,
+// so a dev desktop run shows a working chat at once; it returns their server
+// ids in the order of fakeURLs. The fakes listen on new ports every run, so
+// fake servers left in the store by earlier runs (same home) point at dead
+// ports: they are removed rather than piling up.
+func signInToFake(ctx context.Context, svc *api.Service, fakeURLs ...string) ([]int64, error) {
 	list, err := svc.ListServers(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, s := range list {
-		if isDevFake(s) && s.URL != fakeURL {
+		if isDevFake(s) && !slices.Contains(fakeURLs, s.URL) {
 			if err := svc.RemoveServer(ctx, s.ID); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	srv, err := svc.AddServer(ctx, fakeURL)
-	if err != nil {
-		return err
+	ids := make([]int64, 0, len(fakeURLs))
+	for _, u := range fakeURLs {
+		srv, err := svc.AddServer(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := svc.LoginWithPassword(ctx, srv.ID, "alice", "secret"); err != nil {
+			return nil, err
+		}
+		ids = append(ids, srv.ID)
 	}
-	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
-	return err
+	return ids, nil
 }
 
 // isDevFake: an in-process fake from a dev run (loopback URL, fake site name).

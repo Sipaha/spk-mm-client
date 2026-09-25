@@ -48,15 +48,30 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 
 	var dev []desktop.DevAction
 	if o.MMFake {
-		fake := mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels})
-		defer fake.Close()
-		slog.Warn("fake Mattermost server started (development only)", "url", fake.URL())
-		if err := signInToFake(ctx, svc, fake.URL()); err != nil {
+		fakes := make([]*mmfake.Server, max(o.FakeServers, 1))
+		urls := make([]string, len(fakes))
+		for i := range fakes {
+			fakes[i] = mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels})
+			defer fakes[i].Close()
+			urls[i] = fakes[i].URL()
+			slog.Warn("fake Mattermost server started (development only)", "url", urls[i])
+		}
+		ids, err := signInToFake(ctx, svc, urls...)
+		if err != nil {
 			return fmt.Errorf("fake server sign-in: %w", err)
 		}
+		fake := fakes[0]
 		dev = append(dev, desktop.DevAction{Label: "Fake: mention from bob", Run: func() {
 			fake.PostAs("c-offtopic", "bob", "@alice ping "+time.Now().Format("15:04:05"))
 		}})
+		if o.FakeChurn > 0 {
+			churnCtx, stopChurn := context.WithCancel(ctx)
+			defer stopChurn() // before the fakes close (defers run in reverse)
+			go runFakeChurn(churnCtx, fakeChurn{
+				every: o.FakeChurn, fakes: fakes, serverIDs: ids, channels: o.FakeChannels,
+				open: svc.NotificationClicked,
+			})
+		}
 	}
 
 	return desktop.Run(ctx, desktop.Options{
