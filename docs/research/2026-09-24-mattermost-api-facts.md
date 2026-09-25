@@ -197,3 +197,135 @@ channel_approximate_view_time/<id>, channel_open_time/<id>)` убыв.; обре
 `desktop_threads` применяет сервер при заполнении `followers`.
 User notify_props по умолчанию: `desktop:"mention", channel:"true",
 mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"`.
+
+## 7. Этап 3: аватары, статусы, файлы, реакции, эмодзи
+
+Проверено 2026-09-25 по исходникам `release-10.11` (raw.githubusercontent.com,
+ветка `release-10.11`) для плана `docs/plans/2026-09-25-stage3-avatars-previews-reactions.md`.
+Ссылки — относительно `https://github.com/mattermost/mattermost/blob/release-10.11/`.
+
+### 7.1 Аватары
+
+- `GET /api/v4/users/{id}/image` (`server/channels/api4/user.go` `getProfileImage`):
+  ETag = `strconv.FormatInt(user.LastPictureUpdate, 10)`; при совпадении
+  `If-None-Match` — **304** (`c.HandleEtag`); иначе тело PNG,
+  `Content-Type: image/png` всегда, `Cache-Control: max-age=86400, private`
+  (5 минут, если файл не прочитался и отдан сгенерированный). 403, если
+  пользователя «не видно» (`UserCanSeeOtherUser`).
+- Пользователь без своей картинки всё равно получает картинку по `/image`:
+  сервер генерирует её из инициалов (`GetProfileImage` → default). Отдельно
+  есть `GET /users/{id}/image/default`.
+- `last_picture_update` (`server/public/model/user.go`, `omitempty`) —
+  версия картинки. Загрузка своей — `UpdateLastPictureUpdate` = `+now`;
+  сброс на сгенерированную — `ResetLastPictureUpdate` = **`-now`
+  (отрицательное)** (`server/channels/store/sqlstore/user_store.go`); смена
+  username при сгенерированной картинке перегенерирует её и снова сбрасывает
+  версию (`app/user.go` `UpdateUser`). Значит, версия меняется при любой смене
+  картинки, может быть 0 (поле не пришло) или отрицательной.
+- Веб-клиент строит URL `…/users/{id}/image?_={last_picture_update}` (параметр
+  `_` только если версия ≠ 0; `webapp/platform/client/src/client4.ts`
+  `getProfilePictureUrl`) — сервер параметр игнорирует, это ключ кэша браузера.
+- Сайдбар веб-клиента: у DM — аватар собеседника размера `xs` с иконкой статуса
+  (у ботов статуса нет) (`components/sidebar/.../sidebar_direct_channel.tsx`);
+  у GM — не аватары, а квадрат с числом участников (`sidebar_group_channel.tsx`,
+  число из статистики канала). Иконка статуса: online / away / dnd, всё
+  остальное (offline, ooo) — «offline» (`components/status_icon.tsx`).
+
+### 7.2 Статусы присутствия
+
+- `POST /api/v4/users/status/ids` (`api4/status.go` `getUserStatusesByIds`):
+  тело — массив id; дубли убираются; **каждый id обязан быть длиной 26**, иначе
+  400 на весь запрос; пустой массив — 400. Ответ — `[]Status`
+  `{user_id,status,manual,last_activity_at,dnd_end_time}`; пользователь без
+  строки в таблице статусов (и несуществующий id) → `status:"offline"`
+  (`app/platform/status.go` `GetUserStatusesByIds`). При
+  `ServiceSettings.EnableUserStatuses=false` ответ — пустой массив.
+- `status_change` публикуется с `broadcast.user_id = <чей статус>` —
+  **приходит только самому пользователю** (`app/platform/status.go`
+  `BroadcastStatus`), при «занятом» сервере не публикуется вовсе. Чужие статусы
+  веб-клиент опрашивает: `addVisibleUsersInCurrentChannelAndSelfToStatusPoll`
+  (`webapp/channels/src/actions/status_actions.ts`) — авторы видимых постов
+  открытого канала, собеседники DM с `direct_channel_show=true` и сам
+  пользователь; период — `config.UsersStatusAndProfileFetchingPollIntervalMilliseconds`.
+
+### 7.3 Файлы
+
+- Маршруты (`api4/file.go`): `GET /files/{id}` (оригинал), `/files/{id}/thumbnail`,
+  `/files/{id}/preview`, `/files/{id}/info`; все требуют права читать канал
+  файла (403 иначе, 404 для удалённого). `?download=1` — `Content-Disposition: attachment`.
+- Миниатюра — `image/jpeg`, вписана в **120×100**; превью — `image/jpeg`
+  шириной до **1920** (`app/file.go` `imageThumbnailWidth/Height`,
+  `imagePreviewWidth`). Нет миниатюры/превью → **400**
+  (`api.file.get_file_thumbnail.no_thumbnail.app_error` / `…preview…`).
+- Отдача — `http.ServeContent` (`server/platform/shared/web/files.go`
+  `WriteFileResponse`): **`Range` поддерживается** (206);
+  `X-Content-Type-Options: nosniff`; «опасные» типы отдаются как `text/plain`;
+  inline только для медиатипов (jpeg, png, bmp, gif, tiff, webp, …), остальное —
+  attachment. При `WebserverMode=gzip` вместо `Content-Length` —
+  `X-Uncompressed-Content-Length`.
+- `FileInfo` (`server/public/model/file_info.go`): `id, user_id, post_id,
+  channel_id, create_at, update_at, delete_at, name, extension, size, mime_type,
+  width, height (omitempty), has_preview_image (omitempty), mini_preview
+  (base64 крошечного JPEG), remote_id, archived`.
+- `has_preview_image` (`app/file.go` `preprocessImage`): `true` для
+  декодируемых растровых картинок; **`false` для SVG** (только размеры) и для
+  **GIF** (анимация — веб-клиент показывает оригинал); миниатюра/превью GIF при
+  этом всё равно пишутся. Картинка больше `MaxImageResolution` не загружается.
+- Пост из `posted` несёт `metadata.files`: `CreatePost` готовит пост через
+  `PreparePostForClient` до рассылки (`app/post.go`), событие кладёт
+  `post.ToJSON()` (`publishWebsocketEventForPost`).
+
+### 7.4 Реакции
+
+- `POST /api/v4/reactions` тело `{user_id, post_id, emoji_name}`
+  (`api4/reaction.go` `saveReaction`): `user_id` ≠ сессии → 403
+  (`api.reaction.save_reaction.user_id.app_error`); нет права
+  `add_reaction` в канале → 403; ответ **200** + `Reaction`. Имя проверяется:
+  `^[a-zA-Z0-9\-\+_]+$`, ≤ 64 (`model/reaction.go`), и оно должно быть
+  **системным** (`model.GetSystemEmojiId`, таблица `SystemEmojis` в
+  `model/emoji_data.go` — 4464 имени вместе с алиасами и оттенками кожи) или
+  существующим кастомным (иначе 404 из `GetEmojiByName`) (`app/reaction.go`).
+  Новое имя сверх `ServiceSettings.UniqueEmojiReactionLimitPerPost` → **400**
+  `app.reaction.save.save.too_many_reactions`; архивный канал → **403**
+  `api.reaction.save.archived_channel.app_error`.
+- `DELETE /api/v4/users/{user_id}/posts/{post_id}/reactions/{emoji_name}` →
+  `{"status":"OK"}`; архивный канал → 403
+  (`api.reaction.delete.archived_channel.app_error`); чужую реакцию — только с
+  `remove_others_reactions`.
+- События `reaction_added` / `reaction_removed`: `data.reaction` — JSON-строка
+  `Reaction{user_id,post_id,emoji_name,create_at,update_at,delete_at,remote_id,channel_id}`,
+  `broadcast.channel_id` = канал поста (`app/reaction.go` `sendReactionEvent`);
+  приходят и автору (эхо). `update_at` поста меняется.
+- Алиасы — разные имена: `+1` и `thumbsup` — обе строки есть в `SystemEmojis`
+  с одним кодом `1f44d`, но реакции с ними — **разные записи**. Веб-клиент
+  ставит из пикера **первое** short name набора (`getEmojiName`), то есть `+1`,
+  `smile`, …; клик по чипу повторяет имя чипа.
+- Недавние эмодзи (`webapp/channels/src/actions/emoji_actions.js`
+  `addRecentEmojis`): preference `category="recent_emojis"`, `name=<user id>`,
+  `value` — JSON `[{"name","usageCount"}]`, **не больше 27**, отсортирован по
+  `usageCount` по возрастанию (повторно выбранное удаляется и дописывается в
+  конец с `usageCount+1`); показывается от конца.
+
+### 7.5 Эмодзи
+
+- Набор веб-клиента — npm `emoji-datasource@6.1.1` + `additional_shortnames.json`
+  (`webapp/channels/build/emoji/make_emojis.mjs`); тот же генератор пишет
+  серверную `SystemEmojis`. Все имена из `emoji.json` этой версии + добавочные
+  есть в `SystemEmojis` (проверено скриптом 2026-09-25: 2328 имён без
+  оттенков, расхождений 0).
+- Кастомные (`api4/emoji.go`): `GET /emoji?page&per_page(≤200)&sort=name` →
+  `[]Emoji{id,creator_id,name,create_at,update_at,delete_at}`;
+  `GET /emoji/name/{name}` (404, если нет); `POST /emoji/names` (массив имён);
+  `GET /emoji/{id}/image` — `Content-Type: image/<тип>`,
+  `Cache-Control: max-age=2592000, private`. При
+  `ServiceSettings.EnableCustomEmoji=false` — **501** на всё. Флаг есть в
+  `config/client?format=old` (`EnableCustomEmoji`).
+- `emoji_added`: `data.emoji` — JSON-строка `Emoji`, рассылается всем
+  (`app/emoji.go`).
+
+### 7.6 Не проверено вживую
+
+Всё выше — чтение кода, не наблюдение на mm.citeck.ru. Отдельно не
+проверено: ведёт ли `Range` себя так же за gzip-прокси сервера (код
+отдачи — `ServeContent`, но ответ может быть сжат) — клиент поэтому
+принимает и 200, и 206 и сам обрезает тело.
