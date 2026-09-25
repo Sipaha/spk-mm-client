@@ -47,7 +47,7 @@ func setupWithService(t *testing.T, testAPI bool) (*httptest.Server, string, *mm
 	t.Cleanup(svc.Close)
 	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: svc})
 	require.NoError(t, err)
-	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes, mc)
+	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes, mc, &api.RecordingOpener{})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
 	return ts, token, fake, svc
@@ -299,4 +299,12 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 	var list []api.Notification
 	require.NoError(t, json.NewDecoder(r.Body).Decode(&list))
 	assert.Empty(t, list)
+
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/_test/opened-files", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	var files []string
+	require.NoError(t, json.NewDecoder(r.Body).Decode(&files))
+	assert.Equal(t, []string{}, files)
 }

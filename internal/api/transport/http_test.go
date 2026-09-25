@@ -30,6 +30,10 @@ func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message strin
 	return nil
 }
 
+func (f *fakeAPI) DownloadFile(_ context.Context, id int64, fileID string) (api.SavedFile, error) {
+	return api.SavedFile{Path: fmt.Sprintf("/dl/%d/%s", id, fileID)}, nil
+}
+
 func (f *fakeAPI) GetChannel(_ context.Context, _ int64, channelID string) (api.ChannelDTO, error) {
 	return api.ChannelDTO{ID: channelID, Name: "Town", Posts: []state.PostView{}}, nil
 }
@@ -176,4 +180,9 @@ func TestChatRoutes(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ch))
 	assert.Equal(t, "c1", ch["id"])
 	assert.Equal(t, []any{}, ch["posts"])
+
+	resp = call(t, h, ts.URL, "DownloadFile", `{"id":3,"file_id":"f1"}`)
+	var saved api.SavedFile
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&saved))
+	assert.Equal(t, "/dl/3/f1", saved.Path)
 }

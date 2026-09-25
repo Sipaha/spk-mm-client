@@ -65,3 +65,11 @@ func (w *API) MarkUnread(id int64, postID string) error {
 func (w *API) SaveDraft(id int64, channelID, text string) error {
 	return w.a.SaveDraft(context.Background(), id, channelID, text)
 }
+
+func (w *API) DownloadFile(id int64, fileID string) (api.SavedFile, error) {
+	return w.a.DownloadFile(context.Background(), id, fileID)
+}
+
+func (w *API) OpenFile(id int64, fileID string) (api.SavedFile, error) {
+	return w.a.OpenFile(context.Background(), id, fileID)
+}

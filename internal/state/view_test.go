@@ -45,12 +45,22 @@ func TestChannelViewComposition(t *testing.T) {
 	assert.True(t, v.Posts[1].System)
 	assert.Equal(t, "bob", v.Posts[2].Author)
 	assert.Equal(t, int64(2100), v.Posts[2].EditAt)
-	assert.Equal(t, []FileView{{Name: "a.pdf", Size: 10, Mime: "application/pdf"}}, v.Posts[2].Files)
+	assert.Equal(t, []FileView{{ID: "f1", Name: "a.pdf", Size: 10, Mime: "application/pdf"}}, v.Posts[2].Files)
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 2, Mine: true}, {Emoji: "tada", Count: 1}}, v.Posts[2].Reactions)
 	assert.Equal(t, "u2:9", v.Posts[2].PendingPostID, "postViewLocked carries pending_post_id through for the confirmed post")
 	assert.True(t, v.Posts[3].Pending)
 	assert.Equal(t, "alice", v.Posts[3].Author)
 	assert.Equal(t, v.Posts[3].ID, v.Posts[3].PendingPostID, "a local pending entry is keyed by its own id")
+}
+
+func TestFileViewCarriesWhatPreviewsNeed(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	p := mkPost("p", "off", "u2", 1000)
+	p.Metadata = &model.PostMetadata{Files: []model.FileInfo{{ID: "f1", Name: "a.png", Extension: "png", Size: 10, MimeType: "image/png", Width: 640, Height: 480, HasPreviewImage: true}}}
+	s.SetWindow("off", []model.Post{p}, true, 5)
+	v, _ := s.ChannelView("off")
+	assert.Equal(t, []FileView{{ID: "f1", Name: "a.png", Ext: "png", Size: 10, Mime: "image/png", Width: 640, Height: 480, HasPreview: true}}, v.Posts[0].Files)
 }
 
 func TestChannelViewDMNameAndUnknownChannel(t *testing.T) {

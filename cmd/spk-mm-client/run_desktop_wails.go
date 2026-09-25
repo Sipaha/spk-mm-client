@@ -42,6 +42,8 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	em := events.NewEmitter()
 	open := func(u string) error { return application.Get().Browser.OpenURL(u) }
 	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
+	// xdg-open (Wails Browser.OpenFile) starts and returns at once.
+	svc.SetFileOpener(func(path string) error { return application.Get().Browser.OpenFile(path) })
 	if err := svc.Start(ctx); err != nil {
 		slog.Error("sync did not start; chats stay offline", "err", err) // never keep the window from opening
 	}

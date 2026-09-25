@@ -47,9 +47,13 @@ type Service struct {
 	// callback-reachable s.mu section.
 	badgeMu sync.Mutex
 
+	filesMu sync.Mutex
+	saved   map[string]string // "server/file id" → path saved this session
+
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
 	notifier Notifier
+	fileOpen Opener // hands saved files to the system; nil: save only
 	badgeFns []func(Badge)
 	active   int64 // server shown in the UI
 	focused  bool  // window focused and visible
@@ -63,7 +67,8 @@ var _ API = (*Service)(nil)
 
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
 	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
-		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv}
+		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv,
+		saved: map[string]string{}}
 	s.nq = newNotifyQueue(notifyBurst, s.deliver)
 	return s
 }

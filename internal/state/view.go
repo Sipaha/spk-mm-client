@@ -6,10 +6,17 @@ import (
 	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
+// FileView is what the feed needs to show a file: previews come from
+// /media/ by id; width/height fix the image box before it loads.
 type FileView struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Mime string `json:"mime"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Ext        string `json:"ext,omitempty"`
+	Size       int64  `json:"size"`
+	Mime       string `json:"mime"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+	HasPreview bool   `json:"has_preview,omitempty"`
 }
 
 type ReactionView struct {
@@ -131,7 +138,8 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 	}
 	if p.Metadata != nil {
 		for _, f := range p.Metadata.Files {
-			v.Files = append(v.Files, FileView{Name: f.Name, Size: f.Size, Mime: f.MimeType})
+			v.Files = append(v.Files, FileView{ID: f.ID, Name: f.Name, Ext: f.Extension, Size: f.Size, Mime: f.MimeType,
+				Width: f.Width, Height: f.Height, HasPreview: f.HasPreviewImage})
 		}
 		idx := map[string]int{}
 		for _, r := range p.Metadata.Reactions {

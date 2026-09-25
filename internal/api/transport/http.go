@@ -197,6 +197,16 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return nil, h.api.SaveDraft(ctx, r.ID, r.ChannelID, r.Text)
 	}))
+	type fileReq struct {
+		ID     int64  `json:"id"`
+		FileID string `json:"file_id"`
+	}
+	h.mux.HandleFunc("POST /api/DownloadFile", handle(func(ctx context.Context, r *fileReq) (any, error) {
+		return h.api.DownloadFile(ctx, r.ID, r.FileID)
+	}))
+	h.mux.HandleFunc("POST /api/OpenFile", handle(func(ctx context.Context, r *fileReq) (any, error) {
+		return h.api.OpenFile(ctx, r.ID, r.FileID)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

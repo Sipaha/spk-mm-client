@@ -60,6 +60,8 @@ type API interface {
 	DeletePost(ctx context.Context, id int64, postID string) error
 	MarkUnread(ctx context.Context, id int64, postID string) error
 	SaveDraft(ctx context.Context, id int64, channelID, text string) error
+	DownloadFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
+	OpenFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 }
 
 // Event types pushed to the UI.
@@ -90,6 +92,7 @@ const (
 	CodeNoChannel      = "no_channel"
 	CodeEmptyMessage   = "empty_message"
 	CodeForbidden      = "forbidden"
+	CodeNoFile         = "no_file"
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

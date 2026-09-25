@@ -79,6 +79,8 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
 	notes := &api.RecordingNotifier{} // browser mode has no OS notifications; e2e reads them via test-API
 	svc.SetNotifier(notes)
+	opened := &api.RecordingOpener{} // no system apps in browser mode; e2e reads them via test-API
+	svc.SetFileOpener(opened.Open)
 	if err := svc.Start(ctx); err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
@@ -89,7 +91,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("media cache: %w", err)
 	}
-	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI, notes, mc)
+	h, token := newBrowserHandler(svc, em, frontendFS(), fake, o.TestAPI, notes, mc, opened)
 
 	// Request contexts derive from baseCtx (via Server.BaseContext) instead
 	// of the default context.Background(), so cancelBase can cancel in-flight
@@ -146,7 +148,7 @@ func mediaGuard(token string, next http.Handler) http.Handler {
 	})
 }
 
-func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool, notes *api.RecordingNotifier, mediaH http.Handler) (http.Handler, string) {
+func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *mmfake.Server, testAPI bool, notes *api.RecordingNotifier, mediaH http.Handler, opened *api.RecordingOpener) (http.Handler, string) {
 	mux := http.NewServeMux()
 	httpAPI := transport.NewHTTP(svc, em)
 	token := httpAPI.AuthToken()
@@ -195,6 +197,9 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		}
 		tm.HandleFunc("GET /api/_test/notifications", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, notes.List())
+		})
+		tm.HandleFunc("GET /api/_test/opened-files", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, opened.List())
 		})
 		tm.HandleFunc("POST /api/_test/notification-click", func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
