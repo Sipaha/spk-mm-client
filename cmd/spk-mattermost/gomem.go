@@ -2,8 +2,8 @@ package main
 
 import "runtime/debug"
 
-// Go runtime memory policy (docs/spikes/2026-09-24-stage1-spikes.md, S4
-// "memory budget overrun"). The client's live Go heap is small (~5–10 MB),
+// Go runtime memory policy (docs/spikes/2026-09-24-stage1-spikes.md, S4,
+// «Перерасход на живом клиенте»). The client's live Go heap is small (~5–10 MB),
 // so the default GOGC=100 lets the heap — and the RSS the runtime keeps —
 // reach about twice that between collections; that headroom, not live data,
 // was most of the main process's Go heap. GOGC=50 trades a few more
