@@ -139,15 +139,15 @@ func TestReactionArchivedChannelErrorIDDiffersBySaveAndDelete(t *testing.T) {
 	assert.Equal(t, "api.reaction.delete.archived_channel.app_error", delErr["id"])
 }
 
-func TestPostReactionsAndBrokenReply(t *testing.T) {
+func TestBrokenReplyAndIdempotentRetries(t *testing.T) {
 	s := Start(Options{})
 	defer s.Close()
 	a := loginAs(t, s, "alice")
 	id := s.FindPost("c-offtopic", "Welcome to off-topic")
-	var list []model.Reaction
-	require.Equal(t, 200, a.call("GET", "/api/v4/posts/"+id+"/reactions", nil, &list))
-	assert.Len(t, list, 4)
-	assert.Equal(t, 404, a.call("GET", "/api/v4/posts/nope/reactions", nil, nil))
+	var status map[string]string
+	require.Equal(t, 200, a.call("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/fire", nil, &status),
+		"deleting a missing reaction is harmless (a retried delete)")
+	assert.Equal(t, map[string]string{"status": "OK"}, status)
 
 	s.BreakReplies("/api/v4/reactions", true)
 	body, _ := json.Marshal(map[string]string{"user_id": "u-alice", "post_id": id, "emoji_name": "fire"})

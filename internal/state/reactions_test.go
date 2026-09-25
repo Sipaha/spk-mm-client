@@ -143,3 +143,22 @@ func TestForgetReactIntent(t *testing.T) {
 	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1")) // from another device
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
 }
+
+func TestPinnedIntentDoesNotExpire(t *testing.T) {
+	now := t0
+	s := New(func() time.Time { return now })
+	s.Bootstrap(fixture())
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	s.PinReactIntent("p", "+1", true) // its request waits for a retry
+	now = now.Add(time.Hour)
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "still our latest click")
+	s.PinReactIntent("p", "+1", false) // sent: the echo is due within intentTTL
+	now = now.Add(31 * time.Second)
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	assert.Empty(t, reactions(s, "p"))
+	s.PinReactIntent("p", "+1", true) // no intent: nothing to pin
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+}

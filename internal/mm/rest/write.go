@@ -67,14 +67,6 @@ func (c *Client) SaveReaction(ctx context.Context, r model.Reaction) (model.Reac
 	return out, err
 }
 
-// PostReactions reads every reaction on a post (the authoritative set when
-// a reaction request's outcome is unknown).
-func (c *Client) PostReactions(ctx context.Context, postID string) ([]model.Reaction, error) {
-	var out []model.Reaction
-	err := c.get(ctx, "/api/v4/posts/"+url.PathEscape(postID)+"/reactions", &out)
-	return out, err
-}
-
 func (c *Client) DeleteReaction(ctx context.Context, userID, postID, emoji string) error {
 	_, err := c.do(ctx, http.MethodDelete, "/api/v4/users/"+url.PathEscape(userID)+"/posts/"+url.PathEscape(postID)+
 		"/reactions/"+url.PathEscape(emoji), nil, nil)

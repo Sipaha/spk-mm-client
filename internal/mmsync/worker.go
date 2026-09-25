@@ -62,6 +62,7 @@ type Config struct {
 	// test seams: 0 → refreshTimeout / refreshRetryFirst
 	refreshTimeout time.Duration
 	refreshRetry   time.Duration
+	reactBackoff   []time.Duration // test seam: nil → defaultReactBackoff
 }
 
 func (c *Config) defaults() {
@@ -85,6 +86,9 @@ func (c *Config) defaults() {
 	}
 	if c.StatusEvery <= 0 {
 		c.StatusEvery = defaultStatusEvery
+	}
+	if len(c.reactBackoff) == 0 {
+		c.reactBackoff = defaultReactBackoff
 	}
 	if c.CallTimeout <= 0 {
 		c.CallTimeout = defaultCallTimeout
@@ -164,8 +168,10 @@ type Worker struct {
 	queue      *fetchQueue
 	viewing    sync.Map // channel id → in-flight view
 	reactMu    sync.Mutex
-	reactWant  map[string]bool // post/emoji → the state the user wants while a request runs
-	emojiLoad  atomic.Bool     // custom emoji list read (or being read) by this worker
+	reactPairs map[string]*reactPair // post/emoji → our reaction being sent or waiting for a retry
+	reactPoke  chan struct{}         // a pair started waiting: reactLoop re-arms its timer
+	reactNow   chan struct{}         // live again: reactLoop retries every waiting pair
+	emojiLoad  atomic.Bool           // custom emoji list read (or being read) by this worker
 	missMu     sync.Mutex
 	emojiMiss  map[string]time.Time // custom emoji names the server does not have
 	usersMu    sync.Mutex
@@ -197,16 +203,18 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 	cfg.defaults()
 	w := &Worker{
 		cfg: cfg, srv: srv,
-		rc:        rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(rest.NewLimiter()),
-		st:        state.New(cfg.Now),
-		nudge:     make(chan struct{}, 1),
-		authFail:  make(chan struct{}, 1),
-		metaReq:   make(chan struct{}, 1),
-		metaDue:   make(chan struct{}, 1),
-		statusDue: make(chan struct{}, 1),
-		queue:     newFetchQueue(),
-		emojiMiss: map[string]time.Time{},
-		reactWant: map[string]bool{},
+		rc:         rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(rest.NewLimiter()),
+		st:         state.New(cfg.Now),
+		nudge:      make(chan struct{}, 1),
+		authFail:   make(chan struct{}, 1),
+		metaReq:    make(chan struct{}, 1),
+		metaDue:    make(chan struct{}, 1),
+		statusDue:  make(chan struct{}, 1),
+		queue:      newFetchQueue(),
+		emojiMiss:  map[string]time.Time{},
+		reactPairs: map[string]*reactPair{},
+		reactPoke:  make(chan struct{}, 1),
+		reactNow:   make(chan struct{}, 1),
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)
@@ -270,7 +278,7 @@ func (w *Worker) Run(ctx context.Context) {
 	defer context.AfterFunc(ctx, w.cancelLife)()
 	w.restore(ctx)
 	var wg sync.WaitGroup
-	for _, loop := range []func(context.Context){w.flushLoop, w.fetchLoop, w.metaLoop, w.wakeLoop, w.statusLoop} {
+	for _, loop := range []func(context.Context){w.flushLoop, w.fetchLoop, w.metaLoop, w.wakeLoop, w.statusLoop, w.reactLoop} {
 		wg.Add(1)
 		go func() { defer wg.Done(); loop(ctx) }()
 	}
@@ -392,6 +400,7 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 	}
 	w.setStatus(StatusLive)
 	w.requestStatuses()
+	w.retryReactionsNow()
 	onLive()
 	var settle <-chan time.Time
 	if !w.live.proven() {

@@ -20,6 +20,9 @@ const (
 type intent struct {
 	add   bool
 	until time.Time
+	// pinned: the click's request is waiting for a retry — the intent does
+	// not expire until it is sent (PinReactIntent).
+	pinned bool
 }
 
 func intentKey(postID, emoji string) string { return postID + "/" + emoji }
@@ -57,7 +60,7 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 	now := s.now()
 	if len(s.intents) >= maxIntents {
 		for k, in := range s.intents {
-			if now.After(in.until) {
+			if !in.pinned && now.After(in.until) {
 				delete(s.intents, k)
 			}
 		}
@@ -75,7 +78,7 @@ func (s *Server) UndoReactLocal(postID, emoji string, add bool) Change {
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the
-// server (a rollback, a reconcile) and ends the intent for the pair: the
+// server (a rollback) and ends the intent for the pair: the
 // post shows exactly mine, whatever clicks were applied before.
 func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 	s.mu.Lock()
@@ -97,6 +100,20 @@ func (s *Server) ForgetReactIntent(postID, emoji string) {
 	delete(s.intents, intentKey(postID, emoji))
 }
 
+// PinReactIntent keeps the intent of the pair from expiring while its
+// request waits for a retry (pin), or lets it expire intentTTL from now once
+// the request went through (unpin). A missing intent — its echo already
+// came — stays missing.
+func (s *Server) PinReactIntent(postID, emoji string, pin bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := intentKey(postID, emoji)
+	if in, ok := s.intents[k]; ok {
+		in.pinned, in.until = pin, s.now().Add(intentTTL)
+		s.intents[k] = in
+	}
+}
+
 // staleEchoLocked: an event about our own reaction that contradicts our
 // latest click is the late echo of an earlier click — drop it. The echo
 // that matches the click ends the intent; an expired intent decides nothing.
@@ -109,7 +126,7 @@ func (s *Server) staleEchoLocked(r model.Reaction, add bool) bool {
 	if !ok {
 		return false
 	}
-	if s.now().After(in.until) || in.add == add {
+	if (!in.pinned && s.now().After(in.until)) || in.add == add {
 		delete(s.intents, k)
 		return false
 	}

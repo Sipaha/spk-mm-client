@@ -133,41 +133,94 @@ func TestReactionConcurrentClicksConverge(t *testing.T) {
 		assert.Equal(t, mine, serverHas(h, id, "u-alice", "rocket"), "round %d: the last click shown is the one sent", round)
 		h.eventually(func() bool { return reactionOf(h, id, "rocket").Mine == serverHas(h, id, "u-alice", "rocket") }, "echoes diverged")
 	}
-	h.w.reactMu.Lock()
-	assert.Empty(t, h.w.reactWant, "no pair left in flight")
-	h.w.reactMu.Unlock()
+	assert.Empty(t, h.pairs(), "no pair left in flight")
 }
 
-func TestReactionLostReplyIsReconciledFromTheServer(t *testing.T) {
-	h, id := welcomeHarness(t)
-	ctx := context.Background()
-	h.fake.BreakReplies("/api/v4/reactions", true) // the server applies it, the reply is lost
-	require.NoError(t, h.w.React(ctx, id, "fire", true), "the server has what was asked")
-	assert.True(t, serverHas(h, id, "u-alice", "fire"))
-	assert.Equal(t, state.ReactionView{Emoji: "fire", Count: 1, Mine: true}, reactionOf(h, id, "fire"))
-	assert.Equal(t, 1, h.fake.Hits("GET", "/api/v4/posts/"+id+"/reactions"), "reconciled")
-	time.Sleep(100 * time.Millisecond) // the echo has come (it beat the lost reply) and changed nothing
+// retryHarness: a live worker with short reaction retry backoffs.
+func retryHarness(t *testing.T, backoff ...time.Duration) (*harness, string) {
+	h := newHarness(t, mmfake.Options{})
+	h.tune = func(c *Config) { c.CallTimeout, c.reactBackoff = 150*time.Millisecond, backoff }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	return h, h.fake.FindPost("c-offtopic", "Welcome to off-topic")
+}
+
+func TestReactionNetworkFailureIsRetriedKeepingTheClick(t *testing.T) {
+	h, id := retryHarness(t, 300*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond)
+	h.fake.SetLatency("/api/v4/reactions", time.Second) // times out before the server applies it
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true), "the click is kept for a retry")
+	assert.False(t, serverHas(h, id, "u-alice", "fire"))
+	assert.True(t, reactionOf(h, id, "fire").Mine, "optimistic while the retry waits")
+	h.fake.SetLatency("/api/v4/reactions", 0)
+	h.eventually(func() bool { return serverHas(h, id, "u-alice", "fire") }, "not retried")
 	assert.True(t, reactionOf(h, id, "fire").Mine)
+	h.eventually(func() bool { return len(h.pairs()) == 0 }, "the pair is done")
 	h.eventually(func() bool {
 		return strings.Contains(h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"fire"`)
 	}, "recent emoji not saved")
 }
 
-func TestReactionTimeoutNotAppliedIsRolledBack(t *testing.T) {
-	h := newHarness(t, mmfake.Options{})
-	h.tune = func(c *Config) { c.CallTimeout = 150 * time.Millisecond }
-	h.start()
+func TestReactionLostReplyIsRetried(t *testing.T) {
+	h, id := retryHarness(t, 100*time.Millisecond, 100*time.Millisecond, 100*time.Millisecond)
+	h.fake.BreakReplies("/api/v4/reactions", true) // applied, the reply is lost; the echo beats the error
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	h.fake.BreakReplies("/api/v4/reactions", false)
+	h.eventually(func() bool { return h.fake.Hits("POST", "/api/v4/reactions") == 2 && len(h.pairs()) == 0 }, "not retried")
+	assert.True(t, serverHas(h, id, "u-alice", "fire"))
+	assert.Equal(t, state.ReactionView{Emoji: "fire", Count: 1, Mine: true}, reactionOf(h, id, "fire"))
+}
+
+func TestReactionFailingOnIsRolledBackAfterTheLastAttempt(t *testing.T) {
+	h, id := retryHarness(t, 50*time.Millisecond, 50*time.Millisecond, 50*time.Millisecond)
+	h.fake.SetFailure("/api/v4/reactions", 503)
+	require.NoError(t, h.w.React(context.Background(), id, "tada", true))
+	assert.Equal(t, state.ReactionView{Emoji: "tada", Count: 2, Mine: true}, reactionOf(h, id, "tada"))
+	h.eventually(func() bool { return reactionOf(h, id, "tada") == state.ReactionView{Emoji: "tada", Count: 1} }, "not rolled back")
+	assert.Equal(t, reactAttempts, h.fake.Hits("POST", "/api/v4/reactions"))
+	assert.Empty(t, h.pairs())
+	time.Sleep(200 * time.Millisecond) // nothing more is tried
+	assert.Equal(t, reactAttempts, h.fake.Hits("POST", "/api/v4/reactions"))
+}
+
+func TestReactionToggledBackWhileWaitingSendsNothing(t *testing.T) {
+	h, id := retryHarness(t, time.Hour)
+	h.fake.SetFailure("/api/v4/reactions", 503)
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	h.fake.SetFailure("/api/v4/reactions", 0)
+	require.NoError(t, h.w.React(context.Background(), id, "fire", false), "back to what the server has")
+	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"))
+	assert.Empty(t, h.pairs(), "the retry is dropped")
+	h.w.retryReactionsNow() // even a live transition finds nothing to send
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 1, h.fake.Hits("POST", "/api/v4/reactions"))
+	assert.Zero(t, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/fire"))
+	h.fake.ReactAs("alice", id, "fire") // another device: the intent is gone, not taken for a stale echo
+	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "the intent was not cleared")
+}
+
+func TestReactionRetriedWhenTheWorkerIsLiveAgain(t *testing.T) {
+	h, id := retryHarness(t, time.Hour)
+	h.fake.SetDown(true)
+	h.fake.DropConnections(false)
+	h.eventually(func() bool { return h.w.Status() != StatusLive }, "still live")
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	assert.True(t, reactionOf(h, id, "fire").Mine)
+	h.fake.SetDown(false)
 	h.live()
-	h.eventually(h.allLoaded, "prefetch")
-	id := h.fake.FindPost("c-offtopic", "Welcome to off-topic")
-	h.fake.SetLatency("/api/v4/reactions", time.Second) // times out before the server applies it
-	err := h.w.React(context.Background(), id, "fire", true)
-	var re *rest.Error
-	require.ErrorAs(t, err, &re)
-	assert.Equal(t, rest.KindNetwork, re.Kind)
-	assert.False(t, serverHas(h, id, "u-alice", "fire"))
-	assert.Equal(t, state.ReactionView{}, reactionOf(h, id, "fire"), "rolled back to what the server has")
-	assert.Equal(t, 1, h.fake.Hits("GET", "/api/v4/posts/"+id+"/reactions"), "reconciled")
+	h.eventually(func() bool { return serverHas(h, id, "u-alice", "fire") }, "not retried on going live")
+	h.eventually(func() bool { return len(h.pairs()) == 0 }, "the pair is done")
+}
+
+func TestReactionPendingRetryStopsWithTheWorker(t *testing.T) {
+	h, id := retryHarness(t, 100*time.Millisecond, 100*time.Millisecond, 100*time.Millisecond)
+	h.fake.SetFailure("/api/v4/reactions", 503)
+	require.NoError(t, h.w.React(context.Background(), id, "fire", true))
+	h.stop() // Run returns: its loops, the retry loop among them, are done
+	n := h.fake.Hits("POST", "/api/v4/reactions")
+	time.Sleep(400 * time.Millisecond)
+	assert.Equal(t, n, h.fake.Hits("POST", "/api/v4/reactions"), "nothing is sent after stop")
+	assert.Less(t, n, reactAttempts)
 }
 
 func TestReactionQueuedRequestOutlivesTheFirstCaller(t *testing.T) {
@@ -190,4 +243,14 @@ func TestReactionOnItsOwnStateSendsNothing(t *testing.T) {
 	assert.Zero(t, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/tada"))
 	h.fake.ReactAs("alice", id, "tada") // from another device: must not be taken for a stale echo
 	h.eventually(func() bool { return reactionOf(h, id, "tada").Mine }, "the intent of the unsent click was not dropped")
+}
+
+func (h *harness) pairs() []string {
+	h.w.reactMu.Lock()
+	defer h.w.reactMu.Unlock()
+	var out []string
+	for k := range h.w.reactPairs {
+		out = append(out, k)
+	}
+	return out
 }
