@@ -207,6 +207,20 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/OpenFile", handle(func(ctx context.Context, r *fileReq) (any, error) {
 		return h.api.OpenFile(ctx, r.ID, r.FileID)
 	}))
+	type reactReq struct {
+		ID     int64  `json:"id"`
+		PostID string `json:"post_id"`
+		Emoji  string `json:"emoji"`
+	}
+	h.mux.HandleFunc("POST /api/AddReaction", handle(func(ctx context.Context, r *reactReq) (any, error) {
+		return nil, h.api.AddReaction(ctx, r.ID, r.PostID, r.Emoji)
+	}))
+	h.mux.HandleFunc("POST /api/RemoveReaction", handle(func(ctx context.Context, r *reactReq) (any, error) {
+		return nil, h.api.RemoveReaction(ctx, r.ID, r.PostID, r.Emoji)
+	}))
+	h.mux.HandleFunc("POST /api/EmojiInfo", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return h.api.EmojiInfo(ctx, r.ID)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

@@ -62,6 +62,9 @@ type API interface {
 	SaveDraft(ctx context.Context, id int64, channelID, text string) error
 	DownloadFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 	OpenFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
+	AddReaction(ctx context.Context, id int64, postID, emoji string) error
+	RemoveReaction(ctx context.Context, id int64, postID, emoji string) error
+	EmojiInfo(ctx context.Context, id int64) (EmojiDTO, error)
 }
 
 // Event types pushed to the UI.
@@ -76,23 +79,25 @@ const (
 
 // Error codes. The UI maps them to localized messages (frontend/src/errors.ts).
 const (
-	CodeInvalidURL     = "invalid_url"
-	CodeUnreachable    = "unreachable"
-	CodeNotMattermost  = "not_mattermost"
-	CodeServerExists   = "server_exists"
-	CodeNotFound       = "not_found"
-	CodeGitLabDisabled = "gitlab_disabled"
-	CodeBadCredentials = "bad_credentials"
-	CodeAuthFailed     = "auth_failed"
-	CodeLoginMismatch  = "login_mismatch"
-	CodeNoPendingLogin = "no_pending_login"
-	CodeInternal       = "internal"
-	CodeNotSignedIn    = "not_signed_in"
-	CodeSessionExpired = "session_expired"
-	CodeNoChannel      = "no_channel"
-	CodeEmptyMessage   = "empty_message"
-	CodeForbidden      = "forbidden"
-	CodeNoFile         = "no_file"
+	CodeInvalidURL       = "invalid_url"
+	CodeUnreachable      = "unreachable"
+	CodeNotMattermost    = "not_mattermost"
+	CodeServerExists     = "server_exists"
+	CodeNotFound         = "not_found"
+	CodeGitLabDisabled   = "gitlab_disabled"
+	CodeBadCredentials   = "bad_credentials"
+	CodeAuthFailed       = "auth_failed"
+	CodeLoginMismatch    = "login_mismatch"
+	CodeNoPendingLogin   = "no_pending_login"
+	CodeInternal         = "internal"
+	CodeNotSignedIn      = "not_signed_in"
+	CodeSessionExpired   = "session_expired"
+	CodeNoChannel        = "no_channel"
+	CodeEmptyMessage     = "empty_message"
+	CodeForbidden        = "forbidden"
+	CodeNoFile           = "no_file"
+	CodeNoPost           = "no_post"
+	CodeTooManyReactions = "too_many_reactions"
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

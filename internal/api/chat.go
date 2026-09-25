@@ -46,6 +46,10 @@ func actionError(err error) error {
 		return nil
 	case errors.Is(err, mmsync.ErrEmptyMessage):
 		return coded(CodeEmptyMessage, nil)
+	case errors.Is(err, mmsync.ErrNoPost):
+		return coded(CodeNoPost, nil)
+	case errors.As(err, &re) && re.ID == "app.reaction.save.save.too_many_reactions":
+		return coded(CodeTooManyReactions, err)
 	case errors.As(err, &re) && re.Status == http.StatusUnauthorized:
 		return coded(CodeSessionExpired, err)
 	case errors.As(err, &re) && re.Status == http.StatusForbidden:

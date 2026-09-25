@@ -155,8 +155,10 @@ type Worker struct {
 	metaDue    chan struct{} // debounced metaReq, served by the session's event loop
 	statusDue  chan struct{} // a presence poll is wanted soon
 	queue      *fetchQueue
-	viewing    sync.Map    // channel id → in-flight view
-	emojiLoad  atomic.Bool // custom emoji list read (or being read) by this worker
+	viewing    sync.Map // channel id → in-flight view
+	reactMu    sync.Mutex
+	reactWant  map[string]bool // post/emoji → the state the user wants while a request runs
+	emojiLoad  atomic.Bool     // custom emoji list read (or being read) by this worker
 	missMu     sync.Mutex
 	emojiMiss  map[string]time.Time // custom emoji names the server does not have
 	usersMu    sync.Mutex
@@ -197,6 +199,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		statusDue: make(chan struct{}, 1),
 		queue:     newFetchQueue(),
 		emojiMiss: map[string]time.Time{},
+		reactWant: map[string]bool{},
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)

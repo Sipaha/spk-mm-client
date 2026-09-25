@@ -72,7 +72,8 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 			}
 		}
 	case "reaction_added", "reaction_removed":
-		if r, err := ws.DecodeReaction(ev); err == nil && s.reactLocked(ev.Broadcast.ChannelID, r, ev.Type == "reaction_added") {
+		add := ev.Type == "reaction_added"
+		if r, err := ws.DecodeReaction(ev); err == nil && !s.staleEchoLocked(r, add) && s.reactLocked(ev.Broadcast.ChannelID, r, add) {
 			eff.Channels = []string{ev.Broadcast.ChannelID}
 		}
 	case "multiple_channels_viewed":

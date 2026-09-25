@@ -73,3 +73,15 @@ func (w *API) DownloadFile(id int64, fileID string) (api.SavedFile, error) {
 func (w *API) OpenFile(id int64, fileID string) (api.SavedFile, error) {
 	return w.a.OpenFile(context.Background(), id, fileID)
 }
+
+func (w *API) AddReaction(id int64, postID, emoji string) error {
+	return w.a.AddReaction(context.Background(), id, postID, emoji)
+}
+
+func (w *API) RemoveReaction(id int64, postID, emoji string) error {
+	return w.a.RemoveReaction(context.Background(), id, postID, emoji)
+}
+
+func (w *API) EmojiInfo(id int64) (api.EmojiDTO, error) {
+	return w.a.EmojiInfo(context.Background(), id)
+}

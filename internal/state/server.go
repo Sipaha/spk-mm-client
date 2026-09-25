@@ -93,7 +93,8 @@ type Server struct {
 	suppressView  string
 	guard         map[string]int64
 	seen          seenSet
-	orphans       []orphan // posted events for channels not known yet
+	orphans       []orphan          // posted events for channels not known yet
+	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8
@@ -107,6 +108,7 @@ func New(now func() time.Time) *Server {
 		now: now, prefs: map[prefKey]string{}, chans: map[string]*Chan{}, cats: map[string]model.OrderedCategories{},
 		users: map[string]model.User{}, emoji: map[string]string{}, presence: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
 		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), dirty: newDirtySet(),
+		intents: map[string]intent{},
 	}
 }
 

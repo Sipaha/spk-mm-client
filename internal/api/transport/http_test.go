@@ -23,10 +23,16 @@ type fakeAPI struct {
 	api.API // unimplemented methods panic: tests call only what they set up
 	added   string
 	sent    []string
+	reacted []string
 }
 
 func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message string) error {
 	f.sent = append(f.sent, fmt.Sprintf("%d/%s/%s", id, channelID, message))
+	return nil
+}
+
+func (f *fakeAPI) AddReaction(_ context.Context, id int64, postID, emoji string) error {
+	f.reacted = append(f.reacted, fmt.Sprintf("%d/%s/%s", id, postID, emoji))
 	return nil
 }
 
@@ -185,4 +191,8 @@ func TestChatRoutes(t *testing.T) {
 	var saved api.SavedFile
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&saved))
 	assert.Equal(t, "/dl/3/f1", saved.Path)
+
+	resp = call(t, h, ts.URL, "AddReaction", `{"id":3,"post_id":"p1","emoji":"+1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/p1/+1"}, f.reacted)
 }

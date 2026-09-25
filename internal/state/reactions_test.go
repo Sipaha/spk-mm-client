@@ -1,0 +1,107 @@
+package state
+
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/ws"
+)
+
+func reactionEv(typ, user, post, emoji string) ws.Event {
+	rb, _ := json.Marshal(model.Reaction{UserID: user, PostID: post, EmojiName: emoji})
+	d, _ := json.Marshal(map[string]any{"reaction": string(rb)})
+	return ws.Event{Type: typ, Data: d, Broadcast: ws.Broadcast{ChannelID: "off"}}
+}
+
+func reactions(s *Server, postID string) []ReactionView {
+	v, _ := s.ChannelView("off")
+	for _, p := range v.Posts {
+		if p.ID == postID {
+			return p.Reactions
+		}
+	}
+	return nil
+}
+
+func withPost(s *Server) {
+	s.ClearGuard()
+	s.SetWindow("off", []model.Post{mkPost("p", "off", "u2", 1000)}, true, 5)
+}
+
+func TestReactLocalAppliesAtOnceAndUndoRestores(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	ch, ok := s.ReactLocal("p", "+1", true)
+	require.True(t, ok)
+	assert.Equal(t, Change{Channels: []string{"off"}}, ch)
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+	assert.Equal(t, Change{Channels: []string{"off"}}, s.UndoReactLocal("p", "+1", true))
+	assert.Empty(t, reactions(s, "p"))
+	_, ok = s.ReactLocal("nope", "+1", true)
+	assert.False(t, ok, "a post not in memory")
+}
+
+func TestOwnEchoIsIdempotentAndOthersCount(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+	eff := s.ApplyEvent(reactionEv("reaction_added", "u2", "p", "+1"))
+	assert.Equal(t, []string{"off"}, eff.Channels)
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 2, Mine: true}}, reactions(s, "p"))
+}
+
+func TestLateEchoOfUndoneReactionIsIgnored(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocal("p", "+1", true)  // click: add (the request succeeded)
+	s.ReactLocal("p", "+1", false) // click again: remove
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	assert.Empty(t, reactions(s, "p"), "the late echo of the first click is stale")
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // echo of the second click ends the intent
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))   // a real add from another device
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+}
+
+func TestIntentExpires(t *testing.T) {
+	now := t0
+	s := New(func() time.Time { return now })
+	s.Bootstrap(fixture())
+	withPost(s)
+	s.ReactLocal("p", "+1", true)
+	now = now.Add(31 * time.Second)
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // removed elsewhere, our echo never came
+	assert.Empty(t, reactions(s, "p"))
+}
+
+func TestRecentEmojisFollowTheWebapp(t *testing.T) {
+	s := newFixture()
+	s.BumpRecentEmoji("smile")
+	s.BumpRecentEmoji("+1")
+	s.BumpRecentEmoji("smile")
+	pref := s.BumpRecentEmoji("tada")
+	assert.Equal(t, model.Preference{UserID: "u1", Category: "recent_emojis", Name: "u1",
+		Value: `[{"name":"+1","usageCount":1},{"name":"tada","usageCount":1},{"name":"smile","usageCount":2}]`}, pref)
+	assert.Equal(t, []string{"smile", "tada", "+1"}, s.RecentEmojis())
+	for i := 0; i < 40; i++ {
+		s.BumpRecentEmoji(fmt.Sprintf("e%d", i))
+	}
+	assert.Len(t, s.RecentEmojis(), 27)
+	assert.Equal(t, "smile", s.RecentEmojis()[0], "the most used stays")
+}
+
+func TestRecentEmojisSurviveABadPreference(t *testing.T) {
+	s := newFixture()
+	d, _ := json.Marshal(map[string]any{"preferences": `[{"user_id":"u1","category":"recent_emojis","name":"u1","value":"not json"}]`})
+	s.ApplyEvent(ws.Event{Type: "preferences_changed", Data: d})
+	assert.Empty(t, s.RecentEmojis())
+	s.BumpRecentEmoji("+1")
+	assert.Equal(t, []string{"+1"}, s.RecentEmojis())
+}
