@@ -12,7 +12,7 @@ import { t } from './i18n'
 import { useStore } from './store'
 
 export function App() {
-  const { servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, notice, setError, loginFailed, setInfo, showSignIn, setNotice } = useStore()
+  const { servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, notice, noticeSticky, setError, loginFailed, setInfo, showSignIn, setNotice } = useStore()
 
   useEffect(() => {
     client.appInfo().then(setInfo).catch(() => {})
@@ -68,12 +68,12 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (!notice) return
+    if (!notice || noticeSticky) return // a download in progress stays until its outcome replaces it
     const timer = setTimeout(() => {
       if (useStore.getState().notice === notice) setNotice(null)
     }, 8000)
     return () => clearTimeout(timer)
-  }, [notice, setNotice])
+  }, [notice, noticeSticky, setNotice])
 
   const selected = servers.find((s) => s.id === selectedId)
   const chat = selected && selected.signed_in && signInFor !== selected.id

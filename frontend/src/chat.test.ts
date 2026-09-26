@@ -14,6 +14,7 @@ vi.mock('./api/client', () => ({
     downloadFile: vi.fn(),
     openFile: vi.fn(),
   },
+  ApiError: class ApiError extends Error {},
 }))
 
 const { client } = await import('./api/client')
@@ -113,16 +114,48 @@ test('opening a channel of another team switches the sidebar team', async () => 
   expect(client.sidebar).toHaveBeenLastCalledWith(1, 't2')
 })
 
+const spec = { id: 'f-spec', name: 'spec.pdf' }
+
 test('a download says where the file went; an unopened one says why', async () => {
   setLocale('en')
   vi.mocked(client.downloadFile).mockResolvedValue({ path: '/home/a/Downloads/spec.pdf', opened: false })
-  await downloadFile(1, 'f-spec')
+  await downloadFile(1, spec)
   expect(useStore.getState().notice).toBe('Saved to /home/a/Downloads/spec.pdf')
   vi.mocked(client.openFile).mockResolvedValue({ path: '/d/run.desktop', opened: false })
-  await openFile(1, 'f-x')
+  await openFile(1, { id: 'f-x', name: 'run.desktop' })
   expect(useStore.getState().notice).toBe('Saved to /d/run.desktop. Files of this type are not opened automatically.')
   useStore.getState().setNotice(null)
   vi.mocked(client.openFile).mockResolvedValue({ path: '/d/a.log', opened: true })
-  await openFile(1, 'f-log')
+  await openFile(1, { id: 'f-log', name: 'a.log' })
   expect(useStore.getState().notice).toBeNull()
+})
+
+test('a download in progress is shown at once and stays until it is replaced', async () => {
+  setLocale('en')
+  let done!: (r: { path: string; opened: boolean }) => void
+  vi.mocked(client.downloadFile).mockReturnValueOnce(new Promise((r) => (done = r)))
+  const saving = downloadFile(1, spec)
+  expect(useStore.getState().notice).toBe('Downloading spec.pdf…')
+  expect(useStore.getState().noticeSticky).toBe(true)
+  done({ path: '/d/spec.pdf', opened: false })
+  await saving
+  expect(useStore.getState().notice).toBe('Saved to /d/spec.pdf')
+  expect(useStore.getState().noticeSticky).toBe(false)
+
+  vi.mocked(client.downloadFile).mockRejectedValueOnce(new Error('boom'))
+  await downloadFile(1, spec)
+  expect(useStore.getState().notice).toBeNull()
+  expect(useStore.getState().lastError).not.toBeNull()
+
+  let opened!: (r: { path: string; opened: boolean }) => void
+  vi.mocked(client.openFile).mockReturnValueOnce(new Promise((r) => (opened = r)))
+  const opening = openFile(1, { id: 'f-log', name: 'a.log' })
+  expect(useStore.getState().notice).toBe('Downloading a.log…')
+  opened({ path: '/d/a.log', opened: true })
+  await opening
+  expect(useStore.getState().notice).toBeNull()
+  setLocale('ru')
+  const ru = downloadFile(1, spec)
+  expect(useStore.getState().notice).toBe('Скачивается spec.pdf…')
+  await ru
 })

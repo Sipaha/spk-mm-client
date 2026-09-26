@@ -36,8 +36,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         const index = files.findIndex((f) => f.id === fileId)
         if (index >= 0) setViewer({ channelId, files, index })
       },
-      download: (f) => void downloadFile(server.id, f.id),
-      open: (f) => void openFile(server.id, f.id),
+      download: (f) => void downloadFile(server.id, f),
+      open: (f) => void openFile(server.id, f),
       react: (p, emoji, add) => react(server.id, p.id, emoji, add),
       emojiInfo: () => emojiInfo(server.id),
     }),
@@ -88,8 +88,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           index={viewer.index}
           onIndex={(index) => setViewer({ ...viewer, index })}
           onClose={() => setViewer(null)}
-          onDownload={(f) => void downloadFile(server.id, f.id)}
-          onOpen={(f) => void openFile(server.id, f.id)}
+          onDownload={(f) => void downloadFile(server.id, f)}
+          onOpen={(f) => void openFile(server.id, f)}
         />
       )}
     </section>

@@ -163,25 +163,30 @@ export const copyLink = (serverURL: string, teamName: string, postId: string) =>
   navigator.clipboard?.writeText(`${serverURL}/${teamName}/pl/${postId}`).catch(report)
 }
 
-export async function downloadFile(serverId: number, fileId: string) {
+// saving shows "Downloading <name>…" at once — a big file takes a while —
+// as a sticky notice (no auto-dismiss); the outcome replaces it. Go joins
+// clicks on a file already downloading to that download.
+async function saving(name: string, save: () => Promise<{ path: string; opened: boolean }>, done: (r: { path: string; opened: boolean }) => string | null) {
+  const s = useStore.getState()
+  const busy = t('file.downloading', { name })
+  s.setNotice(busy, true)
   try {
-    const r = await client.downloadFile(serverId, fileId)
-    useStore.getState().setNotice(t('file.saved', { path: r.path }))
+    const r = await save()
+    const msg = done(r)
+    if (msg !== null || useStore.getState().notice === busy) useStore.getState().setNotice(msg)
   } catch (e) {
+    if (useStore.getState().notice === busy) useStore.getState().setNotice(null)
     report(e)
   }
 }
 
+export const downloadFile = (serverId: number, file: { id: string; name: string }) =>
+  saving(file.name, () => client.downloadFile(serverId, file.id), (r) => t('file.saved', { path: r.path }))
+
 // openFile saves and opens with the system app; Go refuses to open
 // launchers (.desktop, scripts…) — then the user is told where the file is.
-export async function openFile(serverId: number, fileId: string) {
-  try {
-    const r = await client.openFile(serverId, fileId)
-    if (!r.opened) useStore.getState().setNotice(t('file.savedNotOpened', { path: r.path }))
-  } catch (e) {
-    report(e)
-  }
-}
+export const openFile = (serverId: number, file: { id: string; name: string }) =>
+  saving(file.name, () => client.openFile(serverId, file.id), (r) => (r.opened ? null : t('file.savedNotOpened', { path: r.path })))
 
 export const react = (serverId: number, postId: string, emoji: string, add: boolean) => {
   ;(add ? client.addReaction(serverId, postId, emoji) : client.removeReaction(serverId, postId, emoji)).catch(report)
