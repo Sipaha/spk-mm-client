@@ -3,13 +3,14 @@ import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { mediaURL } from '../media'
+import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
 import { useTextFile } from './textFile'
 
 // The collapsed snippet is 8 lines high whether loaded or not: the feed
 // row never changes size by itself (only when the user expands it).
 export function TextSnippet({ serverId, file, onView, onDownload, onOpen }: { serverId: number; file: FileView } & FileHandlers) {
-  const res = useTextFile(mediaURL(serverId, 'text', file.id))
+  const res = useTextFile(mediaURL(serverId, 'text', file.id), useLiveEpoch(serverId))
   const [open, setOpen] = useState(false)
   if (res.status === 'error') return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
   return (

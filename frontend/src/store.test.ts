@@ -64,3 +64,17 @@ test('switching to a different channel drops an in-progress edit; refreshing the
   useStore.getState().setChannel(1, chan('b')) // the user actually switched channels
   expect(useStore.getState().editingId).toBeNull()
 })
+
+test('a server going live bumps its live epoch; other updates do not', () => {
+  const epoch = (id: number) => useStore.getState().liveEpochs[id] ?? 0
+  useStore.getState().setServers([srv({ state: 'connecting' }), srv({ id: 2, state: 'live' })])
+  const e1 = epoch(1)
+  const e2 = epoch(2)
+  useStore.getState().setServers([srv({ state: 'live' }), srv({ id: 2, state: 'live', mentions: 3 })])
+  expect(epoch(1)).toBe(e1 + 1)
+  expect(epoch(2)).toBe(e2)
+  useStore.getState().setServers([srv({ state: 'reconnecting' }), srv({ id: 2, state: 'live' })])
+  expect(epoch(1)).toBe(e1 + 1)
+  useStore.getState().setServers([srv({ state: 'live' }), srv({ id: 2, state: 'live' })])
+  expect(epoch(1)).toBe(e1 + 2)
+})

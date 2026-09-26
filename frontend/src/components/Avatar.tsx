@@ -1,6 +1,6 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import { t, type I18nKey } from '../i18n'
-import { mediaURL } from '../media'
+import { mediaURL, useLoadFailure } from '../media'
 
 const COLORS = ['bg-rose-500', 'bg-orange-500', 'bg-amber-600', 'bg-lime-600', 'bg-emerald-600', 'bg-teal-600', 'bg-sky-600', 'bg-indigo-500', 'bg-violet-500', 'bg-fuchsia-600']
 
@@ -57,9 +57,10 @@ interface Props {
 // loaded lazy image stays referenced — with its whole detached feed — until
 // the next paint (AGENTS.md, "Things that bite").
 export const Avatar = memo(function Avatar({ serverId, userId, version, name, status, size, surface }: Props) {
-  // A failed load shows initials until the picture version changes.
-  const [failedFor, setFailedFor] = useState<string | null>(null)
-  const src = version && failedFor !== version ? mediaURL(serverId, 'avatar', userId, { v: version }) : null
+  // A failed load shows initials until the picture version changes or the
+  // server goes live again.
+  const [failed, fail] = useLoadFailure(serverId, version ?? '')
+  const src = version && !failed ? mediaURL(serverId, 'avatar', userId, { v: version }) : null
   return (
     <span className="relative block shrink-0" style={{ width: size, height: size }}>
       {src ? (
@@ -70,7 +71,7 @@ export const Avatar = memo(function Avatar({ serverId, userId, version, name, st
           height={size}
           decoding="async"
           draggable={false}
-          onError={() => setFailedFor(version ?? null)}
+          onError={fail}
           className="block h-full w-full rounded-full bg-hover object-cover"
         />
       ) : (

@@ -1,5 +1,7 @@
-import { fireEvent, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
+import type { ServerState } from '../api/types'
 import { setLocale } from '../i18n'
+import { useStore } from '../store'
 import { Avatar, presenceKey } from './Avatar'
 
 beforeEach(() => setLocale('en'))
@@ -39,4 +41,17 @@ test('offline and out-of-office look the same; no status, no dot', () => {
   expect(presenceKey('dnd')).toBe('dnd')
   const { container } = render(<Avatar serverId={1} userId="u" version="0" name="x" size={20} surface="sidebar" />)
   expect(container.querySelector('[data-status]')).toBeNull()
+})
+
+test('a failed picture is tried again once the server goes live again', () => {
+  const live = (state: ServerState) =>
+    act(() => useStore.getState().setServers([{ id: 3, name: 'A', url: 'https://a', signed_in: true, username: 'a', gitlab: false, state, unread: false, mentions: 0 }]))
+  live('reconnecting')
+  const { container } = render(<Avatar serverId={3} userId="u-bob" version="7" name="bob" size={36} surface="app" />)
+  fireEvent.error(container.querySelector('img')!) // offline: /media/ answered 404
+  expect(container.querySelector('img')).toBeNull()
+  live('reconnecting')
+  expect(container.querySelector('img')).toBeNull()
+  live('live')
+  expect(container.querySelector('img')).toHaveAttribute('src', '/media/3/avatar/u-bob?v=7')
 })

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
-import type { FileView } from '../api/types'
+import type { FileView, ServerState } from '../api/types'
+import { useStore } from '../store'
 import { setLocale } from '../i18n'
 import { Attachments } from './Attachments'
 
@@ -89,4 +90,24 @@ test('other files are cards with download and open', async () => {
   expect(h.onOpen).toHaveBeenCalledWith(pdf)
   expect(screen.getByRole('button', { name: 'Download logo.svg' })).toBeInTheDocument()
   expect(document.querySelector('img')).toBeNull()
+})
+
+const goes = (state: ServerState) =>
+  act(() => useStore.getState().setServers([{ id: 1, name: 'A', url: 'https://a', signed_in: true, username: 'a', gitlab: false, state, unread: false, mentions: 0 }]))
+
+test('a failed image and a failed snippet are tried again once the server goes live again', async () => {
+  let ok = false
+  const fetchMock = vi.fn(async () => (ok ? new Response('line 1\n') : new Response('', { status: 404 })))
+  vi.stubGlobal('fetch', fetchMock)
+  goes('reconnecting')
+  const log: FileView = { id: 'f-log', name: 'server.log', ext: 'log', size: 3000, mime: 'text/plain' }
+  const { container } = render(<Attachments serverId={1} files={[png(), log]} {...handlers()} />)
+  fireEvent.error(container.querySelector('img')!) // offline: /media/ answered 404
+  await vi.waitFor(() => expect(container.querySelector('pre')).toBeNull()) // the snippet became a card
+  expect(container.querySelector('img')).toBeNull()
+  ok = true
+  goes('live')
+  expect(container.querySelector('img')).toHaveAttribute('src', '/media/1/feed/f-build?src=preview')
+  expect(await screen.findByText(/line 1/)).toBeInTheDocument()
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })

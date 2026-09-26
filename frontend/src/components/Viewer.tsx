@@ -3,6 +3,7 @@ import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { mediaURL } from '../media'
+import { useLiveEpoch } from '../store'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { useTextFile } from './textFile'
@@ -18,7 +19,7 @@ interface Props {
 }
 
 function FullText({ serverId, file }: { serverId: number; file: FileView }) {
-  const res = useTextFile(mediaURL(serverId, 'text', file.id))
+  const res = useTextFile(mediaURL(serverId, 'text', file.id), useLiveEpoch(serverId))
   return (
     <div className="flex h-full w-full max-w-5xl flex-col gap-1">
       {res.status === 'ok' && res.truncated && <p className="text-xs text-fg-muted">{t('file.truncated')}</p>}

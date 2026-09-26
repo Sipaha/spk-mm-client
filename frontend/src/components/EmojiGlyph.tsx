@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { emojiChar, useEmojiIndex } from '../emoji'
-import { mediaURL } from '../media'
+import { mediaURL, useLoadFailure } from '../media'
 
 // EmojiGlyph draws an emoji by name: a character for standard emoji, the
 // server's picture for custom ones (via /media/, by name), ":name:" while
@@ -9,7 +8,7 @@ import { mediaURL } from '../media'
 export function EmojiGlyph({ serverId, name, size = 16 }: { serverId: number; name: string; size?: number }) {
   const common = emojiChar(name, null)
   const idx = useEmojiIndex(!common)
-  const [broken, setBroken] = useState(false)
+  const [broken, setBroken] = useLoadFailure(serverId, name) // until the server goes live again
   const ch = common ?? emojiChar(name, idx)
   if (ch) return <span aria-hidden="true">{ch}</span>
   if (!idx || broken) return <span aria-hidden="true">:{name}:</span>
@@ -20,7 +19,7 @@ export function EmojiGlyph({ serverId, name, size = 16 }: { serverId: number; na
       aria-hidden="true"
       width={size}
       height={size}
-      onError={() => setBroken(true)}
+      onError={setBroken}
       className="inline-block align-text-bottom"
     />
   )

@@ -13,6 +13,11 @@ interface State {
   channel: ChannelDTO | null // open channel of the selected server
   editingId: string | null // post being edited inline
   notice: string | null // info banner (e.g. where a download went)
+  noticeSticky: boolean // the notice stays until replaced (a download in progress)
+  // liveEpochs: per server, bumped each time it goes live. A picture or
+  // snippet that failed to load is remembered only for the epoch it failed
+  // in — offline, /media/ answers 404 — and tried again after the next live.
+  liveEpochs: Record<number, number>
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -22,7 +27,7 @@ interface State {
   setSidebar(serverId: number, sb: SidebarDTO): void
   setChannel(serverId: number, ch: ChannelDTO): void
   setEditing(id: string | null): void
-  setNotice(msg: string | null): void
+  setNotice(msg: string | null, sticky?: boolean): void
 }
 
 const cleared = { sidebar: null, channel: null, editingId: null }
@@ -39,6 +44,8 @@ export const useStore = create<State>((set, get) => ({
   channel: null,
   editingId: null,
   notice: null,
+  noticeSticky: false,
+  liveEpochs: {},
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -47,8 +54,15 @@ export const useStore = create<State>((set, get) => ({
     // connection-state updates (now frequent) do not.
     const signInChanged = list.some((s) => prev.find((p) => p.id === s.id)?.signed_in !== s.signed_in)
     const reauth = list.find((s) => s.id === signInFor)
+    let liveEpochs = get().liveEpochs
+    for (const s of list) {
+      if (s.state === 'live' && prev.find((p) => p.id === s.id)?.state !== 'live') {
+        liveEpochs = { ...liveEpochs, [s.id]: (liveEpochs[s.id] ?? 0) + 1 }
+      }
+    }
     set({
       servers: list,
+      liveEpochs,
       selectedId,
       lastError: signInChanged ? null : lastError,
       signInFor: reauth?.state === 'needs_reauth' ? signInFor : null,
@@ -72,5 +86,8 @@ export const useStore = create<State>((set, get) => ({
     set({ channel: ch, ...(switchedChannel ? { editingId: null } : {}) })
   },
   setEditing: (id) => set({ editingId: id }),
-  setNotice: (msg) => set({ notice: msg }),
+  setNotice: (msg, sticky = false) => set({ notice: msg, noticeSticky: msg !== null && sticky }),
 }))
+
+// useLiveEpoch: the server's live epoch (see State.liveEpochs).
+export const useLiveEpoch = (serverId: number) => useStore((s) => s.liveEpochs[serverId] ?? 0)
