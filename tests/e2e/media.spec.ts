@@ -56,6 +56,97 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await removeServerFromMenu(page)
 })
 
+test('text viewer: search finds a match beyond 64 KiB, with a counter', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+  await feed(page).getByRole('button', { name: 'View big.log' }).click()
+  const viewer = page.getByRole('dialog', { name: 'File viewer' })
+  // big.log is ~1.3 MiB, over TextFullLimit (1 MiB): the viewer truncates it
+  // at 1 MiB. worker #10000 sits at ~578 KiB in, past both the feed
+  // snippet's 64 KiB cap and the truncation point — proving the viewer
+  // searches the full ?full=1 text, not a short fragment.
+  await viewer.getByRole('textbox', { name: 'Search in file' }).fill('worker #10000')
+  await expect(viewer.getByText('1 of 1')).toBeVisible()
+  await expect(viewer.locator('mark[data-current="true"]')).toHaveText('worker #10000')
+  await viewer.getByRole('button', { name: 'Close' }).click()
+  await removeServerFromMenu(page)
+})
+
+test('image viewer: wheel changes the zoom indicator', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+  await feed(page).getByRole('button', { name: 'View build.png' }).click()
+  const viewer = page.getByRole('dialog', { name: 'File viewer' })
+  const percent = viewer.getByTestId('viewer-zoom-percent')
+  await expect(percent).toHaveText('100 %')
+  const img = viewer.getByRole('img', { name: 'build.png' })
+  const box = (await img.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, -300) // deltaY < 0: zoom in (ImageZoom.tsx)
+  await expect(percent).not.toHaveText('100 %')
+  await viewer.getByRole('button', { name: 'Close' }).click()
+  await removeServerFromMenu(page)
+})
+
+test('downloads panel: entry appears, "Show in folder" is recorded, "Remove from list" removes it', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+  // big.log, not spec.pdf: spec.pdf is downloaded by the test above, and the
+  // fake's downloads directory is shared across this whole file (one app
+  // instance, one DB) — downloading it again here would land on a
+  // deduplicated "spec (1).pdf" instead.
+  await feed(page).getByRole('button', { name: 'Download big.log' }).click()
+  await expect(page.getByText(/Saved to .*big\.log/)).toBeVisible()
+
+  // The button's accessible name carries the active-download count ("Downloads"
+  // vs "Downloads — active: N", AGENTS.md) — match the stable prefix, not an
+  // exact string that a still-active download would miss.
+  await page.getByRole('button', { name: /^Downloads/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Downloads list' })
+  const row = panel.getByRole('listitem').filter({ hasText: 'big.log' })
+  await expect(row).toBeVisible()
+
+  await row.getByRole('button', { name: 'Show big.log in folder' }).click()
+  await expect
+    .poll(async () => ((await testGet(page, 'revealed-files')) as string[]).some((p) => p.endsWith('big.log')))
+    .toBe(true)
+
+  await row.getByRole('button', { name: 'Remove big.log from the list' }).click()
+  await expect(panel.getByRole('listitem').filter({ hasText: 'big.log' })).toHaveCount(0)
+
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
+  await removeServerFromMenu(page)
+})
+
+test('video, audio and markdown previews: smoke', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+
+  // markdown: rendered fragment in the feed, and Rendered/Source toggle in the viewer
+  await expect(feed(page).getByRole('heading', { name: 'spk-mm-client' })).toBeVisible()
+  await feed(page).getByRole('button', { name: 'View README.md' }).click()
+  const viewer = page.getByRole('dialog', { name: 'File viewer' })
+  await expect(viewer.getByRole('heading', { name: 'spk-mm-client' })).toBeVisible()
+  await viewer.getByRole('group', { name: 'Markdown view' }).getByRole('button', { name: 'Source' }).click()
+  await expect(viewer.locator('pre')).toContainText('# spk-mm-client')
+  await viewer.getByRole('button', { name: 'Close' }).click()
+
+  // video: feed poster → click plays it. clip.webm (VP9/Opus), not clip.mp4
+  // (H.264 may not have a decoder on this host) — AGENTS.md / task-6-brief.
+  const playBtn = feed(page).getByRole('button', { name: 'Play clip.webm' })
+  await expect(playBtn).toBeVisible()
+  await playBtn.click()
+  const video = feed(page).locator('video').first()
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.controls)).toBe(true)
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.paused), { timeout: 10_000 }).toBe(false)
+
+  // audio: the compact player is present in the file's row
+  await expect(feed(page).locator('audio[controls]')).toHaveCount(1)
+
+  await removeServerFromMenu(page)
+})
+
 test('reactions: chips toggle, the picker adds, others arrive live', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()

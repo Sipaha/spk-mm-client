@@ -163,6 +163,66 @@
   картинки, PDF, текст/лог/csv/json/md, макро-свободные офисные документы, аудио/видео,
   распространённые архивы); всё остальное (включая `.html`/`.svg`/лаунчеры) — только сохраняется.
   — `TestOpenFileOpensSafeTypesOnly`.
+- Текстовый просмотрщик (`TextView`) занимает всю ширину панели, грузит файл целиком до
+  `TextFullLimit` (1 МиБ, `?full=1`) — не 64-КиБ фрагмент ленты — и даёт поиск по нему:
+  постоянной длины сворачивание регистра (`foldForSearch`, гарантированно той же длины, что и
+  исходная строка, иначе сместились бы смещения совпадений), честный кап в 5000 совпадений,
+  Ctrl+F перехватывается на `window` (не открывает системный поиск webview), Escape в поле с
+  текстом чистит поиск сразу, не всплывая до просмотрщика (пустое поле — всплывает и закрывает
+  просмотрщик как раньше). — `frontend/src/components/TextView.test.tsx` («search: counter,
+  Enter/Shift+Enter cycle through matches, current match is marked», «a length-expanding case
+  fold (İ → i + combining dot) does not misalign later matches», «Ctrl+F focuses the search
+  field from anywhere in the viewer», «Escape with text in the search field clears it instead
+  of bubbling up, right away (no 150 ms wait)»).
+- Зум картинки в просмотрщике (`ImageZoom`) — колесо вокруг курсора, перетаскивание — пан
+  (только при масштабе > 1), двойной клик и `+`/`-`/`0` — переключение вписать/100%; кап —
+  8× натурального размера. Оригинал запрашивается сразу вместе с превью (оба `<img>` смонтированы
+  с самого начала), превью остаётся видимым до готовности оригинала — не наоборот; колёсный и
+  клавиатурный обработчики подписываются один раз при монтировании и читают свежее состояние
+  через ref, а не переподписываются на каждое изменение масштаба. — `frontend/src/components/
+  ImageZoom.test.tsx` («wheel zooms in around the cursor and reports a growing percentage; wheel
+  out returns toward it», «the original is requested immediately, and the preview is shown as a
+  placeholder until it loads», «wheel and keyboard zoom subscribe once, not on every scale
+  change»), `frontend/src/components/imageZoom.test.ts`.
+- Видео и аудио стримятся, не кэшируются на диске и не буферизуются в памяти: `MediaPlayer`
+  берёт URL у `streamURL()`/`MediaStreamBase` (Task 7) и рендерит `<video controls>`/
+  `<audio controls preload="none">`. Играет одновременно только один элемент во всём приложении
+  (`mediaSession.registerMediaElement` ставит остальные на паузу); элемент, ушедший из DOM
+  (виртуализация ленты, смена канала) или переставший показываться (сорвался стрим — карточка
+  вместо плеера, без размонтирования `MediaPlayer`), останавливается и освобождается
+  (`removeAttribute('src'); load()`) — иначе WebKit держит декодер и буферы (урок 13b). Видео в
+  ленте — `preload="none"` и постер до клика; `play()` вызывается синхронно внутри обработчика
+  клика, иначе WebKitGTK молча отказывает в воспроизведении вне пользовательского жеста. —
+  `frontend/src/components/MediaPlayer.test.tsx` («video: fixed box before load, preload="none",
+  poster placeholder; clicking it calls play() synchronously inside the click», «only one player
+  plays at a time: starting one pauses the other», «unmounting releases the element: paused, src
+  dropped, reloaded (Task 13b)», «a stream failure releases the element right away, not just on
+  unmount (it's swapped for a card, not unmounted as a whole)»), `frontend/src/components/
+  mediaSession.test.ts`.
+- Медиа-поток десктопа — отдельный loopback HTTP-сервер (`internal/media.Loopback`, Task 7,
+  вариант A пользователя 2026-09-27), потому что WebKitGTK/GStreamer не умеет читать `wails://`
+  (спайк S6): слушает `127.0.0.1:0`, поднимается лениво по первому вызову `MediaStreamBase` и
+  живёт до выхода приложения; URL несёт сессионный токен (32 случайных байта, новый при каждом
+  запуске, сравнение за постоянное время, никогда не логируется) —
+  `http://127.0.0.1:<port>/<token>/<srv>/stream/<id>`. Каждый запрос проверяет `Host` (защита от
+  DNS rebinding), метод (только `GET`/`HEAD`), не отдаёт CORS-заголовков и белый список
+  медиатипов; ответы — `Cache-Control: no-store`, чтобы токенизированный URL и байты не осели в
+  дисковом кэше WebKit. В browser-режиме тот же вид `stream` отдаётся по обычному
+  `/media/<srv>/stream/<id>` на уже существующем loopback-сервере UI — отдельного сервера там не
+  нужно, вебвью и так браузер. — `internal/media/loopback_test.go`
+  (`TestLoopbackStartsLazilyOnItsOwnLoopbackPort`, `TestLoopbackRejectsWrongTokenHostAndMethod`,
+  `TestLoopbackCloseStopsServingAndCancelsStreams`, `TestLoopbackTokenNeverReachesTheLogs`),
+  `internal/media/stream_test.go` (`TestStreamPassesRangeThroughAs206`,
+  `TestStreamWritesNothingToTheCache`, `TestStreamCancelClosesTheUpstream`).
+- Markdown-файлы (`.md`/`.markdown`) в ленте — фрагмент, отрендеренный тем же компонентом
+  `Markdown`, что и текст поста (удалённые картинки — ссылками, никогда не загружаются; ссылки —
+  в системный браузер), фиксированной высоты, как у текстового фрагмента, пока не развёрнут; в
+  просмотрщике — рендер на всю ширину с переключателем «Оформление»/«Исходный текст»
+  (`aria-pressed` на обеих кнопках группы), источник тот же `text?full=1`, что и у `TextView`. —
+  `frontend/src/components/MarkdownSnippet.test.tsx` («renders a heading, a list and a code
+  block; fixed height until expanded»), `frontend/src/components/MarkdownView.test.tsx`
+  («renders heading, list, code and table; a remote image is a link, not an <img>»),
+  `frontend/src/components/Viewer.test.tsx`.
 - Каждый созданный Playwright-контекст/страница (в `browser_run_code_unsafe` или в скриптах)
   закрывается в том же вызове (`try`/`finally` → `ctx.close()`); окна не оставляются открытыми.
   После работы с браузером проверить, что не осталось висящих контекстов — пользователь уже
@@ -176,7 +236,7 @@
 - Frontend toolchain resolved newer than the stage-1 briefs assumed (TypeScript 6, Vite 8, Vitest 4): bare CSS side-effect imports need `"vite/client"` in `tsconfig.json`'s `"types"`, and `vite.config.ts` must `import { defineConfig } from 'vitest/config'` (not `'vite'`) — a triple-slash `vitest` types reference no longer reliably pulls in the `UserConfig.test` augmentation.
 - Memory budget is **Private_Dirty** of all app processes (a guideline target of ~150 MB with 2–3 servers/~100 channels — usability comes first, no growth over time is the hard requirement), not PSS: PSS includes a share of WebKit/GTK/ICU libraries shared with other apps and swings with what else runs (150–196 MB PSS vs ~73–80 MB Private_Dirty for the empty shell; release build and WebKit GPU policy don't change it). Measure with `scripts/pss.sh <pid>` (prints both). — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Wails beta.25 Linux tray: `SystemTray.SetTooltip` is a no-op and the StatusNotifierItem `Id`/`ToolTip` are frozen to the label when the tray starts (default "Wails"); only `SetLabel` (SNI `Title`) and `SetIcon` update live. Tray/notification calls reach GTK/D-Bus with no timeout — keep them off service goroutines (`offerLatest`, `asyncSender`). — `internal/desktop/tray.go` (`setTrayText`, `trayBadge`), `internal/desktop/async.go` (`TestAsyncSenderDetachesAHungSendAndResumes`).
-- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), `/api/_test/fake/status` (set a user's presence status), `/api/_test/fake/picture` (bump a user's avatar version), `/api/_test/fake/react` (react as another user, `remove:true` to undo), `/api/_test/opened-files` (files the fake file opener was asked to open), `/api/_test/revealed-files` (files "Show in folder" was asked to reveal) and `SPK_MM_CLIENT_DOWNLOADS` (downloads directory override for e2e), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
+- Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), `/api/_test/fake/status` (set a user's presence status), `/api/_test/fake/picture` (bump a user's avatar version), `/api/_test/fake/react` (react as another user, `remove:true` to undo), `/api/_test/fake/throttle-file` (`{bytes_per_sec}`, `0` restores full speed — slows plain `GET /api/v4/files/{id}` downloads so a screenshot/test can catch one mid-progress; does not affect `/thumbnail`, `/preview`, `/info` or the media stream), `/api/_test/opened-files` (files the fake file opener was asked to open), `/api/_test/revealed-files` (files "Show in folder" was asked to reveal) and `SPK_MM_CLIENT_DOWNLOADS` (downloads directory override for e2e), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
 - Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello), `SetFailure(pathPart, status)` (inject an HTTP error), `UsersSince` (the `since=` of every
 `POST /users/ids` that carried one — the fake honours it: a fake user's `update_at` is its picture
 time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTimeout`, `refreshRetry`, `sinceLimit`). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
@@ -192,3 +252,5 @@ time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTime
 - The real Mattermost `POST /users/status/ids` rejects the **whole** request with 400 if even one id in the array isn't exactly 26 characters (`docs/research/2026-09-24-mattermost-api-facts.md` §7.2); the fake is more lenient (short ids like `u-bob` are accepted) — don't rely on the fake's leniency when writing new status tests, and expect real-server integration to need real 26-char ids.
 - A hidden WebKitGTK window (closed to the tray — `Hide()` unmaps it; a window merely on another workspace kept painting in our runs) never paints, and everything WebKit defers to "the next rendering update" piles up while JS keeps running: (1) `requestAnimationFrame` callbacks never run, and each keeps its closure (rows, virtualizer, channel) alive; (2) every element scrolled by script waits, with its whole subtree, in the document's pending scroll-event list; (3) every `<img loading="lazy">` not yet loaded waits for its first intersection check, again with its whole detached tree. With the feed remounted per channel and scrolled to its end, and avatars of other servers never loaded before the window hid, each switch kept an entire old feed: WebKitWebProcess +2.5–3.5 MB/min under the churn soak while hidden, flat while visible — a soak with the window on screen does not show it. Rules: frames go through `useFrames` (one pending frame per purpose, cancelled on unmount); a scrolled container empties itself when unmounted; images in feed rows and the sidebar load eagerly (the feed is virtualized anyway) — `loading="lazy"` only where the UI is necessarily visible (the emoji picker). Diagnose in the system WebKitGTK: a PyGObject `WebView` + `win.hide()` harness, and `WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:<port>` (works for the dev desktop build too) for heap snapshots over the inspector WebSocket (`Heap.snapshot`, `Heap.getRemoteObject` → `Runtime.callFunctionOn` to find a detached node's tree root). Chromium's background tab is a weaker model (extra Blink-internal paint-timing retention). — `frontend/src/components/Feed.tsx` (`useFrames`), `Feed.test.tsx`, `Avatar.tsx`, spike doc S4 «Этап 3, часть 1».
 - The Mattermost webapp's emoji set (`frontend/src/emoji/data.ts`) is generated, not hand-written — regenerate with `scripts/gen-emoji.mjs` (sources and the exact command are in the script's header comment); editing `data.ts` by hand will be overwritten by the next regeneration and drift from the webapp's names/order.
+- Never raise Wails' `LogLevel` to `Debug` in a build that ships (or in a screenshot/soak session with a real server): Wails logs binding results at Debug (`messageprocessor_call.go`), and `MediaStreamBase`'s result is the loopback stream server's base URL — which carries its session token. Default (Info) is safe; only raise it briefly with a fake server if you must, never with a live one. — `internal/desktop/run.go`.
+- The header's downloads button (`⬇`) folds the active-download count into its own accessible name, the same trap as `ServerRail`'s badge (see above): `t('downloads.button')` is exactly `"Downloads"`, `t('downloads.buttonActive', {n})` is `"Downloads — active: N"` — both change at once as downloads start/finish, so an e2e `getByRole('button', { name: 'Downloads' })` with `exact: true` can miss the button mid-download, and a loose substring match (no `exact`) can also hit unrelated buttons whose name merely contains "Downloads". Match with `{ name: /^Downloads/ }` (or query right after the panel is already known to be idle). — `frontend/src/components/ChannelPane.tsx` (`downloadsLabel`), `frontend/src/i18n.ts`, `tests/e2e/media.spec.ts`.
