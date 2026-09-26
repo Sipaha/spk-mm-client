@@ -40,16 +40,10 @@ func (s *Server) channelOfPostLocked(postID string) (string, bool) {
 	return "", false
 }
 
-// ReactLocal applies our own reaction at once — the click lands before the
-// server answers — and records it as the intent for the post+emoji; false
-// if the post is not in memory.
-func (s *Server) ReactLocal(postID, emoji string, add bool) (Change, bool) {
-	ch, _, ok := s.ReactLocalWas(postID, emoji, add)
-	return ch, ok
-}
-
-// ReactLocalWas is ReactLocal that also reports whether our reaction was
-// there before the click.
+// ReactLocalWas applies our own reaction at once — the click lands before
+// the server answers — and records it as the intent for the post+emoji; it
+// reports whether our reaction was there before the click, and ok=false if
+// the post is not in memory.
 func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,11 +67,6 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 	// The post is in memory, so an add that changed nothing found ours
 	// there and a remove that changed something removed it.
 	return Change{Channels: []string{id}}, changed != add, true
-}
-
-// UndoReactLocal rolls back a ReactLocal the server refused.
-func (s *Server) UndoReactLocal(postID, emoji string, add bool) Change {
-	return s.SetMyReaction(postID, emoji, !add)
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the

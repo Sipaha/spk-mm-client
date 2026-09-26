@@ -37,20 +37,21 @@ func withPost(s *Server) {
 func TestReactLocalAppliesAtOnceAndUndoRestores(t *testing.T) {
 	s := newFixture()
 	withPost(s)
-	ch, ok := s.ReactLocal("p", "+1", true)
+	ch, was, ok := s.ReactLocalWas("p", "+1", true)
 	require.True(t, ok)
+	assert.False(t, was, "not ours before the click")
 	assert.Equal(t, Change{Channels: []string{"off"}}, ch)
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
-	assert.Equal(t, Change{Channels: []string{"off"}}, s.UndoReactLocal("p", "+1", true))
+	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetMyReaction("p", "+1", false))
 	assert.Empty(t, reactions(s, "p"))
-	_, ok = s.ReactLocal("nope", "+1", true)
+	_, _, ok = s.ReactLocalWas("nope", "+1", true)
 	assert.False(t, ok, "a post not in memory")
 }
 
 func TestOwnEchoIsIdempotentAndOthersCount(t *testing.T) {
 	s := newFixture()
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", true)
 	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
 	eff := s.ApplyEvent(reactionEv("reaction_added", "u2", "p", "+1"))
@@ -61,8 +62,8 @@ func TestOwnEchoIsIdempotentAndOthersCount(t *testing.T) {
 func TestLateEchoOfUndoneReactionIsIgnored(t *testing.T) {
 	s := newFixture()
 	withPost(s)
-	s.ReactLocal("p", "+1", true)  // click: add (the request succeeded)
-	s.ReactLocal("p", "+1", false) // click again: remove
+	s.ReactLocalWas("p", "+1", true)  // click: add (the request succeeded)
+	s.ReactLocalWas("p", "+1", false) // click again: remove
 	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
 	assert.Empty(t, reactions(s, "p"), "the late echo of the first click is stale")
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // echo of the second click ends the intent
@@ -75,7 +76,7 @@ func TestIntentExpires(t *testing.T) {
 	s := New(func() time.Time { return now })
 	s.Bootstrap(fixture())
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", true)
 	now = now.Add(31 * time.Second)
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // removed elsewhere, our echo never came
 	assert.Empty(t, reactions(s, "p"))
@@ -123,7 +124,7 @@ func TestReactLocalWasReportsOurPreviousReaction(t *testing.T) {
 func TestSetMyReactionIsExplicitAndEndsTheIntent(t *testing.T) {
 	s := newFixture()
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", true)
 	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetMyReaction("p", "+1", true))
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "sets, does not toggle")
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
@@ -137,8 +138,8 @@ func TestSetMyReactionIsExplicitAndEndsTheIntent(t *testing.T) {
 func TestForgetReactIntent(t *testing.T) {
 	s := newFixture()
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
-	s.ReactLocal("p", "+1", false) // cancelled before it was sent
+	s.ReactLocalWas("p", "+1", true)
+	s.ReactLocalWas("p", "+1", false) // cancelled before it was sent
 	s.ForgetReactIntent("p", "+1")
 	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1")) // from another device
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
@@ -149,7 +150,7 @@ func TestPinnedIntentDoesNotExpire(t *testing.T) {
 	s := New(func() time.Time { return now })
 	s.Bootstrap(fixture())
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", true)
 	s.PinReactIntent("p", "+1", true) // its request waits for a retry
 	now = now.Add(time.Hour)
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
@@ -168,10 +169,10 @@ func TestAClickKeepsThePinOfAWaitingIntent(t *testing.T) {
 	s := New(func() time.Time { return now })
 	s.Bootstrap(fixture())
 	withPost(s)
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", true)
 	s.PinReactIntent("p", "+1", true) // its request waits for a retry
-	s.ReactLocal("p", "+1", false)    // a click meanwhile: the retry will send it
-	s.ReactLocal("p", "+1", true)
+	s.ReactLocalWas("p", "+1", false)    // a click meanwhile: the retry will send it
+	s.ReactLocalWas("p", "+1", true)
 	now = now.Add(time.Hour)
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "still pinned")
