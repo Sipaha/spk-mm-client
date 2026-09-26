@@ -114,3 +114,10 @@ test('the downloads list is dropped once the panel closes and nothing is active'
   useStore.getState().setDownloads([dl({ state: 'done' })]) // it finished: no longer active, panel still closed
   expect(useStore.getState().downloads).toEqual([])
 })
+
+test('patchDownloadProgress for an id not in the store is inert: no crash, no phantom row', () => {
+  useStore.setState({ downloads: [dl({ id: 1 })], downloadsOpen: true })
+  useStore.getState().patchDownloadProgress(999, 42)
+  expect(useStore.getState().downloads).toEqual([dl({ id: 1 })]) // unchanged
+  expect(useStore.getState().downloads).toHaveLength(1)
+})

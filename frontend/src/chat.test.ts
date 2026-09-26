@@ -26,7 +26,7 @@ const { client } = await import('./api/client')
 const {
   clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost, loadSidebar,
   onDownloadsChanged, openChannel, openDownload, openDownloadsPanel, openFile, refreshChannel,
-  removeDownload, resetChat, revealDownload, selectServer,
+  refreshDownloads, removeDownload, resetChat, revealDownload, selectServer,
 } = await import('./chat')
 
 const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
@@ -192,6 +192,20 @@ test('the saved notice carries a "show in folder" action resolving the entry by 
   vi.mocked(client.downloads).mockResolvedValue([dl({ id: 9, path: '/d/spec.pdf' }), dl({ id: 10, path: '/d/other.txt' })])
   action?.onClick()
   await vi.waitFor(() => expect(client.revealDownload).toHaveBeenCalledWith(9))
+})
+
+test('two overlapping refreshDownloads reloads resolving out of order: the newer one wins', async () => {
+  useStore.getState().setDownloadsOpen(true)
+  const first = deferred<DownloadView[]>()
+  const second = deferred<DownloadView[]>()
+  vi.mocked(client.downloads).mockReturnValueOnce(first.p).mockReturnValueOnce(second.p)
+  const r1 = refreshDownloads() // started first
+  const r2 = refreshDownloads() // started right after, while r1 is still in flight
+  second.resolve([dl({ id: 2, name: 'second' })]) // the newer request resolves first
+  await r2
+  first.resolve([dl({ id: 1, name: 'first' })]) // the older one lands late
+  await r1
+  expect(useStore.getState().downloads.map((d) => d.name)).toEqual(['second'])
 })
 
 test('downloads panel: first open loads the list once, later opens rely on events', async () => {

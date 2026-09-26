@@ -6,8 +6,6 @@ import { formatSize } from '../format'
 import { setLocale } from '../i18n'
 import Downloads, { placePanel } from './Downloads'
 
-const anchor = { top: 40, bottom: 60, left: 500, right: 520, width: 20, height: 20, x: 500, y: 40, toJSON() {} } as DOMRect
-
 const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
   id: 1, server_id: 1, file_id: 'f1', name: 'spec.pdf', path: '/d/spec.pdf', size: 12_300_000, mime: 'application/pdf',
   started_at: 0, finished_at: 1_758_700_000_000, state: 'done', error: '', received: 12_300_000, exists: true,
@@ -15,12 +13,28 @@ const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
 })
 
 // primaryAction mirrors chat.ts's downloadPrimaryAction (unit-tested on its
-// own in chat.test.ts): this test only checks Downloads wires row
-// click/Enter to whatever the caller's decision returns.
+// own in chat.test.ts): this test only checks Downloads wires a row's
+// button/Enter to whatever the caller's decision returns.
 function primaryAction(d: DownloadView, onOpen: (id: number) => void, onReveal: (id: number) => void) {
   if (d.state !== 'done' || !d.exists) return null
   return d.openable ? () => onOpen(d.id) : () => onReveal(d.id)
 }
+
+// anchorEl stands in for the header's ⬇ button: a real element (not just a
+// DOMRect), so the outside-click exclusion and the focus-return-on-close
+// behavior have something real to check against.
+let anchorEl: HTMLButtonElement
+
+beforeEach(() => {
+  setLocale('en')
+  anchorEl = document.createElement('button')
+  anchorEl.textContent = 'Downloads'
+  anchorEl.getBoundingClientRect = () =>
+    ({ top: 40, bottom: 60, left: 500, right: 520, width: 20, height: 20, x: 500, y: 40, toJSON() {} }) as DOMRect
+  document.body.appendChild(anchorEl)
+})
+
+afterEach(() => anchorEl.remove())
 
 function setup(downloads: DownloadView[]) {
   const onOpen = vi.fn()
@@ -28,9 +42,9 @@ function setup(downloads: DownloadView[]) {
   const onRemove = vi.fn()
   const onClear = vi.fn()
   const onClose = vi.fn()
-  render(
+  const view = render(
     <Downloads
-      anchor={anchor}
+      anchorEl={anchorEl}
       downloads={downloads}
       locale="en-US"
       primaryAction={(d) => primaryAction(d, onOpen, onReveal)}
@@ -41,14 +55,13 @@ function setup(downloads: DownloadView[]) {
       onClose={onClose}
     />,
   )
-  return { onOpen, onReveal, onRemove, onClear, onClose }
+  return { onOpen, onReveal, onRemove, onClear, onClose, ...view }
 }
 
-beforeEach(() => setLocale('en'))
-
-test('an empty list says so', () => {
+test('an empty list says so, outside role="list"', () => {
   setup([])
   expect(screen.getByText('No downloads yet')).toBeInTheDocument()
+  expect(screen.queryByRole('list')).toBeNull()
 })
 
 test('row states: done, downloading (with a progress bar), failed, deleted', () => {
@@ -66,7 +79,8 @@ test('row states: done, downloading (with a progress bar), failed, deleted', () 
   // only a finished, present file offers Open/Show in folder; downloading and deleted do not
   expect(within(rows[0]).getByRole('button', { name: 'Open spec.pdf' })).toBeInTheDocument()
   expect(within(rows[0]).getByRole('button', { name: 'Show spec.pdf in folder' })).toBeInTheDocument()
-  expect(within(rows[1]).queryByRole('button')).toBeNull()
+  // row 1 (downloading) still has its primary (inert) button, but no action buttons
+  expect(within(rows[1]).getAllByRole('button')).toHaveLength(1)
   expect(within(rows[3]).queryByRole('button', { name: /Open|Show/ })).toBeNull()
   expect(within(rows[3]).getByRole('button', { name: 'Remove gone.txt from the list' })).toBeInTheDocument()
 })
@@ -78,16 +92,27 @@ test('a non-openable finished file offers only "show in folder"', () => {
   expect(within(row).getByRole('button', { name: /Show .* in folder/ })).toBeInTheDocument()
 })
 
-test('action buttons call the matching handler and do not also trigger the row click', async () => {
+test('action buttons call the matching handler and do not also trigger the row', async () => {
   const { onOpen, onReveal, onRemove } = setup([dl()])
   const row = screen.getAllByRole('listitem')[0]
   await userEvent.click(within(row).getByRole('button', { name: 'Open spec.pdf' }))
-  expect(onOpen).toHaveBeenCalledWith(1)
+  expect(onOpen).toHaveBeenCalledTimes(1)
   await userEvent.click(within(row).getByRole('button', { name: 'Show spec.pdf in folder' }))
-  expect(onReveal).toHaveBeenCalledWith(1)
+  expect(onReveal).toHaveBeenCalledTimes(1)
   await userEvent.click(within(row).getByRole('button', { name: 'Remove spec.pdf from the list' }))
   expect(onRemove).toHaveBeenCalledWith(1)
-  expect(onOpen).toHaveBeenCalledTimes(1) // the row's own click did not also fire
+  expect(onOpen).toHaveBeenCalledTimes(1) // still just the one real click on it
+})
+
+test('Enter on the Remove button calls only remove, not the row primary action', async () => {
+  const { onOpen, onReveal, onRemove } = setup([dl()])
+  const row = screen.getAllByRole('listitem')[0]
+  const removeBtn = within(row).getByRole('button', { name: 'Remove spec.pdf from the list' })
+  removeBtn.focus()
+  await userEvent.keyboard('{Enter}')
+  expect(onRemove).toHaveBeenCalledWith(1)
+  expect(onOpen).not.toHaveBeenCalled()
+  expect(onReveal).not.toHaveBeenCalled()
 })
 
 test('clicking a finished row runs its primary action (open); a non-openable one shows its folder', async () => {
@@ -103,26 +128,26 @@ test('a downloading or deleted row has no primary action', async () => {
   expect(onReveal).not.toHaveBeenCalled()
 })
 
-test('Enter on a focused row runs its primary action', () => {
+test('Enter on a focused row runs its primary action', async () => {
   const { onOpen } = setup([dl({ id: 7 })])
   const row = screen.getAllByRole('listitem')[0]
-  row.focus()
-  fireEvent.keyDown(row, { key: 'Enter' })
+  within(row).getByText('spec.pdf').closest('button')!.focus()
+  await userEvent.keyboard('{Enter}')
   expect(onOpen).toHaveBeenCalledWith(7)
 })
 
-test('ArrowDown/ArrowUp move focus between rows', () => {
+test('ArrowDown/ArrowUp move focus between the rows’ primary buttons', () => {
   setup([dl({ id: 1, name: 'a' }), dl({ id: 2, name: 'b' }), dl({ id: 3, name: 'c' })])
-  const rows = screen.getAllByRole('listitem')
-  rows[0].focus()
-  fireEvent.keyDown(rows[0], { key: 'ArrowDown' })
-  expect(rows[1]).toHaveFocus()
-  fireEvent.keyDown(rows[1], { key: 'ArrowDown' })
-  expect(rows[2]).toHaveFocus()
-  fireEvent.keyDown(rows[2], { key: 'ArrowDown' }) // no row below: stays put
-  expect(rows[2]).toHaveFocus()
-  fireEvent.keyDown(rows[2], { key: 'ArrowUp' })
-  expect(rows[1]).toHaveFocus()
+  const btn = (name: string) => screen.getByText(name).closest('button')!
+  btn('a').focus()
+  fireEvent.keyDown(btn('a'), { key: 'ArrowDown' })
+  expect(btn('b')).toHaveFocus()
+  fireEvent.keyDown(btn('b'), { key: 'ArrowDown' })
+  expect(btn('c')).toHaveFocus()
+  fireEvent.keyDown(btn('c'), { key: 'ArrowDown' }) // no row below: stays put
+  expect(btn('c')).toHaveFocus()
+  fireEvent.keyDown(btn('c'), { key: 'ArrowUp' })
+  expect(btn('b')).toHaveFocus()
 })
 
 test('"Clear the list" calls onClear', async () => {
@@ -131,12 +156,37 @@ test('"Clear the list" calls onClear', async () => {
   expect(onClear).toHaveBeenCalledTimes(1)
 })
 
-test('Escape and an outside click both close the panel', () => {
+test('opening moves focus into the panel, and Esc closes it via a document-level listener regardless of focus', async () => {
+  anchorEl.focus() // simulates focus having stayed on ⬇ right up to the panel mounting
   const { onClose } = setup([dl()])
-  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+  expect(document.activeElement).not.toBe(anchorEl) // moved into the panel on open
+  await userEvent.keyboard('{Escape}')
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('closing (unmounting) returns focus to the anchor that opened the panel', () => {
+  anchorEl.focus()
+  const { unmount } = setup([dl()])
+  expect(document.activeElement).not.toBe(anchorEl)
+  unmount()
+  expect(document.activeElement).toBe(anchorEl)
+})
+
+test('an empty list still moves focus to the panel itself (no rows to focus)', () => {
+  setup([])
+  expect(screen.getByRole('dialog')).toHaveFocus()
+})
+
+test('a click outside (not on the anchor) closes the panel', () => {
+  const { onClose } = setup([dl()])
   fireEvent.mouseDown(document.body)
-  expect(onClose).toHaveBeenCalledTimes(2)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('a mousedown on the anchor does not close the panel (so its own click can toggle it)', () => {
+  const { onClose } = setup([dl()])
+  fireEvent.mouseDown(anchorEl)
+  expect(onClose).not.toHaveBeenCalled()
 })
 
 test('placePanel puts the panel below its anchor, or above when there is no room', () => {

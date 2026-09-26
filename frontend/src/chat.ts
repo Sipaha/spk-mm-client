@@ -21,6 +21,7 @@ export function resetChat() {
   inFlight = false
   again = false
   loadedDownloadsOnce = false
+  downloadsSeq++
 }
 
 export function selectServer(id: number | null) {
@@ -213,13 +214,21 @@ export const openFile = (serverId: number, file: { id: string; name: string }) =
 // polled) — the panel fetches it the first time it opens; afterwards
 // downloads_changed keeps the store's copy current.
 let loadedDownloadsOnce = false
+// downloadsSeq: two overlapping reloads (e.g. a fast progress-driven refresh
+// racing a slower one from the panel's first open) can resolve out of
+// order; only the latest request's result is applied — same pattern as
+// sidebarSeq/channelSeq above.
+let downloadsSeq = 0
 
 export async function refreshDownloads() {
   loadedDownloadsOnce = true
+  const my = ++downloadsSeq
   try {
-    useStore.getState().setDownloads(await client.downloads())
+    const list = await client.downloads()
+    if (my !== downloadsSeq) return
+    useStore.getState().setDownloads(list)
   } catch (e) {
-    report(e)
+    if (my === downloadsSeq) report(e)
   }
 }
 

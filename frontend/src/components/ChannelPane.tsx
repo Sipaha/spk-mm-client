@@ -24,6 +24,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloads = useStore((s) => s.downloads)
   const downloadsOpen = useStore((s) => s.downloadsOpen)
   const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
+  const downloadsLabel = activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
   // The viewer belongs to the channel it was opened in.
   const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
@@ -72,8 +73,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         <button
           ref={downloadsBtnRef}
           type="button"
-          title={t('downloads.button')}
-          aria-label={activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')}
+          title={downloadsLabel}
+          aria-label={downloadsLabel}
           onClick={() => (downloadsOpen ? closeDownloadsPanel() : openDownloadsPanel())}
           className="relative ml-auto shrink-0 rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
         >
@@ -123,7 +124,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         downloadsBtnRef.current &&
         createPortal(
           <Downloads
-            anchor={downloadsBtnRef.current.getBoundingClientRect()}
+            anchorEl={downloadsBtnRef.current}
             downloads={downloads}
             locale={formatLocale()}
             primaryAction={downloadPrimaryAction}
