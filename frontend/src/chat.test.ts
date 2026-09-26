@@ -208,7 +208,7 @@ test('two overlapping refreshDownloads reloads resolving out of order: the newer
   expect(useStore.getState().downloads.map((d) => d.name)).toEqual(['second'])
 })
 
-test('downloads panel: first open loads the list once, later opens rely on events', async () => {
+test('downloads panel: every open reloads the list (the store drops it again on close)', async () => {
   vi.mocked(client.downloads).mockResolvedValue([dl()])
   openDownloadsPanel()
   await vi.waitFor(() => expect(useStore.getState().downloads).toHaveLength(1))
@@ -218,8 +218,26 @@ test('downloads panel: first open loads the list once, later opens rely on event
   expect(useStore.getState().downloadsOpen).toBe(false)
   expect(useStore.getState().downloads).toEqual([]) // nothing active: dropped on close
 
+  // Task 6 e2e regression: a fast download can finish (and its
+  // downloads_changed event refresh) while the panel was never opened —
+  // setDownloads drops that result right back to [] (nothing active, panel
+  // closed). The *next* open must still fetch again, not trust a stale
+  // "already loaded once" flag — otherwise the panel is stuck empty even
+  // though Downloads() has entries.
   openDownloadsPanel()
-  expect(client.downloads).toHaveBeenCalledTimes(1) // not re-fetched: only downloads_changed refreshes it now
+  await vi.waitFor(() => expect(useStore.getState().downloads).toHaveLength(1))
+  expect(client.downloads).toHaveBeenCalledTimes(2)
+})
+
+test('a downloads_changed event while the panel is closed does not stop the next open from fetching', async () => {
+  vi.mocked(client.downloads).mockResolvedValue([])
+  onDownloadsChanged({}) // e.g. a download finished while the panel was never open
+  await vi.waitFor(() => expect(client.downloads).toHaveBeenCalledTimes(1))
+  expect(useStore.getState().downloads).toEqual([]) // dropped: not open, nothing active
+
+  vi.mocked(client.downloads).mockResolvedValue([dl()])
+  openDownloadsPanel()
+  await vi.waitFor(() => expect(useStore.getState().downloads).toHaveLength(1))
 })
 
 test('onDownloadsChanged patches progress in place, and reloads on state/new/clear', async () => {

@@ -20,7 +20,6 @@ export function resetChat() {
   wanted = null
   inFlight = false
   again = false
-  loadedDownloadsOnce = false
   downloadsSeq++
 }
 
@@ -210,18 +209,13 @@ export const openFile = (serverId: number, file: { id: string; name: string }) =
 
 // --- Downloads panel ---------------------------------------------------
 
-// loadedDownloadsOnce: Downloads() is read only by UI request (never
-// polled) — the panel fetches it the first time it opens; afterwards
-// downloads_changed keeps the store's copy current.
-let loadedDownloadsOnce = false
 // downloadsSeq: two overlapping reloads (e.g. a fast progress-driven refresh
-// racing a slower one from the panel's first open) can resolve out of
-// order; only the latest request's result is applied — same pattern as
+// racing a slower one from the panel's own open) can resolve out of order;
+// only the latest request's result is applied — same pattern as
 // sidebarSeq/channelSeq above.
 let downloadsSeq = 0
 
 export async function refreshDownloads() {
-  loadedDownloadsOnce = true
   const my = ++downloadsSeq
   try {
     const list = await client.downloads()
@@ -232,9 +226,20 @@ export async function refreshDownloads() {
   }
 }
 
+// openDownloadsPanel always re-reads Downloads(): the store only *holds*
+// the list while the panel is open or a download is active
+// (store.ts's setDownloads/setDownloadsOpen drop it back to [] otherwise,
+// so the list never grows across a long session) — so on every open the
+// in-memory copy may already be stale or empty, even if a downloads_changed
+// event refreshed it (and immediately dropped the result again) while the
+// panel was closed. A "fetch only the first time" gate looked like a
+// reasonable dedupe but was wrong for exactly that reason: it could latch
+// on a closed-panel refresh and leave a later open stuck showing nothing
+// forever (Task 6 e2e finding — "download, then open the panel" with
+// nothing else happening in between never fetched again).
 export function openDownloadsPanel() {
   useStore.getState().setDownloadsOpen(true)
-  if (!loadedDownloadsOnce) void refreshDownloads()
+  void refreshDownloads()
 }
 
 export const closeDownloadsPanel = () => useStore.getState().setDownloadsOpen(false)
