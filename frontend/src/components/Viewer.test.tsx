@@ -94,13 +94,40 @@ test('clicking the backdrop closes the viewer around an image, while loading and
 
 test('an image that fails to load falls back to a card with download/open, not a broken image', async () => {
   const onDownload = vi.fn()
-  render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />)
-  const el = screen.getByRole('img', { name: 'build.png' })
-  fireEvent.error(el)
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />)
+  // build.png has a preview and is within the size limit, so the viewer
+  // starts loading both at once (see Task 3): a failure of one alone isn't
+  // fatal while the other might still come through.
+  const preview = container.querySelector('img[src$="src=preview"]')!
+  const original = container.querySelector('img[src$="src=file"]')!
+  fireEvent.error(preview)
+  expect(screen.queryByRole('button', { name: 'Download build.png' })).toBeNull() // still waiting on the original
+  fireEvent.error(original)
   expect(screen.queryByRole('img', { name: 'build.png' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Download build.png' }))
   expect(onDownload).toHaveBeenCalledWith(img)
   expect(screen.getByRole('button', { name: 'Open build.png' })).toBeInTheDocument()
+})
+
+test('the original loads immediately alongside the preview; a working original replaces the preview without the preview ever failing', async () => {
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  const preview = container.querySelector('img[src$="src=preview"]')!
+  const original = container.querySelector('img[src$="src=file"]')!
+  expect(preview).toHaveAttribute('alt', 'build.png') // shown as a placeholder right away
+  expect(original).toHaveAttribute('alt', '') // requested immediately, but not shown yet
+  fireEvent.load(original)
+  expect(screen.getByRole('img', { name: 'build.png' })).toBe(original) // swapped in, no jump
+  expect(preview).toHaveAttribute('alt', '')
+})
+
+test('an original over the size limit is never requested; only the preview is shown, and its own failure still falls back to a card', async () => {
+  const bigWithPreview: FileView = { id: 'f-huge', name: 'huge.png', ext: 'png', size: 40 * 1024 * 1024, mime: 'image/png', has_preview: true }
+  const { container } = render(<Viewer serverId={1} files={[bigWithPreview]} index={0} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  expect(container.querySelector('img[src$="src=file"]')).toBeNull()
+  const preview = screen.getByRole('img', { name: 'huge.png' })
+  expect(preview).toHaveAttribute('src', '/media/1/full/f-huge?src=preview')
+  fireEvent.error(preview)
+  expect(await screen.findByRole('button', { name: 'Download huge.png' })).toBeInTheDocument()
 })
 
 test('text search: counter and Enter/Shift+Enter cycle matches, current one highlighted', async () => {

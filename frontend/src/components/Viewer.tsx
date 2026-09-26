@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
-import { mediaURL } from '../media'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
+import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
 import { TextView } from './TextView'
 
 interface Props {
@@ -33,6 +33,15 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
   const [loadedIds, setLoadedIds] = useState<ReadonlySet<string>>(new Set())
   const addFailed = (id: string) => setFailedIds((s) => (s.has(id) ? s : new Set(s).add(id)))
   const addLoaded = (id: string) => setLoadedIds((s) => (s.has(id) ? s : new Set(s).add(id)))
+  // The image's zoom/pan is per-file (ImageZoom is keyed by file.id and
+  // resets to "fit" on remount); only its scale indicator and the Fit
+  // button live in the header, so they're lifted here.
+  const imageZoomRef = useRef<ImageZoomHandle>(null)
+  const [scalePercent, setScalePercent] = useState(100)
+  // Set right when a real drag (not just a click) ends, so the backdrop's
+  // own click handler — fired right after, since the drag can end with the
+  // pointer over the backdrop — doesn't treat it as a backdrop click.
+  const draggedRef = useRef(false)
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
@@ -58,6 +67,10 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
   if (!file) return null
   const src = imageSrc(file)
   const closeOnBackdrop = (e: React.MouseEvent) => {
+    if (draggedRef.current) {
+      draggedRef.current = false
+      return
+    }
     if (e.target === e.currentTarget) onClose()
   }
   const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
@@ -70,7 +83,17 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
         {files.length > 1 && (
           <span className="shrink-0 text-xs text-fg-muted">{t('viewer.counter', { i: String(index + 1), n: String(files.length) })}</span>
         )}
-        <span className="ml-auto flex shrink-0 gap-2">
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {showImage && (
+            <>
+              <span className="text-xs text-fg-muted" data-testid="viewer-zoom-percent">
+                {t('viewer.zoom', { p: String(scalePercent) })}
+              </span>
+              <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => imageZoomRef.current?.fit()}>
+                {t('viewer.fit')}
+              </button>
+            </>
+          )}
           <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => onDownload(file)}>
             {t('viewer.download')}
           </button>
@@ -82,7 +105,10 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
           </button>
         </span>
       </header>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center p-4" onClick={closeOnBackdrop}>
+      {/* overflow-hidden: a zoomed-in image must clip to this pane — without
+          it, the transformed <img> paints over the header (it comes later
+          in the DOM) and steals clicks from the Fit button/percent. */}
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4" onClick={closeOnBackdrop}>
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.prev')} className={`${nav} left-3`} onClick={() => onIndex((index - 1 + files.length) % files.length)}>
             ‹
@@ -90,23 +116,19 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
         )}
         {fileKind(file) === 'image' ? (
           showImage ? (
-            <>
-              <img
-                key={file.id}
-                src={mediaURL(serverId, 'full', file.id, { src: src! })}
-                alt={file.name}
-                className="max-h-full max-w-full object-contain"
-                onLoad={() => addLoaded(file.id)}
-                onError={() => addFailed(file.id)}
-              />
-              {!loadedIds.has(file.id) && (
-                // pointer-events-none: this sits over the whole backdrop
-                // while the image decodes, but a click on it must still
-                // close the viewer like a click on the bare backdrop does
-                // (it falls through to the content div's own onClick).
-                <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-fg-muted">{t('file.loading')}</p>
-              )}
-            </>
+            <ImageZoom
+              key={file.id}
+              ref={imageZoomRef}
+              serverId={serverId}
+              file={file}
+              loaded={loadedIds.has(file.id)}
+              onLoaded={() => addLoaded(file.id)}
+              onFail={() => addFailed(file.id)}
+              onDragEnd={() => {
+                draggedRef.current = true
+              }}
+              onPercent={setScalePercent}
+            />
           ) : (
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )

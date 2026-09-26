@@ -30,6 +30,19 @@ export function imageSrc(f: FileView): 'preview' | 'file' | null {
   return RASTER.has(mime) && f.size <= IMAGE_FILE_MAX ? 'file' : null
 }
 
+// imageOriginalOk: whether the viewer may request the original
+// (mediaURL(..., 'full', id, { src: 'file' })) regardless of whether a
+// preview exists — same size rule as imageSrc's 'file' branch (GIF against
+// GIF_INLINE_MAX, everything else against IMAGE_FILE_MAX), but not gated on
+// has_preview: the viewer wants the original even when a preview exists,
+// the preview there is only ever a placeholder until it loads.
+export function imageOriginalOk(f: FileView): boolean {
+  const mime = (f.mime || '').toLowerCase()
+  if (!RASTER.has(mime)) return false
+  if (mime === 'image/gif') return f.size <= GIF_INLINE_MAX
+  return f.size <= IMAGE_FILE_MAX
+}
+
 export function fileKind(f: FileView): FileKind {
   if (imageSrc(f)) return 'image'
   const ext = extOf(f)
