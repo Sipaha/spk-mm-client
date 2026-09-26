@@ -95,7 +95,8 @@
   from /media/) becomes a card»).
 - `/media/` ходит к серверу только через «живой» воркер (`StatusLive`): офлайн, при переподключении
   и при `needs_reauth` `api.Service` как `media.Origin` отвечает `media.ErrNoServer` (404, в
-  негативный кэш не попадает) — иначе запрос уходил бы в сеть и падал 502, который UI запоминает.
+  негативный кэш не попадает) — иначе запрос уходил бы в сеть и падал 502, который UI запоминает;
+  имя кастомного эмодзи, уже известное воркеру, резолвится и офлайн (картинка может быть на диске).
   401 на картинку или имя эмодзи тоже не запоминается и ведёт воркер в повторный вход
   (`Worker.CheckAuth` → `signalAuth`), как любой другой запрос. — `TestMediaOriginFetchesOnlyWhileLive`,
   `TestMediaUnauthorizedAsksForSignIn`, `TestUnauthorizedIsNotRemembered`, `TestNotSignedInIsNotRemembered`.
