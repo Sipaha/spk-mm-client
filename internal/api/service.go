@@ -48,7 +48,8 @@ type Service struct {
 	badgeMu sync.Mutex
 
 	filesMu sync.Mutex
-	saved   map[string]string // "server/file id" → path saved this session
+	saved   map[string]string    // "server/file id" → path saved this session
+	saving  map[string]*download // "server/file id" → download in progress
 
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
@@ -68,7 +69,7 @@ var _ API = (*Service)(nil)
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
 	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
 		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv,
-		saved: map[string]string{}}
+		saved: map[string]string{}, saving: map[string]*download{}}
 	s.nq = newNotifyQueue(notifyBurst, s.deliver)
 	return s
 }

@@ -103,27 +103,12 @@ func (s *Service) saveFile(ctx context.Context, id int64, fileID string, open bo
 	if err != nil {
 		return SavedFile{}, err
 	}
-	rc := w.REST().WithHTTPClient(s.transfer)
-	ictx, cancel := s.bounded(ctx)
-	info, err := rc.FileInfo(ictx, fileID)
-	cancel()
-	if err != nil {
-		return SavedFile{}, fileError(err)
-	}
-	dir, err := downloadsDir(s.getenv)
-	if err != nil {
-		return SavedFile{}, coded(CodeInternal, err)
-	}
 	key := fmt.Sprintf("%d/%s", id, fileID)
-	path, ok := s.savedPath(key, info.Size)
-	if !ok {
-		dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
-		defer cancel()
-		if path, err = saveInto(dctx, rc, dir, fileID, info); err != nil {
-			return SavedFile{}, fileError(err)
-		}
-		s.remember(key, path)
-		slog.Info("file saved", "srv", id, "file", fileID, "path", path)
+	path, err := s.shared(ctx, key, func() (string, error) {
+		return s.fetchFile(ctx, w.REST().WithHTTPClient(s.transfer), id, fileID, key)
+	})
+	if err != nil {
+		return SavedFile{}, err
 	}
 	res := SavedFile{Path: path}
 	s.mu.Lock()
@@ -137,6 +122,68 @@ func (s *Service) saveFile(ctx context.Context, id int64, fileID string, open bo
 		}
 	}
 	return res, nil
+}
+
+// download is a save of one file in progress; callers asking for the same
+// file meanwhile wait for it instead of saving a second copy.
+type download struct {
+	done chan struct{}
+	path string
+	err  error
+}
+
+// shared runs fetch for key unless a save of key is already running, in
+// which case it waits for that one's result (each caller then opens the
+// file or not as it asked). A waiter whose ctx ends stops waiting; the save
+// goes on for the others.
+func (s *Service) shared(ctx context.Context, key string, fetch func() (string, error)) (string, error) {
+	s.filesMu.Lock()
+	d := s.saving[key]
+	if d == nil {
+		d = &download{done: make(chan struct{})}
+		s.saving[key] = d
+		s.filesMu.Unlock()
+		d.path, d.err = fetch()
+		s.filesMu.Lock()
+		delete(s.saving, key)
+		s.filesMu.Unlock()
+		close(d.done)
+		return d.path, d.err
+	}
+	s.filesMu.Unlock()
+	select {
+	case <-d.done:
+		return d.path, d.err
+	case <-ctx.Done():
+		return "", actionError(ctx.Err())
+	}
+}
+
+// fetchFile saves the file into the downloads directory, or finds the copy
+// saved earlier this session.
+func (s *Service) fetchFile(ctx context.Context, rc *rest.Client, id int64, fileID, key string) (string, error) {
+	ictx, cancel := s.bounded(ctx)
+	info, err := rc.FileInfo(ictx, fileID)
+	cancel()
+	if err != nil {
+		return "", fileError(err)
+	}
+	dir, err := downloadsDir(s.getenv)
+	if err != nil {
+		return "", coded(CodeInternal, err)
+	}
+	if path, ok := s.savedPath(key, info.Size); ok {
+		return path, nil
+	}
+	dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+	path, err := saveInto(dctx, rc, dir, fileID, info)
+	if err != nil {
+		return "", fileError(err)
+	}
+	s.remember(key, path)
+	slog.Info("file saved", "srv", id, "file", fileID, "path", path)
+	return path, nil
 }
 
 // maxSaved bounds the session's record of saved files.
@@ -196,6 +243,13 @@ func downloadsDir(getenv func(string) string) (string, error) {
 	return filepath.Join(home, "Downloads"), nil
 }
 
+// linkFile and renameFile are os.Link and os.Rename (tests: a file system
+// without hard links).
+var (
+	linkFile   = os.Link
+	renameFile = os.Rename
+)
+
 var errSizeMismatch = errors.New("file size differs from its info")
 
 // saveInto streams the file into a hidden ".<name>.part" in dir and, once
@@ -215,7 +269,15 @@ func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info mod
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(tmp) //nolint:errcheck // gone after a successful link; removes a failed download
+	// A failed download removes its .part. A published one does not: publish
+	// removed or renamed it, and after a rename the name may already be
+	// another download's .part.
+	published := false
+	defer func() {
+		if !published {
+			_ = os.Remove(tmp)
+		}
+	}()
 	n, err := io.Copy(f, io.LimitReader(resp.Body, info.Size+1))
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -226,7 +288,9 @@ func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info mod
 	if err != nil {
 		return "", err
 	}
-	return publish(tmp, dir, name)
+	path, err := publish(tmp, dir, name)
+	published = err == nil
+	return path, err
 }
 
 // uniqueNames yields name, "stem (1).ext", … "stem (999).ext".
@@ -270,14 +334,15 @@ func createExcl(dir, prefix, suffix string) (f *os.File, path string, err error)
 // name exists (even as a dangling symlink), so nothing is replaced and two
 // downloads never race for one name. Where hard links are not supported
 // (FAT, some network mounts), an O_EXCL placeholder reserves the name and
-// the rename replaces only that placeholder.
+// the rename replaces only that placeholder. On success tmp is gone.
 func publish(tmp, dir, name string) (string, error) {
 	path, err := "", errNoFreeName
 	uniqueNames(name, func(n string) bool {
 		p := filepath.Join(dir, n)
-		e := os.Link(tmp, p)
+		e := linkFile(tmp, p)
 		switch {
 		case e == nil:
+			_ = os.Remove(tmp) // still ours: the link holds the file
 			path, err = p, nil
 			return false
 		case errors.Is(e, fs.ErrExist):
@@ -289,7 +354,7 @@ func publish(tmp, dir, name string) (string, error) {
 			return false
 		}
 		_ = f.Close()
-		if re := os.Rename(tmp, fp); re != nil {
+		if re := renameFile(tmp, fp); re != nil {
 			_ = os.Remove(fp)
 			err = re
 			return false

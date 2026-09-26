@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/stretchr/testify/assert"
@@ -249,4 +252,70 @@ func TestDownloadsDirNeverTheHomeDirectory(t *testing.T) {
 	d, err := downloadsDir(func(string) string { return "" })
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, "Downloads"), d, "a dotfile from the server must not land next to ~/.profile")
+}
+
+// Clicks on one file while it is still downloading share that download: one
+// request, one copy; an Open that joined a Download still opens the file.
+func TestConcurrentSavesOfOneFileShareTheDownload(t *testing.T) {
+	f := newChatFixture(t)
+	dl := t.TempDir()
+	f.svc.getenv = downloadsIn(dl)
+	opened := &RecordingOpener{}
+	f.svc.SetFileOpener(opened.Open)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	fake.SetLatency("/api/v4/files/f-log", 300*time.Millisecond)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	res := make([]SavedFile, 3)
+	errs := make([]error, 3)
+	for i, save := range []func(context.Context, int64, string) (SavedFile, error){f.svc.DownloadFile, f.svc.DownloadFile, f.svc.OpenFile} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res[i], errs[i] = save(ctx, id, "f-log")
+		}()
+		time.Sleep(20 * time.Millisecond) // the first one is in flight
+	}
+	wg.Wait()
+	want := filepath.Join(dl, "server.log")
+	for i := range res {
+		require.NoError(t, errs[i])
+		assert.Equal(t, want, res[i].Path)
+	}
+	assert.False(t, res[0].Opened)
+	assert.True(t, res[2].Opened, "an Open that joined a Download still opens")
+	assert.Equal(t, []string{want}, opened.List())
+	assert.Equal(t, 1, fake.Hits("GET", "/api/v4/files/f-log"), "one download")
+	names, err := os.ReadDir(dl)
+	require.NoError(t, err)
+	assert.Len(t, names, 1, "one copy")
+}
+
+// Without hard links the finished .part is renamed away, and its name is
+// free at once: another download of a same-named file may take it for its
+// own .part before this one returns. Cleaning up must not delete that.
+func TestNoLinkFallbackLeavesAnotherDownloadsPartAlone(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer ts.Close()
+	dir := t.TempDir()
+	other := filepath.Join(dir, ".a.txt.part")
+	defer func(l func(string, string) error, r func(string, string) error) { linkFile, renameFile = l, r }(linkFile, renameFile)
+	linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: errors.ErrUnsupported} }
+	renameFile = func(from, to string) error {
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+		return os.WriteFile(other, []byte("partial"), 0o644) // the other download
+	}
+	p, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "f1", Name: "a.txt", Size: 10})
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "a.txt"), p)
+	assert.FileExists(t, other, "another download's .part survives")
+	data, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "0123456789", string(data))
 }
