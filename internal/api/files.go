@@ -166,11 +166,15 @@ func (s *Service) fetchFile(ctx context.Context, rc *rest.Client, id int64, file
 	info, err := rc.FileInfo(ictx, fileID)
 	cancel()
 	if err != nil {
-		return "", fileError(err)
+		err = fileError(err)
+		s.failEarly(ctx, id, fileID, model.FileInfo{}, err)
+		return "", err
 	}
 	dir, err := downloadsDir(s.getenv)
 	if err != nil {
-		return "", coded(CodeInternal, err)
+		cerr := coded(CodeInternal, err)
+		s.failEarly(ctx, id, fileID, info, cerr)
+		return "", cerr
 	}
 	if path, dl, ok := s.savedPath(key, info.Size); ok {
 		s.remember(key, path, s.raiseDownload(ctx, dl, id, fileID, info, path))

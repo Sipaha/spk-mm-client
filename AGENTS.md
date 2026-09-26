@@ -151,8 +151,14 @@
   реальную загрузку (присоединившиеся к общей её не дублируют; повторное скачивание уже сохранённого
   файла поднимает запись наверх). Прогресс — событие `downloads_changed` не чаще ~4 раз в секунду на
   загрузку. «Показать в папке» — D-Bus `FileManager1.ShowItems` с таймаутом 2 с только по действию
-  пользователя, при ошибке — каталог через тот же opener, что у «Открыть». —
-  `internal/store/downloads_test.go`, `internal/api/downloads_test.go`, `internal/desktop/showitem_test.go`.
+  пользователя, при ошибке — каталог через тот же opener, что у «Открыть». Сбой до начала загрузки
+  (FileInfo, каталог загрузок) тоже попадает в список как `failed` с кодом. id записей не
+  переиспользуются (`AUTOINCREMENT`), поднимается только запись того же файла (сервер, id, путь);
+  путь из БД доверяется, только если он абсолютный и ведёт на обычный файл (`os.Lstat`, не симлинк). —
+  `TestDownloadsKeepTheLatestHundred`, `TestInterruptedDownloadsFailOnOpen`, `TestDownloadIDsAreNeverReused`,
+  `TestSharedDownloadIsOneEntry`, `TestDownloadsAreListedNewestFirst`, `TestRemovedNewestEntryIsNotConfusedWithTheNext`,
+  `TestProgressIsThrottled`, `TestFailureBeforeTheDownloadIsListed`, `TestListedPathMustBeARegularAbsoluteFile`,
+  `TestOpenDownloadOpensSafeTypesOnly`, `TestRevealFallsBackToOpeningTheFolder`, `TestShowItemGivesUpOnAHungBus`.
 - «Открыть» запускает системным приложением только инертные типы из allowlist (растровые
   картинки, PDF, текст/лог/csv/json/md, макро-свободные офисные документы, аудио/видео,
   распространённые архивы); всё остальное (включая `.html`/`.svg`/лаунчеры) — только сохраняется.

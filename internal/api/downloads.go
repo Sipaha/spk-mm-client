@@ -112,9 +112,6 @@ func (s *Service) finishDownload(ctx context.Context, dl int64, path string, err
 	if dl == 0 {
 		return
 	}
-	s.filesMu.Lock()
-	delete(s.progress, dl)
-	s.filesMu.Unlock()
 	code, state := "", store.DownloadDone
 	if err != nil {
 		code, state = CodeInternal, store.DownloadFailed
@@ -126,6 +123,11 @@ func (s *Service) finishDownload(ctx context.Context, dl int64, path string, err
 	if ferr := s.st.FinishDownload(context.WithoutCancel(ctx), dl, path, code, nowMs()); ferr != nil {
 		slog.Warn("could not record the download's result", "download", dl, "err", ferr)
 	}
+	// Only after the result is stored: a Downloads() in between must not
+	// see a running entry with 0 bytes.
+	s.filesMu.Lock()
+	delete(s.progress, dl)
+	s.filesMu.Unlock()
 	s.downloadsChanged(map[string]any{"id": dl, "state": state})
 }
 
@@ -133,7 +135,8 @@ func (s *Service) finishDownload(ctx context.Context, dl int64, path string, err
 // the top, or lists it anew if the user removed it; returns its entry.
 func (s *Service) raiseDownload(ctx context.Context, dl, srv int64, fileID string, info model.FileInfo, path string) int64 {
 	if dl != 0 {
-		ok, err := s.st.RaiseDownload(context.WithoutCancel(ctx), dl, nowMs())
+		ok, err := s.st.RaiseDownload(context.WithoutCancel(ctx),
+			store.Download{ID: dl, ServerID: srv, FileID: fileID, Path: path}, nowMs())
 		if err != nil {
 			slog.Warn("could not raise the download", "download", dl, "err", err)
 			return dl
@@ -148,12 +151,23 @@ func (s *Service) raiseDownload(ctx context.Context, dl, srv int64, fileID strin
 	return dl
 }
 
-// fileThere: the saved file is still in place, unchanged in size.
+// failEarly lists a download that failed before it started (file info,
+// downloads folder); info.Name may be empty: the file id stands in.
+func (s *Service) failEarly(ctx context.Context, srv int64, fileID string, info model.FileInfo, err error) {
+	if info.Name == "" {
+		info.Name = fileID
+	}
+	s.finishDownload(ctx, s.startDownload(ctx, srv, fileID, info), "", err)
+}
+
+// fileThere: the saved file is still in place, unchanged in size. The path
+// comes from the DB: only an absolute path to a regular file (not a
+// symlink planted in its place) counts.
 func fileThere(path string, size int64) bool {
-	if path == "" {
+	if !filepath.IsAbs(path) {
 		return false
 	}
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() == size
 }
 

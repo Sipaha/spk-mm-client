@@ -11,11 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adrg/xdg"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mm/rest"
+	"github.com/spk/spk-mm-client/internal/store"
 )
 
 // downloadEvents collects downloads_changed payloads from their own
@@ -296,4 +298,96 @@ func TestSaveIntoReportsProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, got)
 	assert.Equal(t, int64(10), got[len(got)-1], "every byte is counted")
+}
+
+// A remembered entry id must not raise another download's entry after the
+// newest one was removed (SQLite would hand its rowid out again).
+func TestRemovedNewestEntryIsNotConfusedWithTheNext(t *testing.T) {
+	f := newChatFixture(t)
+	f.svc.getenv = downloadsIn(t.TempDir())
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	_, err := f.svc.DownloadFile(ctx, id, "f-spec")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.RemoveDownload(ctx, downloadsList(t, f.svc)[0].ID))
+	logFile, err := f.svc.DownloadFile(ctx, id, "f-log")
+	require.NoError(t, err)
+	_, err = f.svc.DownloadFile(ctx, id, "f-spec")
+	require.NoError(t, err)
+
+	list := downloadsList(t, f.svc)
+	require.Len(t, list, 2)
+	assert.Equal(t, "spec.pdf", list[0].Name)
+	assert.Equal(t, "server.log", list[1].Name, "the other entry is untouched")
+	assert.Equal(t, logFile.Path, list[1].Path)
+	assert.NotEqual(t, list[0].ID, list[1].ID)
+}
+
+func TestListedPathMustBeARegularAbsoluteFile(t *testing.T) {
+	f := newChatFixture(t)
+	f.svc.getenv = downloadsIn(t.TempDir())
+	opened := &RecordingOpener{}
+	f.svc.SetFileOpener(opened.Open)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	r, err := f.svc.DownloadFile(ctx, id, "f-log")
+	require.NoError(t, err)
+	d := downloadsList(t, f.svc)[0]
+
+	elsewhere := filepath.Join(t.TempDir(), "same-size")
+	data, err := os.ReadFile(r.Path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(elsewhere, data, 0o644))
+	require.NoError(t, os.Remove(r.Path))
+	require.NoError(t, os.Symlink(elsewhere, r.Path))
+	assert.False(t, downloadsList(t, f.svc)[0].Exists, "a symlink in the file's place is not the file")
+	_, err = f.svc.OpenDownload(ctx, d.ID)
+	assert.Equal(t, CodeNoFile, codeOf(err))
+
+	rel, err := f.st.AddDownload(ctx, store.Download{ServerID: id, FileID: "f-x", Name: "x.log", Size: int64(len(data)), StartedAt: 1})
+	require.NoError(t, err)
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	relPath, err := filepath.Rel(wd, elsewhere)
+	require.NoError(t, err)
+	require.NoError(t, f.st.FinishDownload(ctx, rel, relPath, "", 2))
+	for _, v := range downloadsList(t, f.svc) {
+		if v.ID == rel {
+			assert.False(t, v.Exists, "a relative path from the DB is never trusted")
+		}
+	}
+	_, err = f.svc.OpenDownload(ctx, rel)
+	assert.Equal(t, CodeNoFile, codeOf(err))
+	assert.Equal(t, CodeNoFile, codeOf(f.svc.RevealDownload(ctx, rel)))
+	assert.Empty(t, opened.List())
+}
+
+func TestFailureBeforeTheDownloadIsListed(t *testing.T) {
+	f := newChatFixture(t)
+	f.svc.getenv = downloadsIn(t.TempDir())
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	_, err := f.svc.DownloadFile(context.Background(), id, "f-nope")
+	require.Equal(t, CodeNoFile, codeOf(err))
+	list := downloadsList(t, f.svc)
+	require.Len(t, list, 1)
+	assert.Equal(t, "failed", list[0].State)
+	assert.Equal(t, CodeNoFile, list[0].Error)
+	assert.Equal(t, "f-nope", list[0].Name, "the name is unknown: the file id stands in")
+	assert.Equal(t, "f-nope", list[0].FileID)
+
+	f.svc.getenv = func(string) string { return "" }
+	t.Setenv("HOME", "")
+	xdgPrev := xdg.UserDirs.Download
+	t.Cleanup(func() { xdg.UserDirs.Download = xdgPrev })
+	xdg.UserDirs.Download = ""
+	_, err = f.svc.DownloadFile(context.Background(), id, "f-spec")
+	require.Equal(t, CodeInternal, codeOf(err))
+	list = downloadsList(t, f.svc)
+	require.Len(t, list, 2)
+	assert.Equal(t, "spec.pdf", list[0].Name, "no downloads folder: listed with its name")
+	assert.Equal(t, "failed", list[0].State)
+	assert.Equal(t, CodeInternal, list[0].Error)
 }

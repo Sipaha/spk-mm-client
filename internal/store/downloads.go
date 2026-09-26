@@ -81,10 +81,13 @@ func (s *Store) FinishDownload(ctx context.Context, id int64, path, errCode stri
 	return err
 }
 
-// RaiseDownload moves an entry to the top of the list; false: there is no
-// such entry (the user removed it).
-func (s *Store) RaiseDownload(ctx context.Context, id int64, at int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE downloads SET started_at = `+onTop+` WHERE id = ?`, at, id)
+// RaiseDownload moves the entry d.ID to the top of the list if it is still
+// the entry of that file (server, file id and path match); false: there is
+// no such entry (the user removed it).
+func (s *Store) RaiseDownload(ctx context.Context, d Download, at int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE downloads SET started_at = `+onTop+` WHERE id = ? AND server_id = ? AND file_id = ? AND path = ?`,
+		at, d.ID, d.ServerID, d.FileID, d.Path)
 	if err != nil {
 		return false, err
 	}

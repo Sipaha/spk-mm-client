@@ -96,7 +96,10 @@ const (
 	EventOpenChannel    = "open_channel"    // payload: server_id, channel_id — a notification was clicked
 	// EventDownloadsChanged: the downloads list changed. Payload: id of the
 	// entry (none: many changed); with "received" — progress of a download
-	// (at most ~4 a second each); with "state" — it ended (done | failed).
+	// (at most ~4 a second each; not final — the last bytes may arrive
+	// without an event); with "state" — it ended (done | failed): the UI
+	// reloads the list then (and on events with neither field), and only
+	// patches the row in place on "received".
 	EventDownloadsChanged = "downloads_changed"
 )
 

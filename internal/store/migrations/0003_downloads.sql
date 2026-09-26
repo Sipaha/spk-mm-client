@@ -3,8 +3,10 @@
 -- started_at (raised when a saved file is asked for again). state is
 -- downloading | done | failed; error holds the failure's API code. Not tied
 -- to servers: the saved file outlives its server entry. Times are unix ms.
+-- AUTOINCREMENT: ids are never reused, so a remembered or stale id cannot
+-- point at another download after the newest entry was removed.
 CREATE TABLE downloads (
-    id          INTEGER PRIMARY KEY,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     server_id   INTEGER NOT NULL,
     file_id     TEXT    NOT NULL,
     name        TEXT    NOT NULL,

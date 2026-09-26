@@ -42,7 +42,10 @@ func TestDownloadLifecycle(t *testing.T) {
 	assert.Equal(t, DownloadFailed, d.State)
 	assert.Equal(t, "no_file", d.Error)
 
-	ok, err := st.RaiseDownload(ctx, a, 300)
+	ok, err := st.RaiseDownload(ctx, Download{ID: a, ServerID: 1, FileID: "f-b.txt", Path: "/dl/a.txt"}, 300)
+	require.NoError(t, err)
+	assert.False(t, ok, "only the entry of that very file is raised")
+	ok, err = st.RaiseDownload(ctx, Download{ID: a, ServerID: 1, FileID: "f-a.txt", Path: "/dl/a.txt"}, 300)
 	require.NoError(t, err)
 	assert.True(t, ok)
 	list, err = st.ListDownloads(ctx)
@@ -52,7 +55,7 @@ func TestDownloadLifecycle(t *testing.T) {
 	require.NoError(t, st.RemoveDownload(ctx, a))
 	_, err = st.GetDownload(ctx, a)
 	require.ErrorIs(t, err, ErrNotFound)
-	ok, err = st.RaiseDownload(ctx, a, 400)
+	ok, err = st.RaiseDownload(ctx, Download{ID: a, ServerID: 1, FileID: "f-a.txt", Path: "/dl/a.txt"}, 400)
 	require.NoError(t, err)
 	assert.False(t, ok, "a removed entry is not raised")
 }
@@ -109,4 +112,15 @@ func TestInterruptedDownloadsFailOnOpen(t *testing.T) {
 	d, err = st.GetDownload(ctx, done)
 	require.NoError(t, err)
 	assert.Equal(t, DownloadDone, d.State, "finished downloads are left alone")
+}
+
+func TestDownloadIDsAreNeverReused(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	addDownload(t, st, "a.txt", 1)
+	b := addDownload(t, st, "b.txt", 2)
+	require.NoError(t, st.FinishDownload(ctx, b, "/dl/b.txt", "", 3))
+	require.NoError(t, st.RemoveDownload(ctx, b))
+	c := addDownload(t, st, "c.txt", 4)
+	assert.Greater(t, c, b, "a remembered id never points at another download")
 }
