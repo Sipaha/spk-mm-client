@@ -93,6 +93,35 @@
   откатывается на карточку файла, а не остаётся сломанной. —
   `frontend/src/components/Attachments.test.tsx` («a single image that fails to load (404/413/415
   from /media/) becomes a card»).
+- `/media/` ходит к серверу только через «живой» воркер (`StatusLive`): офлайн, при переподключении
+  и при `needs_reauth` `api.Service` как `media.Origin` отвечает `media.ErrNoServer` (404, в
+  негативный кэш не попадает) — иначе запрос уходил бы в сеть и падал 502, который UI запоминает.
+  401 на картинку или имя эмодзи тоже не запоминается и ведёт воркер в повторный вход
+  (`Worker.CheckAuth` → `signalAuth`), как любой другой запрос. — `TestMediaOriginFetchesOnlyWhileLive`,
+  `TestMediaUnauthorizedAsksForSignIn`, `TestUnauthorizedIsNotRemembered`, `TestNotSignedInIsNotRemembered`.
+- UI помнит неудачную загрузку картинки/фрагмента/кастомного эмодзи только до следующего перехода
+  сервера в `live`: store держит «эпоху живости» на сервер (`liveEpochs`, растёт на каждом
+  переходе в `live` в `setServers`), `useLoadFailure`/`useTextFile(url, epoch)` сбрасывают отказ
+  при смене эпохи — иначе клиент, стартовавший офлайн, показывал бы инициалы и карточки весь сеанс.
+  — `frontend/src/store.test.ts` («a server going live bumps its live epoch; other updates do not»),
+  `Avatar.test.tsx` («a failed picture is tried again once the server goes live again»),
+  `Attachments.test.tsx` («a failed image and a failed snippet are tried again once the server
+  goes live again»).
+- После каждого bootstrap воркер один раз (в фоне, через общий лимитер) перечитывает профили,
+  которые держал до него (из снимка или с прошлого потока): `POST users/ids?since=<начало дыры −
+  sinceMargin>`, без метки — все пачками по 100; `state.RefreshUsers` не откатывает более свежий
+  профиль из события (`update_at`) и шлёт `changed()` только при видимом изменении. Иначе
+  аватар (версия — часть immutable-URL) и имя, изменённые в офлайне, не обновились бы до живого
+  `user_updated`. — `TestKnownUsersAreRefreshedOnceAfterBootstrap`,
+  `TestRefreshUsersKeepsNewerProfilesAndReportsChanges`.
+- Скачивание/«Открыть» одного файла (`сервер/id`), пока он качается, присоединяются к той же
+  загрузке (`Service.shared`): один запрос, одна копия; присоединившееся «Открыть» после неё
+  открывает файл по своему allowlist. UI сразу показывает «Скачивается <имя>…» (липкое
+  уведомление без авто-скрытия), его заменяет «Сохранено…» или ошибка. Запасной путь без жёстких
+  ссылок не удаляет после переименования путь `.part` — его уже может занять чужая одноимённая
+  загрузка. — `TestConcurrentSavesOfOneFileShareTheDownload`,
+  `TestNoLinkFallbackLeavesAnotherDownloadsPartAlone`, `frontend/src/chat.test.ts` («a download in
+  progress is shown at once and stays until it is replaced»).
 - Рамка картинки и текстового фрагмента имеет окончательный размер до загрузки содержимого —
   лента со скролл-якорем не прыгает при догрузке превью. —
   `frontend/src/components/Attachments.test.tsx` («the image box has its final size before the
@@ -134,7 +163,9 @@
 - Memory budget is **Private_Dirty** of all app processes (a guideline target of ~150 MB with 2–3 servers/~100 channels — usability comes first, no growth over time is the hard requirement), not PSS: PSS includes a share of WebKit/GTK/ICU libraries shared with other apps and swings with what else runs (150–196 MB PSS vs ~73–80 MB Private_Dirty for the empty shell; release build and WebKit GPU policy don't change it). Measure with `scripts/pss.sh <pid>` (prints both). — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
 - Wails beta.25 Linux tray: `SystemTray.SetTooltip` is a no-op and the StatusNotifierItem `Id`/`ToolTip` are frozen to the label when the tray starts (default "Wails"); only `SetLabel` (SNI `Title`) and `SetIcon` update live. Tray/notification calls reach GTK/D-Bus with no timeout — keep them off service goroutines (`offerLatest`, `asyncSender`). — `internal/desktop/tray.go` (`setTrayText`, `trayBadge`), `internal/desktop/async.go` (`TestAsyncSenderDetachesAHungSendAndResumes`).
 - Fake-server test API (dev/e2e only, gated by `--test-api`): `/api/_test/fake/post`, `/api/_test/fake/drop` (simulate a lost WS connection — `{lose:true}` drops the server's dead-letter buffer too, forcing a resync instead of a resume), `/api/_test/fake/revoke` (expire the session), `/api/_test/fake/status` (set a user's presence status), `/api/_test/fake/picture` (bump a user's avatar version), `/api/_test/fake/react` (react as another user, `remove:true` to undo), `/api/_test/opened-files` (files the fake file opener was asked to open) and `SPK_MM_CLIENT_DOWNLOADS` (downloads directory override for e2e), plus `/api/_test/notifications` and `/api/_test/notification-click` for asserting on desktop-notification delivery/click without a real OS notifier. — `cmd/spk-mm-client/browser.go`.
-- Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello), `SetFailure(pathPart, status)` (inject an HTTP error); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTimeout`, `refreshRetry`, `sinceLimit`). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
+- Go-level fake network controls for `mmsync` tests: `mmfake.Server.SetDown` (every request 503 — server unreachable), `SetLatency(pathPart, d)` (slow endpoint, e.g. keep a resync in flight), `RejectResumes` (close resumed sockets without a hello), `SetFailure(pathPart, status)` (inject an HTTP error), `UsersSince` (the `since=` of every
+`POST /users/ids` that carried one — the fake honours it: a fake user's `update_at` is its picture
+time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTimeout`, `refreshRetry`, `sinceLimit`). The harness `useClock()` gives the worker a clock the test can jump forward while the fake keeps real time. — `internal/mmfake/net.go`, `internal/mmsync/harness_test.go`.
 - `--mm-fake-channels N` (browser mode) seeds N extra open channels (`c-load-001`…, 20 posts each) in the fake server for memory/perf checks; the desktop `--mm-fake` flag (dev builds only) starts the same fake server in-process and signs in as alice automatically — always point it at its own `SPK_MM_CLIENT_HOME` (a fresh temp dir), never at the live client's data dir, and it clears any stale fake-mode server entries from a previous dev run before adding the live one. — `cmd/spk-mm-client/main.go`, `cmd/spk-mm-client/run_desktop_wails.go`.
 - Testing the virtualized feed under Vitest/jsdom needs a manual layout stub: jsdom never computes real layout, so `HTMLElement.prototype.offsetHeight` (row height for the virtualizer) and `scrollTo` (history-load anchor) must be overridden in `beforeEach`/restored in `afterEach`, not left at jsdom's defaults (0 / no-op that doesn't move `scrollTop`). — `frontend/src/components/Feed.test.tsx`.
 - `ServerRail`'s per-server button folds the unread/mention badge into its own accessible name ("`<name> — Mentions: N`" or "`<name> — Unread messages`"), not just the sibling badge `<span>` (Task 12 fix). Playwright's `getByLabel`/`getByRole(name:)` match is a substring by default, so `page.getByRole('navigation').getByLabel('Mentions: 1')` also matches that button (whose name contains "Mentions: 1") in addition to the intended badge — two hits trip strict mode. e2e assertions on these badge labels need `{ exact: true }`. — `frontend/src/components/ServerRail.tsx`, `tests/e2e/chat.spec.ts`.
