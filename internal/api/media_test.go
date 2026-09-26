@@ -67,6 +67,7 @@ func TestMediaOriginFetchesOnlyWhileLive(t *testing.T) {
 	id := f.signIn(fake, "alice")
 	ctx := context.Background()
 	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	f.eventually(func() bool { eid, err := f.svc.EmojiID(ctx, id, "partyparrot"); return err == nil && eid == "e-parrot" }, "custom emoji name not resolved")
 
 	fake.SetDown(true)
 	fake.DropConnections(false)
@@ -76,6 +77,9 @@ func TestMediaOriginFetchesOnlyWhileLive(t *testing.T) {
 	assert.ErrorIs(t, err, media.ErrNoServer, "not live: no fetch")
 	_, err = f.svc.EmojiID(ctx, id, "not_known_yet")
 	assert.ErrorIs(t, err, media.ErrNoServer)
+	eid, err := f.svc.EmojiID(ctx, id, "partyparrot")
+	require.NoError(t, err, "a name already known resolves without the network: its picture may be on disk")
+	assert.Equal(t, "e-parrot", eid)
 	assert.Equal(t, hits, fake.Hits("GET", "/api/v4/users/u-bob/image"))
 
 	fake.SetDown(false)

@@ -43,8 +43,17 @@ func (s *Service) Get(ctx context.Context, serverID int64, path string, hdr http
 	return resp, err
 }
 
-// EmojiID implements media.Origin.
+// EmojiID implements media.Origin. A name already in the worker's list
+// resolves while offline too (no request; its picture may be on disk);
+// asking the server needs a live worker.
 func (s *Service) EmojiID(ctx context.Context, serverID int64, name string) (string, error) {
+	if m := s.manager(); m != nil {
+		if w := m.Worker(serverID); w != nil && w.Status() != mmsync.StatusNeedsReauth {
+			if id, ok := w.State().CustomEmojiID(name); ok {
+				return id, nil
+			}
+		}
+	}
 	w := s.running(serverID)
 	if w == nil {
 		return "", media.ErrNoServer
