@@ -88,6 +88,7 @@ func (w *Worker) EmojiID(ctx context.Context, name string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
+		w.CheckAuth(err)
 		return "", err
 	}
 	w.st.AddCustomEmoji(e)

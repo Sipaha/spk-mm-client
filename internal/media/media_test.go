@@ -340,6 +340,31 @@ func TestFailuresAreCachedBriefly(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode, "…but only for 30 s")
 }
 
+// 401 means the session died: the worker asks for a new sign-in, and the
+// picture must load as soon as it is signed in again — not in 5 minutes.
+func TestUnauthorizedIsNotRemembered(t *testing.T) {
+	code := atomic.Int32{}
+	code.Store(http.StatusUnauthorized)
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) {
+		if c := int(code.Load()); c != 0 {
+			w.WriteHeader(c)
+			return
+		}
+		_, _ = w.Write(pngOf(2, 2))
+	})
+	resp, _ := e.get("/media/1/avatar/u1")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	code.Store(0)
+	resp, _ = e.get("/media/1/avatar/u1")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "a 401 is not remembered")
+	code.Store(http.StatusForbidden)
+	resp, _ = e.get("/media/1/avatar/u2")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	code.Store(0)
+	resp, _ = e.get("/media/1/avatar/u2")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a 403 (no permission) is")
+}
+
 func TestUpstreamRefusalAndTimeout(t *testing.T) {
 	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v4/files/slow/thumbnail" {

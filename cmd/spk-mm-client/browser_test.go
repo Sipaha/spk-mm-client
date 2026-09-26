@@ -60,6 +60,10 @@ func TestMediaNeedsThePageCookie(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
 	require.NoError(t, err)
+	require.Eventually(t, func() bool { // media is fetched only while live
+		list, err := svc.ListServers(ctx)
+		return err == nil && len(list) == 1 && list[0].State == "live"
+	}, 10*time.Second, 20*time.Millisecond)
 	u := fmt.Sprintf("%s/media/%d/avatar/u-bob?v=0", ts.URL, srv.ID)
 
 	resp, err := http.Get(u)

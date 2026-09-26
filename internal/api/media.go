@@ -10,15 +10,19 @@ import (
 
 var _ media.Origin = (*Service)(nil)
 
-// running is the worker of a signed-in server with a live session; media
-// never fetches for a server that needs a new sign-in.
+// running is the worker of a signed-in server whose session is live. Media
+// never fetches otherwise: offline or reconnecting the request would fail
+// (a 502 the UI remembers per picture), and a server that needs a new
+// sign-in must not be asked at all. ErrNoServer (404) is not remembered by
+// the cache, and the UI retries its failed pictures when the server goes
+// live again.
 func (s *Service) running(id int64) *mmsync.Worker {
 	m := s.manager()
 	if m == nil {
 		return nil
 	}
 	w := m.Worker(id)
-	if w == nil || w.Status() == mmsync.StatusNeedsReauth {
+	if w == nil || w.Status() != mmsync.StatusLive {
 		return nil
 	}
 	return w
@@ -32,7 +36,11 @@ func (s *Service) Get(ctx context.Context, serverID int64, path string, hdr http
 	if w == nil {
 		return nil, media.ErrNoServer
 	}
-	return w.REST().WithHTTPClient(s.transfer).Stream(ctx, path, hdr)
+	resp, err := w.REST().WithHTTPClient(s.transfer).Stream(ctx, path, hdr)
+	if err != nil {
+		w.CheckAuth(err) // a 401: the session died, ask for a new sign-in
+	}
+	return resp, err
 }
 
 // EmojiID implements media.Origin.

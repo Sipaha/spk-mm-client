@@ -59,8 +59,9 @@ const (
 )
 
 var (
-	// ErrNoServer means the server id is unknown or not signed in (404).
-	ErrNoServer = errors.New("media: server not signed in")
+	// ErrNoServer means the server id is unknown, not signed in or not live
+	// (404, not remembered).
+	ErrNoServer = errors.New("media: server not signed in or not live")
 	errTooLarge = errors.New("media: object too large")
 	errType     = errors.New("media: content type not allowed")
 	errUpstream = errors.New("media: unexpected upstream status")
@@ -418,9 +419,11 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	}
 	c.mu.Lock()
 	delete(c.inflight, key)
-	// A server that is not signed in yet is not remembered: its pictures
-	// must appear as soon as it signs in (asking again costs no network).
-	if status != 0 && !errors.Is(err, ErrNoServer) {
+	// A server that is not signed in (or not live) yet is not remembered:
+	// its pictures must appear as soon as it is (asking again costs no
+	// network). Nor is a 401: the session died, the worker asks for a new
+	// sign-in, and the picture must load once it is signed in again.
+	if status != 0 && !errors.Is(err, ErrNoServer) && !unauthorized(err) {
 		ttl := negTTLTransient
 		switch status {
 		case http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
@@ -531,6 +534,11 @@ func (c *Cache) forget(name string) {
 		c.total -= e.size
 		delete(c.index, name)
 	}
+}
+
+func unauthorized(err error) bool {
+	var re *rest.Error
+	return errors.As(err, &re) && re.Status == http.StatusUnauthorized
 }
 
 func statusFor(err error) int {

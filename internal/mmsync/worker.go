@@ -244,6 +244,15 @@ func (w *Worker) Nudge() {
 	}
 }
 
+// CheckAuth sends a request error made through REST() outside the worker
+// (media fetches) down the worker's re-auth path: a 401 ends the session
+// and the server asks for a new sign-in.
+func (w *Worker) CheckAuth(err error) {
+	if sessionExpired(err) {
+		w.signalAuth()
+	}
+}
+
 func (w *Worker) signalAuth() {
 	select {
 	case w.authFail <- struct{}{}:
