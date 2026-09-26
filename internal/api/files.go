@@ -172,16 +172,21 @@ func (s *Service) fetchFile(ctx context.Context, rc *rest.Client, id int64, file
 	if err != nil {
 		return "", coded(CodeInternal, err)
 	}
-	if path, ok := s.savedPath(key, info.Size); ok {
+	if path, dl, ok := s.savedPath(key, info.Size); ok {
+		s.remember(key, path, s.raiseDownload(ctx, dl, id, fileID, info, path))
 		return path, nil
 	}
+	dl := s.startDownload(ctx, id, fileID, info)
 	dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
-	path, err := saveInto(dctx, rc, dir, fileID, info)
+	path, err := saveInto(dctx, rc, dir, fileID, info, s.meterFor(dl))
 	if err != nil {
-		return "", fileError(err)
+		err = fileError(err)
+		s.finishDownload(ctx, dl, "", err)
+		return "", err
 	}
-	s.remember(key, path)
+	s.finishDownload(ctx, dl, path, nil)
+	s.remember(key, path, dl)
 	slog.Info("file saved", "srv", id, "file", fileID, "path", path)
 	return path, nil
 }
@@ -189,7 +194,14 @@ func (s *Service) fetchFile(ctx context.Context, rc *rest.Client, id int64, file
 // maxSaved bounds the session's record of saved files.
 const maxSaved = 512
 
-func (s *Service) remember(key, path string) {
+// savedEntry is a file saved this session and its downloads list entry
+// (0: unlisted).
+type savedEntry struct {
+	path string
+	dl   int64
+}
+
+func (s *Service) remember(key, path string, dl int64) {
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
 	if _, ok := s.saved[key]; !ok && len(s.saved) >= maxSaved {
@@ -198,22 +210,22 @@ func (s *Service) remember(key, path string) {
 			break
 		}
 	}
-	s.saved[key] = path
+	s.saved[key] = savedEntry{path: path, dl: dl}
 }
 
-// savedPath: the file saved earlier this session, if it is still there
-// unchanged (same size).
-func (s *Service) savedPath(key string, size int64) (string, bool) {
+// savedPath: the file saved earlier this session and its list entry, if
+// it is still there unchanged (same size).
+func (s *Service) savedPath(key string, size int64) (string, int64, bool) {
 	s.filesMu.Lock()
-	p, ok := s.saved[key]
+	e, ok := s.saved[key]
 	s.filesMu.Unlock()
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
-	if fi, err := os.Stat(p); err != nil || fi.Size() != size {
-		return "", false
+	if fi, err := os.Stat(e.path); err != nil || fi.Size() != size {
+		return "", 0, false
 	}
-	return p, true
+	return e.path, e.dl, true
 }
 
 func fileError(err error) error {
@@ -255,7 +267,8 @@ var errSizeMismatch = errors.New("file size differs from its info")
 // saveInto streams the file into a hidden ".<name>.part" in dir and, once
 // complete and of the declared size, links it to a free final name: a
 // partial file never appears under the final name, and nothing is replaced.
-func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info model.FileInfo) (string, error) {
+// progress (nil: none) counts the bytes as they arrive.
+func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info model.FileInfo, progress *meter) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -278,7 +291,11 @@ func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info mod
 			_ = os.Remove(tmp)
 		}
 	}()
-	n, err := io.Copy(f, io.LimitReader(resp.Body, info.Size+1))
+	body := io.LimitReader(resp.Body, info.Size+1)
+	if progress != nil {
+		body = io.TeeReader(body, progress)
+	}
+	n, err := io.Copy(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

@@ -72,6 +72,18 @@ type API interface {
 	// Wails logs binding results at Debug, so its log level must never be
 	// raised to Debug in a build that ships (see internal/desktop/run.go).
 	MediaStreamBase(ctx context.Context) (string, error)
+
+	// Downloads is the browser-like list of saved files, newest first.
+	Downloads(ctx context.Context) ([]DownloadView, error)
+	// OpenDownload opens a listed file (OpenFile's allowlist): false when
+	// its type is only saved.
+	OpenDownload(ctx context.Context, id int64) (bool, error)
+	// RevealDownload shows a listed file in the file manager.
+	RevealDownload(ctx context.Context, id int64) error
+	// RemoveDownload drops an entry (not the file); ClearDownloads drops
+	// every finished one. Downloads in progress stay.
+	RemoveDownload(ctx context.Context, id int64) error
+	ClearDownloads(ctx context.Context) error
 }
 
 // Event types pushed to the UI.
@@ -82,6 +94,10 @@ const (
 	EventSidebarChanged = "sidebar_changed" // payload: server_id
 	EventChannelChanged = "channel_changed" // payload: server_id, channel_id
 	EventOpenChannel    = "open_channel"    // payload: server_id, channel_id — a notification was clicked
+	// EventDownloadsChanged: the downloads list changed. Payload: id of the
+	// entry (none: many changed); with "received" — progress of a download
+	// (at most ~4 a second each); with "state" — it ended (done | failed).
+	EventDownloadsChanged = "downloads_changed"
 )
 
 // Error codes. The UI maps them to localized messages (frontend/src/errors.ts).

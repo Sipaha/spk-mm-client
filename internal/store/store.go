@@ -56,6 +56,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := s.failInterrupted(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("interrupted downloads: %w", err)
+	}
 	return s, nil
 }
 

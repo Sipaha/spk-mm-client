@@ -25,6 +25,34 @@ type fakeAPI struct {
 	added   string
 	sent    []string
 	reacted []string
+	dl      []string
+}
+
+func (f *fakeAPI) Downloads(context.Context) ([]api.DownloadView, error) {
+	return []api.DownloadView{{ID: 7, Name: "a.pdf", State: "done", Exists: true, Openable: true}}, nil
+}
+
+func (f *fakeAPI) OpenDownload(_ context.Context, id int64) (bool, error) {
+	f.dl = append(f.dl, fmt.Sprintf("open %d", id))
+	return true, nil
+}
+
+func (f *fakeAPI) RevealDownload(_ context.Context, id int64) error {
+	f.dl = append(f.dl, fmt.Sprintf("reveal %d", id))
+	if id == 0 {
+		return &api.CodedError{Code: api.CodeNoFile}
+	}
+	return nil
+}
+
+func (f *fakeAPI) RemoveDownload(_ context.Context, id int64) error {
+	f.dl = append(f.dl, fmt.Sprintf("remove %d", id))
+	return nil
+}
+
+func (f *fakeAPI) ClearDownloads(context.Context) error {
+	f.dl = append(f.dl, "clear")
+	return nil
 }
 
 func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message string) error {
@@ -223,4 +251,40 @@ func TestChatRoutes(t *testing.T) {
 	raw, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `"/media"`, string(raw))
+}
+
+func TestDownloadRoutes(t *testing.T) {
+	f := &fakeAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "Downloads", `{}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	var list []map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&list))
+	require.Len(t, list, 1)
+	assert.Equal(t, float64(7), list[0]["id"])
+	assert.Equal(t, true, list[0]["exists"])
+	assert.Equal(t, true, list[0]["openable"])
+
+	resp = call(t, h, ts.URL, "OpenDownload", `{"id":7}`)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `true`, string(raw))
+	assert.Equal(t, 200, call(t, h, ts.URL, "RevealDownload", `{"id":7}`).StatusCode)
+	resp = call(t, h, ts.URL, "RevealDownload", `{"id":0}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "no_file", body["code"])
+	assert.Equal(t, 200, call(t, h, ts.URL, "RemoveDownload", `{"id":7}`).StatusCode)
+	assert.Equal(t, 200, call(t, h, ts.URL, "ClearDownloads", `{}`).StatusCode)
+	assert.Equal(t, []string{"open 7", "reveal 7", "reveal 0", "remove 7", "clear"}, f.dl)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/ClearDownloads", strings.NewReader(`{}`))
+	req.Header.Set("Origin", ts.URL)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, 401, resp.StatusCode, "behind the same guard")
 }

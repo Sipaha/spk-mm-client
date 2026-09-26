@@ -47,14 +47,16 @@ type Service struct {
 	// callback-reachable s.mu section.
 	badgeMu sync.Mutex
 
-	filesMu sync.Mutex
-	saved   map[string]string    // "server/file id" → path saved this session
-	saving  map[string]*download // "server/file id" → download in progress
+	filesMu  sync.Mutex
+	saved    map[string]savedEntry // "server/file id" → file saved this session
+	saving   map[string]*download  // "server/file id" → download in progress
+	progress map[int64]int64       // listed download in progress → bytes received
 
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
 	notifier Notifier
-	fileOpen Opener // hands saved files to the system; nil: save only
+	fileOpen Opener   // hands saved files to the system; nil: save only
+	reveal   Revealer // shows a saved file in the file manager; nil: open its folder
 	// streamBase gives the desktop's media stream address; nil: "/media".
 	streamBase func() (string, error)
 	badgeFns   []func(Badge)
@@ -71,7 +73,7 @@ var _ API = (*Service)(nil)
 func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
 	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
 		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv,
-		saved: map[string]string{}, saving: map[string]*download{}}
+		saved: map[string]savedEntry{}, saving: map[string]*download{}, progress: map[int64]int64{}}
 	s.nq = newNotifyQueue(notifyBurst, s.deliver)
 	return s
 }

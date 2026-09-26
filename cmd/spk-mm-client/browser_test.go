@@ -47,7 +47,8 @@ func setupWithService(t *testing.T, testAPI bool) (*httptest.Server, string, *mm
 	t.Cleanup(svc.Close)
 	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: svc})
 	require.NoError(t, err)
-	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes, mc, &api.RecordingOpener{})
+	svc.SetFileOpener((&api.RecordingOpener{}).Open)
+	h, token := newBrowserHandler(svc, em, dist, fake, testAPI, notes, mc, &api.RecordingOpener{}, recordReveals(svc))
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
 	return ts, token, fake, svc
@@ -311,6 +312,37 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 	var files []string
 	require.NoError(t, json.NewDecoder(r.Body).Decode(&files))
 	assert.Equal(t, []string{}, files)
+}
+
+// "Show in folder" has no file manager in browser mode: e2e reads the
+// requests from the test-API.
+func TestTestAPIRevealedFiles(t *testing.T) {
+	dl := t.TempDir()
+	t.Setenv("SPK_MM_CLIENT_DOWNLOADS", dl)
+	ts, token, fake, svc := setupWithService(t, true)
+	ctx := context.Background()
+	srv, err := svc.AddServer(ctx, fake.URL())
+	require.NoError(t, err)
+	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
+	require.NoError(t, err)
+	saved, err := svc.DownloadFile(ctx, srv.ID, "f-spec")
+	require.NoError(t, err)
+	list, err := svc.Downloads(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+
+	do := func(method, path, body string) *http.Response {
+		req, _ := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Origin", ts.URL)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+	require.Equal(t, 200, do(http.MethodPost, "/api/RevealDownload", fmt.Sprintf(`{"id":%d}`, list[0].ID)).StatusCode)
+	var files []string
+	require.NoError(t, json.NewDecoder(do(http.MethodGet, "/api/_test/revealed-files", "").Body).Decode(&files))
+	assert.Equal(t, []string{saved.Path}, files)
 }
 
 // Browser mode: the base MediaStreamBase returns through the HTTP transport

@@ -224,6 +224,21 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/MediaStreamBase", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return h.api.MediaStreamBase(ctx)
 	}))
+	h.mux.HandleFunc("POST /api/Downloads", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.Downloads(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/OpenDownload", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return h.api.OpenDownload(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/RevealDownload", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return nil, h.api.RevealDownload(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/RemoveDownload", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return nil, h.api.RemoveDownload(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/ClearDownloads", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return nil, h.api.ClearDownloads(ctx)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

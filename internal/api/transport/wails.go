@@ -91,3 +91,15 @@ func (w *API) EmojiInfo(id int64) (api.EmojiDTO, error) {
 func (w *API) MediaStreamBase() (string, error) {
 	return w.a.MediaStreamBase(context.Background())
 }
+
+func (w *API) Downloads() ([]api.DownloadView, error) { return w.a.Downloads(context.Background()) }
+
+func (w *API) OpenDownload(id int64) (bool, error) {
+	return w.a.OpenDownload(context.Background(), id)
+}
+
+func (w *API) RevealDownload(id int64) error { return w.a.RevealDownload(context.Background(), id) }
+
+func (w *API) RemoveDownload(id int64) error { return w.a.RemoveDownload(context.Background(), id) }
+
+func (w *API) ClearDownloads() error { return w.a.ClearDownloads(context.Background()) }

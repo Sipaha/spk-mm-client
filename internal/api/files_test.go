@@ -93,7 +93,7 @@ func TestSaveIntoRejectsASizeMismatch(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		}))
 		dir := t.TempDir()
-		_, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "f1", Name: "a.txt", Size: 10})
+		_, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "f1", Name: "a.txt", Size: 10}, nil)
 		ts.Close()
 		require.ErrorIs(t, err, errSizeMismatch, body)
 		entries, err := os.ReadDir(dir)
@@ -110,7 +110,7 @@ func TestSaveIntoStreamsTheValidatedID(t *testing.T) {
 	}))
 	defer ts.Close()
 	dir := t.TempDir()
-	p, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "../other", Name: "a.txt", Size: 10})
+	p, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "../other", Name: "a.txt", Size: 10}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "/api/v4/files/f1", got)
 	assert.Equal(t, filepath.Join(dir, "a.txt"), p)
@@ -171,12 +171,12 @@ func TestOpenFileAllowsInertTypesOnly(t *testing.T) {
 }
 
 func TestSavedRecordIsBounded(t *testing.T) {
-	s := &Service{saved: map[string]string{}}
+	s := &Service{saved: map[string]savedEntry{}}
 	for i := 0; i < maxSaved+50; i++ {
-		s.remember(fmt.Sprint(i), "p")
+		s.remember(fmt.Sprint(i), "p", int64(i))
 	}
 	assert.Len(t, s.saved, maxSaved)
-	assert.Equal(t, "p", s.saved[fmt.Sprint(maxSaved+49)], "the newest entry is kept")
+	assert.Equal(t, savedEntry{path: "p", dl: maxSaved + 49}, s.saved[fmt.Sprint(maxSaved+49)], "the newest entry is kept")
 }
 
 func TestDownloadErrors(t *testing.T) {
@@ -311,7 +311,7 @@ func TestNoLinkFallbackLeavesAnotherDownloadsPartAlone(t *testing.T) {
 		}
 		return os.WriteFile(other, []byte("partial"), 0o644) // the other download
 	}
-	p, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "f1", Name: "a.txt", Size: 10})
+	p, err := saveInto(context.Background(), rest.New(ts.URL, "", ts.Client()), dir, "f1", model.FileInfo{ID: "f1", Name: "a.txt", Size: 10}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "a.txt"), p)
 	assert.FileExists(t, other, "another download's .part survives")
