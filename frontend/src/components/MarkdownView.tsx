@@ -12,7 +12,12 @@ import { useTextFile } from './textFile'
 export function MarkdownView({ serverId, file, me, onLink }: { serverId: number; file: FileView; me: string; onLink(href: string): void }) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id, { full: '1' }), useLiveEpoch(serverId))
   return (
-    <div className="h-full w-full overflow-auto rounded bg-code-bg px-6 py-4">
+    // bg-panel, not bg-code-bg: .md pre/.md code (index.css) paint fenced
+    // and inline code with --color-code-bg, the same token — a panel in
+    // that shade would make code blocks invisible against it. bg-panel
+    // keeps the panel opaque over the backdrop while letting code stand
+    // out, same as it does over the feed's bg-app.
+    <div className="h-full w-full overflow-auto rounded bg-panel px-6 py-4">
       {res.status === 'ok' ? (
         <>
           {res.truncated && <p className="mb-2 text-xs text-fg-muted">{t('file.truncated')}</p>}

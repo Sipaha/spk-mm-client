@@ -34,16 +34,30 @@ test('renders heading, list, code and table; a remote image is a link, not an <i
   expect(onLink).toHaveBeenCalledWith('https://example.com/x.png')
 })
 
-test('the panel is opaque, like TextView: bg-code-bg, rounded, fills and scrolls the pane', async () => {
+test('the panel is opaque, like TextView: rounded, fills and scrolls the pane', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n')))
   const { container } = render(<MarkdownView serverId={1} file={readme} me="alice" onLink={vi.fn()} />)
   await screen.findByRole('heading', { name: 'Title' })
   const panel = container.firstElementChild!
-  expect(panel).toHaveClass('bg-code-bg')
+  expect(panel).toHaveClass('bg-panel')
   expect(panel).toHaveClass('rounded')
   expect(panel).toHaveClass('h-full')
   expect(panel).toHaveClass('w-full')
   expect(panel).toHaveClass('overflow-auto')
+})
+
+// .md pre and .md code (index.css) paint fenced/inline code with
+// --color-code-bg; if the panel used the same token (bg-code-bg), a code
+// block would be invisible against it (round 2 regression). The panel must
+// carry a different background token/class than the collision one.
+test('the panel background is a different token from .md pre/code, so a code block still stands out', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('```go\nfmt.Println("hi")\n```\n')))
+  const { container } = render(<MarkdownView serverId={1} file={readme} me="alice" onLink={vi.fn()} />)
+  await screen.findByText(/fmt\.Println/)
+  const panel = container.firstElementChild!
+  expect(container.querySelector('pre')).toBeInTheDocument()
+  expect(panel).not.toHaveClass('bg-code-bg')
+  expect(panel).toHaveClass('bg-panel')
 })
 
 test('the truncation notice uses the 1 MB i18n key', async () => {

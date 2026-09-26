@@ -30,6 +30,19 @@ test('renders a heading, a list and a code block; fixed height until expanded', 
   expect(box).toHaveClass('max-h-96')
 })
 
+// .md pre and .md code (index.css) paint fenced/inline code with
+// --color-code-bg; the snippet's own figure must not share that token, or a
+// code block would be invisible against it (round 2 regression).
+test('the figure background is a different token from .md pre/code, so a code block still stands out', async () => {
+  stubFetch('```go\nfmt.Println("hi")\n```\n')
+  const { container } = render(<MarkdownSnippet serverId={1} file={readme} me="alice" onLink={vi.fn()} {...handlers()} />)
+  await screen.findByText(/fmt\.Println/)
+  const figure = container.querySelector('figure')!
+  expect(container.querySelector('pre')).toBeInTheDocument()
+  expect(figure).not.toHaveClass('bg-code-bg')
+  expect(figure).toHaveClass('bg-panel')
+})
+
 test('a remote image becomes a link, never an <img>; the link opens the system browser', async () => {
   stubFetch('![diagram](https://example.com/diagram.png) and a [link](https://example.com)')
   const onLink = vi.fn()

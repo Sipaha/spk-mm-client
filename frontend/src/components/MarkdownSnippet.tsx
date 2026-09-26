@@ -26,7 +26,12 @@ export function MarkdownSnippet({
   const [open, setOpen] = useState(false)
   if (res.status === 'error') return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
   return (
-    <figure className="w-full max-w-3xl overflow-hidden rounded border border-line bg-code-bg text-xs">
+    // bg-panel, not bg-code-bg: .md pre/.md code (index.css) already paint
+    // fenced code and inline code with --color-code-bg, so a snippet panel
+    // in that same shade would swallow them — code needs to read as a
+    // distinct surface against the panel, same as it does over the feed's
+    // bg-app.
+    <figure className="w-full max-w-3xl overflow-hidden rounded border border-line bg-panel text-xs">
       <figcaption className="flex items-center gap-2 border-b border-line px-2 py-1">
         <span aria-hidden>📝</span>
         <span className="min-w-0 truncate font-medium" title={file.name}>
