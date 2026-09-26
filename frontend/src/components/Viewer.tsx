@@ -5,12 +5,15 @@ import { t } from '../i18n'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
+import { MarkdownView } from './MarkdownView'
 import { TextView } from './TextView'
 
 interface Props {
   serverId: number
   files: FileView[] // the post's previewable files (images and texts)
   index: number
+  me: string
+  onLink(href: string): void
   onIndex(i: number): void
   onClose(): void
   onDownload(file: FileView): void
@@ -19,7 +22,7 @@ interface Props {
 
 // Viewer is a modal over the app: Escape closes, ←/→ go through the post's
 // files (wrapping), focus starts on Close and returns to where it was.
-export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, onOpen }: Props) {
+export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, onDownload, onOpen }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null)
   // The media endpoint can 404/413/415 an image that looked fine in the
   // feed (e.g. it changed on the server); track failures by file id (all of
@@ -42,6 +45,10 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
   // own click handler — fired right after, since the drag can end with the
   // pointer over the backdrop — doesn't treat it as a backdrop click.
   const draggedRef = useRef(false)
+  // Markdown files default to the rendered view; the header's Source/
+  // Rendered switch flips this. Per-file, so paging ←/→ to a different
+  // file always starts on the rendered view again.
+  const [mdSource, setMdSource] = useState(false)
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
@@ -63,6 +70,7 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [files.length, index, onClose, onIndex])
+  useEffect(() => setMdSource(false), [files[index]?.id])
   const file = files[index]
   if (!file) return null
   const src = imageSrc(file)
@@ -75,6 +83,7 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
   }
   const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
   const showImage = fileKind(file) === 'image' && src && !failedIds.has(file.id)
+  const isMarkdown = fileKind(file) === 'markdown'
   return (
     <div role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
@@ -93,6 +102,26 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
                 {t('viewer.fit')}
               </button>
             </>
+          )}
+          {isMarkdown && (
+            <span className="flex shrink-0 items-center gap-1 rounded border border-line p-0.5">
+              <button
+                type="button"
+                aria-pressed={!mdSource}
+                className={`rounded px-2 py-0.5 ${!mdSource ? 'bg-hover' : 'hover:bg-hover'}`}
+                onClick={() => setMdSource(false)}
+              >
+                {t('viewer.md.rendered')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={mdSource}
+                className={`rounded px-2 py-0.5 ${mdSource ? 'bg-hover' : 'hover:bg-hover'}`}
+                onClick={() => setMdSource(true)}
+              >
+                {t('viewer.md.source')}
+              </button>
+            </span>
           )}
           <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => onDownload(file)}>
             {t('viewer.download')}
@@ -132,6 +161,8 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
           ) : (
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )
+        ) : isMarkdown && !mdSource ? (
+          <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} />
         ) : (
           <TextView key={file.id} serverId={serverId} file={file} />
         )}

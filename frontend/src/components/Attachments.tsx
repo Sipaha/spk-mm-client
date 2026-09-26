@@ -3,6 +3,7 @@ import { t } from '../i18n'
 import { mediaURL, useLoadFailure } from '../media'
 import { FileCard, type FileHandlers } from './FileCard'
 import { fileKind, fitBox, imageSrc } from './files'
+import { MarkdownSnippet } from './MarkdownSnippet'
 import { TextSnippet } from './TextSnippet'
 
 const BIG = { w: 480, h: 360 }
@@ -40,10 +41,18 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
 }
 
 // Attachments: one image big, several as thumbnails, text files as
-// snippets, everything else as cards. Every box has its size up front.
-export function Attachments({ serverId, files, ...h }: { serverId: number; files: FileView[] } & FileHandlers) {
+// snippets, markdown files rendered, everything else as cards. Every box
+// has its size up front.
+export function Attachments({
+  serverId,
+  files,
+  me,
+  onLink,
+  ...h
+}: { serverId: number; files: FileView[]; me: string; onLink(href: string): void } & FileHandlers) {
   const images = files.filter((f) => fileKind(f) === 'image')
   const texts = files.filter((f) => fileKind(f) === 'text')
+  const markdowns = files.filter((f) => fileKind(f) === 'markdown')
   const others = files.filter((f) => fileKind(f) === 'other')
   return (
     <div className="mt-1 flex flex-col items-start gap-2">
@@ -56,6 +65,9 @@ export function Attachments({ serverId, files, ...h }: { serverId: number; files
       )}
       {texts.map((f) => (
         <TextSnippet key={f.id} serverId={serverId} file={f} {...h} />
+      ))}
+      {markdowns.map((f) => (
+        <MarkdownSnippet key={f.id} serverId={serverId} file={f} me={me} onLink={onLink} {...h} />
       ))}
       {others.length > 0 && (
         <div className="flex flex-wrap gap-2">

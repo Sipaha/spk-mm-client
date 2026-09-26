@@ -86,6 +86,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           serverId={server.id}
           files={viewer.files}
           index={viewer.index}
+          me={server.username}
+          onLink={openLink}
           onIndex={(index) => setViewer({ ...viewer, index })}
           onClose={() => setViewer(null)}
           onDownload={(f) => void downloadFile(server.id, f)}

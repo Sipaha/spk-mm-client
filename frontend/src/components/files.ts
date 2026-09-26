@@ -1,11 +1,12 @@
 import type { FileView } from '../api/types'
 
-export type FileKind = 'image' | 'text' | 'other'
+export type FileKind = 'image' | 'text' | 'markdown' | 'other'
 
 const RASTER = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])
 
-// Text files previewed inline. Markdown is not here on purpose: rendered
-// .md previews are in the backlog; until then .md is a card.
+// Text files previewed inline as plain text. Markdown is not here on
+// purpose: .md/.markdown get their own 'markdown' kind (rendered by
+// MarkdownSnippet/MarkdownView), not the plain-text snippet.
 export const TEXT_EXT = new Set([
   'txt', 'log', 'csv', 'tsv', 'json', 'yaml', 'yml', 'xml', 'toml', 'ini', 'conf', 'cfg', 'env', 'properties', 'sql',
   'sh', 'bash', 'zsh', 'ps1', 'bat', 'go', 'py', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'java', 'kt', 'kts', 'gradle',
@@ -47,7 +48,7 @@ export function fileKind(f: FileView): FileKind {
   if (imageSrc(f)) return 'image'
   const ext = extOf(f)
   const mime = (f.mime || '').toLowerCase()
-  if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'other'
+  if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'markdown'
   if (TEXT_EXT.has(ext) || mime === 'text/plain') return 'text'
   return 'other'
 }

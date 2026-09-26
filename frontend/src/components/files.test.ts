@@ -13,7 +13,8 @@ test('what kind of preview a file gets', () => {
   expect(fileKind(F({ name: 'server.log', ext: 'log', mime: 'text/plain' }))).toBe('text')
   expect(fileKind(F({ name: 'main.go', ext: 'go', mime: 'application/octet-stream' }))).toBe('text')
   expect(fileKind(F({ name: 'Makefile' }))).toBe('text')
-  expect(fileKind(F({ name: 'notes.md', ext: 'md', mime: 'text/markdown' }))).toBe('other')
+  expect(fileKind(F({ name: 'notes.md', ext: 'md', mime: 'text/markdown' }))).toBe('markdown')
+  expect(fileKind(F({ name: 'notes.markdown', ext: 'markdown', mime: 'text/plain' }))).toBe('markdown')
   expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf' }))).toBe('other')
 })
 

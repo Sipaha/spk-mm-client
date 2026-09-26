@@ -182,7 +182,15 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
         )}
         {post.attachments?.map((a, i) => <AttachmentView key={i} a={a} me={me.username} onLink={actions.link} />)}
         {post.files && post.files.length > 0 && (
-          <Attachments serverId={serverId} files={post.files} onView={(f) => actions.view(post, f.id)} onDownload={actions.download} onOpen={actions.open} />
+          <Attachments
+            serverId={serverId}
+            files={post.files}
+            me={me.username}
+            onLink={actions.link}
+            onView={(f) => actions.view(post, f.id)}
+            onDownload={actions.download}
+            onOpen={actions.open}
+          />
         )}
         {post.reactions && post.reactions.length > 0 && (
           <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />

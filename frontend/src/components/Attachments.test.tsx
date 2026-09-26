@@ -6,7 +6,7 @@ import { useStore } from '../store'
 import { setLocale } from '../i18n'
 import { Attachments } from './Attachments'
 
-const handlers = () => ({ onView: vi.fn(), onDownload: vi.fn(), onOpen: vi.fn() })
+const handlers = () => ({ onView: vi.fn(), onDownload: vi.fn(), onOpen: vi.fn(), me: 'alice', onLink: vi.fn() })
 const png = (o: Partial<FileView> = {}): FileView => ({
   id: 'f-build', name: 'build.png', ext: 'png', size: 5000, mime: 'image/png', width: 1280, height: 720, has_preview: true, ...o,
 })
@@ -79,6 +79,17 @@ test('text files: a fixed-height snippet, expand, view; unreadable text falls ba
   expect(h.onView).toHaveBeenCalledWith(log)
   expect(await screen.findByRole('button', { name: 'Open weird.txt' })).toBeInTheDocument()
   expect(fetchMock).toHaveBeenCalledWith('/media/1/text/f-log', expect.objectContaining({ credentials: 'same-origin' }))
+})
+
+test('markdown files: rendered snippet, not a plain-text <pre>', async () => {
+  const fetchMock = vi.fn(async () => new Response('# Title\n\n- one\n- two\n'))
+  vi.stubGlobal('fetch', fetchMock)
+  const h = handlers()
+  const readme: FileView = { id: 'f-readme', name: 'README.md', ext: 'md', size: 400, mime: 'text/markdown' }
+  render(<Attachments serverId={1} files={[readme]} {...h} />)
+  expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
+  expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  expect(fetchMock).toHaveBeenCalledWith('/media/1/text/f-readme', expect.objectContaining({ credentials: 'same-origin' }))
 })
 
 test('other files are cards with download and open', async () => {

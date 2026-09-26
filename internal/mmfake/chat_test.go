@@ -74,7 +74,7 @@ func TestSeedVisibleToAlice(t *testing.T) {
 	assert.Len(t, cats.Order, 3)
 
 	off := s.Channel("c-offtopic")
-	assert.Equal(t, int64(6), off.TotalMsgCount, "welcome + five posts with files")
+	assert.Equal(t, int64(7), off.TotalMsgCount, "welcome + six posts with files")
 	assert.Equal(t, off.TotalMsgCount, s.Member("c-offtopic", "alice").MsgCount, "seed is read")
 }
 

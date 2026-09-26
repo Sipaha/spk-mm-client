@@ -78,6 +78,8 @@ func (s *Server) seed() {
 		s.newFileLocked("f-spec", "c-offtopic", "spec.pdf", "application/pdf", []byte("%PDF-1.4\n% fake pdf for spk-mattermost tests\n")))
 	s.seedFilePostLocked("c-offtopic", "u-bob", "Full log, for the viewer's ?full=1",
 		s.newFileLocked("f-biglog", "c-offtopic", "big.log", "text/plain", bigLogText(22000))) // ~1.2 MiB: over TextFullLimit (1 MiB)
+	s.seedFilePostLocked("c-offtopic", "u-carol", "Project README",
+		s.newFileLocked("f-readme", "c-offtopic", "README.md", "text/markdown", readmeText()))
 	s.chat.emoji["e-parrot"] = &femoji{e: model.Emoji{ID: "e-parrot", Name: "partyparrot", CreatorID: "u-bob"}, png: img["emoji"]}
 	for i, u := range o.Users {
 		at := base + int64(i)
@@ -124,6 +126,41 @@ func (s *Server) seedFilePostLocked(channelID, userID, msg string, files ...*ffi
 	}
 	p.Metadata = &model.PostMetadata{Files: s.fileInfosLocked(p.FileIDs)}
 	return p
+}
+
+// readmeText is the seeded README.md (Task 9): headings, a list, a code
+// block, a table, a link and a remote image — exercising every markdown
+// preview case (the remote image must never be fetched, only linked).
+func readmeText() []byte {
+	return []byte(`# spk-mm-client
+
+A lightweight desktop client for Mattermost.
+
+## Features
+
+- Fast, virtualized feed
+- Inline previews for images, text and markdown files
+- Keyboard-first viewer with search
+
+## Example
+
+` + "```go" + `
+func main() {
+	fmt.Println("hello")
+}
+` + "```" + `
+
+## Status
+
+| Component | State |
+| --- | --- |
+| Feed | done |
+| Viewer | done |
+
+See the [project tracker](https://example.com/tracker) for details.
+
+![Diagram](https://example.com/diagram.png)
+`)
 }
 
 func (s *Server) allMembersLocked() []*model.ChannelMember {
