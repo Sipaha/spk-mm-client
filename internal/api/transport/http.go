@@ -221,6 +221,9 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/EmojiInfo", handle(func(ctx context.Context, r *idReq) (any, error) {
 		return h.api.EmojiInfo(ctx, r.ID)
 	}))
+	h.mux.HandleFunc("POST /api/MediaStreamBase", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.MediaStreamBase(ctx)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

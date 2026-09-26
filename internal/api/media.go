@@ -61,6 +61,29 @@ func (s *Service) EmojiID(ctx context.Context, serverID int64, name string) (str
 	return w.EmojiID(ctx, name)
 }
 
+// SetMediaStreamBase makes MediaStreamBase ask fn (the desktop's lazily
+// started loopback stream server) instead of answering "/media".
+func (s *Service) SetMediaStreamBase(fn func() (string, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamBase = fn
+}
+
+// MediaStreamBase implements API.
+func (s *Service) MediaStreamBase(context.Context) (string, error) {
+	s.mu.Lock()
+	fn := s.streamBase
+	s.mu.Unlock()
+	if fn == nil {
+		return "/media", nil
+	}
+	base, err := fn()
+	if err != nil {
+		return "", coded(CodeInternal, err)
+	}
+	return base, nil
+}
+
 func transportOf(hc *http.Client) http.RoundTripper {
 	if hc != nil && hc.Transport != nil {
 		return hc.Transport

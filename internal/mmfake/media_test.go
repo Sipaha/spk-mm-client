@@ -108,8 +108,19 @@ func TestSeededFilesServeDataThumbnailPreviewAndRange(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, []string{"build.png", "flow.png", "arch.png", "server.log", "spec.pdf", "big.log", "README.md"}, names)
+	assert.Equal(t, []string{"build.png", "flow.png", "arch.png", "server.log", "spec.pdf", "big.log", "README.md",
+		"clip.webm", "clip.mp4", "tone.ogg"}, names)
 	assert.Equal(t, 1, s.Hits("GET", "/api/v4/files/f-build/info"))
+
+	for id, want := range map[string]string{"f-clip-webm": "video/webm", "f-clip-mp4": "video/mp4", "f-tone-ogg": "audio/ogg"} {
+		resp, body := a.raw("GET", "/api/v4/files/"+id, http.Header{"Range": {"bytes=0-3"}})
+		assert.Equal(t, 206, resp.StatusCode, id)
+		assert.Equal(t, want, resp.Header.Get("Content-Type"), id)
+		assert.Len(t, body, 4, id)
+	}
+	for _, name := range []string{"clip.webm", "clip.mp4", "tone.ogg"} {
+		assert.Less(t, len(seedMedia(name)), 200<<10, "seeded clips stay small: %s", name)
+	}
 }
 
 func TestFilePermissionIsTheChannel(t *testing.T) {

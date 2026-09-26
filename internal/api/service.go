@@ -55,11 +55,13 @@ type Service struct {
 	mgr      *mmsync.Manager
 	notifier Notifier
 	fileOpen Opener // hands saved files to the system; nil: save only
-	badgeFns []func(Badge)
-	active   int64 // server shown in the UI
-	focused  bool  // window focused and visible
-	marks    map[int64]serverMark
-	total    Badge
+	// streamBase gives the desktop's media stream address; nil: "/media".
+	streamBase func() (string, error)
+	badgeFns   []func(Badge)
+	active     int64 // server shown in the UI
+	focused    bool  // window focused and visible
+	marks      map[int64]serverMark
+	total      Badge
 }
 
 const defaultCallTimeout = 15 * time.Second

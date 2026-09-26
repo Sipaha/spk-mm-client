@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,4 +111,62 @@ func TestMediaUnauthorizedAsksForSignIn(t *testing.T) {
 			f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "a media 401 did not ask for a new sign-in")
 		})
 	}
+}
+
+func TestMediaStreamBase(t *testing.T) {
+	f := newChatFixture(t)
+	ctx := context.Background()
+	base, err := f.svc.MediaStreamBase(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "/media", base, "browser mode: the page's own /media/")
+
+	f.svc.SetMediaStreamBase(func() (string, error) { return "http://127.0.0.1:1/tok", nil })
+	base, err = f.svc.MediaStreamBase(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:1/tok", base)
+
+	f.svc.SetMediaStreamBase(func() (string, error) { return "", errors.New("no socket") })
+	_, err = f.svc.MediaStreamBase(ctx)
+	var ce *CodedError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, CodeInternal, ce.Code)
+}
+
+// The desktop path end to end: the loopback server streams a seeded clip
+// of the fake through the worker, and a 401 there asks for a new sign-in.
+func TestMediaStreamThroughTheLoopbackServer(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	lb := media.NewLoopback(media.NewStreamer(f.svc))
+	defer lb.Close()
+	f.svc.SetMediaStreamBase(lb.Base)
+	base, err := f.svc.MediaStreamBase(context.Background())
+	require.NoError(t, err)
+
+	get := func(file, rng string) *http.Response {
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/stream/%d/%s", base, id, file), nil)
+		require.NoError(t, err)
+		if rng != "" {
+			req.Header.Set("Range", rng)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp
+	}
+	resp := get("f-clip-webm", "bytes=0-99")
+	require.Equal(t, http.StatusPartialContent, resp.StatusCode)
+	assert.Equal(t, "video/webm", resp.Header.Get("Content-Type"))
+	assert.Regexp(t, `^bytes 0-99/\d+$`, resp.Header.Get("Content-Range"))
+	assert.Equal(t, "video/mp4", get("f-clip-mp4", "").Header.Get("Content-Type"))
+	assert.Equal(t, "audio/ogg", get("f-tone-ogg", "").Header.Get("Content-Type"))
+	assert.Equal(t, http.StatusUnsupportedMediaType, get("f-spec", "").StatusCode)
+
+	fake.SetFailure("/files/f-clip-mp4", http.StatusUnauthorized)
+	assert.Equal(t, http.StatusForbidden, get("f-clip-mp4", "bytes=0-9").StatusCode)
+	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "a stream 401 did not ask for a new sign-in")
+	assert.Equal(t, http.StatusNotFound, get("f-clip-webm", "").StatusCode, "not live: no stream")
 }

@@ -19,7 +19,7 @@ func TestWithMediaRoutesMediaAndAssets(t *testing.T) {
 	h := withMedia(assets, mediaH)
 	for path, want := range map[string]string{
 		"/": "asset /", "/index.html": "asset /index.html", "/assets/app.js": "asset /assets/app.js",
-		"/media/1/avatar/u1": "media /media/1/avatar/u1",
+		"/media/1/avatar/u1": "media /media/1/avatar/u1", "/media/1/stream/f1": "media /media/1/stream/f1",
 	} {
 		assert.Equal(t, want, serve(h, path), path)
 	}

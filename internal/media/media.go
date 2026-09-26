@@ -44,6 +44,7 @@ const (
 	KindFull   Kind = "full"   // image in the viewer: preview or original as is
 	KindText   Kind = "text"   // first TextLimit (or TextFullLimit with ?full=1) bytes of a text file
 	KindEmoji  Kind = "emoji"  // custom emoji picture; key emoji name
+	KindStream Kind = "stream" // audio/video passed through with Range, never cached (Streamer)
 )
 
 // Limits of the cache and of what it accepts.
@@ -111,6 +112,7 @@ type Cache struct {
 	total    int64
 	neg      map[string]negEntry // cache key → recent failure
 	inflight map[string]*call    // cache key → fetch in progress
+	stream   *Streamer
 }
 
 // New opens (creating) the cache directory: leftovers of interrupted writes
@@ -140,7 +142,7 @@ func New(o Options) (*Cache, error) {
 		return nil, err
 	}
 	c := &Cache{o: o, sem: make(chan struct{}, o.Fetches), index: map[string]*entry{},
-		neg: map[string]negEntry{}, inflight: map[string]*call{}}
+		neg: map[string]negEntry{}, inflight: map[string]*call{}, stream: NewStreamer(o.Origin)}
 	for _, de := range des {
 		name := de.Name()
 		switch {
@@ -207,7 +209,7 @@ func parse(u *url.URL) (request, bool) {
 		if q.variant != "preview" && q.variant != "file" {
 			return request{}, false
 		}
-	case KindThumb:
+	case KindThumb, KindStream:
 	case KindText:
 		switch u.Query().Get("full") {
 		case "":
@@ -276,6 +278,10 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q, ok := parse(r.URL)
 	if !ok {
 		http.Error(w, "bad media path", http.StatusBadRequest)
+		return
+	}
+	if q.kind == KindStream {
+		c.stream.Serve(w, r, q.server, q.key)
 		return
 	}
 	for attempt := 0; attempt < 2; attempt++ {

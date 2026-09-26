@@ -65,6 +65,10 @@ type API interface {
 	AddReaction(ctx context.Context, id int64, postID, emoji string) error
 	RemoveReaction(ctx context.Context, id int64, postID, emoji string) error
 	EmojiInfo(ctx context.Context, id int64) (EmojiDTO, error)
+	// MediaStreamBase is where <video>/<audio> take files from:
+	// <base>/stream/<server id>/<file id>. Browser mode: "/media"; desktop:
+	// the loopback stream server with its token (media.Loopback).
+	MediaStreamBase(ctx context.Context) (string, error)
 }
 
 // Event types pushed to the UI.

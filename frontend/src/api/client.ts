@@ -35,6 +35,8 @@ export interface Client {
   addReaction(id: number, postId: string, emoji: string): Promise<void>
   removeReaction(id: number, postId: string, emoji: string): Promise<void>
   emojiInfo(id: number): Promise<EmojiDTO>
+  /** Base of audio/video URLs: `${base}/stream/${serverId}/${fileId}` ("/media" in the browser, a loopback URL in desktop). */
+  mediaStreamBase(): Promise<string>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -90,6 +92,7 @@ export const httpClient: Client = {
   addReaction: (id, post_id, emoji) => done(post('AddReaction', { id, post_id, emoji })),
   removeReaction: (id, post_id, emoji) => done(post('RemoveReaction', { id, post_id, emoji })),
   emojiInfo: (id) => post('EmojiInfo', { id }),
+  mediaStreamBase: () => post('MediaStreamBase', {}),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -151,6 +154,7 @@ export const wailsClient: Client = {
   addReaction: (id, postId, emoji) => wcall('AddReaction', id, postId, emoji),
   removeReaction: (id, postId, emoji) => wcall('RemoveReaction', id, postId, emoji),
   emojiInfo: (id) => wcall('EmojiInfo', id),
+  mediaStreamBase: () => wcall('MediaStreamBase'),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

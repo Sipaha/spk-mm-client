@@ -82,6 +82,9 @@ func (w *API) RemoveReaction(id int64, postID, emoji string) error {
 	return w.a.RemoveReaction(context.Background(), id, postID, emoji)
 }
 
+func (w *API) MediaStreamBase() (string, error) {
+	return w.a.MediaStreamBase(context.Background())
+}
 func (w *API) EmojiInfo(id int64) (api.EmojiDTO, error) {
 	return w.a.EmojiInfo(context.Background(), id)
 }

@@ -62,6 +62,7 @@ test('http client chat methods post snake_case bodies', async () => {
   await httpClient.downloadFile(3, 'f1')
   await httpClient.addReaction(3, 'p1', '+1')
   await httpClient.emojiInfo(3)
+  await httpClient.mediaStreamBase()
   expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
     ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi' }],
     ['/api/EditPost', { id: 3, post_id: 'p1', message: 'v2' }],
@@ -69,5 +70,6 @@ test('http client chat methods post snake_case bodies', async () => {
     ['/api/DownloadFile', { id: 3, file_id: 'f1' }],
     ['/api/AddReaction', { id: 3, post_id: 'p1', emoji: '+1' }],
     ['/api/EmojiInfo', { id: 3 }],
+    ['/api/MediaStreamBase', {}],
   ])
 })

@@ -3,6 +3,7 @@ package mmfake
 import (
 	"bytes"
 	"crypto/sha256"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -102,6 +103,20 @@ var seedImages = sync.OnceValue(func() map[string][]byte {
 		"emoji":     patternPNG(64, 64, palette[4]),
 	}
 })
+
+// seedClips are short generated clips (gst-launch-1.0, spike S6): clip.webm
+// 2 s VP9/Opus 320×180, clip.mp4 2 s H.264/AAC (faststart), tone.ogg 3 s Opus.
+//
+//go:embed seedmedia
+var seedClips embed.FS
+
+func seedMedia(name string) []byte {
+	b, err := seedClips.ReadFile("seedmedia/" + name)
+	if err != nil {
+		panic("mmfake: seed clip " + name + ": " + err.Error())
+	}
+	return b
+}
 
 func logText(lines int) []byte {
 	var b strings.Builder

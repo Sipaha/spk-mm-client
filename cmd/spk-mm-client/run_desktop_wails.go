@@ -49,6 +49,13 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	}
 	defer svc.Close()
 
+	// <video>/<audio> cannot read wails:// (spike S6): streams go over a
+	// loopback HTTP server, started when the UI first asks for its address
+	// and closed before the service (defers run in reverse).
+	streams := media.NewLoopback(media.NewStreamer(svc))
+	defer streams.Close()
+	svc.SetMediaStreamBase(streams.Base)
+
 	// A nil *media.Cache in the interface would not be a nil handler:
 	// mediaH stays a nil interface when the cache cannot be opened.
 	var mediaH http.Handler

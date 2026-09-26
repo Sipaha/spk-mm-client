@@ -681,4 +681,33 @@ faststart — `moov` в конце — и webm) для перемотки.
 
 Go-вид `stream` (сквозной `Range`, 200/206, только медиа-типы, без диска) нужен
 для A, B и C одинаково; меняется только то, как UI его вызывает (A — ещё и
-отдельный слушатель). Task 7 остановлен до выбора (NEEDS_CONTEXT).
+отдельный слушатель).
+
+**Решение пользователя 2026-09-27: вариант A.** Реализация (Task 7):
+`media.Streamer` (вид `stream`, в browser mode — `/media/<srv>/stream/<id>`) и
+`media.Loopback` — `http://127.0.0.1:<случайный порт>/<токен>/stream/<srv>/<id>`,
+поднимается при первом `MediaStreamBase`, закрывается при выходе; токен — 32
+случайных байта base64url, в логи не пишется; `Host` строго `127.0.0.1:<port>`,
+только GET/HEAD, без CORS, `Referrer-Policy: no-referrer`, `nosniff`,
+`Cache-Control: private`.
+
+**Проверка в desktop (2026-09-27).** Временная сборка во временный каталог,
+`--mm-fake`, свой `SPK_MM_CLIENT_HOME`, одна копия; временный хук (не закоммичен)
+отдавал страницу с адресом из `MediaStreamBase` и логировал события элементов и
+каждый ответ `Streamer`. Жест пользователя без ввода X11 — через удалённый
+инспектор WebKit (`WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:<port>`,
+`Runtime.evaluate` с `emulateUserGesture: true` → `video.play()`; без жеста
+`play()` видео отказывает `NotAllowedError` даже при `muted`, аудио — нет).
+- `MediaStreamBase` в desktop вернул `http://127.0.0.1:<port>/<token>`.
+- Сид `clip.webm` (VP9/Opus): 200 `video/webm`, `loadedmetadata` 320×180,
+  `play()` → `ended` на 2.01 с, `totalVideoFrames=60`, `dropped=0`.
+- Сид `clip.mp4` (H.264/AAC): 200 `video/mp4`, до `ended` на 2.00 с, 60 кадров,
+  0 потерянных. Сид `tone.ogg` (Opus): доиграл до `ended` (3.01 с).
+- 30-секундные mp4/webm (1.3/3.3 МБ, временно добавлены в сид хуком): играют,
+  перемотка на 25 с — `seeked`.
+- 48 МБ mp4 1280×720 без faststart (`moov` в конце): запросы webview —
+  `GET` без `Range` → 200 (отменён плеером), `Range: bytes=47743399-` → 206
+  `Content-Range: bytes 47743399-47751498/47751499` (чтение `moov`),
+  `bytes=20637862-` → 206; после `play()` и перемотки на 50 с —
+  `bytes=42450086-` → 206, `seeked` на 50.00. То есть GStreamer ходит с `Range`,
+  принимает 206, а отменённые запросы закрывают поток к серверу.

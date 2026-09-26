@@ -46,6 +46,8 @@ func (f *fakeAPI) EmojiInfo(_ context.Context, id int64) (api.EmojiDTO, error) {
 	return api.EmojiDTO{Recent: []string{fmt.Sprint(id), "+1"}, Custom: []string{"partyparrot"}, CustomEnabled: true}, nil
 }
 
+func (f *fakeAPI) MediaStreamBase(context.Context) (string, error) { return "/media", nil }
+
 func (f *fakeAPI) DownloadFile(_ context.Context, id int64, fileID string) (api.SavedFile, error) {
 	return api.SavedFile{Path: fmt.Sprintf("/dl/%d/%s", id, fileID)}, nil
 }
@@ -215,4 +217,10 @@ func TestChatRoutes(t *testing.T) {
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"recent":["3","+1"],"custom":["partyparrot"],"custom_enabled":true}`, string(raw))
+
+	resp = call(t, h, ts.URL, "MediaStreamBase", `{}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	raw, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"/media"`, string(raw))
 }
