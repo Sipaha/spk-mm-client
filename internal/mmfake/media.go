@@ -111,6 +111,17 @@ func logText(lines int) []byte {
 	return []byte(b.String())
 }
 
+// bigLogText is a larger seeded text file for the viewer's ?full=1 (over
+// media.TextFullLimit, 1 MiB): a distinct message shape from logText's
+// server.log so e2e text matches on one do not also hit the other.
+func bigLogText(lines int) []byte {
+	var b strings.Builder
+	for i := 1; i <= lines; i++ {
+		fmt.Fprintf(&b, "2026-09-24 12:%02d:%02d DEBUG worker #%d tick %d queued jobs\n", i/60, i%60, i, 7+i%23)
+	}
+	return []byte(b.String())
+}
+
 // newFileLocked registers an uploaded file of channelID ("" id = generated);
 // images get the derived images the server makes: a thumbnail always, a
 // preview except for GIF (kept animated) and SVG.

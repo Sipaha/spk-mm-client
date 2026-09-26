@@ -144,18 +144,19 @@ func downscale(data []byte, ctype string) ([]byte, error) {
 	return out.Bytes(), err
 }
 
-// writeText stores up to TextLimit bytes of a text file behind a one-byte
-// flag ('T' — there is more, 'F' — complete). Content with NUL bytes or
-// invalid UTF-8 is refused: a binary file with a text name, or a legacy
-// encoding we would show as garbage.
-func writeText(dst io.Writer, src io.Reader, contentRange string) (int64, error) {
-	buf, err := io.ReadAll(io.LimitReader(src, TextLimit+1))
+// writeText stores up to limit bytes of a text file (TextLimit for the feed
+// snippet, TextFullLimit for the viewer's ?full=1) behind a one-byte flag
+// ('T' — there is more, 'F' — complete). Content with NUL bytes or invalid
+// UTF-8 is refused: a binary file with a text name, or a legacy encoding we
+// would show as garbage.
+func writeText(dst io.Writer, src io.Reader, contentRange string, limit int64) (int64, error) {
+	buf, err := io.ReadAll(io.LimitReader(src, limit+1))
 	if err != nil {
 		return 0, err
 	}
-	truncated := len(buf) > TextLimit || rangeTotal(contentRange) > TextLimit
-	if len(buf) > TextLimit {
-		buf = buf[:TextLimit]
+	truncated := int64(len(buf)) > limit || rangeTotal(contentRange) > limit
+	if int64(len(buf)) > limit {
+		buf = buf[:limit]
 	}
 	if truncated {
 		buf = trimPartialRune(buf)

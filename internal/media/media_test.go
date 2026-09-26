@@ -272,6 +272,44 @@ func TestTextPreview(t *testing.T) {
 	assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode)
 }
 
+func TestTextFullPreview(t *testing.T) {
+	long := strings.Repeat("a", TextFullLimit-1) + "й" + "tail"
+	small := "hello, this is a short text file\n" // well under either limit
+	var mu sync.Mutex
+	var ranges []string // Range header seen upstream, in request order (the /media/ query is never forwarded)
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ranges = append(ranges, r.Header.Get("Range"))
+		mu.Unlock()
+		body := map[string]string{"/api/v4/files/long": long, "/api/v4/files/small": small}[r.URL.Path]
+		http.ServeContent(w, r, "x.txt", time.Time{}, strings.NewReader(body))
+	})
+	resp, body := e.get("/media/1/text/long?full=1")
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "1", resp.Header.Get("X-Truncated"))
+	assert.Equal(t, strings.Repeat("a", TextFullLimit-1), string(body), "a character cut in half is dropped")
+	assert.Greater(t, len(body), TextLimit, "full=1 serves more than the feed snippet limit")
+	assert.LessOrEqual(t, len(body), TextFullLimit)
+
+	resp, body = e.get("/media/1/text/small?full=1")
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("X-Truncated"))
+	assert.Equal(t, small, string(body))
+
+	resp, body = e.get("/media/1/text/small") // no ?full=1: a separate cache entry, same content here
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("X-Truncated"))
+	assert.Equal(t, small, string(body))
+	assert.Equal(t, 2, e.origin.count("/api/v4/files/small"), "?full=1 and the plain snippet are cached separately")
+
+	assert.Equal(t, []string{
+		fmt.Sprintf("bytes=0-%d", TextFullLimit-1), // long?full=1
+		fmt.Sprintf("bytes=0-%d", TextFullLimit-1), // small?full=1
+		fmt.Sprintf("bytes=0-%d", TextLimit-1),     // small, no full
+	}, ranges)
+}
+
 func TestEmojiResolvesNameToID(t *testing.T) {
 	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v4/emoji/e1/image", r.URL.Path)
@@ -388,7 +426,7 @@ func TestBadRequests(t *testing.T) {
 	for _, p := range []string{
 		"/media/x/avatar/u1", "/media/0/avatar/u1", "/media/1/bogus/u1", "/media/1/avatar/..%2Fx",
 		"/media/1/avatar/u1?v=abc", "/media/1/feed/f1?src=evil", "/media/1/avatar", "/media/1/avatar/u1/extra",
-		"/media/1/emoji/bad%20name",
+		"/media/1/emoji/bad%20name", "/media/1/text/f1?full=0", "/media/1/text/f1?full=true", "/media/1/text/f1?full=2",
 	} {
 		resp, _ := e.get(p)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, p)

@@ -42,7 +42,7 @@ const (
 	KindThumb  Kind = "thumb"  // file thumbnail (server: JPEG ≤120×100)
 	KindFeed   Kind = "feed"   // image in the feed: preview or original, scaled to ≤ FeedMax
 	KindFull   Kind = "full"   // image in the viewer: preview or original as is
-	KindText   Kind = "text"   // first TextLimit bytes of a text file
+	KindText   Kind = "text"   // first TextLimit (or TextFullLimit with ?full=1) bytes of a text file
 	KindEmoji  Kind = "emoji"  // custom emoji picture; key emoji name
 )
 
@@ -50,7 +50,8 @@ const (
 const (
 	DefaultMaxBytes = 256 << 20
 	FeedMax         = 960              // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
-	TextLimit       = 64 << 10         // bytes of a text file shown
+	TextLimit       = 64 << 10         // bytes of a text file shown in the feed snippet
+	TextFullLimit   = 1 << 20          // bytes of a text file shown in the viewer (?full=1)
 	maxPixels       = 50_000_000       // decompression-bomb guard for every image
 	scaleMaxPixels  = 24_000_000       // largest feed image decoded to scale (~96 MB bitmap)
 	negTTL          = 5 * time.Minute  // 403/404/413/415: will not change soon
@@ -206,7 +207,15 @@ func parse(u *url.URL) (request, bool) {
 		if q.variant != "preview" && q.variant != "file" {
 			return request{}, false
 		}
-	case KindThumb, KindText:
+	case KindThumb:
+	case KindText:
+		switch u.Query().Get("full") {
+		case "":
+		case "1":
+			q.variant = "full"
+		default:
+			return request{}, false
+		}
 	case KindEmoji:
 		return q, emojiRe.MatchString(q.key)
 	default:
@@ -242,8 +251,12 @@ func (q request) spec(id string) spec {
 		}
 		return spec{path: p, max: 25 << 20, scale: q.kind == KindFeed}
 	case KindText:
-		return spec{path: "/api/v4/files/" + esc, max: TextLimit, text: true,
-			hdr: http.Header{"Range": {fmt.Sprintf("bytes=0-%d", TextLimit-1)}}}
+		limit := int64(TextLimit)
+		if q.variant == "full" {
+			limit = TextFullLimit
+		}
+		return spec{path: "/api/v4/files/" + esc, max: limit, text: true,
+			hdr: http.Header{"Range": {fmt.Sprintf("bytes=0-%d", limit-1)}}}
 	default: // KindEmoji: id is the resolved emoji id
 		return spec{path: "/api/v4/emoji/" + esc + "/image", max: 1 << 20}
 	}
@@ -458,7 +471,7 @@ func (c *Cache) fetch(q request, id, name string) error {
 	}
 	var size int64
 	if sp.text {
-		size, err = writeText(tmp, resp.Body, resp.Header.Get("Content-Range"))
+		size, err = writeText(tmp, resp.Body, resp.Header.Get("Content-Range"), sp.max)
 	} else {
 		size, err = writeImage(tmp, resp.Body, sp)
 	}
