@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { FileView } from '../api/types'
@@ -13,10 +13,11 @@ beforeEach(() => setLocale('en'))
 afterEach(() => vi.unstubAllGlobals())
 
 test('full image, keyboard navigation around the post, Escape closes', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('hello log', { headers: { 'X-Truncated': '1' } })))
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response('hello log', { headers: { 'X-Truncated': '1' } }))
+  vi.stubGlobal('fetch', fetchMock)
   const onIndex = vi.fn()
   const onClose = vi.fn()
-  const { rerender } = render(<Viewer serverId={1} files={[img, log]} index={0} onIndex={onIndex} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const { rerender, container } = render(<Viewer serverId={1} files={[img, log]} index={0} onIndex={onIndex} onClose={onClose} onDownload={noop} onOpen={noop} />)
   const dialog = screen.getByRole('dialog', { name: 'File viewer' })
   expect(screen.getByRole('img', { name: 'build.png' })).toHaveAttribute('src', '/media/1/full/f-build?src=preview')
   expect(dialog).toHaveTextContent('1 of 2')
@@ -27,7 +28,12 @@ test('full image, keyboard navigation around the post, Escape closes', async () 
   expect(onIndex).toHaveBeenLastCalledWith(1) // wraps around
   rerender(<Viewer serverId={1} files={[img, log]} index={1} onIndex={onIndex} onClose={onClose} onDownload={noop} onOpen={noop} />)
   expect(await screen.findByText('hello log')).toBeInTheDocument()
-  expect(screen.getByText('Showing the first 64 KB')).toBeInTheDocument()
+  // full=1: the viewer asks for up to 1 MiB, not the feed's 64 KiB fragment.
+  expect(fetchMock.mock.calls.at(-1)?.[0]).toBe('/media/1/text/f-log?full=1')
+  expect(screen.getByText('Showing the first 1 MB')).toBeInTheDocument()
+  expect(screen.queryByText(/64 KB/)).toBeNull()
+  // Full width: the text panel does not have the old max-w-5xl cap.
+  expect(container.querySelector('.max-w-5xl')).toBeNull()
   await userEvent.keyboard('{Escape}')
   expect(onClose).toHaveBeenCalled()
 })
@@ -95,4 +101,52 @@ test('an image that fails to load falls back to a card with download/open, not a
   await userEvent.click(screen.getByRole('button', { name: 'Download build.png' }))
   expect(onDownload).toHaveBeenCalledWith(img)
   expect(screen.getByRole('button', { name: 'Open build.png' })).toBeInTheDocument()
+})
+
+test('text search: counter and Enter/Shift+Enter cycle matches, current one highlighted', async () => {
+  vi.useFakeTimers()
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('one two one three one')))
+  render(<Viewer serverId={1} files={[log]} index={0} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  await act(async () => vi.advanceTimersByTime(0))
+  const box = await screen.findByRole('textbox', { name: 'Search in file' })
+  await user.type(box, 'one')
+  await act(async () => vi.advanceTimersByTime(150))
+  expect(screen.getByText('1 of 3')).toBeInTheDocument()
+  const dialog = screen.getByRole('dialog', { name: 'File viewer' })
+  expect(dialog.querySelectorAll('mark')).toHaveLength(3)
+  await user.type(box, '{Enter}')
+  expect(screen.getByText('2 of 3')).toBeInTheDocument()
+  await user.type(box, '{Shift>}{Enter}{/Shift}')
+  expect(screen.getByText('1 of 3')).toBeInTheDocument()
+  vi.useRealTimers()
+})
+
+test('Escape in the search field clears it first; Escape in an empty field still closes the viewer', async () => {
+  vi.useFakeTimers()
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('one two one')))
+  const onClose = vi.fn()
+  render(<Viewer serverId={1} files={[log]} index={0} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  await act(async () => vi.advanceTimersByTime(0))
+  const box = await screen.findByRole('textbox', { name: 'Search in file' })
+  await user.type(box, 'one')
+  await act(async () => vi.advanceTimersByTime(150))
+  expect(screen.getByText('1 of 2')).toBeInTheDocument()
+  await user.type(box, '{Escape}')
+  expect(box).toHaveValue('')
+  expect(onClose).not.toHaveBeenCalled()
+  await user.type(box, '{Escape}')
+  expect(onClose).toHaveBeenCalled()
+  vi.useRealTimers()
+})
+
+test('arrow keys typed in the search field move the caret, not the post’s files', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('one two one')))
+  const onIndex = vi.fn()
+  render(<Viewer serverId={1} files={[log, img]} index={0} onIndex={onIndex} onClose={noop} onDownload={noop} onOpen={noop} />)
+  const box = await screen.findByRole('textbox', { name: 'Search in file' })
+  box.focus()
+  await userEvent.keyboard('{ArrowRight}{ArrowLeft}')
+  expect(onIndex).not.toHaveBeenCalled()
 })

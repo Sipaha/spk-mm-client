@@ -3,10 +3,9 @@ import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { mediaURL } from '../media'
-import { useLiveEpoch } from '../store'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
-import { useTextFile } from './textFile'
+import { TextView } from './TextView'
 
 interface Props {
   serverId: number
@@ -16,18 +15,6 @@ interface Props {
   onClose(): void
   onDownload(file: FileView): void
   onOpen(file: FileView): void
-}
-
-function FullText({ serverId, file }: { serverId: number; file: FileView }) {
-  const res = useTextFile(mediaURL(serverId, 'text', file.id), useLiveEpoch(serverId))
-  return (
-    <div className="flex h-full w-full max-w-5xl flex-col gap-1">
-      {res.status === 'ok' && res.truncated && <p className="text-xs text-fg-muted">{t('file.truncated')}</p>}
-      <pre className="min-h-0 flex-1 overflow-auto rounded bg-code-bg p-3 font-mono text-xs leading-5 text-fg">
-        {res.status === 'ok' ? res.text : res.status === 'loading' ? t('file.loading') : t('err.no_file')}
-      </pre>
-    </div>
-  )
 }
 
 // Viewer is a modal over the app: Escape closes, ←/→ go through the post's
@@ -124,7 +111,7 @@ export function Viewer({ serverId, files, index, onIndex, onClose, onDownload, o
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )
         ) : (
-          <FullText key={file.id} serverId={serverId} file={file} />
+          <TextView key={file.id} serverId={serverId} file={file} />
         )}
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.next')} className={`${nav} right-3`} onClick={() => onIndex((index + 1) % files.length)}>
