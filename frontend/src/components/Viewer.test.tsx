@@ -216,6 +216,25 @@ test('markdown: paging to another file resets the toggle back to rendered', asyn
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument() // back to rendered, not left on Source
 })
 
+test('markdown: the Rendered/Source switch is a labelled group; keyboard (Tab, Enter/Space) works it', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n')))
+  render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  await screen.findByRole('heading', { name: 'Title' })
+  expect(screen.getByRole('group', { name: 'Markdown view' })).toBeInTheDocument()
+
+  screen.getByRole('button', { name: 'Rendered' }).focus()
+  await userEvent.tab()
+  expect(screen.getByRole('button', { name: 'Source' })).toHaveFocus()
+  await userEvent.keyboard('{Enter}')
+  expect(await screen.findByRole('textbox', { name: 'Search in file' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull()
+
+  await userEvent.tab({ shift: true })
+  expect(screen.getByRole('button', { name: 'Rendered' })).toHaveFocus()
+  await userEvent.keyboard(' ')
+  expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
+})
+
 test('a plain text file has no Source/Rendered switch', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('hello log')))
   render(<Viewer serverId={1} files={[log]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)

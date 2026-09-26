@@ -34,6 +34,18 @@ test('renders heading, list, code and table; a remote image is a link, not an <i
   expect(onLink).toHaveBeenCalledWith('https://example.com/x.png')
 })
 
+test('the panel is opaque, like TextView: bg-code-bg, rounded, fills and scrolls the pane', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n')))
+  const { container } = render(<MarkdownView serverId={1} file={readme} me="alice" onLink={vi.fn()} />)
+  await screen.findByRole('heading', { name: 'Title' })
+  const panel = container.firstElementChild!
+  expect(panel).toHaveClass('bg-code-bg')
+  expect(panel).toHaveClass('rounded')
+  expect(panel).toHaveClass('h-full')
+  expect(panel).toHaveClass('w-full')
+  expect(panel).toHaveClass('overflow-auto')
+})
+
 test('the truncation notice uses the 1 MB i18n key', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('hello', { headers: { 'X-Truncated': '1' } })))
   render(<MarkdownView serverId={1} file={readme} me="alice" onLink={vi.fn()} />)

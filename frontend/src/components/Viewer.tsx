@@ -104,7 +104,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
             </>
           )}
           {isMarkdown && (
-            <span className="flex shrink-0 items-center gap-1 rounded border border-line p-0.5">
+            <span role="group" aria-label={t('viewer.md.group')} className="flex shrink-0 items-center gap-1 rounded border border-line p-0.5">
               <button
                 type="button"
                 aria-pressed={!mdSource}
