@@ -9,9 +9,19 @@ export interface FileHandlers {
   onOpen(file: FileView): void
 }
 
-export function IconButton({ label, onClick, children }: { label: string; onClick(): void; children: ReactNode }) {
+export function IconButton({
+  label,
+  onClick,
+  children,
+  className = '',
+}: {
+  label: string
+  onClick(): void
+  children: ReactNode
+  className?: string
+}) {
   return (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className="rounded px-1 text-fg-muted hover:bg-hover hover:text-fg">
+    <button type="button" aria-label={label} title={label} onClick={onClick} className={`rounded px-1 text-fg-muted hover:bg-hover hover:text-fg ${className}`}>
       {children}
     </button>
   )

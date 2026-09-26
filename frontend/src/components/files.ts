@@ -1,6 +1,6 @@
 import type { FileView } from '../api/types'
 
-export type FileKind = 'image' | 'text' | 'markdown' | 'other'
+export type FileKind = 'image' | 'video' | 'audio' | 'text' | 'markdown' | 'other'
 
 const RASTER = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])
 
@@ -44,13 +44,51 @@ export function imageOriginalOk(f: FileView): boolean {
   return f.size <= IMAGE_FILE_MAX
 }
 
+// Video/audio extensions and MIME types the UI offers to stream: this must
+// match internal/media's streamTypeByExt/streamTypeByMime allowlist (Task
+// 7) — extension first, MIME as a fallback (e.g. no extension left after
+// upload). Something let through here that the webview's GStreamer can't
+// actually decode still fails cleanly at the element's `error` event
+// (falls back to a card), same as an image the server can't preview.
+const STREAM_KIND_BY_EXT: Record<string, 'video' | 'audio'> = {
+  mp4: 'video', m4v: 'video', webm: 'video', mov: 'video', ogv: 'video', mkv: 'video',
+  mp3: 'audio', ogg: 'audio', oga: 'audio', opus: 'audio', wav: 'audio', flac: 'audio', m4a: 'audio', aac: 'audio',
+}
+const STREAM_KIND_BY_MIME: Record<string, 'video' | 'audio'> = {
+  'video/mp4': 'video', 'video/x-m4v': 'video', 'video/webm': 'video',
+  'video/quicktime': 'video', 'video/ogg': 'video', 'video/x-matroska': 'video',
+  'audio/mpeg': 'audio', 'audio/mp3': 'audio', 'audio/ogg': 'audio', 'audio/opus': 'audio',
+  'audio/wav': 'audio', 'audio/x-wav': 'audio', 'audio/wave': 'audio', 'audio/flac': 'audio',
+  'audio/x-flac': 'audio', 'audio/mp4': 'audio', 'audio/x-m4a': 'audio', 'audio/aac': 'audio', 'audio/webm': 'audio',
+}
+
+function streamKind(f: FileView): 'video' | 'audio' | undefined {
+  const ext = extOf(f)
+  if (STREAM_KIND_BY_EXT[ext]) return STREAM_KIND_BY_EXT[ext]
+  const mime = (f.mime || '').toLowerCase().split(';')[0].trim()
+  return STREAM_KIND_BY_MIME[mime]
+}
+
 export function fileKind(f: FileView): FileKind {
   if (imageSrc(f)) return 'image'
+  const sk = streamKind(f)
+  if (sk) return sk
   const ext = extOf(f)
   const mime = (f.mime || '').toLowerCase()
   if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'markdown'
   if (TEXT_EXT.has(ext) || mime === 'text/plain') return 'text'
   return 'other'
+}
+
+// VIDEO_BOX: the feed's fixed video frame — the file's own width/height
+// (Task 8), scaled to fit, or this 16:9 default when they're unknown (the
+// fake's seeded clips have none) so the feed never jumps once the file
+// actually loads.
+export const VIDEO_BOX = { w: 480, h: 270 }
+
+export function videoBox(f: FileView): { width: number; height: number } {
+  if (f.width && f.height) return fitBox(f.width, f.height, VIDEO_BOX.w, VIDEO_BOX.h)
+  return { width: VIDEO_BOX.w, height: VIDEO_BOX.h }
 }
 
 // fitBox: the box an image is shown in — known before it loads, so the

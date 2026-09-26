@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { FileView, ServerState } from '../api/types'
+import { client } from '../api/client'
 import { useStore } from '../store'
 import { setLocale } from '../i18n'
 import { Attachments } from './Attachments'
@@ -90,6 +91,25 @@ test('markdown files: rendered snippet, not a plain-text <pre>', async () => {
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
   expect(screen.getAllByRole('listitem')).toHaveLength(2)
   expect(fetchMock).toHaveBeenCalledWith('/media/1/text/f-readme', expect.objectContaining({ credentials: 'same-origin' }))
+})
+
+test('video and audio: fixed-box poster (video) and a compact row (audio), preload="none"', async () => {
+  vi.spyOn(client, 'mediaStreamBase').mockResolvedValue('/media')
+  const h = handlers()
+  const clip: FileView = { id: 'f-clip', name: 'clip.webm', ext: 'webm', size: 43538, mime: 'video/webm' }
+  const tone: FileView = { id: 'f-tone', name: 'tone.ogg', ext: 'ogg', size: 9736, mime: 'audio/ogg' }
+  const { container } = render(<Attachments serverId={1} files={[clip, tone]} {...h} />)
+  const videoEl = container.querySelector('video')!
+  expect(videoEl).toHaveAttribute('preload', 'none')
+  expect(videoEl.parentElement).toHaveStyle({ width: '480px', height: '270px' })
+  expect(screen.getByRole('button', { name: 'Play clip.webm' })).toBeInTheDocument()
+  const audioEl = container.querySelector('audio')!
+  expect(audioEl).toHaveAttribute('preload', 'none')
+  expect(audioEl).toHaveAttribute('controls')
+  expect(screen.getByText('tone.ogg')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'View clip.webm' }))
+  expect(h.onView).toHaveBeenCalledWith(clip)
+  vi.restoreAllMocks()
 })
 
 test('other files are cards with download and open', async () => {

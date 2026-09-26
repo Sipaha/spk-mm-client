@@ -4,6 +4,7 @@ import { mediaURL, useLoadFailure } from '../media'
 import { FileCard, type FileHandlers } from './FileCard'
 import { fileKind, fitBox, imageSrc } from './files'
 import { MarkdownSnippet } from './MarkdownSnippet'
+import { MediaPlayer } from './MediaPlayer'
 import { TextSnippet } from './TextSnippet'
 
 const BIG = { w: 480, h: 360 }
@@ -51,6 +52,8 @@ export function Attachments({
   ...h
 }: { serverId: number; files: FileView[]; me: string; onLink(href: string): void } & FileHandlers) {
   const images = files.filter((f) => fileKind(f) === 'image')
+  const videos = files.filter((f) => fileKind(f) === 'video')
+  const audios = files.filter((f) => fileKind(f) === 'audio')
   const texts = files.filter((f) => fileKind(f) === 'text')
   const markdowns = files.filter((f) => fileKind(f) === 'markdown')
   const others = files.filter((f) => fileKind(f) === 'other')
@@ -63,6 +66,16 @@ export function Attachments({
           ))}
         </div>
       )}
+      {videos.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {videos.map((f) => (
+            <MediaPlayer key={f.id} serverId={serverId} file={f} kind="video" onView={h.onView} onDownload={h.onDownload} onOpen={h.onOpen} />
+          ))}
+        </div>
+      )}
+      {audios.map((f) => (
+        <MediaPlayer key={f.id} serverId={serverId} file={f} kind="audio" onView={h.onView} onDownload={h.onDownload} onOpen={h.onOpen} />
+      ))}
       {texts.map((f) => (
         <TextSnippet key={f.id} serverId={serverId} file={f} {...h} />
       ))}

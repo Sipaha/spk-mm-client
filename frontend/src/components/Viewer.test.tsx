@@ -2,12 +2,15 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { FileView } from '../api/types'
+import { client } from '../api/client'
 import { setLocale } from '../i18n'
 import { Viewer } from './Viewer'
 
 const img: FileView = { id: 'f-build', name: 'build.png', ext: 'png', size: 5000, mime: 'image/png', width: 1280, height: 720, has_preview: true }
 const log: FileView = { id: 'f-log', name: 'server.log', ext: 'log', size: 70000, mime: 'text/plain' }
 const readme: FileView = { id: 'f-readme', name: 'README.md', ext: 'md', size: 400, mime: 'text/markdown' }
+const clip: FileView = { id: 'f-clip', name: 'clip.webm', ext: 'webm', size: 43538, mime: 'video/webm' }
+const tone: FileView = { id: 'f-tone', name: 'tone.ogg', ext: 'ogg', size: 9736, mime: 'audio/ogg' }
 const noop = () => {}
 
 beforeEach(() => setLocale('en'))
@@ -241,4 +244,39 @@ test('a plain text file has no Source/Rendered switch', async () => {
   await screen.findByText('hello log')
   expect(screen.queryByRole('button', { name: 'Source' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Rendered' })).toBeNull()
+})
+
+test('video: opens big with native controls; ←/→ focused in the player seek instead of paging, Escape still closes', async () => {
+  vi.spyOn(client, 'mediaStreamBase').mockResolvedValue('/media')
+  const onIndex = vi.fn()
+  const onClose = vi.fn()
+  const { container } = render(
+    <Viewer serverId={1} files={[clip, img]} index={0} me="alice" onLink={noop} onIndex={onIndex} onClose={onClose} onDownload={noop} onOpen={noop} />,
+  )
+  const video = container.querySelector('video')!
+  expect(video).toHaveAttribute('controls')
+  expect(video).toHaveAttribute('preload', 'none')
+  video.focus()
+  fireEvent.keyDown(video, { key: 'ArrowRight' })
+  expect(onIndex).not.toHaveBeenCalled()
+  fireEvent.keyDown(video, { key: 'ArrowLeft' })
+  expect(onIndex).not.toHaveBeenCalled()
+  // Outside the player, the same keys still page through the post's files.
+  fireEvent.keyDown(window, { key: 'ArrowRight' })
+  expect(onIndex).toHaveBeenLastCalledWith(1)
+  fireEvent.keyDown(video, { key: 'Escape' })
+  expect(onClose).toHaveBeenCalled()
+  vi.restoreAllMocks()
+})
+
+test('audio: opens big with native controls, no viewer chrome from the feed row', async () => {
+  vi.spyOn(client, 'mediaStreamBase').mockResolvedValue('/media')
+  const { container } = render(
+    <Viewer serverId={1} files={[tone]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />,
+  )
+  const audio = container.querySelector('audio')!
+  expect(audio).toHaveAttribute('controls')
+  expect(audio).toHaveAttribute('preload', 'none')
+  expect(screen.getByRole('dialog').querySelector('header')).toHaveTextContent('tone.ogg') // the viewer's own header, not the feed's row
+  vi.restoreAllMocks()
 })

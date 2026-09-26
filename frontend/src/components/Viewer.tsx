@@ -6,6 +6,7 @@ import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
 import { MarkdownView } from './MarkdownView'
+import { MediaPlayer } from './MediaPlayer'
 import { TextView } from './TextView'
 
 interface Props {
@@ -82,8 +83,9 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
     if (e.target === e.currentTarget) onClose()
   }
   const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
-  const showImage = fileKind(file) === 'image' && src && !failedIds.has(file.id)
-  const isMarkdown = fileKind(file) === 'markdown'
+  const kind = fileKind(file)
+  const showImage = kind === 'image' && src && !failedIds.has(file.id)
+  const isMarkdown = kind === 'markdown'
   return (
     <div role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
@@ -143,7 +145,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
             ‹
           </button>
         )}
-        {fileKind(file) === 'image' ? (
+        {kind === 'image' ? (
           showImage ? (
             <ImageZoom
               key={file.id}
@@ -161,6 +163,8 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
           ) : (
             <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
           )
+        ) : kind === 'video' || kind === 'audio' ? (
+          <MediaPlayer key={file.id} serverId={serverId} file={file} kind={kind} big onDownload={onDownload} onOpen={onOpen} />
         ) : isMarkdown && !mdSource ? (
           <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} />
         ) : (

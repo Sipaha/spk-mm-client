@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { client } from './api/client'
 import { useLiveEpoch } from './store'
 
 export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji'
@@ -21,4 +22,30 @@ export function useLoadFailure(serverId: number, key: string): [failed: boolean,
   const [failedAt, setFailedAt] = useState<string | null>(null)
   const tag = `${epoch}|${key}`
   return [failedAt === tag, () => setFailedAt(tag)]
+}
+
+// streamBase caches client.mediaStreamBase() for the life of the page
+// (Task 7's contract): the desktop URL carries a secret session token that
+// must never sit in localStorage or a log line, and the browser's fixed
+// "/media" has nothing to gain from being asked again. A rejected attempt
+// is not cached, so the next player retries instead of failing forever.
+let streamBase: Promise<string> | undefined
+
+function getStreamBase(): Promise<string> {
+  if (!streamBase) {
+    streamBase = client.mediaStreamBase().catch((e) => {
+      streamBase = undefined
+      throw e
+    })
+  }
+  return streamBase
+}
+
+// streamURL: the one shape <video>/<audio> read from in both modes,
+// `${base}/${serverId}/stream/${fileId}` — only the base differs (a
+// same-origin "/media" path in the browser, a loopback URL with a token on
+// desktop), and it is asked for at most once per session.
+export async function streamURL(serverId: number, fileId: string): Promise<string> {
+  const base = await getStreamBase()
+  return `${base}/${serverId}/stream/${fileId}`
 }
