@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
+import type { ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
 import { setLocale } from './i18n'
 import { useStore } from './store'
 
@@ -13,12 +13,26 @@ vi.mock('./api/client', () => ({
     editPost: vi.fn(),
     downloadFile: vi.fn(),
     openFile: vi.fn(),
+    downloads: vi.fn(),
+    openDownload: vi.fn(),
+    revealDownload: vi.fn(),
+    removeDownload: vi.fn(),
+    clearDownloads: vi.fn(),
   },
   ApiError: class ApiError extends Error {},
 }))
 
 const { client } = await import('./api/client')
-const { downloadFile, editPost, loadSidebar, openChannel, openFile, refreshChannel, resetChat, selectServer } = await import('./chat')
+const {
+  clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost, loadSidebar,
+  onDownloadsChanged, openChannel, openDownload, openDownloadsPanel, openFile, refreshChannel,
+  removeDownload, resetChat, revealDownload, selectServer,
+} = await import('./chat')
+
+const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
+  id: 1, server_id: 1, file_id: 'f1', name: 'a.txt', path: '/d/a.txt', size: 10, mime: 'text/plain',
+  started_at: 0, finished_at: 1, state: 'done', error: '', received: 10, exists: true, openable: true, ...over,
+})
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -47,7 +61,15 @@ beforeEach(() => {
   vi.mocked(client.getChannel).mockReset()
   vi.mocked(client.sidebar).mockReset()
   vi.mocked(client.editPost).mockReset()
-  useStore.setState({ servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null, editingId: null })
+  vi.mocked(client.downloads).mockReset()
+  vi.mocked(client.openDownload).mockReset().mockResolvedValue(true)
+  vi.mocked(client.revealDownload).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.removeDownload).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.clearDownloads).mockReset().mockResolvedValue(undefined)
+  useStore.setState({
+    servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
+    editingId: null, downloads: [], downloadsOpen: false,
+  })
 })
 
 test('loading the sidebar opens its selected channel', async () => {
@@ -158,4 +180,69 @@ test('a download in progress is shown at once and stays until it is replaced', a
   const ru = downloadFile(1, spec)
   expect(useStore.getState().notice).toBe('Скачивается spec.pdf…')
   await ru
+})
+
+test('the saved notice carries a "show in folder" action resolving the entry by path', async () => {
+  setLocale('en')
+  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/d/spec.pdf', opened: false })
+  await downloadFile(1, spec)
+  const action = useStore.getState().noticeAction
+  expect(action?.label).toBe('Show in folder')
+
+  vi.mocked(client.downloads).mockResolvedValue([dl({ id: 9, path: '/d/spec.pdf' }), dl({ id: 10, path: '/d/other.txt' })])
+  action?.onClick()
+  await vi.waitFor(() => expect(client.revealDownload).toHaveBeenCalledWith(9))
+})
+
+test('downloads panel: first open loads the list once, later opens rely on events', async () => {
+  vi.mocked(client.downloads).mockResolvedValue([dl()])
+  openDownloadsPanel()
+  await vi.waitFor(() => expect(useStore.getState().downloads).toHaveLength(1))
+  expect(client.downloads).toHaveBeenCalledTimes(1)
+
+  closeDownloadsPanel()
+  expect(useStore.getState().downloadsOpen).toBe(false)
+  expect(useStore.getState().downloads).toEqual([]) // nothing active: dropped on close
+
+  openDownloadsPanel()
+  expect(client.downloads).toHaveBeenCalledTimes(1) // not re-fetched: only downloads_changed refreshes it now
+})
+
+test('onDownloadsChanged patches progress in place, and reloads on state/new/clear', async () => {
+  useStore.getState().setDownloadsOpen(true)
+  useStore.getState().setDownloads([dl({ id: 5, state: 'downloading', received: 1 })])
+
+  onDownloadsChanged({ id: 5, received: 42 })
+  expect(useStore.getState().downloads[0].received).toBe(42)
+  expect(client.downloads).not.toHaveBeenCalled()
+
+  vi.mocked(client.downloads).mockResolvedValue([dl({ id: 5, state: 'done', received: 100 })])
+  onDownloadsChanged({ id: 5, state: 'done' })
+  await vi.waitFor(() => expect(useStore.getState().downloads[0].state).toBe('done'))
+
+  vi.mocked(client.downloads).mockResolvedValue([])
+  onDownloadsChanged(undefined) // a clear/remove: neither field
+  await vi.waitFor(() => expect(useStore.getState().downloads).toEqual([]))
+})
+
+test('downloadPrimaryAction: open when possible, else reveal, none while downloading or deleted', () => {
+  expect(downloadPrimaryAction(dl({ state: 'downloading' }))).toBeNull()
+  expect(downloadPrimaryAction(dl({ state: 'done', exists: false }))).toBeNull()
+
+  downloadPrimaryAction(dl({ id: 3, state: 'done', exists: true, openable: true }))?.()
+  expect(client.openDownload).toHaveBeenCalledWith(3)
+
+  downloadPrimaryAction(dl({ id: 4, state: 'done', exists: true, openable: false }))?.()
+  expect(client.revealDownload).toHaveBeenCalledWith(4)
+})
+
+test('the panel actions call the matching API methods', () => {
+  openDownload(1)
+  expect(client.openDownload).toHaveBeenCalledWith(1)
+  revealDownload(2)
+  expect(client.revealDownload).toHaveBeenCalledWith(2)
+  removeDownload(3)
+  expect(client.removeDownload).toHaveBeenCalledWith(3)
+  clearDownloads()
+  expect(client.clearDownloads).toHaveBeenCalledTimes(1)
 })

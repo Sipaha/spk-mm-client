@@ -1,4 +1,4 @@
-import type { ServerDTO } from './api/types'
+import type { DownloadView, ServerDTO } from './api/types'
 import { useStore } from './store'
 
 const srv = (o: Partial<ServerDTO> = {}): ServerDTO => ({
@@ -77,4 +77,40 @@ test('a server going live bumps its live epoch; other updates do not', () => {
   expect(epoch(1)).toBe(e1 + 1)
   useStore.getState().setServers([srv({ state: 'live' }), srv({ id: 2, state: 'live' })])
   expect(epoch(1)).toBe(e1 + 2)
+})
+
+const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
+  id: 1, server_id: 1, file_id: 'f1', name: 'a.txt', path: '/d/a.txt', size: 10, mime: 'text/plain',
+  started_at: 0, finished_at: 1, state: 'done', error: '', received: 10, exists: true, openable: true, ...over,
+})
+
+test('setNotice carries an optional action, cleared with the notice', () => {
+  const onClick = () => {}
+  useStore.getState().setNotice('Saved to /a', false, { label: 'Show in folder', onClick })
+  expect(useStore.getState().noticeAction).toEqual({ label: 'Show in folder', onClick })
+  useStore.getState().setNotice(null)
+  expect(useStore.getState().noticeAction).toBeNull()
+})
+
+test('the downloads list is dropped once the panel closes and nothing is active', () => {
+  useStore.setState({ downloads: [], downloadsOpen: false })
+  useStore.getState().setDownloads([dl()])
+  expect(useStore.getState().downloads).toEqual([]) // panel closed, nothing active: not held
+
+  useStore.getState().setDownloadsOpen(true)
+  useStore.getState().setDownloads([dl()])
+  expect(useStore.getState().downloads).toHaveLength(1) // panel open: held
+
+  useStore.getState().setDownloadsOpen(false)
+  expect(useStore.getState().downloads).toEqual([]) // closing with nothing active drops it
+
+  useStore.getState().setDownloads([dl({ state: 'downloading', received: 3 })])
+  useStore.getState().setDownloadsOpen(false) // an active download keeps the list even when the panel is closed
+  expect(useStore.getState().downloads).toHaveLength(1)
+
+  useStore.getState().patchDownloadProgress(1, 7)
+  expect(useStore.getState().downloads[0].received).toBe(7)
+
+  useStore.getState().setDownloads([dl({ state: 'done' })]) // it finished: no longer active, panel still closed
+  expect(useStore.getState().downloads).toEqual([])
 })

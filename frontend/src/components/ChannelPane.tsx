@@ -1,10 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
-import { copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openFile, openLink, react, retryPost, saveDraft, sendPost } from '../chat'
+import {
+  clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
+  editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
+  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost,
+} from '../chat'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
 import { useStore } from '../store'
 import { Composer } from './Composer'
+import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
 import { channelGlyph } from './glyph'
@@ -15,6 +21,10 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const channelId = channel?.id ?? ''
   const teamName = channel?.team_name ?? ''
   const editingId = useStore((s) => s.editingId)
+  const downloads = useStore((s) => s.downloads)
+  const downloadsOpen = useStore((s) => s.downloadsOpen)
+  const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
+  const downloadsBtnRef = useRef<HTMLButtonElement>(null)
   // The viewer belongs to the channel it was opened in.
   const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
   // Stable per channel: PostItem is memoized on its props.
@@ -59,6 +69,21 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
             {channel.header}
           </p>
         )}
+        <button
+          ref={downloadsBtnRef}
+          type="button"
+          title={t('downloads.button')}
+          aria-label={activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')}
+          onClick={() => (downloadsOpen ? closeDownloadsPanel() : openDownloadsPanel())}
+          className="relative ml-auto shrink-0 rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
+        >
+          ⬇
+          {activeDownloads > 0 && (
+            <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-white">
+              {activeDownloads}
+            </span>
+          )}
+        </button>
       </header>
       {server.state === 'needs_reauth' && (
         <div role="status" className="flex items-center gap-3 bg-mention-bg px-4 py-1.5 text-sm text-mention-fg">
@@ -94,6 +119,22 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           onOpen={(f) => void openFile(server.id, f)}
         />
       )}
+      {downloadsOpen &&
+        downloadsBtnRef.current &&
+        createPortal(
+          <Downloads
+            anchor={downloadsBtnRef.current.getBoundingClientRect()}
+            downloads={downloads}
+            locale={formatLocale()}
+            primaryAction={downloadPrimaryAction}
+            onOpen={openDownload}
+            onReveal={revealDownload}
+            onRemove={removeDownload}
+            onClear={clearDownloads}
+            onClose={closeDownloadsPanel}
+          />,
+          document.body,
+        )}
     </section>
   )
 }

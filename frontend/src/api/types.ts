@@ -87,6 +87,26 @@ export interface SavedFile {
   opened: boolean
 }
 
+// DownloadView is one entry of the browser-like downloads list (newest
+// first); see internal/api/downloads.go (api.DownloadView) for the exact
+// contract this mirrors.
+export interface DownloadView {
+  id: number
+  server_id: number
+  file_id: string
+  name: string
+  path: string // '' until done
+  size: number
+  mime: string
+  started_at: number // unix ms
+  finished_at: number // unix ms, 0 while downloading
+  state: 'downloading' | 'done' | 'failed'
+  error: string // error code of a failed download
+  received: number // bytes so far (downloading), size when done
+  exists: boolean // done and the file is still there — else "file deleted", no actions
+  openable: boolean // OpenDownload hands this type to the system; otherwise only "show in folder"
+}
+
 export interface ReactionView {
   emoji: string
   count: number
@@ -147,6 +167,7 @@ export type EventType =
   | 'sidebar_changed'
   | 'channel_changed'
   | 'open_channel'
+  | 'downloads_changed'
 
 export interface ApiEvent {
   type: EventType

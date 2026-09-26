@@ -1,5 +1,5 @@
 import { client } from './api/client'
-import type { ChannelDTO } from './api/types'
+import type { ChannelDTO, DownloadView } from './api/types'
 import { errorMessage } from './errors'
 import { t } from './i18n'
 import { useStore } from './store'
@@ -20,6 +20,7 @@ export function resetChat() {
   wanted = null
   inFlight = false
   again = false
+  loadedDownloadsOnce = false
 }
 
 export function selectServer(id: number | null) {
@@ -163,9 +164,24 @@ export const copyLink = (serverURL: string, teamName: string, postId: string) =>
   navigator.clipboard?.writeText(`${serverURL}/${teamName}/pl/${postId}`).catch(report)
 }
 
+// revealSavedFile backs the saved notice's "Show in folder" button: it
+// resolves the download's list entry by its (unique) saved path and asks
+// Go to show it — RevealDownload takes a downloads-list id, which
+// DownloadFile/OpenFile's result does not carry.
+async function revealSavedFile(path: string) {
+  try {
+    const list = await client.downloads()
+    const entry = list.find((d) => d.path === path)
+    if (entry) await client.revealDownload(entry.id)
+  } catch (e) {
+    report(e)
+  }
+}
+
 // saving shows "Downloading <name>…" at once — a big file takes a while —
 // as a sticky notice (no auto-dismiss); the outcome replaces it. Go joins
-// clicks on a file already downloading to that download.
+// clicks on a file already downloading to that download. A notice with a
+// path (saved, whether or not it was opened) gets a "Show in folder" action.
 async function saving(name: string, save: () => Promise<{ path: string; opened: boolean }>, done: (r: { path: string; opened: boolean }) => string | null) {
   const s = useStore.getState()
   const busy = t('file.downloading', { name })
@@ -173,7 +189,10 @@ async function saving(name: string, save: () => Promise<{ path: string; opened: 
   try {
     const r = await save()
     const msg = done(r)
-    if (msg !== null || useStore.getState().notice === busy) useStore.getState().setNotice(msg)
+    if (msg !== null || useStore.getState().notice === busy) {
+      const action = msg !== null ? { label: t('downloads.showInFolder'), onClick: () => void revealSavedFile(r.path) } : null
+      useStore.getState().setNotice(msg, false, action)
+    }
   } catch (e) {
     if (useStore.getState().notice === busy) useStore.getState().setNotice(null)
     report(e)
@@ -187,6 +206,56 @@ export const downloadFile = (serverId: number, file: { id: string; name: string 
 // launchers (.desktop, scripts…) — then the user is told where the file is.
 export const openFile = (serverId: number, file: { id: string; name: string }) =>
   saving(file.name, () => client.openFile(serverId, file.id), (r) => (r.opened ? null : t('file.savedNotOpened', { path: r.path })))
+
+// --- Downloads panel ---------------------------------------------------
+
+// loadedDownloadsOnce: Downloads() is read only by UI request (never
+// polled) — the panel fetches it the first time it opens; afterwards
+// downloads_changed keeps the store's copy current.
+let loadedDownloadsOnce = false
+
+export async function refreshDownloads() {
+  loadedDownloadsOnce = true
+  try {
+    useStore.getState().setDownloads(await client.downloads())
+  } catch (e) {
+    report(e)
+  }
+}
+
+export function openDownloadsPanel() {
+  useStore.getState().setDownloadsOpen(true)
+  if (!loadedDownloadsOnce) void refreshDownloads()
+}
+
+export const closeDownloadsPanel = () => useStore.getState().setDownloadsOpen(false)
+
+// onDownloadsChanged applies an EventDownloadsChanged payload: "received"
+// alone patches that row in place (not final — throttled, at most ~4/s);
+// anything else (a new download listed, "state" on completion, or no
+// payload at all — a remove/clear) re-reads the whole list.
+export function onDownloadsChanged(payload: Record<string, unknown> | undefined) {
+  const p = payload ?? {}
+  if ('received' in p && !('state' in p) && typeof p.id === 'number') {
+    useStore.getState().patchDownloadProgress(p.id, Number(p.received))
+    return
+  }
+  void refreshDownloads()
+}
+
+export const openDownload = (id: number) => client.openDownload(id).catch(report)
+export const revealDownload = (id: number) => client.revealDownload(id).catch(report)
+export const removeDownload = (id: number) => client.removeDownload(id).catch(report)
+export const clearDownloads = () => client.clearDownloads().catch(report)
+
+// downloadPrimaryAction: what a click on a finished row / Enter does —
+// "Open" when possible, else "Show in folder"; nothing for an in-progress
+// or deleted entry (Go's RevealDownload/OpenDownload would just 404).
+export function downloadPrimaryAction(d: DownloadView): (() => void) | null {
+  if (d.state !== 'done' || !d.exists) return null
+  if (d.openable) return () => openDownload(d.id)
+  return () => revealDownload(d.id)
+}
 
 export const react = (serverId: number, postId: string, emoji: string, add: boolean) => {
   ;(add ? client.addReaction(serverId, postId, emoji) : client.removeReaction(serverId, postId, emoji)).catch(report)

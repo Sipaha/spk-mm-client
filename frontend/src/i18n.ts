@@ -130,6 +130,19 @@ const ru = {
   'picker.cat.objects': 'Предметы',
   'picker.cat.symbols': 'Символы',
   'picker.cat.flags': 'Флаги',
+  'downloads.button': 'Загрузки',
+  'downloads.buttonActive': 'Загрузки — активных: {n}',
+  'downloads.panelLabel': 'Список загрузок',
+  'downloads.empty': 'Загрузок пока нет',
+  'downloads.clear': 'Очистить список',
+  'downloads.open': 'Открыть {name}',
+  'downloads.reveal': 'Показать {name} в папке',
+  'downloads.remove': 'Убрать {name} из списка',
+  'downloads.showInFolder': 'Показать в папке',
+  'downloads.deleted': 'Файл удалён',
+  'downloads.error': 'Ошибка: {detail}',
+  'downloads.progress': '{received} из {total}',
+  'downloads.savedAt': '{size} · {time}',
 } as const
 
 type Key = keyof typeof ru
@@ -266,6 +279,19 @@ const en: Record<Key, string> = {
   'picker.cat.objects': 'Objects',
   'picker.cat.symbols': 'Symbols',
   'picker.cat.flags': 'Flags',
+  'downloads.button': 'Downloads',
+  'downloads.buttonActive': 'Downloads — active: {n}',
+  'downloads.panelLabel': 'Downloads list',
+  'downloads.empty': 'No downloads yet',
+  'downloads.clear': 'Clear the list',
+  'downloads.open': 'Open {name}',
+  'downloads.reveal': 'Show {name} in folder',
+  'downloads.remove': 'Remove {name} from the list',
+  'downloads.showInFolder': 'Show in folder',
+  'downloads.deleted': 'File deleted',
+  'downloads.error': 'Error: {detail}',
+  'downloads.progress': '{received} of {total}',
+  'downloads.savedAt': '{size} · {time}',
 }
 
 export const dict = { ru, en }

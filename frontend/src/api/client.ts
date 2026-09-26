@@ -1,5 +1,5 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, AppInfo, ChannelDTO, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
+import type { ApiEvent, AppInfo, ChannelDTO, DownloadView, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -37,6 +37,16 @@ export interface Client {
   emojiInfo(id: number): Promise<EmojiDTO>
   /** Base of audio/video URLs: `${base}/${serverId}/stream/${fileId}` ("/media" in the browser, a loopback URL in desktop). */
   mediaStreamBase(): Promise<string>
+  /** The browser-like downloads list, newest first. */
+  downloads(): Promise<DownloadView[]>
+  /** Opens a listed file (OpenFile's allowlist); false: only "show in folder" applies. */
+  openDownload(id: number): Promise<boolean>
+  /** Shows a listed file in the file manager (or its folder as a fallback). */
+  revealDownload(id: number): Promise<void>
+  /** Drops one finished/failed entry (the file stays); a download in progress is kept. */
+  removeDownload(id: number): Promise<void>
+  /** Drops every finished/failed entry. */
+  clearDownloads(): Promise<void>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -93,6 +103,11 @@ export const httpClient: Client = {
   removeReaction: (id, post_id, emoji) => done(post('RemoveReaction', { id, post_id, emoji })),
   emojiInfo: (id) => post('EmojiInfo', { id }),
   mediaStreamBase: () => post('MediaStreamBase', {}),
+  downloads: () => post('Downloads', {}),
+  openDownload: (id) => post('OpenDownload', { id }),
+  revealDownload: (id) => done(post('RevealDownload', { id })),
+  removeDownload: (id) => done(post('RemoveDownload', { id })),
+  clearDownloads: () => done(post('ClearDownloads', {})),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -124,6 +139,7 @@ const EVENT_TYPES: EventType[] = [
   'sidebar_changed',
   'channel_changed',
   'open_channel',
+  'downloads_changed',
 ]
 
 export const wailsClient: Client = {
@@ -155,6 +171,11 @@ export const wailsClient: Client = {
   removeReaction: (id, postId, emoji) => wcall('RemoveReaction', id, postId, emoji),
   emojiInfo: (id) => wcall('EmojiInfo', id),
   mediaStreamBase: () => wcall('MediaStreamBase'),
+  downloads: () => wcall('Downloads'),
+  openDownload: (id) => wcall('OpenDownload', id),
+  revealDownload: (id) => wcall('RevealDownload', id),
+  removeDownload: (id) => wcall('RemoveDownload', id),
+  clearDownloads: () => wcall('ClearDownloads'),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

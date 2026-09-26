@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { AppInfo, ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
+import type { AppInfo, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+
+export interface NoticeAction {
+  label: string
+  onClick(): void
+}
 
 interface State {
   servers: ServerDTO[]
@@ -14,10 +19,16 @@ interface State {
   editingId: string | null // post being edited inline
   notice: string | null // info banner (e.g. where a download went)
   noticeSticky: boolean // the notice stays until replaced (a download in progress)
+  noticeAction: NoticeAction | null // e.g. the saved notice's "Show in folder"
   // liveEpochs: per server, bumped each time it goes live. A picture or
   // snippet that failed to load is remembered only for the epoch it failed
   // in — offline, /media/ answers 404 — and tried again after the next live.
   liveEpochs: Record<number, number>
+  // downloads: the browser-like downloads list (newest first). Held only
+  // while the panel is open or a download is active — otherwise cleared, so
+  // it never grows across a long session (see setDownloads/setDownloadsOpen).
+  downloads: DownloadView[]
+  downloadsOpen: boolean
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -27,8 +38,13 @@ interface State {
   setSidebar(serverId: number, sb: SidebarDTO): void
   setChannel(serverId: number, ch: ChannelDTO): void
   setEditing(id: string | null): void
-  setNotice(msg: string | null, sticky?: boolean): void
+  setNotice(msg: string | null, sticky?: boolean, action?: NoticeAction | null): void
+  setDownloads(list: DownloadView[]): void
+  setDownloadsOpen(open: boolean): void
+  patchDownloadProgress(id: number, received: number): void
 }
+
+const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
 
 const cleared = { sidebar: null, channel: null, editingId: null }
 
@@ -45,7 +61,10 @@ export const useStore = create<State>((set, get) => ({
   editingId: null,
   notice: null,
   noticeSticky: false,
+  noticeAction: null,
   liveEpochs: {},
+  downloads: [],
+  downloadsOpen: false,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -86,7 +105,17 @@ export const useStore = create<State>((set, get) => ({
     set({ channel: ch, ...(switchedChannel ? { editingId: null } : {}) })
   },
   setEditing: (id) => set({ editingId: id }),
-  setNotice: (msg, sticky = false) => set({ notice: msg, noticeSticky: msg !== null && sticky }),
+  setNotice: (msg, sticky = false, action = null) =>
+    set({ notice: msg, noticeSticky: msg !== null && sticky, noticeAction: msg !== null ? action : null }),
+  setDownloads(list) {
+    set({ downloads: get().downloadsOpen || hasActiveDownload(list) ? list : [] })
+  },
+  setDownloadsOpen(open) {
+    set((s) => ({ downloadsOpen: open, downloads: open || hasActiveDownload(s.downloads) ? s.downloads : [] }))
+  },
+  patchDownloadProgress(id, received) {
+    set((s) => ({ downloads: s.downloads.map((d) => (d.id === id ? { ...d, received } : d)) }))
+  },
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).

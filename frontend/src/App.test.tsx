@@ -29,6 +29,7 @@ vi.mock('./api/client', async (orig) => {
       sidebar: vi.fn(async () => sb),
       openChannel: vi.fn(async () => town),
       getChannel: vi.fn(async () => town),
+      downloads: vi.fn(async () => []),
       subscribeEvents: (fn: (e: ApiEvent) => void) => {
         h.emit = fn
         return () => {}
@@ -95,4 +96,17 @@ test('window focus and network changes are reported to Go', async () => {
   expect(client.setFocused).toHaveBeenLastCalledWith(true)
   await act(async () => window.dispatchEvent(new Event('online')))
   expect(client.networkChanged).toHaveBeenCalled()
+})
+
+test('a downloads_changed event refreshes the list and the header badge shows the active count', async () => {
+  const { client } = await import('./api/client')
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  vi.mocked(client.downloads).mockResolvedValue([
+    { id: 1, server_id: 1, file_id: 'f1', name: 'a.txt', path: '', size: 5, mime: 'text/plain', started_at: 0,
+      finished_at: 0, state: 'downloading', error: '', received: 2, exists: false, openable: true },
+  ])
+  await act(async () => h.emit!({ type: 'downloads_changed', payload: { id: 1 } }))
+  expect(await screen.findByRole('button', { name: 'Downloads — active: 1' })).toBeInTheDocument()
 })
