@@ -77,7 +77,7 @@ func (s *Server) seed() {
 	s.seedFilePostLocked("c-offtopic", "u-carol", "Spec draft",
 		s.newFileLocked("f-spec", "c-offtopic", "spec.pdf", "application/pdf", []byte("%PDF-1.4\n% fake pdf for spk-mattermost tests\n")))
 	s.seedFilePostLocked("c-offtopic", "u-bob", "Full log, for the viewer's ?full=1",
-		s.newFileLocked("f-biglog", "c-offtopic", "big.log", "text/plain", logText(22000))) // ~1.2 MiB: over TextFullLimit (1 MiB)
+		s.newFileLocked("f-biglog", "c-offtopic", "big.log", "text/plain", bigLogText(22000))) // ~1.2 MiB: over TextFullLimit (1 MiB)
 	s.chat.emoji["e-parrot"] = &femoji{e: model.Emoji{ID: "e-parrot", Name: "partyparrot", CreatorID: "u-bob"}, png: img["emoji"]}
 	for i, u := range o.Users {
 		at := base + int64(i)
