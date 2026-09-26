@@ -46,6 +46,11 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
   // own click handler — fired right after, since the drag can end with the
   // pointer over the backdrop — doesn't treat it as a backdrop click.
   const draggedRef = useRef(false)
+  // Set right before switching from Rendered to Source in response to
+  // Ctrl+F (see below); read once by TextView's mount effect to focus the
+  // search field, then cleared — a normal Source/Rendered toggle click (or
+  // paging to a plain text file) must not steal focus.
+  const focusSearchRef = useRef(false)
   // Markdown files default to the rendered view; the header's Source/
   // Rendered switch flips this. Per-file, so paging ←/→ to a different
   // file always starts on the rendered view again.
@@ -66,11 +71,22 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       } else if (e.key === 'ArrowLeft' && files.length > 1) {
         e.preventDefault()
         onIndex((index - 1 + files.length) % files.length)
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        // TextView (Source) intercepts Ctrl+F itself once mounted; in
+        // Rendered mode there is no search field to intercept for at all,
+        // so without this Ctrl+F silently did nothing. Switch to Source
+        // and hand off focus to its search field once it mounts.
+        const f = files[index]
+        if (f && fileKind(f) === 'markdown' && !mdSource) {
+          e.preventDefault()
+          focusSearchRef.current = true
+          setMdSource(true)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [files.length, index, onClose, onIndex])
+  }, [files, index, onClose, onIndex, mdSource])
   useEffect(() => setMdSource(false), [files[index]?.id])
   const file = files[index]
   if (!file) return null
@@ -86,6 +102,14 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
   const kind = fileKind(file)
   const showImage = kind === 'image' && src && !failedIds.has(file.id)
   const isMarkdown = kind === 'markdown'
+  // Read-and-clear: TextView only needs this for the render that mounts it
+  // right after Ctrl+F switched from Rendered — any later render (a normal
+  // Source/Rendered toggle, paging) must not carry it over.
+  const consumeFocusSearch = () => {
+    const v = focusSearchRef.current
+    focusSearchRef.current = false
+    return v
+  }
   return (
     <div role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
@@ -157,6 +181,20 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
               onFail={() => addFailed(file.id)}
               onDragEnd={() => {
                 draggedRef.current = true
+                // Normally the very next `click` (the browser's own,
+                // synthesized right after this mouseup) reaches
+                // `closeOnBackdrop` and resets the flag itself. But if the
+                // drag ends outside the window (mouseup delivered to
+                // `window` while the pointer is no longer over any element
+                // in the document — e.g. released past the OS window's
+                // edge), no `click` event fires at all, and the flag would
+                // otherwise stay set until some later, unrelated backdrop
+                // click gets wrongly swallowed by it. This macrotask runs
+                // after any same-tick click already handled it, so it only
+                // ever clears a flag no real click consumed.
+                setTimeout(() => {
+                  draggedRef.current = false
+                }, 0)
               }}
               onPercent={setScalePercent}
             />
@@ -168,7 +206,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
         ) : isMarkdown && !mdSource ? (
           <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} />
         ) : (
-          <TextView key={file.id} serverId={serverId} file={file} />
+          <TextView key={file.id} serverId={serverId} file={file} autoFocusSearch={consumeFocusSearch()} />
         )}
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.next')} className={`${nav} right-3`} onClick={() => onIndex((index + 1) % files.length)}>

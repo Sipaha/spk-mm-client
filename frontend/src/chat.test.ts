@@ -194,6 +194,19 @@ test('the saved notice carries a "show in folder" action resolving the entry by 
   await vi.waitFor(() => expect(client.revealDownload).toHaveBeenCalledWith(9))
 })
 
+test('"show in folder" reports an error instead of doing nothing when no entry matches the saved path (e.g. the SQLite insert failed)', async () => {
+  setLocale('en')
+  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/d/spec.pdf', opened: false })
+  await downloadFile(1, spec)
+  const action = useStore.getState().noticeAction
+
+  useStore.getState().setError(null)
+  vi.mocked(client.downloads).mockResolvedValue([dl({ id: 10, path: '/d/other.txt' })]) // no entry for spec.pdf
+  action?.onClick()
+  await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
+  expect(client.revealDownload).not.toHaveBeenCalled()
+})
+
 test('two overlapping refreshDownloads reloads resolving out of order: the newer one wins', async () => {
   useStore.getState().setDownloadsOpen(true)
   const first = deferred<DownloadView[]>()

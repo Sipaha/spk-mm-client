@@ -69,6 +69,21 @@ describe('zoomAround', () => {
     expect(back.scale).toBeCloseTo(1)
     expect(back.tx).toBeCloseTo(0)
   })
+
+  test('pan then wheel out to fit gives FIT, not an off-centre scale-1 state', () => {
+    // Reviewer's repro: zoom in a few steps anchored off-center, pan away
+    // from that anchor (so the zoomed-in translate no longer cancels out),
+    // then wheel out repeatedly until scale clamps back to exactly 1. The
+    // clamp used to keep whatever translate the last step computed instead
+    // of snapping to FIT, leaving the image off-centre and (per
+    // ImageZoom.tsx's `zoom.scale <= 1` guard) undraggable.
+    let s = FIT
+    const cursor = { x: -200, y: -100 }
+    for (let i = 0; i < 3; i++) s = zoomAround(s, cursor, ZOOM_STEP, 8)
+    s = panBy(s, 300, 0)
+    for (let i = 0; i < 10; i++) s = zoomAround(s, cursor, 1 / ZOOM_STEP, 8)
+    expect(s).toEqual(FIT)
+  })
 })
 
 describe('panBy', () => {

@@ -96,6 +96,39 @@ test('clicking the backdrop closes the viewer around an image, while loading and
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
+test('a pan-drag that ends without a following click (e.g. released outside the window) does not swallow a later, unrelated backdrop click', async () => {
+  const onClose = vi.fn()
+  const { container } = render(
+    <Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />,
+  )
+  const dialog = screen.getByRole('dialog', { name: 'File viewer' })
+  const backdrop = dialog.children[1] as HTMLElement
+  // ImageZoom's own root div — the immediate parent of its <img>s — is
+  // where wheel/mousedown are wired (ImageZoom.tsx).
+  const zoomRoot = container.querySelector('img[alt="build.png"]')!.parentElement as HTMLElement
+
+  // Zoom in so a drag actually pans (ImageZoom ignores mousedown at "fit").
+  fireEvent.wheel(zoomRoot, { deltaY: -100, clientX: 50, clientY: 50 })
+  // Drag past the threshold, then release — like the real ImageZoom
+  // gesture — but with no `click` DOM event following (as happens when the
+  // mouseup lands outside the browser window: no synthetic click fires
+  // anywhere in the document, so the backdrop's own click-based reset in
+  // `closeOnBackdrop` never runs).
+  fireEvent.mouseDown(zoomRoot, { button: 0, clientX: 100, clientY: 100 })
+  fireEvent.mouseMove(window, { clientX: 130, clientY: 100 })
+  fireEvent.mouseUp(window)
+
+  // No click follows. Give the safety-net timer a chance to run.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  })
+
+  // A later, unrelated click on the backdrop must still close the viewer —
+  // the stale "just dragged" flag must not still be swallowing it.
+  fireEvent.click(backdrop)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
 test('an image that fails to load falls back to a card with download/open, not a broken image', async () => {
   const onDownload = vi.fn()
   const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />)
@@ -236,6 +269,18 @@ test('markdown: the Rendered/Source switch is a labelled group; keyboard (Tab, E
   expect(screen.getByRole('button', { name: 'Rendered' })).toHaveFocus()
   await userEvent.keyboard(' ')
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
+})
+
+test('markdown: Ctrl+F in Rendered mode switches to Source and focuses the search field (it does nothing in Rendered otherwise)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\nsome body text\n')))
+  render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
+  expect(screen.queryByRole('textbox', { name: 'Search in file' })).toBeNull()
+
+  await userEvent.keyboard('{Control>}f{/Control}')
+
+  expect(await screen.findByRole('textbox', { name: 'Search in file' })).toHaveFocus()
+  expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull() // switched to Source
 })
 
 test('a plain text file has no Source/Rendered switch', async () => {

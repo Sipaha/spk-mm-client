@@ -56,7 +56,19 @@ function findMatches(lowerText: string, needle: string): { matches: Match[]; mor
 // mediaURL(…, 'text', id, { full: '1' }), and an in-file search. Kept
 // self-contained (its own header row, its own key handling) so it doesn't
 // need to know about the rest of the viewer beyond the file it's showing.
-export function TextView({ serverId, file }: { serverId: number; file: FileView }) {
+export function TextView({
+  serverId,
+  file,
+  autoFocusSearch,
+}: {
+  serverId: number
+  file: FileView
+  // Focus (and select) the search field once, right after mount — used by
+  // Viewer.tsx when Ctrl+F in a markdown file's Rendered view switches to
+  // this component (Source): there is no search field to intercept for
+  // until this mounts, so the viewer hands off the focus request instead.
+  autoFocusSearch?: boolean
+}) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id, { full: '1' }), useLiveEpoch(serverId))
   const text = res.status === 'ok' ? res.text : ''
   const lowerText = useMemo(() => foldForSearch(text), [text])
@@ -82,6 +94,16 @@ export function TextView({ serverId, file }: { serverId: number; file: FileView 
     setDebounced('')
   }
   useEffect(() => () => clearTimeout(timer.current), [])
+
+  // Mount-once, not on every `autoFocusSearch` change: the caller passes a
+  // read-once flag (Viewer.tsx's `consumeFocusSearch`), true only for the
+  // very render that mounts this component.
+  useEffect(() => {
+    if (autoFocusSearch) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [])
 
   const needle = foldForSearch(debounced.trim())
   const { matches, more } = useMemo(() => findMatches(lowerText, needle), [lowerText, needle])

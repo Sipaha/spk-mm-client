@@ -172,7 +172,11 @@ async function revealSavedFile(path: string) {
   try {
     const list = await client.downloads()
     const entry = list.find((d) => d.path === path)
-    if (entry) await client.revealDownload(entry.id)
+    // No matching list entry (e.g. the download's SQLite insert failed
+    // even though the file itself was saved) — report it instead of
+    // silently doing nothing; there is no id to reveal by otherwise.
+    if (!entry) throw new Error(`no downloads-list entry for ${path}`)
+    await client.revealDownload(entry.id)
   } catch (e) {
     report(e)
   }

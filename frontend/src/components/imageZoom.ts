@@ -49,6 +49,13 @@ export function zoomAround(state: ZoomState, cursor: { x: number; y: number }, f
   const s0 = state.scale
   const s1 = clampScale(s0 * factor, maxScale)
   if (s1 === s0) return state
+  // Clamped back to exactly "fit": always snap to FIT (tx=ty=0), regardless
+  // of where `cursor` is or how far `state`'s translate had drifted (e.g.
+  // from a pan after the zoom-in that anchored it elsewhere) — otherwise a
+  // pan-then-zoom-out-to-fit sequence lands at scale 1 with a stale,
+  // off-centre translate that `ImageZoom.tsx`'s `zoom.scale <= 1` guard
+  // then makes undraggable.
+  if (s1 === FIT.scale) return FIT
   const r = s1 / s0
   return {
     scale: s1,
