@@ -92,6 +92,11 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
 
 test('history loads up to the first message', async ({ page }) => {
   await signInAlice(page)
+  // Scroll up only once the feed has settled at its end, as a user would: a
+  // scroll to the top before the first rows are laid out loads a page with
+  // no anchor, the feed stays at scrollTop 0, and later scrollTo(0) calls
+  // fire no scroll event (docs/backlog.md).
+  await expect(feed(page).getByText('Message #150', { exact: true })).toBeVisible()
   await expect
     .poll(
       async () => {
