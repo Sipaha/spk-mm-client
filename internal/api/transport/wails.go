@@ -82,9 +82,12 @@ func (w *API) RemoveReaction(id int64, postID, emoji string) error {
 	return w.a.RemoveReaction(context.Background(), id, postID, emoji)
 }
 
-func (w *API) MediaStreamBase() (string, error) {
-	return w.a.MediaStreamBase(context.Background())
-}
 func (w *API) EmojiInfo(id int64) (api.EmojiDTO, error) {
 	return w.a.EmojiInfo(context.Background(), id)
+}
+
+// MediaStreamBase returns a URL with the loopback server's token: keep Wails'
+// log level below Debug in shipped builds (it logs binding results there).
+func (w *API) MediaStreamBase() (string, error) {
+	return w.a.MediaStreamBase(context.Background())
 }

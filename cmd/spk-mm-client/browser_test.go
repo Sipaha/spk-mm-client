@@ -312,3 +312,43 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 	require.NoError(t, json.NewDecoder(r.Body).Decode(&files))
 	assert.Equal(t, []string{}, files)
 }
+
+// Browser mode: the base MediaStreamBase returns through the HTTP transport
+// composes, as documented (<base>/<srv>/stream/<id>), into a URL the media
+// handler streams.
+func TestMediaStreamBaseComposesInBrowserMode(t *testing.T) {
+	ts, token, fake, svc := setupWithService(t, false)
+	ctx := context.Background()
+	srv, err := svc.AddServer(ctx, fake.URL())
+	require.NoError(t, err)
+	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		list, err := svc.ListServers(ctx)
+		return err == nil && len(list) == 1 && list[0].State == "live"
+	}, 10*time.Second, 20*time.Millisecond)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/MediaStreamBase", strings.NewReader("{}"))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", ts.URL) // the CSRF guard of state-changing methods
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	var base string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&base))
+	_ = resp.Body.Close()
+	assert.Equal(t, "/media", base)
+
+	req, err = http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s/%d/stream/%s", ts.URL, base, srv.ID, "f-clip-webm"), nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Range", "bytes=0-99")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
+	assert.Equal(t, "video/webm", resp.Header.Get("Content-Type"))
+	assert.Len(t, body, 100)
+}

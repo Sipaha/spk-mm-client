@@ -130,6 +130,9 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}
 
+	// Never raise Wails' LogLevel to Debug in a build that ships: Wails logs
+	// binding results at Debug (messageprocessor_call.go), and
+	// MediaStreamBase's result carries the loopback stream server's token.
 	app := application.New(application.Options{
 		Name:        "spk-mm-client",
 		Description: "Lightweight Mattermost client",

@@ -95,7 +95,14 @@ func NewStreamer(o Origin) *Streamer {
 }
 
 // Serve answers GET/HEAD for one file (the caller checked method and ids).
+// HEAD costs as much as GET upstream: a full GET (the Origin has no HEAD)
+// and a rate-limiter token; only the body is not copied.
 func (s *Streamer) Serve(w http.ResponseWriter, r *http.Request, server int64, fileID string) {
+	s.serve(w, r, server, fileID, streamCacheControl)
+}
+
+// serve is Serve with the Cache-Control of a successful answer.
+func (s *Streamer) serve(w http.ResponseWriter, r *http.Request, server int64, fileID, cacheControl string) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	rng := r.Header.Get("Range")
@@ -135,7 +142,7 @@ func (s *Streamer) Serve(w http.ResponseWriter, r *http.Request, server int64, f
 		h.Set("Accept-Ranges", "bytes")
 	}
 	h.Set("Content-Type", ctype)
-	h.Set("Cache-Control", streamCacheControl)
+	h.Set("Cache-Control", cacheControl)
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.WriteHeader(resp.StatusCode)
 	if r.Method == http.MethodHead {

@@ -19,7 +19,7 @@ var errLoopbackClosed = errors.New("media: stream server closed")
 // Loopback serves audio and video to the desktop webview over plain HTTP on
 // 127.0.0.1: WebKitGTK's media player (GStreamer) cannot read the app's
 // wails:// scheme at all (spike S6), so <video>/<audio> get
-// http://127.0.0.1:<port>/<token>/stream/<server id>/<file id> instead.
+// http://127.0.0.1:<port>/<token>/<server id>/stream/<file id> instead.
 //
 // It listens only after the UI first asks for its address (Base), on a
 // random port, until Close. Every request must carry the run's token (32
@@ -97,7 +97,9 @@ func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "private")
+	// no-store: neither the tokenized URL nor the bytes go to WebKit's
+	// disk cache.
+	h.Set("Cache-Control", "no-store")
 	if r.Host != l.host {
 		l.reject(w, http.StatusForbidden, "host")
 		return
@@ -112,16 +114,17 @@ func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
 		l.reject(w, http.StatusMethodNotAllowed, "method")
 		return
 	}
-	l.stream.Serve(w, r, server, fileID)
+	l.stream.serve(w, r, server, fileID, "no-store")
 }
 
-// route checks /<token>/stream/<server id>/<file id>.
+// route checks /<token>/<server id>/stream/<file id> — the base is
+// /<token> where browser mode has /media (same <base>/<srv>/<kind>/<key>).
 func (l *Loopback) route(path string) (int64, string, bool) {
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	if len(parts) != 4 || subtle.ConstantTimeCompare([]byte(parts[0]), l.token) != 1 || parts[1] != "stream" {
+	if len(parts) != 4 || subtle.ConstantTimeCompare([]byte(parts[0]), l.token) != 1 || parts[2] != "stream" {
 		return 0, "", false
 	}
-	server, err := strconv.ParseInt(parts[2], 10, 64)
+	server, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || server <= 0 || !idRe.MatchString(parts[3]) {
 		return 0, "", false
 	}

@@ -74,7 +74,7 @@ func TestLoopbackServesStreamsWithItsHeaders(t *testing.T) {
 	base, err := l.Base()
 	require.NoError(t, err)
 
-	resp, body := lbDo(t, http.MethodGet, base+"/stream/1/clip", http.Header{"Range": {"bytes=10-19"}, "Origin": {"https://evil.example"}}, "")
+	resp, body := lbDo(t, http.MethodGet, base+"/1/stream/clip", http.Header{"Range": {"bytes=10-19"}, "Origin": {"https://evil.example"}}, "")
 	require.Equal(t, http.StatusPartialContent, resp.StatusCode)
 	assert.Equal(t, "bytes 10-19/1000", resp.Header.Get("Content-Range"))
 	assert.Equal(t, "bytes", resp.Header.Get("Accept-Ranges"))
@@ -82,16 +82,16 @@ func TestLoopbackServesStreamsWithItsHeaders(t *testing.T) {
 	assert.Equal(t, clipBytes(1000)[10:20], body)
 	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
 	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
-	assert.Contains(t, resp.Header.Get("Cache-Control"), "private")
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"), "nothing of a tokenized URL in WebKit's disk cache")
 	for k := range resp.Header {
 		assert.False(t, strings.HasPrefix(k, "Access-Control-"), "no CORS: %s", k)
 	}
 
-	resp, _ = lbDo(t, http.MethodHead, base+"/stream/1/clip", nil, "")
+	resp, _ = lbDo(t, http.MethodHead, base+"/1/stream/clip", nil, "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	resp, _ = lbDo(t, http.MethodGet, base+"/stream/1/pdf", nil, "")
+	resp, _ = lbDo(t, http.MethodGet, base+"/1/stream/pdf", nil, "")
 	assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode)
-	resp, _ = lbDo(t, http.MethodGet, base+"/stream/2/clip", nil, "")
+	resp, _ = lbDo(t, http.MethodGet, base+"/2/stream/clip", nil, "")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "only while the server's worker is live")
 }
 
@@ -105,19 +105,20 @@ func TestLoopbackRejectsWrongTokenHostAndMethod(t *testing.T) {
 	wrong := strings.Repeat("A", len(token))
 
 	for _, p := range []string{
-		"/" + wrong + "/stream/1/clip", "/stream/1/clip", "/" + token, "/" + token + "/", "/" + token + "/stream/1",
-		"/" + token + "/stream/1/clip/x", "/" + token + "/feed/1/clip", "/" + token + "/stream/x/clip",
-		"/" + token + "/stream/0/clip", "/" + token + "/stream/1/..%2Fx", "/", "/favicon.ico",
+		"/" + wrong + "/1/stream/clip", "/1/stream/clip", "/" + token, "/" + token + "/", "/" + token + "/1/stream",
+		"/" + token + "/1/stream/clip/x", "/" + token + "/1/feed/clip", "/" + token + "/x/stream/clip",
+		"/" + token + "/0/stream/clip", "/" + token + "/1/stream/..%2Fx", "/", "/favicon.ico",
+		"/" + token + "/stream/1/clip", // the old shape
 	} {
 		resp, _ := lbDo(t, http.MethodGet, root+p, nil, "")
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode, p)
 	}
 	for _, host := range []string{"localhost:" + u.Port(), "evil.example", "127.0.0.1", "127.0.0.1:1"} {
-		resp, _ := lbDo(t, http.MethodGet, base+"/stream/1/clip", nil, host)
+		resp, _ := lbDo(t, http.MethodGet, base+"/1/stream/clip", nil, host)
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode, host)
 	}
 	for _, m := range []string{http.MethodPost, http.MethodOptions, http.MethodPut, http.MethodDelete} {
-		resp, _ := lbDo(t, m, base+"/stream/1/clip", http.Header{"Origin": {"https://evil.example"}, "Access-Control-Request-Method": {"GET"}}, "")
+		resp, _ := lbDo(t, m, base+"/1/stream/clip", http.Header{"Origin": {"https://evil.example"}, "Access-Control-Request-Method": {"GET"}}, "")
 		assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode, m)
 		assert.Empty(t, resp.Header.Get("Access-Control-Allow-Origin"), m)
 	}
@@ -127,7 +128,7 @@ func TestLoopbackCloseStopsServingAndCancelsStreams(t *testing.T) {
 	l, u := newLoopbackEnv(t)
 	base, err := l.Base()
 	require.NoError(t, err)
-	resp, err := http.Get(base + "/stream/1/endless")
+	resp, err := http.Get(base + "/1/stream/endless")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	_, err = io.ReadFull(resp.Body, make([]byte, 64<<10))
@@ -140,7 +141,7 @@ func TestLoopbackCloseStopsServingAndCancelsStreams(t *testing.T) {
 		t.Fatal("closing the server did not close the upstream request")
 	}
 	c := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
-	_, err = c.Get(base + "/stream/1/clip")
+	_, err = c.Get(base + "/1/stream/clip")
 	assert.Error(t, err, "nothing listens after Close")
 	_, err = l.Base()
 	assert.Error(t, err, "no restart after Close")
@@ -176,12 +177,12 @@ func TestLoopbackTokenNeverReachesTheLogs(t *testing.T) {
 	base, err := l.Base()
 	require.NoError(t, err)
 	token := base[strings.LastIndex(base, "/")+1:]
-	for _, p := range []string{"/stream/1/clip", "/stream/1/pdf", "/stream/1/gone", "/stream/2/clip", "/other"} {
+	for _, p := range []string{"/1/stream/clip", "/1/stream/pdf", "/1/stream/gone", "/2/stream/clip", "/other"} {
 		lbDo(t, http.MethodGet, base+p, nil, "")
 	}
-	lbDo(t, http.MethodGet, base+"/stream/1/clip", http.Header{"Range": {"bytes=x"}}, "")
-	lbDo(t, http.MethodGet, base+"/stream/1/clip", nil, "evil.example")
-	lbDo(t, http.MethodPost, base+"/stream/1/clip", nil, "")
+	lbDo(t, http.MethodGet, base+"/1/stream/clip", http.Header{"Range": {"bytes=x"}}, "")
+	lbDo(t, http.MethodGet, base+"/1/stream/clip", nil, "evil.example")
+	lbDo(t, http.MethodPost, base+"/1/stream/clip", nil, "")
 	require.NoError(t, l.Close())
 
 	out := logs.String()

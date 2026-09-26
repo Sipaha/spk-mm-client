@@ -35,7 +35,7 @@ export interface Client {
   addReaction(id: number, postId: string, emoji: string): Promise<void>
   removeReaction(id: number, postId: string, emoji: string): Promise<void>
   emojiInfo(id: number): Promise<EmojiDTO>
-  /** Base of audio/video URLs: `${base}/stream/${serverId}/${fileId}` ("/media" in the browser, a loopback URL in desktop). */
+  /** Base of audio/video URLs: `${base}/${serverId}/stream/${fileId}` ("/media" in the browser, a loopback URL in desktop). */
   mediaStreamBase(): Promise<string>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }

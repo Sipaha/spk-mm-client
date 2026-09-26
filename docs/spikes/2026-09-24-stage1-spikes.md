@@ -685,11 +685,11 @@ Go-вид `stream` (сквозной `Range`, 200/206, только медиа-�
 
 **Решение пользователя 2026-09-27: вариант A.** Реализация (Task 7):
 `media.Streamer` (вид `stream`, в browser mode — `/media/<srv>/stream/<id>`) и
-`media.Loopback` — `http://127.0.0.1:<случайный порт>/<токен>/stream/<srv>/<id>`,
+`media.Loopback` — `http://127.0.0.1:<случайный порт>/<токен>/<srv>/stream/<id>`,
 поднимается при первом `MediaStreamBase`, закрывается при выходе; токен — 32
 случайных байта base64url, в логи не пишется; `Host` строго `127.0.0.1:<port>`,
 только GET/HEAD, без CORS, `Referrer-Policy: no-referrer`, `nosniff`,
-`Cache-Control: private`.
+`Cache-Control: no-store` (фикс-раунд 1: единый вид `<base>/<srv>/stream/<id>` в обоих режимах, `no-store` — URL с токеном и байты не попадают в дисковый кэш WebKit).
 
 **Проверка в desktop (2026-09-27).** Временная сборка во временный каталог,
 `--mm-fake`, свой `SPK_MM_CLIENT_HOME`, одна копия; временный хук (не закоммичен)

@@ -146,7 +146,7 @@ func TestMediaStreamThroughTheLoopbackServer(t *testing.T) {
 	require.NoError(t, err)
 
 	get := func(file, rng string) *http.Response {
-		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/stream/%d/%s", base, id, file), nil)
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%d/stream/%s", base, id, file), nil) // the documented <base>/<srv>/stream/<id>
 		require.NoError(t, err)
 		if rng != "" {
 			req.Header.Set("Range", rng)

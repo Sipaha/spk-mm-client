@@ -66,8 +66,11 @@ type API interface {
 	RemoveReaction(ctx context.Context, id int64, postID, emoji string) error
 	EmojiInfo(ctx context.Context, id int64) (EmojiDTO, error)
 	// MediaStreamBase is where <video>/<audio> take files from:
-	// <base>/stream/<server id>/<file id>. Browser mode: "/media"; desktop:
-	// the loopback stream server with its token (media.Loopback).
+	// <base>/<server id>/stream/<file id> (the /media/<srv>/<kind>/<key>
+	// shape). Browser mode: "/media"; desktop: the loopback stream server
+	// with its token (media.Loopback). The desktop value carries that token:
+	// Wails logs binding results at Debug, so its log level must never be
+	// raised to Debug in a build that ships (see internal/desktop/run.go).
 	MediaStreamBase(ctx context.Context) (string, error)
 }
 
