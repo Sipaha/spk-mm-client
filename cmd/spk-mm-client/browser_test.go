@@ -292,6 +292,8 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 		found = found || p.Message == "from test"
 	}
 	assert.True(t, found)
+	assert.Equal(t, 200, post("/api/_test/fake/throttle-file", `{"bytes_per_sec":100000}`).StatusCode)
+	assert.Equal(t, 200, post("/api/_test/fake/throttle-file", `{"bytes_per_sec":0}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/drop", `{"lose":true}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/revoke", `{}`).StatusCode)
 	assert.Equal(t, 0, fake.ActiveSessions())

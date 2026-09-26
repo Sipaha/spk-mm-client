@@ -261,6 +261,14 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			writeJSON(w, http.StatusOK, map[string]int64{"at": fake.SetPicture(in.Username)})
 		}))
+		tm.HandleFunc("POST /api/_test/fake/throttle-file", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				BytesPerSec int `json:"bytes_per_sec"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.SetFileThrottle(in.BytesPerSec)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
 		tm.HandleFunc("POST /api/_test/fake/react", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				ChannelID string `json:"channel_id"`

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,6 +181,35 @@ func TestCustomEmoji(t *testing.T) {
 	assert.Equal(t, 501, b.call("GET", "/api/v4/emoji?page=0&per_page=200", nil, nil))
 	require.Equal(t, 200, b.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
 	assert.Equal(t, "false", cfg["EnableCustomEmoji"])
+}
+
+// SetFileThrottle is a dev/e2e knob (Task 5, downloads panel screenshots):
+// it slows only a plain file download, not its info or thumbnail, and 0
+// restores full speed.
+func TestFileThrottleSlowsPlainDownloadOnly(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	s.newFileLocked("f-throttle", "c-offtopic", "slow.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 300))
+	a := loginAs(t, s, "alice")
+
+	s.SetFileThrottle(1000) // chunk 100 B/100 ms: 300 B takes 2 waits, ~200 ms
+	start := time.Now()
+	resp, body := a.raw("GET", "/api/v4/files/f-throttle", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Len(t, body, 300)
+	assert.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "throttled download waits between chunks")
+
+	start = time.Now()
+	resp, _ = a.raw("GET", "/api/v4/files/f-throttle/info", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Less(t, time.Since(start), 150*time.Millisecond, "info is not a plain download and ignores the throttle")
+
+	s.SetFileThrottle(0)
+	start = time.Now()
+	resp, body = a.raw("GET", "/api/v4/files/f-throttle", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Len(t, body, 300)
+	assert.Less(t, time.Since(start), 150*time.Millisecond, "0 restores full-speed serving")
 }
 
 func TestPictureChangeIsBroadcast(t *testing.T) {

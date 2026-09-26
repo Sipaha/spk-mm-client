@@ -115,6 +115,17 @@ func (s *Server) SetLatency(part string, d time.Duration) {
 	s.latency[part] = d
 }
 
+// SetFileThrottle makes every plain file download (GET
+// /api/v4/files/{id} — not its /thumbnail or /preview, and not /info)
+// stream at roughly bytesPerSec, flushing after each small chunk instead of
+// answering at once: dev/e2e only, so a screenshot or a manual check can
+// catch a download mid-progress (0 restores full-speed serving).
+func (s *Server) SetFileThrottle(bytesPerSec int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileThrottle = bytesPerSec
+}
+
 // RejectResumes makes the WebSocket endpoint close every socket that asks
 // to resume (connection_id given) right after the upgrade, without a hello —
 // what the real server does with a connection_id it does not accept.

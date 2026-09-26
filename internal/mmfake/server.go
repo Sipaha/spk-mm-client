@@ -56,6 +56,7 @@ type Server struct {
 	broken        map[string]bool // BreakReplies
 	rejectResumes bool
 	hits          map[string]int
+	fileThrottle  int // bytes/sec, 0 = full speed (SetFileThrottle)
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.

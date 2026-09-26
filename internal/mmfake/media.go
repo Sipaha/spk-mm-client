@@ -296,7 +296,45 @@ func (s *Server) fileHandler(what string) func(http.ResponseWriter, *http.Reques
 		w.Header().Set("Content-Type", ctype)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, max-age=86400")
+		s.mu.Lock()
+		bps := s.fileThrottle
+		s.mu.Unlock()
+		if what == "" && bps > 0 {
+			streamThrottled(w, r, data, bps)
+			return
+		}
 		http.ServeContent(w, r, f.info.Name, time.Time{}, bytes.NewReader(data))
+	}
+}
+
+// streamThrottled writes data in small chunks at roughly bytesPerSec,
+// flushing after each one so a client copying the response body observes
+// its progress growing over time instead of getting it all at once; it
+// does not support Range (SetFileThrottle is a dev/e2e knob, not used
+// together with partial requests).
+func streamThrottled(w http.ResponseWriter, r *http.Request, data []byte, bytesPerSec int) {
+	const tick = 100 * time.Millisecond
+	chunk := max(1, bytesPerSec/10)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	for len(data) > 0 {
+		n := min(chunk, len(data))
+		if _, err := w.Write(data[:n]); err != nil {
+			return
+		}
+		data = data[n:]
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if len(data) == 0 {
+			return
+		}
+		select {
+		case <-time.After(tick):
+		case <-r.Context().Done():
+			return
+		}
 	}
 }
 
