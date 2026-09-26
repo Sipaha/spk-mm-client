@@ -343,6 +343,43 @@ func (s *Server) SetUsers(us []model.User) {
 	}
 }
 
+// KnownUserIDs lists the users held (restored from the snapshot or loaded).
+func (s *Server) KnownUserIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.users))
+	for id := range s.users {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RefreshUsers stores a fresh read of users we already hold; a profile a
+// newer event already brought (higher update_at) is kept, users we do not
+// hold are ignored. Reports whether anything the UI shows changed (names,
+// picture version, deactivation).
+func (s *Server) RefreshUsers(us []model.User) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for _, u := range us {
+		old, ok := s.users[u.ID]
+		if !ok || old.UpdateAt > u.UpdateAt {
+			continue
+		}
+		if u.ID == s.me.ID && u.NotifyProps == nil {
+			u.NotifyProps = old.NotifyProps
+		}
+		changed = changed || old.Username != u.Username || old.FirstName != u.FirstName || old.LastName != u.LastName ||
+			old.Nickname != u.Nickname || old.DeleteAt != u.DeleteAt || old.IsBot != u.IsBot ||
+			old.LastPictureUpdate != u.LastPictureUpdate
+		s.users[u.ID] = u
+		s.dirty.users[u.ID] = true
+	}
+	return changed
+}
+
 // MissingUserIDs lists users the views need (DM partners, post authors)
 // that are not loaded yet.
 func (s *Server) MissingUserIDs() []string {

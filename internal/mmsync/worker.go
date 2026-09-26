@@ -643,6 +643,10 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	if lost {
 		w.needResync = true
 	}
+	// Held before this bootstrap: from the snapshot or an earlier stream,
+	// possibly stale — refreshed once below. gapStart is where the last
+	// proven stream ended (seeded from the snapshot's live mark).
+	known, since := w.st.KnownUserIDs(), w.live.gapStart()
 	b, settled, err := w.fetchMeta(ctx)
 	if err != nil {
 		return err
@@ -655,6 +659,7 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	w.replayOrphans()
 	w.booted, w.needResync = true, false
 	w.loadUsers(ctx)
+	w.goBG(func(ctx context.Context) { w.refreshUsers(ctx, known, since) })
 	w.enqueueAll()
 	w.startEmojiLoad()
 	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}})
@@ -840,6 +845,35 @@ func (w *Worker) loadUsers(ctx context.Context) {
 	}
 	w.st.SetUsers(users)
 	w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}})
+}
+
+// refreshUsers re-reads users held before a bootstrap, once per bootstrap
+// and in the background: profiles restored from the snapshot (or held over
+// a gap) are never missing, so a picture or name changed while we were not
+// live would otherwise stay stale — the picture version is part of an
+// immutable media URL — until a live user_updated. With the gap start
+// (minus sinceMargin for clock skew) the server returns only the users
+// updated meanwhile; without one every profile is re-read (chunks of 100).
+func (w *Worker) refreshUsers(ctx context.Context, ids []string, since int64) {
+	if len(ids) == 0 {
+		return
+	}
+	if since > 0 {
+		since = max(1, since-sinceMargin.Milliseconds())
+	}
+	w.usersMu.Lock()
+	defer w.usersMu.Unlock()
+	users, err := w.rc.UsersByIDsSince(ctx, ids, since)
+	if err != nil {
+		if sessionExpired(err) {
+			w.signalAuth()
+		}
+		slog.Warn("user profiles not refreshed", "srv", w.srv.ID, "err", err)
+		return
+	}
+	if w.st.RefreshUsers(users) {
+		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}})
+	}
 }
 
 func (w *Worker) restore(ctx context.Context) {

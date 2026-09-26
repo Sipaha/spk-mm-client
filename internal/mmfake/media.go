@@ -341,8 +341,7 @@ func (s *Server) SetPicture(username string) int64 {
 	s.chat.pictureSeq++
 	s.chat.pictures[id] = &picture{at: at, png: seedImages()[fmt.Sprintf("avatar%d", (s.chat.pictureSeq+2)%len(palette))]}
 	u, _ := s.userByID(id)
-	out := userJSON(u)
-	out.LastPictureUpdate = at
+	out := s.userWithPictureLocked(u)
 	s.publishLocked("user_updated", map[string]any{"user": out}, wsBroadcast{}, s.allUserIDs(), nil)
 	return at
 }

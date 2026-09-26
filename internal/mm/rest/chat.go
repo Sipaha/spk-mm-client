@@ -68,11 +68,22 @@ func (c *Client) MyStatus(ctx context.Context) (model.Status, error) {
 
 // UsersByIDs fetches profiles in chunks (the request body is an id array).
 func (c *Client) UsersByIDs(ctx context.Context, ids []string) ([]model.User, error) {
+	return c.UsersByIDsSince(ctx, ids, 0)
+}
+
+// UsersByIDsSince is UsersByIDs returning only the users updated after since
+// (ms, the server compares update_at > since; a picture change moves
+// update_at); since 0 returns every one.
+func (c *Client) UsersByIDsSince(ctx context.Context, ids []string, since int64) ([]model.User, error) {
+	path := "/api/v4/users/ids"
+	if since > 0 {
+		path += "?since=" + strconv.FormatInt(since, 10)
+	}
 	var all []model.User
 	for start := 0; start < len(ids); start += usersChunk {
 		end := min(start+usersChunk, len(ids))
 		var out []model.User
-		if _, err := c.do(ctx, http.MethodPost, "/api/v4/users/ids", ids[start:end], &out); err != nil {
+		if _, err := c.do(ctx, http.MethodPost, path, ids[start:end], &out); err != nil {
 			return nil, err
 		}
 		all = append(all, out...)

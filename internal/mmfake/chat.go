@@ -36,6 +36,7 @@ type chatData struct {
 	emoji      map[string]*femoji // by id
 	pictures   map[string]*picture
 	pictureSeq int
+	usersSince []int64 // since= of every POST /users/ids that had one
 }
 
 type RecordedEvent struct {
@@ -205,22 +206,46 @@ func (s *Server) getStatus(w http.ResponseWriter, _ *http.Request, u User) {
 	writeJSON(w, 200, model.Status{UserID: u.ID, Status: st})
 }
 
+// usersByIDs: ?since=ms keeps only users updated after it (update_at >
+// since), as the real server does. A fake user's update_at is the time of
+// its picture — the only profile change the fake makes.
 func (s *Server) usersByIDs(w http.ResponseWriter, r *http.Request, _ User) {
 	var ids []string
 	_ = json.NewDecoder(r.Body).Decode(&ids)
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	out := []model.User{}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if since > 0 {
+		s.chat.usersSince = append(s.chat.usersSince, since)
+	}
 	for _, id := range ids {
 		if u, ok := s.userByID(id); ok {
-			mu := userJSON(u)
-			if pic := s.chat.pictures[id]; pic != nil {
-				mu.LastPictureUpdate = pic.at
+			mu := s.userWithPictureLocked(u)
+			if mu.UpdateAt > since {
+				out = append(out, mu)
 			}
-			out = append(out, mu)
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+// userWithPictureLocked is the user's JSON with its picture version and the
+// matching update_at.
+func (s *Server) userWithPictureLocked(u User) model.User {
+	mu := userJSON(u)
+	if pic := s.chat.pictures[u.ID]; pic != nil {
+		mu.LastPictureUpdate = pic.at
+		mu.UpdateAt = max(pic.at, -pic.at)
+	}
+	return mu
+}
+
+// UsersSince lists the since= of every POST /users/ids that carried one.
+func (s *Server) UsersSince() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int64(nil), s.chat.usersSince...)
 }
 
 func visible(p *fpost, crt bool) bool {

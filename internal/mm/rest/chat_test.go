@@ -107,6 +107,25 @@ func TestUsersByIDsChunksBy100(t *testing.T) {
 	assert.Empty(t, none)
 }
 
+func TestUsersByIDsSinceAsksOnlyForUpdatedOnes(t *testing.T) {
+	var queries []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		_, _ = w.Write([]byte("[]"))
+	})
+	ids := make([]string, 101)
+	for i := range ids {
+		ids[i] = fmt.Sprint(i)
+	}
+	_, err := c.UsersByIDsSince(context.Background(), ids, 1234)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"since=1234", "since=1234"}, queries, "every chunk carries since")
+	queries = nil
+	_, err = c.UsersByIDsSince(context.Background(), ids[:1], 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{""}, queries, "0: no since, every profile")
+}
+
 func TestCategoriesPrefsStatus(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

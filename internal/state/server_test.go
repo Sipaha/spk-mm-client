@@ -136,3 +136,15 @@ func findItem(sb SidebarView, id string) ChannelItem {
 	}
 	return ChannelItem{}
 }
+
+func TestRefreshUsersKeepsNewerProfilesAndReportsChanges(t *testing.T) {
+	s := newFixture()
+	s.SetUsers([]model.User{{ID: "u3", Username: "carol", UpdateAt: 50}})
+	assert.Equal(t, []string{"u1", "u2", "u3"}, s.KnownUserIDs())
+	assert.False(t, s.RefreshUsers([]model.User{{ID: "u1", Username: "alice"}}), "nothing shown changed")
+	assert.True(t, s.RefreshUsers([]model.User{{ID: "u2", Username: "bob", FirstName: "Bob", LastName: "Brown", LastPictureUpdate: 9, UpdateAt: 10}}))
+	assert.Equal(t, "9", s.avatarLocked("u2"))
+	assert.False(t, s.RefreshUsers([]model.User{{ID: "u3", Username: "old-carol", UpdateAt: 40}}), "an older read does not undo a newer event")
+	assert.False(t, s.RefreshUsers([]model.User{{ID: "u8", Username: "stranger"}}), "only users we know")
+	assert.Equal(t, []string{"u1", "u2", "u3"}, s.KnownUserIDs())
+}
