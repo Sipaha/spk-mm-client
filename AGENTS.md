@@ -89,6 +89,10 @@
 - SVG и не-растровые типы не отображаются, размер файла и число пикселей ограничены (пиксельный
   гард отказывает закрыто, если конфиг картинки не читается). — `TestSVGIsRefused`,
   `TestHugeDimensionsAreRefused`.
+- Картинка, которая не загрузилась (`/media/` ответил 404/413/415), в ленте/миниатюрах/просмотрщике
+  откатывается на карточку файла, а не остаётся сломанной. —
+  `frontend/src/components/Attachments.test.tsx` («a single image that fails to load (404/413/415
+  from /media/) becomes a card»).
 - Рамка картинки и текстового фрагмента имеет окончательный размер до загрузки содержимого —
   лента со скролл-якорем не прыгает при догрузке превью. —
   `frontend/src/components/Attachments.test.tsx` («the image box has its final size before the
@@ -104,11 +108,14 @@
   пользователя 2026-09-25): при неоднозначном исходе (сетевая ошибка, таймаут, 5xx) оптимистичное
   состояние сохраняется и повторяется с бэкоффом 2/5/15 с, откат — только после 4 попыток;
   переключение обратно во время неуверенного ожидания сразу шлёт второй, тоже идемпотентный,
-  запрос. — `TestLateEchoOfUndoneReactionIsIgnored`, `TestReactionRefusedIsRolledBack`,
+  запрос. Бэкофф-таймеры тикают только пока воркер «живой» (`StatusLive`) — в офлайне ожидающая
+  попытка не расходуется впустую; когда воркер снова становится живым, все ожидающие пары
+  повторяются сразу, а не ждут истечения своего таймера — офлайн-время не срезает 4 попытки.
+  — `TestLateEchoOfUndoneReactionIsIgnored`, `TestReactionRefusedIsRolledBack`,
   `TestReactionClicksWhileInFlightAreQueuedLastWins`,
   `TestReactionNetworkFailureIsRetriedKeepingTheClick`,
   `TestReactionFailingOnIsRolledBackAfterTheLastAttempt`,
-  `TestReactionToggledBackWhileWaitingIsSentAtOnce`.
+  `TestReactionToggledBackWhileWaitingIsSentAtOnce`, `TestReactionRetriedWhenTheWorkerIsLiveAgain`.
 - «Открыть» запускает системным приложением только инертные типы из allowlist (растровые
   картинки, PDF, текст/лог/csv/json/md, макро-свободные офисные документы, аудио/видео,
   распространённые архивы); всё остальное (включая `.html`/`.svg`/лаунчеры) — только сохраняется.

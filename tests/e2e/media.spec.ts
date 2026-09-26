@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { existsSync } from 'node:fs'
 import { channel, feed, removeServerFromMenu, signInAlice, testGet, testPost } from './helpers'
 
 const naturalWidth = (img: import('@playwright/test').Locator) => img.evaluate((i: HTMLImageElement) => i.naturalWidth)
@@ -44,7 +45,10 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await expect(viewer).toHaveCount(0)
 
   await feed(page).getByRole('button', { name: 'Download spec.pdf' }).click()
-  await expect(page.getByText(/Saved to .*spec\.pdf/)).toBeVisible()
+  const savedNotice = page.getByText(/Saved to .*spec\.pdf/)
+  await expect(savedNotice).toBeVisible()
+  const savedPath = (await savedNotice.textContent())!.replace(/^Saved to /, '')
+  expect(existsSync(savedPath), `downloaded file missing on disk: ${savedPath}`).toBe(true)
   await feed(page).getByRole('button', { name: 'Open server.log' }).click()
   await expect
     .poll(async () => ((await testGet(page, 'opened-files')) as string[]).some((p) => p.endsWith('server.log')))
@@ -72,6 +76,16 @@ test('reactions: chips toggle, the picker adds, others arrive live', async ({ pa
   await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: 'Welcome to off-topic', username: 'bob', emoji: 'fire' })
   await expect(post.getByRole('button', { name: '🔥 1' })).toBeVisible()
   await expect(post.locator('img[src*="/emoji/partyparrot"]')).toBeVisible()
+
+  // prove our own toggles actually reached the fake server, not just the optimistic UI:
+  // fake/drop {lose:true} drops the dead-letter buffer too, forcing a full resync — the
+  // channel's posts (reactions included) are rebuilt from the fake server over REST, so a
+  // reaction that survives this is one the server actually has.
+  await testPost(page, 'fake/drop', { lose: true })
+  await expect(page.getByText('Offline — reconnecting…')).toHaveCount(0, { timeout: 15_000 })
+  await expect(post.getByRole('button', { name: '🥑 1, you reacted' })).toBeVisible({ timeout: 15_000 })
+  await expect(post.getByRole('button', { name: '🔥 1' })).toBeVisible()
+  await expect(post.getByRole('button', { name: '👍 2' })).toBeVisible()
 
   // the fake is shared by all tests: put things back
   await post.getByRole('button', { name: '🥑 1, you reacted' }).click()
