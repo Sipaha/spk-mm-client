@@ -37,6 +37,27 @@ function isTypingTarget(el: Element | null): boolean {
   return el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 }
 
+// fitWidthOf: the box `el` renders at when scale is 1 ("fit"), derived from
+// its current (possibly scaled) box — transforms never change layout, so
+// this holds at any zoom level. Takes `scale` explicitly (rather than
+// reading component state) so it can be called from event handlers that
+// only read the latest state via a ref (see `latestRef` below).
+function fitWidthOf(el: HTMLImageElement | null, scale: number): number {
+  if (!el) return 0
+  const rect = el.getBoundingClientRect()
+  return scale > 0 ? rect.width / scale : rect.width
+}
+
+// natAndMax: the single place that turns (active element, current scale,
+// natural pixel width) into the "100 %" factor and the 8×-natural cap —
+// used by the percent indicator, wheel, double-click and keyboard zoom so
+// the formula only exists once.
+function natAndMax(el: HTMLImageElement | null, scale: number, naturalW: number): { nat: number; maxScale: number } {
+  const fitW = fitWidthOf(el, scale)
+  const nat = naturalScale(naturalW || fitW, fitW || 1)
+  return { nat, maxScale: MAX_ZOOM_OF_NATURAL * nat }
+}
+
 // ImageZoom shows one previewable image with wheel-zoom (anchored at the
 // cursor), drag-to-pan, double-click fit/100% toggle and +/-/0 keys. It
 // also owns the "original loads immediately, preview is a placeholder"
@@ -46,8 +67,17 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   { serverId, file, loaded, onLoaded, onFail, onDragEnd, onPercent },
   ref,
 ) {
-  const previewAvailable = !!file.has_preview
+  // GIFs keep their pre-Task-3 behaviour: only the (animated) original is
+  // ever requested, never a static preview — has_preview on a GIF (if the
+  // server ever sets it) describes a feed thumbnail, not something this
+  // viewer should show in place of the animation.
+  const isGif = (file.mime || '').toLowerCase() === 'image/gif'
+  const previewAvailable = !!file.has_preview && !isGif
   const originalOk = imageOriginalOk(file)
+  // The file's own width/height metadata describes the *original* — safe
+  // to trust up front, and must not be overwritten by the preview's own
+  // (usually smaller) decoded size once it loads (fix round 1 #2).
+  const hasFileDims = !!(file.width && file.height)
   const previewUrl = previewAvailable ? mediaURL(serverId, 'full', file.id, { src: 'preview' }) : null
   const originalUrl = originalOk ? mediaURL(serverId, 'full', file.id, { src: 'file' }) : null
 
@@ -63,7 +93,7 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   const containerRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef<HTMLImageElement | null>(null)
   const originalRef = useRef<HTMLImageElement | null>(null)
-  const dragRef = useRef<{ x: number; y: number; tx: number; ty: number; scale: number; moved: boolean } | null>(null)
+  const dragHandlersRef = useRef<{ onMove: (e: MouseEvent) => void; onUp: (e: MouseEvent) => void } | null>(null)
   const gestureTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useImperativeHandle(ref, () => ({ fit: () => setZoom(FIT) }), [])
@@ -80,6 +110,13 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   const showPreview = !showOriginal && previewUsable
   const shown = (showOriginal && originalReady) || (showPreview && previewReady)
 
+  // Wheel and keyboard zoom subscribe once (mount) rather than resubscribe
+  // whenever scale/natural/showOriginal change (fix round 1 #5 — that
+  // churned add/removeEventListener on every tick). Their handlers read the
+  // latest values through this ref instead of closing over render state.
+  const latestRef = useRef({ zoom, natural, showOriginal })
+  latestRef.current = { zoom, natural, showOriginal }
+
   useEffect(() => {
     if (shown) onLoaded()
   }, [shown])
@@ -92,24 +129,8 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
 
   const activeEl = () => (showOriginal ? originalRef.current : previewRef.current)
 
-  // fitWidth: the box the active image renders at when scale is 1 ("fit"),
-  // derived from its current (possibly scaled) box — transforms never
-  // change layout, so this holds at any zoom level.
-  const fitWidthOf = (el: HTMLImageElement | null): number => {
-    if (!el) return 0
-    const rect = el.getBoundingClientRect()
-    return zoom.scale > 0 ? rect.width / zoom.scale : rect.width
-  }
-
-  const maxScale = (() => {
-    const fitW = fitWidthOf(activeEl())
-    const nat = naturalScale(natural.w || fitW, fitW || 1)
-    return MAX_ZOOM_OF_NATURAL * nat
-  })()
-
   useLayoutEffect(() => {
-    const fitW = fitWidthOf(activeEl())
-    const nat = naturalScale(natural.w || fitW, fitW || 1)
+    const { nat } = natAndMax(activeEl(), zoom.scale, natural.w)
     onPercent(scalePercent(zoom.scale, nat))
   }, [zoom.scale, natural.w, natural.h, showOriginal])
 
@@ -130,57 +151,74 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
     if (!el) return
     const handler = (e: WheelEvent) => {
       e.preventDefault()
-      const active = showOriginal ? originalRef.current : previewRef.current
+      const { natural: n0, showOriginal: so } = latestRef.current
+      const active = so ? originalRef.current : previewRef.current
       if (!active) return
       const cursor = ((c) => ({ x: e.clientX - c.x, y: e.clientY - c.y }))(centerOf(active.getBoundingClientRect()))
       const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP
       startGesture()
-      setZoom((z) => zoomAround(z, cursor, factor, maxScale))
+      setZoom((z) => zoomAround(z, cursor, factor, natAndMax(active, z.scale, n0.w).maxScale))
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [maxScale, showOriginal])
+    // Mount-once: `handler` reads fresh state via `latestRef` instead.
+  }, [])
 
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = activeEl()
     if (!el) return
     const rect = el.getBoundingClientRect()
     const cursor = ((c) => ({ x: e.clientX - c.x, y: e.clientY - c.y }))(centerOf(rect))
-    const fitW = zoom.scale > 0 ? rect.width / zoom.scale : rect.width
-    const nat = naturalScale(natural.w || fitW, fitW || 1)
+    const { nat, maxScale } = natAndMax(el, zoom.scale, natural.w)
     startGesture()
-    setZoom((z) => toggleFitAndNatural(z, nat, cursor, MAX_ZOOM_OF_NATURAL * nat))
+    setZoom((z) => toggleFitAndNatural(z, nat, cursor, maxScale))
   }
 
   const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || zoom.scale <= 1) return // nothing to pan at "fit"
     e.preventDefault()
     const startScale = zoom.scale
-    dragRef.current = { x: e.clientX, y: e.clientY, tx: zoom.tx, ty: zoom.ty, scale: startScale, moved: false }
+    const start = { x: e.clientX, y: e.clientY, tx: zoom.tx, ty: zoom.ty, scale: startScale, moved: false }
     setDragging(true)
     startGesture()
     const onMove = (ev: MouseEvent) => {
-      const d = dragRef.current
-      if (!d) return
-      const dx = ev.clientX - d.x
-      const dy = ev.clientY - d.y
-      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) d.moved = true
-      setZoom(panBy({ scale: d.scale, tx: d.tx, ty: d.ty }, dx, dy))
+      const dx = ev.clientX - start.x
+      const dy = ev.clientY - start.y
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) start.moved = true
+      setZoom(panBy({ scale: start.scale, tx: start.tx, ty: start.ty }, dx, dy))
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      dragHandlersRef.current = null
       setDragging(false)
-      if (dragRef.current?.moved) onDragEnd()
-      dragRef.current = null
+      if (start.moved) onDragEnd()
     }
+    dragHandlersRef.current = { onMove, onUp }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
 
+  // If ImageZoom unmounts mid-drag (the user presses ←/→ or Esc while
+  // holding the mouse button — ImageZoom is keyed by file.id, so switching
+  // files unmounts this instance outright), onUp above never runs and the
+  // window-level listeners would otherwise leak. Fix round 1 #1.
+  useEffect(() => {
+    return () => {
+      const h = dragHandlersRef.current
+      if (!h) return
+      window.removeEventListener('mousemove', h.onMove)
+      window.removeEventListener('mouseup', h.onUp)
+      dragHandlersRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(document.activeElement)) return
+      const { zoom: z0, natural: n0, showOriginal: so } = latestRef.current
+      const active = so ? originalRef.current : previewRef.current
+      const { maxScale } = natAndMax(active, z0.scale, n0.w)
       if (e.key === '0') {
         e.preventDefault()
         setZoom(FIT)
@@ -194,7 +232,8 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [maxScale])
+    // Mount-once: `onKey` reads fresh state via `latestRef` instead.
+  }, [])
 
   const transformStyle = {
     transform: `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`,
@@ -205,7 +244,7 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   // correct "fit" box before the image itself decodes — without it, an
   // unloaded <img> with no width/height lays out at 0×0, so the very first
   // percent/max-zoom reading (before anything has loaded) would be off.
-  const aspectStyle = file.width && file.height ? { aspectRatio: `${file.width} / ${file.height}` } : undefined
+  const aspectStyle = hasFileDims ? { aspectRatio: `${file.width} / ${file.height}` } : undefined
   const styleFor = (visible: boolean) => (visible ? { ...aspectStyle, ...transformStyle } : aspectStyle)
 
   return (
@@ -223,7 +262,12 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
           draggable={false}
           onLoad={(e) => {
             setPreviewReady(true)
-            if (!originalReady) setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+            // Only trust the preview's own decoded size when the file has
+            // no width/height metadata of its own — the preview is usually
+            // a smaller rendition, and letting it overwrite `natural` (set
+            // from the original's real dimensions) made the scale
+            // indicator jump twice during the preview→original swap.
+            if (!hasFileDims && !originalReady) setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
           }}
           onError={() => setPreviewBroken(true)}
           className={`max-h-full max-w-full object-contain ${showPreview ? '' : 'hidden'}`}

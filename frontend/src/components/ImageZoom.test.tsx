@@ -9,6 +9,7 @@ beforeEach(() => setLocale('en'))
 
 const img: FileView = { id: 'f-build', name: 'build.png', ext: 'png', size: 5000, mime: 'image/png', width: 1280, height: 720, has_preview: true }
 const noPreview: FileView = { id: 'f-plain', name: 'plain.png', ext: 'png', size: 5000, mime: 'image/png', width: 800, height: 600 }
+const gifFile: FileView = { id: 'f-gif', name: 'anim.gif', ext: 'gif', size: 5000, mime: 'image/gif', width: 100, height: 100, has_preview: true }
 const noop = () => {}
 
 // jsdom never computes real layout/transforms: getBoundingClientRect always
@@ -57,6 +58,116 @@ test('a file without a preview requests only the original', () => {
   expect(container.querySelector('img[src$="src=preview"]')).toBeNull()
   const original = screen.getByRole('img', { name: 'plain.png' })
   expect(original).toHaveAttribute('src', '/media/1/full/f-plain?src=file')
+})
+
+test('the original failing while the preview is showing keeps the preview, silently (no card)', () => {
+  const restore = stubImageRect()
+  try {
+    const { onFail } = renderZoom(img)
+    const imgs = document.querySelectorAll('img')
+    const originalEl = Array.from(imgs).find((el) => el.getAttribute('src')?.includes('src=file'))!
+    const previewEl = Array.from(imgs).find((el) => el.getAttribute('src')?.includes('src=preview'))!
+    fireEvent.error(originalEl)
+    expect(onFail).not.toHaveBeenCalled()
+    expect(previewEl).toHaveAttribute('alt', 'build.png') // still the shown/accessible one
+    expect(screen.getByRole('img', { name: 'build.png' })).toBe(previewEl)
+  } finally {
+    restore()
+  }
+})
+
+test('a GIF within the inline limit requests only the original (no static preview), even if has_preview is set', () => {
+  const { container } = render(<ImageZoom serverId={1} file={gifFile} loaded={false} onLoaded={noop} onFail={noop} onDragEnd={noop} onPercent={noop} />)
+  expect(container.querySelectorAll('img')).toHaveLength(1)
+  const el = screen.getByRole('img', { name: 'anim.gif' })
+  expect(el).toHaveAttribute('src', '/media/1/full/f-gif?src=file')
+})
+
+test('the scale indicator does not jump when the preview decodes at a different resolution than the original', () => {
+  const restore = stubImageRect(400, 300)
+  try {
+    // img has file.width/height (1280x720) up front — that must win over
+    // whatever the preview itself later reports.
+    const { onPercent } = renderZoom(img)
+    const before = onPercent.mock.calls.at(-1)![0] as number
+
+    const imgs = document.querySelectorAll('img')
+    const previewEl = Array.from(imgs).find((el) => el.getAttribute('src')?.includes('src=preview'))! as HTMLImageElement
+    const originalEl = Array.from(imgs).find((el) => el.getAttribute('src')?.includes('src=file'))! as HTMLImageElement
+
+    // The preview is typically a much smaller rendition than the original.
+    Object.defineProperty(previewEl, 'naturalWidth', { value: 400, configurable: true })
+    Object.defineProperty(previewEl, 'naturalHeight', { value: 225, configurable: true })
+    fireEvent.load(previewEl)
+    expect(onPercent.mock.calls.at(-1)![0]).toBe(before) // no jump: file.width/height already known
+
+    Object.defineProperty(originalEl, 'naturalWidth', { value: 1280, configurable: true })
+    Object.defineProperty(originalEl, 'naturalHeight', { value: 720, configurable: true })
+    fireEvent.load(originalEl)
+    expect(onPercent.mock.calls.at(-1)![0]).toBe(before) // still stable: matches file metadata
+  } finally {
+    restore()
+  }
+})
+
+test('unmounting mid-drag removes the window mousemove/mouseup listeners (no leak)', () => {
+  const restore = stubImageRect(400, 300)
+  const addSpy = vi.spyOn(window, 'addEventListener')
+  const removeSpy = vi.spyOn(window, 'removeEventListener')
+  try {
+    const { unmount } = render(<ImageZoom serverId={1} file={img} loaded={false} onLoaded={noop} onFail={noop} onDragEnd={noop} onPercent={noop} />)
+    const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
+    fireEvent.keyDown(window, { key: '+' }) // zoom in so there's room to pan
+    fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
+    fireEvent.mouseMove(window, { clientX: 130, clientY: 110 }) // mid-drag — no mouseup yet
+
+    const addedMove = addSpy.mock.calls.filter((c) => c[0] === 'mousemove').length
+    const addedUp = addSpy.mock.calls.filter((c) => c[0] === 'mouseup').length
+    expect(addedMove).toBeGreaterThan(0)
+    expect(addedUp).toBeGreaterThan(0)
+
+    // Simulates the user pressing ←/→ or Esc while still holding the
+    // button: ImageZoom is keyed by file.id, so the whole instance unmounts
+    // mid-drag and onMouseUp's own cleanup never gets to run.
+    unmount()
+
+    const removedMove = removeSpy.mock.calls.filter((c) => c[0] === 'mousemove').length
+    const removedUp = removeSpy.mock.calls.filter((c) => c[0] === 'mouseup').length
+    expect(removedMove).toBeGreaterThanOrEqual(addedMove)
+    expect(removedUp).toBeGreaterThanOrEqual(addedUp)
+
+    // A later mousemove must be a no-op (the listener is really gone) —
+    // sanity-checked by it not throwing and not calling onDragEnd again.
+    expect(() => fireEvent.mouseMove(window, { clientX: 999, clientY: 999 })).not.toThrow()
+  } finally {
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
+    restore()
+  }
+})
+
+test('wheel and keyboard zoom subscribe once, not on every scale change', () => {
+  const restore = stubImageRect(400, 300)
+  const addSpy = vi.spyOn(EventTarget.prototype, 'addEventListener')
+  try {
+    renderZoom(img)
+    const wheelSubs = () => addSpy.mock.calls.filter((c) => c[0] === 'wheel').length
+    const keydownSubs = () => addSpy.mock.calls.filter((c) => c[0] === 'keydown').length
+    const wheelBefore = wheelSubs()
+    const keydownBefore = keydownSubs()
+
+    const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
+    fireEvent.wheel(stage, { deltaY: -100, clientX: 250, clientY: 150 })
+    fireEvent.wheel(stage, { deltaY: -100, clientX: 250, clientY: 150 })
+    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '-' })
+
+    expect(wheelSubs()).toBe(wheelBefore) // no resubscription from scale changes
+    expect(keydownSubs()).toBe(keydownBefore)
+  } finally {
+    addSpy.mockRestore()
+    restore()
+  }
 })
 
 test('a working original replacing a broken preview does not mark the file as failed', () => {
