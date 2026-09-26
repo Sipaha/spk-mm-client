@@ -82,7 +82,7 @@ test('search is case-insensitive substring, matching is honest about a 5000+ cap
   expect(document.querySelectorAll('mark')).toHaveLength(5000)
 })
 
-test('Escape with text in the search field clears it instead of bubbling up', async () => {
+test('Escape with text in the search field clears it instead of bubbling up, right away (no 150 ms wait)', async () => {
   vi.useFakeTimers()
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
   stubFetch('one two one')
@@ -99,6 +99,29 @@ test('Escape with text in the search field clears it instead of bubbling up', as
   await user.type(box, '{Escape}')
   expect(box).toHaveValue('')
   expect(onWindowEscape).not.toHaveBeenCalled()
+  // Cleared immediately: no lingering highlights/counter without advancing
+  // the debounce timer at all.
+  expect(screen.queryByText('1 of 2')).toBeNull()
+  expect(document.querySelectorAll('mark')).toHaveLength(0)
+})
+
+test('a length-expanding case fold (İ → i + combining dot) does not misalign later matches', async () => {
+  vi.useFakeTimers()
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  // 'İ'.toLowerCase() is two UTF-16 units ('i' + U+0307); a naive
+  // text.toLowerCase() used only for scanning would shift every offset
+  // after it by one, misaligning the slice taken from the original text.
+  const text = 'İ one two one'
+  stubFetch(text)
+  render(<TextView serverId={1} file={log} />)
+  await act(async () => vi.advanceTimersByTime(0))
+  const box = screen.getByRole('textbox', { name: 'Search in file' })
+  await user.type(box, 'one')
+  await act(async () => vi.advanceTimersByTime(150))
+  expect(await screen.findByText('1 of 2')).toBeInTheDocument()
+  const marks = document.querySelectorAll('mark')
+  expect(marks).toHaveLength(2)
+  for (const m of marks) expect(m.textContent).toBe('one')
 })
 
 test('Escape in an empty search field is not intercepted (lets the viewer close as before)', async () => {

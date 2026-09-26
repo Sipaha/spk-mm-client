@@ -13,6 +13,27 @@ interface Match {
   end: number
 }
 
+// foldForSearch lowercases text for case-insensitive matching while
+// guaranteeing the result has exactly the same length (and so the same
+// offsets) as the input. Plain String.prototype.toLowerCase() isn't
+// length-preserving for a handful of code points — e.g. 'İ' (U+0130) becomes
+// two UTF-16 units ('i' + a combining dot above, U+0307) — which would shift
+// every match offset found after it, misaligning the slice taken from the
+// original text. The fast path (a single native toLowerCase() call) covers
+// the overwhelming majority of real text; the per-unit fallback (keeping a
+// unit as-is whenever its lowercase form isn't exactly one unit long) only
+// runs on the rare text where lengths actually differ.
+function foldForSearch(text: string): string {
+  const fast = text.toLowerCase()
+  if (fast.length === text.length) return fast
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const lower = text[i].toLowerCase()
+    out += lower.length === 1 ? lower : text[i]
+  }
+  return out
+}
+
 // findMatches scans for a case-insensitive substring, stopping one match
 // past the cap: enough to tell "more exist" honestly without walking the
 // rest of a pathological query (e.g. "a" over 1 MiB of "aaaa…") to the end.
@@ -38,7 +59,7 @@ function findMatches(lowerText: string, needle: string): { matches: Match[]; mor
 export function TextView({ serverId, file }: { serverId: number; file: FileView }) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id, { full: '1' }), useLiveEpoch(serverId))
   const text = res.status === 'ok' ? res.text : ''
-  const lowerText = useMemo(() => text.toLowerCase(), [text])
+  const lowerText = useMemo(() => foldForSearch(text), [text])
 
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
@@ -52,9 +73,17 @@ export function TextView({ serverId, file }: { serverId: number; file: FileView 
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setDebounced(v), SEARCH_DEBOUNCE)
   }
+  // Clears both the field and the active search immediately — used by
+  // Escape, which must drop the highlights/counter at once, not 150 ms
+  // later like a normal keystroke.
+  const clearQuery = () => {
+    clearTimeout(timer.current)
+    setQuery('')
+    setDebounced('')
+  }
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  const needle = debounced.trim().toLowerCase()
+  const needle = foldForSearch(debounced.trim())
   const { matches, more } = useMemo(() => findMatches(lowerText, needle), [lowerText, needle])
   // A fresh search (or the text changing under it) jumps back to the first
   // match, like a browser's find-in-page.
@@ -93,7 +122,7 @@ export function TextView({ serverId, file }: { serverId: number; file: FileView 
         // to the viewer's own handler and closes it, as before.
         e.preventDefault()
         e.stopPropagation()
-        changeQuery('')
+        clearQuery()
       }
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       // Let the input move its caret; just don't let the viewer page files.
