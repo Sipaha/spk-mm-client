@@ -171,7 +171,7 @@ func TestAClickKeepsThePinOfAWaitingIntent(t *testing.T) {
 	withPost(s)
 	s.ReactLocalWas("p", "+1", true)
 	s.PinReactIntent("p", "+1", true) // its request waits for a retry
-	s.ReactLocalWas("p", "+1", false)    // a click meanwhile: the retry will send it
+	s.ReactLocalWas("p", "+1", false) // a click meanwhile: the retry will send it
 	s.ReactLocalWas("p", "+1", true)
 	now = now.Add(time.Hour)
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
