@@ -604,3 +604,81 @@ Web, минуты 10–30 (скрыто): среднее 77.3, мин 74.5, ма
 Chromium фоновая вкладка удерживает ещё и текстовые узлы через внутренние
 структуры Blink (учёт отрисовки текста) — к WebKitGTK не относится, в
 системном WebKit обвязка показывает ограниченное число живых узлов.
+
+## S6. Видео и аудио из `wails://` в WebKitGTK (2026-09-27, этап 3 ч.1б, Task 7)
+
+Вопрос: играют ли `<video>`/`<audio>` WebKitGTK источник `wails://localhost/media/…`,
+который отдаёт `AssetOptions.Handler`, ходят ли они туда с `Range` и принимают ли 206.
+
+**Среда.** Linux Mint 22.3, WebKit2GTK 4.1 **2.52.3**, Wails v3.0.0-beta.25 (`gtk3`).
+GStreamer (`gst-inspect-1.0`): `avdec_h264`, `openh264dec`, `avdec_aac`, `faad`,
+`avdec_vp9`/`vp9dec`/`vavp9dec`, `opusdec`/`avdec_opus`, `vorbisdec`,
+`mpg123audiodec`, демультиплексоры `qtdemux` (mp4/mov) и `matroskademux`
+(webm/mkv) — кодеки для mp4 H.264/AAC, webm VP9/Opus, ogg/opus и mp3 есть.
+`canPlayType` в окне: `video/webm; codecs="vp9,opus"`, `video/mp4;
+codecs="avc1.4d401e,mp4a.40.2"`, `audio/ogg; codecs=opus` — все `probably`.
+
+**Методика.** Временная сборка desktop во временный каталог (`--mm-fake`, свой
+`SPK_MM_CLIENT_HOME`, одна копия, окно найдено по PID в `wmctrl -lp`, без ввода
+X11). Временный локальный хук (не закоммичен): обёртка над обработчиком ассетов
+отдаёт тестовые файлы с `/spike/…` через `http.ServeContent` и пишет в лог каждый
+запрос (`Range`, статус, байты, отмена контекста), страница `/spike/…html` шлёт
+события медиа-элементов (`loadedmetadata`, `timeupdate`, `ended`, `error`, `seeked`)
+в Go запросом `/spike/log`. Клипы сгенерированы `gst-launch-1.0`: 2 с mp4
+H.264/AAC 320×180, 2 с webm VP9/Opus, 3 с ogg/opus, и 30 с 640×360 (mp4 без
+faststart — `moov` в конце — и webm) для перемотки.
+
+**Результат: прямой `src="wails://…"` не играет вообще — ни видео, ни аудио.**
+
+1. Все элементы сразу получают `error` с `MEDIA_ERR_SRC_NOT_SUPPORTED` (4).
+   `GST_DEBUG=webkitcommon:5`: `isProtocolAllowed: Requested protocol: wails
+   (allowed: no)` → `loadingFailed: FormatError`. Единственный запрос к схеме —
+   сниффер типа WebKit (`Range: bytes=0-1445`, 206, 1446 байт) — он доходит и
+   отвечается правильно, но проигрыватель в него не смотрит.
+2. `WEBKIT_GST_ALLOWED_URI_PROTOCOLS=wails` (переменная есть в
+   `libwebkit2gtk-4.1.so`) снимает первый запрет, но дальше `uridecodebin`:
+   `No URI handler implemented for "wails"`. Источник WebKit (`webkitwebsrc`)
+   регистрирует только `http`/`https`/`blob`, для кастомных схем WebKit у
+   GStreamer обработчика нет. Итог тот же — ошибка 4. Выхода изнутри Wails нет
+   (схема на Linux обязательно кастомная), а свой GStreamer-плагин `wails://`
+   в web-процессе всё равно должен был бы ходить к Go по сокету — это тот же
+   локальный сервер, только сложнее.
+
+Что **работает** через `wails://` (проверено тем же хуком):
+- `fetch()` с заголовком `Range` через `AssetOptions.Handler`: `bytes=100-199` →
+  206, `Content-Range: bytes 100-199/3294491`, `Accept-Ranges: bytes`, ровно 100
+  байт. Ответ Wails идёт через pipe (`webkit_uri_scheme_request_finish` с
+  `GUnixInputStream`) — потоком, без буферизации в Go; статус и заголовки
+  проходят как есть; отмена запроса webview отменяет `r.Context()`
+  (`requestLifetime`).
+- **Blob:** `fetch` всего файла → `URL.createObjectURL(blob)` → `<video>`/`<audio>`:
+  mp4 H.264/AAC и webm VP9/Opus декодируются (`loadeddata` с 320×180, кадр в
+  canvas непустой, `currentTime=1.5` после перемотки — другой кадр), webm
+  VP9/Opus и ogg/opus доиграли до `ended`. Файл целиком в памяти web-процесса.
+- **MSE:** `MediaSource.isTypeSupported('video/webm; codecs="vp9,opus"')` —
+  `true`; 30-секундный webm, поданный кусками по 512 КиБ `fetch` с `Range`,
+  принят (`loadedmetadata`, длительность 30.016). Обычный (нефрагментированный)
+  mp4/mov, ogg, mp3, wav, flac в MSE так не подать — нужен ремукс в JS.
+- **Loopback HTTP** (временный Go-сервер `127.0.0.1`, `http.FileServer`):
+  страница `wails://` играет `<video src="http://127.0.0.1:…/long.mp4">` (mp4 без
+  faststart, H.264/AAC) и webm VP9/Opus, перемотка на 25 с работает; смешанного
+  содержимого/CSP-запретов нет (у страницы нет CSP). Кадр в canvas снять нельзя
+  (другой origin — `SecurityError`), это не мешает показу.
+
+Автовоспроизведение без жеста в этом окне ненадёжно (видео со звуком — даже
+`muted` — часто получает `NotAllowedError` на `play()`, аудио — нет); в UI
+воспроизведение по клику пользователя, так что для задачи не важно; декодирование
+доказано через `loadeddata`/`seeked`/canvas и `ended`.
+
+**Варианты (решение за пользователем/контроллером — компромисс безопасности):**
+
+| Вариант | Как | Плюсы | Минусы |
+|---|---|---|---|
+| A. Loopback HTTP | Go поднимает `127.0.0.1:<случайный порт>` только для `/media/<srv>/stream/<id>`, в URL — случайный токен сессии (медиа-элемент не шлёт заголовков), проверка `Host`, без CORS | нативный `Range`/перемотка, любые контейнеры GStreamer, память ограничена, тот же Go-код `stream`, в browser-режиме уже так | новый сетевой сокет: любой локальный процесс/пользователь, узнавший токен (он в DOM/URL webview, в истории загрузок WebKit), читает файлы Mattermost; порт виден всем локально; ещё один компонент для гардов (rebinding, лимиты) |
+| B. MSE | UI качает куски `fetch` с `Range` из `wails://…/stream`, кладёт в `SourceBuffer` | без нового сокета, память ограничена, `Range` через `wails://` работает | только webm и фрагментированный mp4; обычные mp4/mov (почти всё с телефонов), ogg, mp3, wav, flac — нет без ремукса в JS (mp4box.js — +зависимость); своя логика перемотки/буфера |
+| C. Blob с лимитом | UI качает файл целиком (`/media/…/stream`, 200) в Blob ≤ N МБ, больше — карточка/«Открыть» | без нового сокета, все контейнеры, просто | весь файл в памяти web-процесса (против правила «без буферизации»), старт после полной загрузки, большие видео — только системным плеером |
+| D. Только «Открыть» | без встроенного плеера | ничего нового | нет превью |
+
+Go-вид `stream` (сквозной `Range`, 200/206, только медиа-типы, без диска) нужен
+для A, B и C одинаково; меняется только то, как UI его вызывает (A — ещё и
+отдельный слушатель). Task 7 остановлен до выбора (NEEDS_CONTEXT).
