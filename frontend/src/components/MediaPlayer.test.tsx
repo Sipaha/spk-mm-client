@@ -4,6 +4,7 @@ import { vi } from 'vitest'
 import type { FileView, ServerState } from '../api/types'
 import { client } from '../api/client'
 import { setLocale } from '../i18n'
+import { resetStreamBaseForTests } from '../media'
 import { useStore } from '../store'
 import { MediaPlayer } from './MediaPlayer'
 
@@ -13,11 +14,16 @@ const handlers = () => ({ onView: vi.fn(), onDownload: vi.fn(), onOpen: vi.fn() 
 
 beforeEach(() => {
   setLocale('en')
+  // media.ts caches a successfully resolved stream base for the page's
+  // life (by design — Task 7); within one test file that would let an
+  // earlier test's success silently survive into a later test that wants
+  // to see a fresh (or rejected) MediaStreamBase() call.
+  resetStreamBaseForTests()
   vi.spyOn(client, 'mediaStreamBase').mockResolvedValue('/media')
 })
 afterEach(() => vi.restoreAllMocks())
 
-test('video: fixed box before load, preload="none", poster placeholder; a click plays it in place', async () => {
+test('video: fixed box before load, preload="none", poster placeholder; clicking it calls play() synchronously inside the click', async () => {
   const h = handlers()
   const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
   const { container } = render(<MediaPlayer serverId={1} file={video} kind="video" {...h} />)
@@ -29,13 +35,43 @@ test('video: fixed box before load, preload="none", poster placeholder; a click 
   const poster = screen.getByRole('button', { name: 'Play clip.webm' })
   expect(poster).toHaveTextContent('clip.webm')
   expect(poster).toHaveTextContent('42.5 KB')
-  await act(async () => {
-    await userEvent.click(poster)
-  })
+
+  // The URL (module-level cached base + this file's stream path) is
+  // fetched on mount, not on click — by the time of a real click it has
+  // almost always already resolved.
+  await vi.waitFor(() => expect(el).toHaveAttribute('src', '/media/1/stream/f-clip'))
+
+  // fireEvent.click is synchronous (unlike userEvent.click, which awaits
+  // internally): asserting play() right after, with no await in between,
+  // proves it ran inside the click's own call stack — Task 8 fix round 1,
+  // WebKitGTK (spike S6) silently refuses playback started from a later
+  // effect/microtask instead of the gesture itself.
+  fireEvent.click(poster)
   expect(play).toHaveBeenCalledTimes(1)
   expect(screen.queryByRole('button', { name: 'Play clip.webm' })).toBeNull()
   expect(el).toHaveAttribute('controls')
-  expect(el).toHaveAttribute('src', '/media/1/stream/f-clip')
+})
+
+test("video: if the URL isn't resolved yet at click time, native controls appear but nothing auto-plays once it arrives (no gesture-less playback)", async () => {
+  const h = handlers()
+  let resolveBase!: (v: string) => void
+  vi.mocked(client.mediaStreamBase).mockReturnValueOnce(
+    new Promise<string>((resolve) => {
+      resolveBase = resolve
+    }),
+  )
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+  const { container } = render(<MediaPlayer serverId={1} file={video} kind="video" {...h} />)
+  const poster = screen.getByRole('button', { name: 'Play clip.webm' })
+  fireEvent.click(poster)
+  expect(play).not.toHaveBeenCalled() // nothing to play yet
+  expect(screen.queryByRole('button', { name: 'Play clip.webm' })).toBeNull() // controls shown instead, ready for the user's own next click
+  await act(async () => {
+    resolveBase('/media')
+    await Promise.resolve()
+  })
+  await vi.waitFor(() => expect(container.querySelector('video')).toHaveAttribute('src', '/media/1/stream/f-clip'))
+  expect(play).not.toHaveBeenCalled() // still not auto-played — no gesture accompanied the URL's arrival
 })
 
 test('video: a small ⤢ opens the viewer, independent of the play button', async () => {
@@ -142,4 +178,25 @@ test('a failed video is tried again once the server goes live again', async () =
   expect(container.querySelector('video')).toBeNull()
   goes('live')
   expect(container.querySelector('video')).not.toBeNull()
+})
+
+test('a rejecting MediaStreamBase falls back to a card, the same as a media error — not an inert poster forever', async () => {
+  const h = handlers()
+  vi.mocked(client.mediaStreamBase).mockRejectedValueOnce(new Error('no loopback yet'))
+  const { container } = render(<MediaPlayer serverId={1} file={video} kind="video" {...h} />)
+  await vi.waitFor(() => expect(container.querySelector('video')).toBeNull())
+  expect(screen.getByText('clip.webm')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Download clip.webm' }))
+  expect(h.onDownload).toHaveBeenCalledWith(video)
+})
+
+test('a rejecting MediaStreamBase is retried once the server goes live again', async () => {
+  const h = handlers()
+  vi.mocked(client.mediaStreamBase).mockRejectedValueOnce(new Error('no loopback yet'))
+  goes('reconnecting')
+  const { container } = render(<MediaPlayer serverId={1} file={video} kind="video" {...h} />)
+  await vi.waitFor(() => expect(container.querySelector('video')).toBeNull())
+  vi.mocked(client.mediaStreamBase).mockResolvedValue('/media')
+  goes('live')
+  await vi.waitFor(() => expect(container.querySelector('video')).not.toBeNull())
 })

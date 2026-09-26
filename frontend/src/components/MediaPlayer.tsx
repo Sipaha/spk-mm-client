@@ -3,6 +3,7 @@ import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { streamURL, useLoadFailure } from '../media'
+import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
 import { videoBox } from './files'
 import { registerMediaElement, releaseMediaElement } from './mediaSession'
@@ -41,30 +42,36 @@ function stopArrowKeys(e: React.KeyboardEvent) {
 // WebKit doesn't keep a decoder/buffers alive for a tile that scrolled out
 // of the feed or a channel that was switched away from (Task 13b).
 export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onOpen, onView }: Props) {
+  const epoch = useLiveEpoch(serverId)
   const [failed, fail] = useLoadFailure(serverId, `stream/${file.id}`)
   const [url, setUrl] = useState<string | undefined>(undefined)
   const [wantsPlay, setWantsPlay] = useState(false)
   const ref = useRef<HTMLVideoElement & HTMLAudioElement>(null)
 
+  // Resolve the stream URL as soon as the player mounts (not on click): the
+  // base is a module-level cache (Task 7), so this costs one real call per
+  // app run and every later player/file gets it near-instantly. Depending
+  // on `epoch` retries after a rejection (MediaStreamBase failing, e.g. the
+  // worker wasn't live yet) once the server actually goes live — the same
+  // "remembered only until the next live epoch" story as a media/image
+  // load failure. A rejection falls back to a card exactly like the
+  // element's own `error` event does (fail()).
   useEffect(() => {
     let live = true
     streamURL(serverId, file.id).then(
       (u) => {
         if (live) setUrl(u)
       },
-      () => {},
+      () => {
+        if (live) fail()
+      },
     )
     return () => {
       live = false
     }
-  }, [serverId, file.id])
-
-  // The click handler asks for playback right away; if the (session-cached,
-  // usually already-resolved) URL isn't in yet, this effect finishes the
-  // job the moment it arrives.
-  useEffect(() => {
-    if (wantsPlay && url) ref.current?.play().catch(() => {})
-  }, [wantsPlay, url])
+    // `fail`'s identity changes every render (it closes over the current
+    // epoch/tag); `epoch` itself is the right thing to retrigger this on.
+  }, [serverId, file.id, epoch])
 
   // Depends on `failed`, not `[]`: a stream failure swaps this component's
   // own JSX for a FileCard (below) without unmounting MediaPlayer itself,
@@ -114,7 +121,20 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
   }
 
   const box = videoBox(file)
-  const play = () => setWantsPlay(true)
+  // Call play() synchronously, inside this same click — WebKitGTK (spike
+  // S6) silently refuses playback that isn't started within the user
+  // gesture's own call stack, so deferring it to an effect (even one that
+  // fires on the very next tick) can lose the gesture. The URL is almost
+  // always already resolved by click time (fetched on mount, from a
+  // module-level cache — see the effect above), so this is the common
+  // path. If it genuinely isn't in yet, there is nothing to play: reveal
+  // the native controls instead (`wantsPlay`), so the user's *next* click
+  // — on the control itself — is its own fresh gesture; nothing here plays
+  // it automatically once the URL arrives.
+  const play = () => {
+    setWantsPlay(true)
+    if (url) ref.current?.play().catch(() => {})
+  }
   return (
     <div className="relative shrink-0 overflow-hidden rounded border border-line bg-black" style={box}>
       <video

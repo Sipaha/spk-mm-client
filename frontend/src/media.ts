@@ -41,6 +41,16 @@ function getStreamBase(): Promise<string> {
   return streamBase
 }
 
+// resetStreamBaseForTests: test-only. A successfully resolved base is
+// cached for the page's lifetime by design (see above), which means it
+// also survives across `test()`s sharing one module instance within a
+// file — a test that wants to see a *first* MediaStreamBase() call (e.g.
+// a rejection) needs this to undo an earlier test's successful resolution.
+// Not called by production code.
+export function resetStreamBaseForTests(): void {
+  streamBase = undefined
+}
+
 // streamURL: the one shape <video>/<audio> read from in both modes,
 // `${base}/${serverId}/stream/${fileId}` — only the base differs (a
 // same-origin "/media" path in the browser, a loopback URL with a token on
