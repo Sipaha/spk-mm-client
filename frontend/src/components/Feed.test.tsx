@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
@@ -110,4 +111,75 @@ test('the history row keeps its box while loading: the label is only hidden, nev
   fireEvent.scroll(log)
   expect(await screen.findByText('Loading history…')).not.toHaveClass('invisible')
   finish(true)
+})
+
+// A hidden window (closed to the tray, minimized, screen off) never paints,
+// so the engine never runs animation-frame callbacks: every callback still
+// scheduled keeps its closure — and through it an unmounted feed's DOM and
+// channel — alive until the next paint (WebKitWebProcess grew ~0.6 MB per
+// channel switch in the soak). Simulate that page: frames are queued,
+// never run.
+function neverPaintingPage() {
+  const pending = new Map<number, FrameRequestCallback>()
+  let next = 1
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    pending.set(next, cb)
+    return next++
+  })
+  const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    pending.delete(id)
+  })
+  return { pending, restore: () => (raf.mockRestore(), caf.mockRestore()) }
+}
+
+test('a feed that never paints does not pile up frame callbacks as posts arrive', () => {
+  const page = neverPaintingPage()
+  try {
+    const p = props({ has_more: true })
+    const { rerender } = render(<Feed {...p} />)
+    let posts = p.channel.posts
+    for (let i = 0; i < 20; i++) {
+      posts = [...posts, P(`n${i}`, 'bob', 0)]
+      rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+    }
+    // at most one pending frame per purpose (ours and the virtualizer's), not one per post
+    expect(page.pending.size).toBeLessThanOrEqual(3)
+  } finally {
+    page.restore()
+  }
+})
+
+test('an unmounted feed leaves no frame callback behind', () => {
+  const page = neverPaintingPage()
+  try {
+    const { unmount } = render(<Feed {...props({ has_more: true })} />)
+    expect(page.pending.size).toBeGreaterThan(0) // the viewport-fill check waits for a frame
+    unmount()
+    expect(page.pending.size).toBe(0)
+  } finally {
+    page.restore()
+  }
+})
+
+test('an unmounted feed leaves its scroller empty', async () => {
+  // WebKit queues a scroll event for every element scrolled by script and
+  // keeps the element until the next paint; a hidden window never paints,
+  // so each switched-away feed would stay alive with all its rows.
+  const { unmount } = render(<Feed {...props()} />)
+  const log = screen.getByRole('log')
+  expect(log.querySelector('article')).not.toBeNull()
+  unmount()
+  await Promise.resolve()
+  expect(log.isConnected).toBe(false)
+  expect(log.childNodes.length).toBe(0)
+})
+
+test('StrictMode keeps the rows of a feed that stays mounted', async () => {
+  render(
+    <StrictMode>
+      <Feed {...props()} />
+    </StrictMode>,
+  )
+  await Promise.resolve()
+  expect(screen.getByText('text c')).toBeInTheDocument()
 })

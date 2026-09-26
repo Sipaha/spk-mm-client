@@ -9,6 +9,7 @@ import { TextSnippet } from './TextSnippet'
 const BIG = { w: 480, h: 360 }
 const THUMB = { w: 120, h: 100 }
 
+// ImageTile loads its picture eagerly (not loading="lazy" — see Avatar).
 function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { serverId: number; file: FileView; big: boolean } & FileHandlers) {
   const [failed, setFailed] = useState(false)
   const src = imageSrc(file)
@@ -29,7 +30,6 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
         alt={file.name}
         width={box.width}
         height={box.height}
-        loading="lazy"
         decoding="async"
         draggable={false}
         onError={() => setFailed(true)}

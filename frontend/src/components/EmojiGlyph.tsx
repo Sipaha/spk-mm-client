@@ -4,7 +4,8 @@ import { mediaURL } from '../media'
 
 // EmojiGlyph draws an emoji by name: a character for standard emoji, the
 // server's picture for custom ones (via /media/, by name), ":name:" while
-// unknown or if the picture fails.
+// unknown or if the picture fails. The picture loads eagerly (not
+// loading="lazy" — see Avatar).
 export function EmojiGlyph({ serverId, name, size = 16 }: { serverId: number; name: string; size?: number }) {
   const common = emojiChar(name, null)
   const idx = useEmojiIndex(!common)
@@ -19,7 +20,6 @@ export function EmojiGlyph({ serverId, name, size = 16 }: { serverId: number; na
       aria-hidden="true"
       width={size}
       height={size}
-      loading="lazy"
       onError={() => setBroken(true)}
       className="inline-block align-text-bottom"
     />

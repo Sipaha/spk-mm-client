@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
@@ -49,6 +49,35 @@ export function pickAnchor(boxes: RowBox[], viewTop: number): { key: string; off
   return best && { key: best.key, offset: best.top - viewTop }
 }
 
+// useFrames schedules animation-frame callbacks by purpose: scheduling a
+// purpose again replaces its pending frame, and unmounting cancels them all.
+// A hidden window (closed to the tray) never paints, so the
+// engine never runs frame callbacks; each one left pending would keep its
+// closure — the feed's rows, DOM and channel of that render — alive until
+// the next paint: one per incoming post, and a whole feed per channel switch.
+export function useFrames(): (purpose: string, fn: () => void) => void {
+  const ids = useRef<Map<string, number>>(new Map())
+  useEffect(() => {
+    const pending = ids.current
+    return () => {
+      for (const id of pending.values()) cancelAnimationFrame(id)
+      pending.clear()
+    }
+  }, [])
+  return useCallback((purpose, fn) => {
+    const pending = ids.current
+    const prev = pending.get(purpose)
+    if (prev !== undefined) cancelAnimationFrame(prev)
+    pending.set(
+      purpose,
+      requestAnimationFrame(() => {
+        pending.delete(purpose)
+        fn()
+      }),
+    )
+  }, [])
+}
+
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
 export function Feed({ channel, serverId, me, locale, actions, editingId, onLoadOlder }: Props) {
@@ -61,6 +90,22 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
   const loading = useRef(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const frame = useFrames()
+  // WebKit queues a scroll event for every element scrolled by script (the
+  // virtualizer scrolls each new feed to its end) and keeps the element until
+  // the next paint dispatches it; a hidden window never paints, so every
+  // switched-away feed would stay alive with all its rows. Empty the scroller
+  // when the feed goes away: only the bare element waits for the paint.
+  // React removes just this top node; the rows below are not touched again.
+  // Checked after the commit: StrictMode's rehearsal unmount keeps the node.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    return () => {
+      queueMicrotask(() => {
+        if (el && !el.isConnected) el.replaceChildren()
+      })
+    }
+  }, [])
   const v = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
@@ -110,7 +155,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   // just the first mount, so the feed can't get stuck under-filled with
   // has_more still true after one page wasn't enough.
   const fillViewportIfShort = () => {
-    requestAnimationFrame(() => {
+    frame('fill', () => {
       const el = scroller.current
       if (el && channel.has_more && el.scrollHeight <= el.clientHeight) void loadOlder()
     })
@@ -129,7 +174,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   // the virtualizer's own scroll adjustments for the user and fight them.
   const correctAnchorPosition = (key: string, target: number, attempt: number) => {
     if (attempt > MAX_CORRECTIONS) return
-    requestAnimationFrame(() => {
+    frame('anchor', () => {
       const el = scroller.current
       if (!el || userScrolling.current) return
       // A plain DOM query, not v.elementsCache: the anchor row is being

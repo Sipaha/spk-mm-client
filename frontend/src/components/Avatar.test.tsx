@@ -11,7 +11,10 @@ test('a loaded profile: picture with its version, fixed size, presence dot', () 
   expect(img).toHaveAttribute('width', '36')
   expect(img).toHaveAttribute('height', '36')
   expect(img).toHaveAttribute('alt', '')
-  expect(img).toHaveAttribute('loading', 'lazy')
+  // Not loading="lazy": feed rows are virtualized already, and a hidden window
+  // never runs WebKit's lazy-load check, which keeps every removed not-yet-loaded
+  // image — with its whole detached row — alive until the next paint.
+  expect(img).not.toHaveAttribute('loading')
   const dot = container.querySelector('[data-status]')!
   expect(dot).toHaveAttribute('data-status', 'away')
   expect(dot).toHaveAttribute('title', 'Away')

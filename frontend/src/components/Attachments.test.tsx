@@ -20,7 +20,10 @@ test('the image box has its final size before the image loads', async () => {
   expect(img).toHaveAttribute('src', '/media/1/feed/f-build?src=preview')
   expect(img).toHaveAttribute('width', '480')
   expect(img).toHaveAttribute('height', '270')
-  expect(img).toHaveAttribute('loading', 'lazy')
+  // Not loading="lazy": feed rows are virtualized already, and a hidden window
+  // never runs WebKit's lazy-load check, which keeps every removed not-yet-loaded
+  // image — with its whole detached row — alive until the next paint.
+  expect(img).not.toHaveAttribute('loading')
   expect(img).toHaveAttribute('alt', 'build.png')
   const box = screen.getByRole('button', { name: 'View build.png' })
   expect(box).toHaveStyle({ width: '480px', height: '270px' })

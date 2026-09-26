@@ -51,6 +51,11 @@ interface Props {
 
 // Avatar is decorative (alt=""): the name is always shown next to it. Its box
 // has the final size from the start, so a loading picture never moves text.
+// Pictures in feed rows and the sidebar load eagerly, never loading="lazy":
+// the feed is virtualized already, and while the window is hidden (in the
+// tray) WebKit never runs its lazy-load check, so each removed, not yet
+// loaded lazy image stays referenced — with its whole detached feed — until
+// the next paint (AGENTS.md, "Things that bite").
 export const Avatar = memo(function Avatar({ serverId, userId, version, name, status, size, surface }: Props) {
   // A failed load shows initials until the picture version changes.
   const [failedFor, setFailedFor] = useState<string | null>(null)
@@ -63,7 +68,6 @@ export const Avatar = memo(function Avatar({ serverId, userId, version, name, st
           alt=""
           width={size}
           height={size}
-          loading="lazy"
           decoding="async"
           draggable={false}
           onError={() => setFailedFor(version ?? null)}

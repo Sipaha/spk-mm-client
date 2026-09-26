@@ -22,6 +22,10 @@ test('a custom emoji is a picture from the media endpoint once the set says it i
   const { container } = render(<Reactions serverId={4} reactions={[{ emoji: 'partyparrot', count: 1, mine: false }]} onToggle={vi.fn()} />)
   expect(screen.getByRole('button', { name: ':partyparrot: 1' })).toBeInTheDocument()
   await waitFor(() => expect(container.querySelector('img')).toHaveAttribute('src', '/media/4/emoji/partyparrot'))
+  // Not loading="lazy": feed rows are virtualized already, and a hidden window
+  // never runs WebKit's lazy-load check, which keeps every removed not-yet-loaded
+  // image — with its whole detached row — alive until the next paint.
+  expect(container.querySelector('img')).not.toHaveAttribute('loading')
   fireEvent.error(container.querySelector('img')!)
   expect(container).toHaveTextContent(':partyparrot:')
 })
