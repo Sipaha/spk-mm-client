@@ -74,3 +74,42 @@ test('Delete/Backspace removes the chip while it has focus', async () => {
   await user.keyboard('{Backspace}')
   expect(onRemove).toHaveBeenCalledTimes(2)
 })
+
+// Removal is not synchronous — onRemove goes through the store/API, and the
+// chip only actually disappears once the parent re-renders with a shorter
+// `items`. These tests simulate that round-trip with rerender().
+function chipAt(index: number): HTMLElement {
+  return screen.getAllByRole('listitem')[index].querySelector<HTMLElement>('[tabindex="0"]')!
+}
+
+test('Delete on a middle chip moves focus to the chip that took its place (the next one)', async () => {
+  const user = userEvent.setup()
+  const items = [av({ id: 'a' }), av({ id: 'b' }), av({ id: 'c' })]
+  const { rerender } = render(<AttachmentsTray serverId={1} items={items} onRemove={() => {}} onRetry={() => {}} />)
+  chipAt(0).focus()
+  await user.keyboard('{Delete}')
+  rerender(<AttachmentsTray serverId={1} items={[av({ id: 'b' }), av({ id: 'c' })]} onRemove={() => {}} onRetry={() => {}} />)
+  expect(chipAt(0)).toHaveFocus() // was 'b', now in the removed chip's slot
+})
+
+test('Delete on the last chip moves focus to the previous one', async () => {
+  const user = userEvent.setup()
+  const items = [av({ id: 'a' }), av({ id: 'b' }), av({ id: 'c' })]
+  const { rerender } = render(<AttachmentsTray serverId={1} items={items} onRemove={() => {}} onRetry={() => {}} />)
+  chipAt(2).focus()
+  await user.keyboard('{Delete}')
+  rerender(<AttachmentsTray serverId={1} items={[av({ id: 'a' }), av({ id: 'b' })]} onRemove={() => {}} onRetry={() => {}} />)
+  expect(chipAt(1)).toHaveFocus() // 'b', now the last chip
+})
+
+test('Delete on the only chip focuses the textarea', async () => {
+  const user = userEvent.setup()
+  const onFocusTextarea = vi.fn()
+  const { rerender } = render(
+    <AttachmentsTray serverId={1} items={[av({ id: 'only' })]} onRemove={() => {}} onRetry={() => {}} onFocusTextarea={onFocusTextarea} />,
+  )
+  chipAt(0).focus()
+  await user.keyboard('{Delete}')
+  rerender(<AttachmentsTray serverId={1} items={[]} onRemove={() => {}} onRetry={() => {}} onFocusTextarea={onFocusTextarea} />)
+  expect(onFocusTextarea).toHaveBeenCalledTimes(1)
+})

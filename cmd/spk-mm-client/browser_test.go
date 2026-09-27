@@ -299,6 +299,20 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 	assert.Equal(t, 200, post("/api/_test/fake/throttle-upload", `{"bytes_per_sec":100000}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/throttle-upload", `{"bytes_per_sec":0}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/fail-uploads", `{"n":1}`).StatusCode)
+	fakeClientConfig := func() map[string]string {
+		resp, err := http.Get(fake.URL() + "/api/v4/config/client?format=old")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var cfg map[string]string
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&cfg))
+		return cfg
+	}
+	assert.Equal(t, 200, post("/api/_test/fake/max-file-size", `{"bytes":10}`).StatusCode)
+	assert.Equal(t, "10", fakeClientConfig()["MaxFileSize"])
+	assert.Equal(t, 200, post("/api/_test/fake/max-file-size", `{"bytes":0}`).StatusCode)
+	assert.Equal(t, 200, post("/api/_test/fake/file-attachments-enabled", `{"enabled":false}`).StatusCode)
+	assert.Equal(t, "false", fakeClientConfig()["EnableFileAttachments"])
+	assert.Equal(t, 200, post("/api/_test/fake/file-attachments-enabled", `{"enabled":true}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/drop", `{"lose":true}`).StatusCode)
 	assert.Equal(t, 200, post("/api/_test/fake/revoke", `{}`).StatusCode)
 	assert.Equal(t, 0, fake.ActiveSessions())

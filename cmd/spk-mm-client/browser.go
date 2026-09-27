@@ -291,6 +291,22 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			fake.FailUploads(in.N)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		}))
+		tm.HandleFunc("POST /api/_test/fake/max-file-size", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Bytes int64 `json:"bytes"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.SetMaxFileSize(in.Bytes)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/file-attachments-enabled", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Enabled bool `json:"enabled"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.SetFileAttachmentsEnabled(in.Enabled)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
 		tm.HandleFunc("POST /api/_test/fake/react", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				ChannelID string `json:"channel_id"`

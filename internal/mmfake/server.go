@@ -193,6 +193,12 @@ func (s *Server) handleAuthed(h func(w http.ResponseWriter, r *http.Request, u U
 }
 
 func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
+	// MaxFileSize/DisableFileAttachments can change at runtime (e2e:
+	// SetMaxFileSize/SetFileAttachmentsEnabled) — read every field under the
+	// same lock those setters use.
+	s.mu.Lock()
+	fileAttachments, maxFileSize := !s.opts.DisableFileAttachments, s.opts.MaxFileSize
+	s.mu.Unlock()
 	crt := "disabled"
 	if s.opts.CRT {
 		crt = "always_on"
@@ -205,8 +211,8 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 		"CollapsedThreads":       crt,
 		"TeammateNameDisplay":    "username",
 		"EnableCustomEmoji":      fmt.Sprint(!s.opts.DisableCustomEmoji),
-		"EnableFileAttachments":  fmt.Sprint(!s.opts.DisableFileAttachments),
-		"MaxFileSize":            strconv.FormatInt(s.opts.MaxFileSize, 10),
+		"EnableFileAttachments":  fmt.Sprint(fileAttachments),
+		"MaxFileSize":            strconv.FormatInt(maxFileSize, 10),
 	})
 }
 

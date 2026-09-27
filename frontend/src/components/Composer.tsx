@@ -24,6 +24,7 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
   const [error, setError] = useState<string | null>(null)
   const attachError = useStore((s) => s.attachError)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const latest = useRef(channel.draft)
   const saved = useRef(channel.draft)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -158,6 +159,7 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
         items={attachments}
         onRemove={(id) => removeAttachment(serverId, id)}
         onRetry={(id) => retryAttachment(serverId, id)}
+        onFocusTextarea={() => textareaRef.current?.focus()}
       />
       <div className="flex items-end gap-2">
         <button
@@ -170,6 +172,7 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
           📎
         </button>
         <textarea
+          ref={textareaRef}
           aria-label={t('composer.label')}
           placeholder={t('composer.placeholder', { name: channel.name })}
           value={text}

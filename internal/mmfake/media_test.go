@@ -322,6 +322,49 @@ func TestUploadFileOverMaxSizeIs413(t *testing.T) {
 	assert.Equal(t, strconv.FormatInt(DefaultMaxFileSize, 10), cfg["MaxFileSize"])
 }
 
+// TestSetMaxFileSizeChangesTheLimitAtRuntime is SetMaxFileSize's own test:
+// e2e needs to hit the "too large" limit without uploading megabytes, and
+// 0 restores DefaultMaxFileSize like SetUploadThrottle's 0 restores speed.
+func TestSetMaxFileSizeChangesTheLimitAtRuntime(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+
+	s.SetMaxFileSize(10)
+	var cfg map[string]string
+	require.Equal(t, 200, a.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, "10", cfg["MaxFileSize"])
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", bytes.Repeat([]byte("x"), 11))
+	assert.Equal(t, 413, resp.StatusCode)
+
+	s.SetMaxFileSize(0)
+	require.Equal(t, 200, a.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, strconv.FormatInt(DefaultMaxFileSize, 10), cfg["MaxFileSize"])
+	resp, _ = a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", bytes.Repeat([]byte("x"), 11))
+	assert.Equal(t, 201, resp.StatusCode)
+}
+
+// TestSetFileAttachmentsEnabledFlipsAtRuntime is SetFileAttachmentsEnabled's
+// own test, the counterpart of TestSetMaxFileSizeChangesTheLimitAtRuntime.
+func TestSetFileAttachmentsEnabledFlipsAtRuntime(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+
+	s.SetFileAttachmentsEnabled(false)
+	var cfg map[string]string
+	require.Equal(t, 200, a.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, "false", cfg["EnableFileAttachments"])
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", []byte("x"))
+	assert.Equal(t, 403, resp.StatusCode)
+
+	s.SetFileAttachmentsEnabled(true)
+	require.Equal(t, 200, a.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, "true", cfg["EnableFileAttachments"])
+	resp, _ = a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", []byte("x"))
+	assert.Equal(t, 201, resp.StatusCode)
+}
+
 // TestFailUploadsInjectsAServerError lets a test make the next n uploads
 // fail with 500, like FailPosts does for posts.
 func TestFailUploadsInjectsAServerError(t *testing.T) {

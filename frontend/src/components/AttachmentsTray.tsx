@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react'
+import { useEffect, useRef } from 'react'
 import type { AttachmentView } from '../api/types'
 import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
@@ -11,23 +12,40 @@ import { mediaURL, useLoadFailure } from '../media'
 // e.g. a huge/corrupt file the cache refuses) falls back to the 📎 icon.
 const isImage = (mime: string) => mime.startsWith('image/') && mime !== 'image/svg+xml'
 
-function Chip({ serverId, a, onRemove, onRetry }: { serverId: number; a: AttachmentView; onRemove(): void; onRetry(): void }) {
+function Chip({
+  serverId,
+  a,
+  onRemove,
+  onRetry,
+  onKeyRemove,
+  chipRef,
+}: {
+  serverId: number
+  a: AttachmentView
+  onRemove(): void
+  onRetry(): void
+  onKeyRemove(): void
+  chipRef(el: HTMLDivElement | null): void
+}) {
   const url = mediaURL(serverId, 'staged', a.id)
   const [failed, fail] = useLoadFailure(serverId, url)
   const showImage = isImage(a.mime) && !failed
   const pct = a.size > 0 ? Math.min(100, Math.round((a.sent / a.size) * 100)) : 0
 
   // Delete/Backspace removes the chip while it (or something inside it) has
-  // focus — the tray has no other use for either key.
+  // focus — the tray has no other use for either key. onKeyRemove (not
+  // onRemove directly) lets the tray remember where to send focus once the
+  // removal actually lands (it goes through the API/store, not synchronously).
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault()
-      onRemove()
+      onKeyRemove()
     }
   }
 
   return (
     <div
+      ref={chipRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
       className="flex max-w-xs items-center gap-2 rounded border border-line bg-app px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -84,18 +102,54 @@ export function AttachmentsTray({
   items,
   onRemove,
   onRetry,
+  onFocusTextarea,
 }: {
   serverId: number
   items: AttachmentView[]
   onRemove(id: string): void
   onRetry(id: string): void
+  onFocusTextarea?(): void
 }) {
+  const chipRefs = useRef(new Map<string, HTMLDivElement>())
+  // A keyboard removal doesn't take the chip out of `items` synchronously —
+  // onRemove goes through the store/API, and the chip disappears only once
+  // that round-trips back as a prop change. `pending` remembers where the
+  // removed chip was so the effect below can move focus once it actually
+  // does: the chip now at that index (what was "next"), else the one before
+  // it ("previous"), else the composer's textarea (no chips left).
+  const pending = useRef<{ index: number; countBefore: number } | null>(null)
+
+  useEffect(() => {
+    const p = pending.current
+    if (!p || items.length >= p.countBefore) return // removal hasn't landed yet
+    pending.current = null
+    if (items.length === 0) {
+      onFocusTextarea?.()
+      return
+    }
+    const target = items[Math.min(p.index, items.length - 1)]
+    chipRefs.current.get(target.id)?.focus()
+  }, [items, onFocusTextarea])
+
   if (items.length === 0) return null
   return (
     <div role="list" aria-label={t('attach.tray')} className="mb-2 flex flex-wrap gap-2">
-      {items.map((a) => (
+      {items.map((a, i) => (
         <div role="listitem" key={a.id}>
-          <Chip serverId={serverId} a={a} onRemove={() => onRemove(a.id)} onRetry={() => onRetry(a.id)} />
+          <Chip
+            serverId={serverId}
+            a={a}
+            onRemove={() => onRemove(a.id)}
+            onRetry={() => onRetry(a.id)}
+            onKeyRemove={() => {
+              pending.current = { index: i, countBefore: items.length }
+              onRemove(a.id)
+            }}
+            chipRef={(el) => {
+              if (el) chipRefs.current.set(a.id, el)
+              else chipRefs.current.delete(a.id)
+            }}
+          />
         </div>
       ))}
     </div>

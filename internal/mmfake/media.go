@@ -415,11 +415,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, u User) {
 	case failing:
 		appError(w, 500, "app.upload.upload_data.app_error", "injected failure")
 		return
+	case disabled:
+		// Checked before channel membership, like the real server
+		// (docs/research/2026-09-24-mattermost-api-facts.md §7: "проверяется
+		// раньше прав на канал") — both give 403 either way, so this only
+		// matters for which detail a caller would see, not the status code.
+		appError(w, 403, "api.file.attachments.disabled.app_error", "file attachments are disabled")
+		return
 	case !member:
 		appError(w, 403, "api.context.permissions.app_error", "no permission")
-		return
-	case disabled:
-		appError(w, 403, "api.file.attachments.disabled.app_error", "file attachments are disabled")
 		return
 	case r.ContentLength <= 0:
 		appError(w, 400, "api.file.upload_file.read_request.app_error", "Content-Length is required")
@@ -454,6 +458,28 @@ func (s *Server) FailUploads(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.chat.failUploads = n
+}
+
+// SetMaxFileSize changes the server's advertised/enforced MaxFileSize at
+// runtime (e2e: hitting the limit without actually uploading megabytes) — 0
+// restores DefaultMaxFileSize, like SetUploadThrottle's 0 restores full
+// speed. The client only sees the new value after its next metadata
+// refresh (e.g. the e2e helper forces one with fake/drop {lose:true}).
+func (s *Server) SetMaxFileSize(n int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n <= 0 {
+		n = DefaultMaxFileSize
+	}
+	s.opts.MaxFileSize = n
+}
+
+// SetFileAttachmentsEnabled flips EnableFileAttachments at runtime, the
+// counterpart to SetMaxFileSize.
+func (s *Server) SetFileAttachmentsEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.DisableFileAttachments = !enabled
 }
 
 func (s *Server) fileInfo(w http.ResponseWriter, r *http.Request, u User) {
