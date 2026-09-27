@@ -59,6 +59,39 @@ test('several images are thumbnails; a failed one becomes a card', async () => {
   expect(h.onDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }))
 })
 
+test('a staged (pending, not sent yet) image previews from /media/<srv>/staged/<id>, not feed/thumb, and is not a clickable viewer button', () => {
+  const h = handlers()
+  const staged = png({ id: 'a1', staged: true, state: 'uploading', sent: 200, has_preview: false })
+  const { container } = render(<Attachments serverId={1} files={[staged]} {...h} />)
+  const img = container.querySelector('img')!
+  expect(img).toHaveAttribute('src', '/media/1/staged/a1')
+  expect(screen.queryByRole('button', { name: 'View build.png' })).toBeNull()
+})
+
+test('a staged image mid-upload shows a progress bar; uploaded shows none; failed shows a localized error', () => {
+  const h = handlers()
+  const { container, rerender } = render(
+    <Attachments serverId={1} files={[png({ id: 'a1', staged: true, state: 'uploading', sent: 250, size: 1000, has_preview: false })]} {...h} />,
+  )
+  const bar = container.querySelector('[aria-hidden] > div') as HTMLElement
+  expect(bar.style.width).toBe('25%')
+
+  rerender(<Attachments serverId={1} files={[png({ id: 'a1', staged: true, state: 'uploaded', sent: 1000, size: 1000, has_preview: false })]} {...h} />)
+  expect(container.querySelector('[aria-hidden] > div')).toBeNull()
+
+  rerender(<Attachments serverId={1} files={[png({ id: 'a1', staged: true, state: 'failed', error: 'too_large', has_preview: false })]} {...h} />)
+  expect(screen.getByRole('alert')).toHaveTextContent('Error: The file is too large')
+})
+
+test('a staged non-image file (a generic card) shows the same progress/error, and no download/open buttons', () => {
+  const h = handlers()
+  const doc: FileView = { id: 'a2', name: 'notes.pdf', size: 1000, mime: 'application/pdf', staged: true, state: 'uploading', sent: 400 }
+  render(<Attachments serverId={1} files={[doc]} {...h} />)
+  expect(screen.getByText('notes.pdf')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Download notes.pdf' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Open notes.pdf' })).toBeNull()
+})
+
 test('text files: a fixed-height snippet, expand, view; unreadable text falls back to a card', async () => {
   const fetchMock = vi.fn(async (url: string) =>
     url.endsWith('/text/f-log')

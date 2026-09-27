@@ -9,7 +9,11 @@ import (
 // FileView is what the feed needs to show a file: previews come from
 // /media/ by id; width/height fix the image box before it loads. Staged: a
 // file of a post being sent — ID is the attachment id and its picture
-// comes from /media/<srv>/staged/<id>.
+// comes from /media/<srv>/staged/<id>. State/Sent/Error are the live
+// upload progress of a staged file (mirroring attach.Attachment: staged |
+// uploading | uploaded | failed, bytes sent so far, the error code of a
+// failed upload) — set only while Staged, refreshed in place by
+// RefreshPendingProgress as the upload goes.
 type FileView struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -20,6 +24,9 @@ type FileView struct {
 	Height     int    `json:"height,omitempty"`
 	HasPreview bool   `json:"has_preview,omitempty"`
 	Staged     bool   `json:"staged,omitempty"`
+	State      string `json:"state,omitempty"`
+	Sent       int64  `json:"sent,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type ReactionView struct {

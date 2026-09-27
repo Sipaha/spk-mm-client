@@ -384,3 +384,11 @@ func TestOnBadgeReplaysCurrentTotal(t *testing.T) {
 	require.NotEmpty(t, got)
 	assert.Equal(t, Badge{Unread: true, Mentions: 1}, got[0])
 }
+
+// actionError maps mmsync's own "attachments are not enabled" error to a
+// real UI code instead of falling through to internal — the composer
+// otherwise showed a generic "something went wrong" for a case the UI
+// already has a proper localized message for.
+func TestActionErrorMapsNoAttachments(t *testing.T) {
+	assert.Equal(t, CodeAttachmentsDisabled, codeOf(actionError(mmsync.ErrNoAttachments)))
+}

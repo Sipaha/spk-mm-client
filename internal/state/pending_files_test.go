@@ -77,6 +77,51 @@ func TestDroppedPendingPostsReleaseTheirFiles(t *testing.T) {
 	assert.Equal(t, []string{"real", kept.ID}, ids)
 }
 
+func TestRefreshPendingProgressUpdatesStagedFilesInPlace(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("off", nil, true, 5)
+	s.AddPending("off", "", "", stagedFiles("a1", "a2")...)
+
+	changed := s.RefreshPendingProgress("off", func(id string) (FileProgress, bool) {
+		if id == "a1" {
+			return FileProgress{State: "uploading", Sent: 2}, true
+		}
+		return FileProgress{}, false
+	})
+	assert.True(t, changed)
+	v, _ := s.ChannelView("off")
+	require.Len(t, v.Posts, 1)
+	got := v.Posts[0].Files
+	require.Len(t, got, 2)
+	assert.Equal(t, FileView{ID: "a1", Name: "a1.png", Ext: "png", Size: 3, Mime: "image/png", Staged: true, State: "uploading", Sent: 2}, got[0])
+	assert.Equal(t, FileView{ID: "a2", Name: "a2.png", Ext: "png", Size: 3, Mime: "image/png", Staged: true}, got[1], "untouched: get reported not-ok")
+
+	// The same values again: nothing actually changed.
+	changed = s.RefreshPendingProgress("off", func(id string) (FileProgress, bool) {
+		if id == "a1" {
+			return FileProgress{State: "uploading", Sent: 2}, true
+		}
+		return FileProgress{}, false
+	})
+	assert.False(t, changed, "no change: nothing for the caller to tell the UI")
+
+	// A failure replaces state/sent with an error code.
+	changed = s.RefreshPendingProgress("off", func(id string) (FileProgress, bool) {
+		if id == "a1" {
+			return FileProgress{State: "failed", Error: "unreachable"}, true
+		}
+		return FileProgress{}, false
+	})
+	assert.True(t, changed)
+	v, _ = s.ChannelView("off")
+	assert.Equal(t, "failed", v.Posts[0].Files[0].State)
+	assert.Equal(t, "unreachable", v.Posts[0].Files[0].Error)
+	assert.Zero(t, v.Posts[0].Files[0].Sent, "a fresh failure resets progress")
+
+	// An unknown channel is a no-op, not a panic.
+	assert.False(t, s.RefreshPendingProgress("nope", func(string) (FileProgress, bool) { return FileProgress{}, true }))
+}
+
 func TestOnlyAFailedPendingPostIsRetried(t *testing.T) {
 	s := newFixture()
 	pd := s.AddPending("off", "", "", stagedFiles("a1")...)

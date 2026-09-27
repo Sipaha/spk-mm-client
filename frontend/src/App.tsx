@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
 import { ApiError, client, isDesktop } from './api/client'
 import type { ServerDTO } from './api/types'
-import { loadSidebar, onDownloadsChanged, openChannel, openFromNotification, refreshChannel, refreshServers, report, selectServer } from './chat'
+import {
+  loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openFromNotification,
+  refreshChannel, refreshServers, report, selectServer,
+} from './chat'
 import { AddServerForm } from './components/AddServerForm'
 import { ChannelPane } from './components/ChannelPane'
 import { ServerPanel } from './components/ServerPanel'
@@ -35,6 +38,12 @@ export function App() {
           break
         case 'downloads_changed':
           onDownloadsChanged(p)
+          break
+        case 'attachments_changed':
+          onAttachmentsChanged(p)
+          break
+        case 'attachment_refused':
+          onAttachmentRefused(p)
           break
         case 'login_failed':
           loginFailed(errorMessage(new ApiError(String(p.code ?? 'internal'), '')))

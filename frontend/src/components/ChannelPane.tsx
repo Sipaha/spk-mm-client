@@ -4,8 +4,9 @@ import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
   editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost,
+  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost, uploadAttachments,
 } from '../chat'
+import { errorMessage } from '../errors'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
 import { useStore } from '../store'
@@ -23,11 +24,43 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const editingId = useStore((s) => s.editingId)
   const downloads = useStore((s) => s.downloads)
   const downloadsOpen = useStore((s) => s.downloadsOpen)
+  const attachments = useStore((s) => s.attachments)
   const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
   const downloadsLabel = activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
   // The viewer belongs to the channel it was opened in.
   const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
+
+  // Drag-and-drop (browser mode; desktop drops never reach the page —
+  // WebKitGTK takes them at the GTK level and Wails toggles
+  // .file-drop-target-active on data-file-drop-target itself, styled in
+  // index.css). dragDepth survives dragleave firing for every child
+  // element the pointer crosses on its way around the drop zone — only 0
+  // means "actually left it".
+  const [dragActive, setDragActive] = useState(false)
+  const dragDepth = useRef(0)
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    dragDepth.current++
+    setDragActive(true)
+  }
+  const onDragOver = (e: React.DragEvent) => {
+    if (hasFiles(e)) e.preventDefault() // required for the drop event to fire at all
+  }
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    dragDepth.current = 0
+    setDragActive(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    e.preventDefault()
+    uploadAttachments(server.id, channelId, files).catch((err) => useStore.getState().setAttachError(errorMessage(err)))
+  }
   // Stable per channel: PostItem is memoized on its props.
   const actions = useMemo<PostActions>(
     () => ({
@@ -59,7 +92,18 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
     return <div className="flex flex-1 items-center justify-center bg-app text-fg-muted">{t('channel.none')}</div>
   }
   return (
-    <section aria-label={channel.name} className="flex min-h-0 flex-1 flex-col bg-app">
+    <section
+      aria-label={channel.name}
+      data-file-drop-target
+      data-srv={server.id}
+      data-channel={channel.id}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`relative flex min-h-0 flex-1 flex-col bg-app ${dragActive ? 'file-drop-target-active' : ''}`}
+      data-drop-label={t('composer.dropHint')}
+    >
       <header className="flex min-w-0 items-baseline gap-3 border-b border-line bg-panel px-4 py-2">
         <h1 className="shrink-0 font-semibold text-fg">
           <span className="mr-1 text-fg-subtle">{channelGlyph(channel.type)}</span>
@@ -103,7 +147,9 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       <Composer
         key={`composer-${channel.id}`}
         channel={channel}
-        onSend={(m) => sendPost(server.id, channel.id, m)}
+        serverId={server.id}
+        attachments={attachments}
+        onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
         onDraft={(text) => saveDraft(server.id, channel.id, text)}
         onEditLast={() => editLastOwn(channel)}
       />

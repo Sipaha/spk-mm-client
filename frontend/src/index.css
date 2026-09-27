@@ -39,3 +39,27 @@
 .md h3, .md h4, .md h5, .md h6 { font-size: 1rem; font-weight: 600; }
 .md hr { border-color: var(--color-line); margin: 0.5rem 0; }
 .md del { color: var(--color-fg-muted); }
+
+/* Drop target overlay: Wails (desktop) toggles .file-drop-target-active on
+   [data-file-drop-target] itself while a native drag hovers it; browser
+   mode's own dragenter/dragleave handlers (ChannelPane) do the same, so one
+   rule covers both. The label comes from data-drop-label (i18n'd JSX
+   attribute) via CSS content, not a DOM child, so it can never intercept
+   the drop itself. */
+[data-file-drop-target].file-drop-target-active {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: -2px;
+}
+[data-file-drop-target].file-drop-target-active::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-fg);
+  font-weight: 600;
+  pointer-events: none;
+}

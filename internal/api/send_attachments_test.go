@@ -85,8 +85,8 @@ func TestSendPostWithAttachments(t *testing.T) {
 	assert.True(t, p.Pending)
 	assert.Equal(t, "look", p.Message)
 	assert.Equal(t, []state.FileView{
-		{ID: a.ID, Name: "Screenshot.png", Ext: "png", Size: int64(len(pic)), Mime: "image/png", Width: 64, Height: 48, Staged: true},
-		{ID: b.ID, Name: "Notes.TXT", Ext: "txt", Size: 5, Mime: "text/plain", Staged: true},
+		{ID: a.ID, Name: "Screenshot.png", Ext: "png", Size: int64(len(pic)), Mime: "image/png", Width: 64, Height: 48, Staged: true, State: "staged"},
+		{ID: b.ID, Name: "Notes.TXT", Ext: "txt", Size: 5, Mime: "text/plain", Staged: true, State: "staged"},
 	}, p.Files, "the local files, previews from /media/<srv>/staged/<id>")
 	list, err := f.svc.Attachments(ctx, id, "c-offtopic")
 	require.NoError(t, err)
@@ -126,6 +126,64 @@ func TestSendPostWithAttachments(t *testing.T) {
 	}, "the attachments and the spool are let go of")
 	assert.Equal(t, 2, fake.Hits("POST", "/api/v4/files"))
 	assert.Equal(t, 1, fake.Hits("POST", "/api/v4/posts"))
+}
+
+// A sending post's staged file shows live upload progress (State, at
+// least), and the UI is told through the same channel_changed path a
+// post/window update uses — the controller carry-over from Task 3's
+// review. The upload is throttled server-side so the client's UploadFile
+// call (and so the attachment's "uploading" state) spans a stretch of real
+// time: the fake reads the request body slowly, so its HTTP response (and
+// so the attach store's move to "uploaded") does not arrive until then,
+// regardless of how fast the small body itself reaches the kernel.
+func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
+	f := newChatFixture(t)
+	f.withAttachments()
+	fake := startFake(t)
+	id := f.live(fake)
+	ctx := context.Background()
+	fake.SetUploadThrottle(2000) // ~1s for 2000 bytes of body
+	t.Cleanup(func() { fake.SetUploadThrottle(0) })
+	data := bytes.Repeat([]byte{1}, 2000)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "big.bin", "application/octet-stream", bytes.NewReader(data), 0)
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "", []string{a.ID}))
+	pending, ok := f.pendingPost(id, "c-offtopic")
+	require.True(t, ok, "shown at once")
+
+	// Drain events in the background looking for a channel_changed of this
+	// channel while the file is still uploading (proves onAttachments
+	// reused the existing view-update path, not just the composer event).
+	sawChannelChangedMidUpload := make(chan bool, 1)
+	go func() {
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case ev := <-f.evs:
+				if ev.Type == EventChannelChanged && ev.Payload["server_id"] == id && ev.Payload["channel_id"] == "c-offtopic" {
+					p, ok := f.pendingPost(id, "c-offtopic")
+					if ok && len(p.Files) == 1 && p.Files[0].State == "uploading" {
+						sawChannelChangedMidUpload <- true
+						return
+					}
+				}
+			case <-timeout:
+				sawChannelChangedMidUpload <- false
+				return
+			}
+		}
+	}()
+	f.eventually(func() bool {
+		p, ok := f.pendingPost(id, "c-offtopic")
+		return ok && len(p.Files) == 1 && p.Files[0].State == "uploading"
+	}, "never saw the pending post's file go to uploading")
+	assert.True(t, <-sawChannelChangedMidUpload, "channel_changed never told the UI about the progress")
+
+	var got state.PostView
+	f.eventually(func() bool { got, ok = f.confirmed(id, "c-offtopic", pending.ID); return ok }, "the post was never confirmed")
+	assert.Len(t, got.Files, 1)
+	assert.False(t, got.Files[0].Staged, "the confirmed post shows the server's file, not the staged one")
 }
 
 func TestSendPostWithOnlyAttachments(t *testing.T) {

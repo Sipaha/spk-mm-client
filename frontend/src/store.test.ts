@@ -65,6 +65,21 @@ test('switching to a different channel drops an in-progress edit; refreshing the
   expect(useStore.getState().editingId).toBeNull()
 })
 
+const av = (id: string): import('./api/types').AttachmentView => ({ id, name: id + '.png', size: 3, mime: 'image/png', state: 'staged', sent: 0, error: '' })
+
+test('switching to a different channel drops the composer tray and its error; refreshing the same one keeps it (chat.ts refetches right after)', () => {
+  useStore.getState().setServers([srv()])
+  useStore.getState().setChannel(1, chan('a'))
+  useStore.getState().setAttachments([av('x')])
+  useStore.getState().setAttachError('boom')
+  useStore.getState().setChannel(1, chan('a'))
+  expect(useStore.getState().attachments).toEqual([av('x')])
+  expect(useStore.getState().attachError).toBe('boom')
+  useStore.getState().setChannel(1, chan('b'))
+  expect(useStore.getState().attachments).toEqual([])
+  expect(useStore.getState().attachError).toBeNull()
+})
+
 test('a server going live bumps its live epoch; other updates do not', () => {
   const epoch = (id: number) => useStore.getState().liveEpochs[id] ?? 0
   useStore.getState().setServers([srv({ state: 'connecting' }), srv({ id: 2, state: 'live' })])

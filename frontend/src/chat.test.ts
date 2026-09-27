@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
 import { setLocale } from './i18n'
 import { useStore } from './store'
 
@@ -18,15 +18,26 @@ vi.mock('./api/client', () => ({
     revealDownload: vi.fn(),
     removeDownload: vi.fn(),
     clearDownloads: vi.fn(),
+    attachments: vi.fn(),
+    removeAttachment: vi.fn(),
+    retryAttachment: vi.fn(),
+    pickAttachments: vi.fn(),
+    attachFromClipboard: vi.fn(),
   },
-  ApiError: class ApiError extends Error {},
+  uploadAttachmentBrowser: vi.fn(),
+  ApiError: class ApiError extends Error {
+    constructor(public code: string, public detail: string) {
+      super(detail ? `${code}: ${detail}` : code)
+    }
+  },
 }))
 
-const { client } = await import('./api/client')
+const { client, uploadAttachmentBrowser } = await import('./api/client')
 const {
-  clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost, loadSidebar,
-  onDownloadsChanged, openChannel, openDownload, openDownloadsPanel, openFile, refreshChannel,
-  refreshDownloads, removeDownload, resetChat, revealDownload, selectServer,
+  attachFromClipboard, clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost,
+  loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
+  openDownloadsPanel, openFile, pickAttachments, refreshChannel, refreshDownloads,
+  removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, uploadAttachments,
 } = await import('./chat')
 
 const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
@@ -66,10 +77,20 @@ beforeEach(() => {
   vi.mocked(client.revealDownload).mockReset().mockResolvedValue(undefined)
   vi.mocked(client.removeDownload).mockReset().mockResolvedValue(undefined)
   vi.mocked(client.clearDownloads).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.attachments).mockReset().mockResolvedValue([])
+  vi.mocked(client.removeAttachment).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.retryAttachment).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.pickAttachments).mockReset()
+  vi.mocked(client.attachFromClipboard).mockReset()
+  vi.mocked(uploadAttachmentBrowser).mockReset()
   useStore.setState({
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
-    editingId: null, downloads: [], downloadsOpen: false,
+    editingId: null, downloads: [], downloadsOpen: false, attachments: [], attachError: null,
   })
+})
+
+const av = (id: string, over: Partial<AttachmentView> = {}): AttachmentView => ({
+  id, name: id + '.png', size: 3, mime: 'image/png', state: 'staged', sent: 0, error: '', ...over,
 })
 
 test('loading the sidebar opens its selected channel', async () => {
@@ -290,4 +311,86 @@ test('the panel actions call the matching API methods', () => {
   expect(client.removeDownload).toHaveBeenCalledWith(3)
   clearDownloads()
   expect(client.clearDownloads).toHaveBeenCalledTimes(1)
+})
+
+// --- Attachments ---------------------------------------------------------
+
+test('opening a channel fetches its composer tray', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.attachments).mockResolvedValue([av('x')])
+  await openChannel(1, 'a')
+  await vi.waitFor(() => expect(useStore.getState().attachments).toEqual([av('x')]))
+  expect(client.attachments).toHaveBeenCalledWith(1, 'a')
+})
+
+test('a stale attachments fetch (channel switched away while it was in flight) is dropped', async () => {
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('a')).mockResolvedValueOnce(chan('b'))
+  const stale = deferred<AttachmentView[]>()
+  vi.mocked(client.attachments).mockReturnValueOnce(stale.p).mockResolvedValue([av('y')])
+  await openChannel(1, 'a')
+  await openChannel(1, 'b') // switches away before "a"'s attachments resolve
+  await vi.waitFor(() => expect(useStore.getState().attachments).toEqual([av('y')]))
+  stale.resolve([av('x')])
+  await Promise.resolve()
+  expect(useStore.getState().attachments).toEqual([av('y')]) // the stale fetch for "a" must not land
+})
+
+test('onAttachmentsChanged applies only to the channel on screen', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  await vi.waitFor(() => expect(client.attachments).toHaveBeenCalled())
+
+  onAttachmentsChanged({ server_id: 2, channel_id: 'a', items: [av('other-server')] })
+  expect(useStore.getState().attachments).toEqual([])
+  onAttachmentsChanged({ server_id: 1, channel_id: 'b', items: [av('other-channel')] })
+  expect(useStore.getState().attachments).toEqual([])
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', items: [av('mine')] })
+  expect(useStore.getState().attachments).toEqual([av('mine')])
+})
+
+test('onAttachmentRefused shows a localized message in the composer, only for the channel on screen', async () => {
+  setLocale('en')
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+
+  onAttachmentRefused({ server_id: 1, channel_id: 'b', code: 'too_many' })
+  expect(useStore.getState().attachError).toBeNull()
+  onAttachmentRefused({ server_id: 1, channel_id: 'a', code: 'too_many' })
+  expect(useStore.getState().attachError).toBe('Too many attachments (10 at most)')
+})
+
+test('removeAttachment/retryAttachment call the API and report a failure globally', async () => {
+  removeAttachment(1, 'a1')
+  expect(client.removeAttachment).toHaveBeenCalledWith(1, 'a1')
+  retryAttachment(1, 'a1')
+  expect(client.retryAttachment).toHaveBeenCalledWith(1, 'a1')
+
+  vi.mocked(client.removeAttachment).mockRejectedValueOnce(new Error('boom'))
+  await removeAttachment(1, 'a1')
+  await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
+})
+
+test('pickAttachments/attachFromClipboard are not caught here — the caller shows the error inline', async () => {
+  vi.mocked(client.pickAttachments).mockResolvedValue(2)
+  await expect(pickAttachments(1, 'a')).resolves.toBe(2)
+  expect(client.pickAttachments).toHaveBeenCalledWith(1, 'a')
+
+  vi.mocked(client.attachFromClipboard).mockRejectedValue(new Error('nope'))
+  await expect(attachFromClipboard(1, 'a')).rejects.toThrow('nope')
+  expect(useStore.getState().lastError).toBeNull() // not turned into a global error by chat.ts
+})
+
+test('uploadAttachments tries every file even if one fails, then throws the first failure', async () => {
+  const good1 = new File(['a'], 'a.txt')
+  const bad = new File(['b'], 'b.txt')
+  const good2 = new File(['c'], 'c.txt')
+  vi.mocked(uploadAttachmentBrowser)
+    .mockResolvedValueOnce(av('a'))
+    .mockRejectedValueOnce(new Error('too big'))
+    .mockResolvedValueOnce(av('c'))
+  await expect(uploadAttachments(1, 'a', [good1, bad, good2])).rejects.toThrow('too big')
+  expect(uploadAttachmentBrowser).toHaveBeenCalledTimes(3)
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(1, 1, 'a', good1)
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(2, 1, 'a', bad)
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(3, 1, 'a', good2)
 })

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { FileView } from '../api/types'
+import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 
@@ -27,20 +28,49 @@ export function IconButton({
   )
 }
 
+// StagedProgress: a sending post's staged file's live upload state (Task 5
+// controller carry-over) — a thin progress bar while it uploads, or an
+// error with no bar once it fails; nothing for an ordinary server file
+// (not staged) or once uploaded (its post is about to be created).
+export function StagedProgress({ file }: { file: FileView }) {
+  if (!file.staged || !file.state || file.state === 'uploaded') return null
+  if (file.state === 'failed') {
+    return (
+      <p role="alert" className="text-danger">
+        {t('attach.error', { detail: downloadErrorMessage(file.error ?? '') })}
+      </p>
+    )
+  }
+  const pct = file.size > 0 ? Math.min(100, Math.round(((file.sent ?? 0) / file.size) * 100)) : 0
+  return (
+    <div className="h-1 w-full overflow-hidden rounded bg-line" aria-hidden>
+      <div className="h-full bg-accent transition-[width]" style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
 export function FileCard({ file, onDownload, onOpen }: { file: FileView } & Pick<FileHandlers, 'onDownload' | 'onOpen'>) {
   return (
-    <div className="flex max-w-sm items-center gap-2 rounded border border-line px-2 py-1 text-xs">
-      <span aria-hidden>📎</span>
-      <span className="min-w-0 truncate" title={file.name}>
-        {file.name}
-      </span>
-      <span className="shrink-0 text-fg-muted">{formatSize(file.size)}</span>
-      <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-        ⬇
-      </IconButton>
-      <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
-        ↗
-      </IconButton>
+    <div className="flex max-w-sm flex-col gap-1 rounded border border-line px-2 py-1 text-xs">
+      <div className="flex items-center gap-2">
+        <span aria-hidden>📎</span>
+        <span className="min-w-0 truncate" title={file.name}>
+          {file.name}
+        </span>
+        <span className="shrink-0 text-fg-muted">{formatSize(file.size)}</span>
+        {/* A staged file has no server id yet — nothing to download/open. */}
+        {!file.staged && (
+          <>
+            <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
+              ⬇
+            </IconButton>
+            <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
+              ↗
+            </IconButton>
+          </>
+        )}
+      </div>
+      <StagedProgress file={file} />
     </div>
   )
 }

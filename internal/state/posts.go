@@ -410,6 +410,53 @@ func (s *Server) TakeReleased() []string {
 	return out
 }
 
+// FileProgress is a staged file's live upload state, fed to
+// RefreshPendingProgress by the caller (api.Service, which holds the
+// attachment store) without this package importing internal/attach.
+type FileProgress struct {
+	State string
+	Sent  int64
+	Error string
+}
+
+// RefreshPendingProgress applies fresh upload progress to the staged Files
+// of channelID's pending posts: get is called with each file's id (the
+// attachment id) and, when it reports ok, its State/Sent/Error replace
+// what is shown. It reports whether anything actually changed — the
+// caller only needs to tell the UI then. Pending posts are not persisted
+// (they do not survive a restart), so this never marks anything dirty.
+//
+// A changed post's Files is replaced wholesale with a fresh clone rather
+// than edited element by element: ChannelView hands out p.Files by its
+// existing slice header (never deep-cloned — Task 7), so a caller reading
+// an earlier snapshot without the lock must keep seeing that snapshot
+// unchanged underneath it. Only the Pending's Files field (a slice header,
+// touched solely under s.mu, like every other field here) is replaced.
+func (s *Server) RefreshPendingProgress(channelID string, get func(id string) (FileProgress, bool)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	list := s.pending[channelID]
+	for i := range list {
+		var next []FileView // cloned lazily, only once something actually changes
+		for j, fv := range list[i].Files {
+			fp, ok := get(fv.ID)
+			if !ok || (fv.State == fp.State && fv.Sent == fp.Sent && fv.Error == fp.Error) {
+				continue
+			}
+			if next == nil {
+				next = slices.Clone(list[i].Files)
+			}
+			next[j].State, next[j].Sent, next[j].Error = fp.State, fp.Sent, fp.Error
+			changed = true
+		}
+		if next != nil {
+			list[i].Files = next
+		}
+	}
+	return changed
+}
+
 // PendingAttachments gives the attachment ids of every pending post.
 func (s *Server) PendingAttachments() []string {
 	s.mu.Lock()

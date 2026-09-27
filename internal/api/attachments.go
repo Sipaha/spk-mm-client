@@ -68,12 +68,38 @@ func (u uploader) CheckAuth(err error) { u.w.CheckAuth(err) }
 
 // onAttachments pushes a channel's attachments to the UI, coalesced like
 // the other events; progress comes at most ~4 times a second per upload.
+// It also refreshes the progress/error shown on any pending post's staged
+// files of this channel (an attachment stays tracked, and keeps notifying,
+// after Take moves it from the composer to a post being sent) and, only
+// when that actually changed something, tells the UI through the same
+// channel_changed path a post/window update uses — cheap and coalesced
+// the same way.
 func (s *Service) onAttachments(srv int64, ch string) {
 	s.co.Schedule(fmt.Sprintf("attachments/%d/%s", srv, ch), func() {
 		if att := s.att; att != nil {
 			s.emit(EventAttachmentsChanged, map[string]any{"server_id": srv, "channel_id": ch, "items": att.List(srv, ch)})
 		}
 	})
+	m := s.manager()
+	if m == nil || s.att == nil {
+		return
+	}
+	w := m.Worker(srv)
+	if w == nil {
+		return
+	}
+	changed := w.State().RefreshPendingProgress(ch, func(id string) (state.FileProgress, bool) {
+		a, ok := s.att.Get(id)
+		if !ok || a.Server != srv {
+			return state.FileProgress{}, false
+		}
+		return state.FileProgress{State: string(a.State), Sent: a.Sent, Error: a.Error}, true
+	})
+	if changed {
+		s.co.Schedule(fmt.Sprintf("channel/%d/%s", srv, ch), func() {
+			s.emit(EventChannelChanged, map[string]any{"server_id": srv, "channel_id": ch})
+		})
+	}
 }
 
 func attachError(err error) error {
@@ -194,7 +220,7 @@ func (p postFiles) Release(ids []string) {
 // is read from its header so the feed's box is final before it loads.
 func (s *Service) stagedFile(a attach.Attachment) state.FileView {
 	fv := state.FileView{ID: a.ID, Name: a.Name, Ext: strings.ToLower(strings.TrimPrefix(filepath.Ext(a.Name), ".")),
-		Size: a.Size, Mime: a.Mime, Staged: true}
+		Size: a.Size, Mime: a.Mime, Staged: true, State: string(a.State), Sent: a.Sent, Error: a.Error}
 	if !media.IsRaster(a.Mime) {
 		return fv
 	}

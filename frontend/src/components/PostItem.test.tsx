@@ -74,6 +74,29 @@ test('pending and failed posts', async () => {
   expect(a.discard).toHaveBeenCalledWith(failed)
 })
 
+test('a pending post with files offers Cancel while any upload is not done, and hides it once all are', async () => {
+  const a = actions()
+  const waiting = post({
+    pending: true, user_id: 'u-alice',
+    files: [{ id: 'a1', name: 'x.png', size: 3, mime: 'image/png', staged: true, state: 'staged' }],
+  })
+  const { rerender } = render(<PostItem serverId={1} post={waiting} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel sending' }))
+  expect(a.discard).toHaveBeenCalledWith(waiting)
+
+  const done = post({
+    pending: true, user_id: 'u-alice',
+    files: [{ id: 'a1', name: 'x.png', size: 3, mime: 'image/png', staged: true, state: 'uploaded', sent: 3 }],
+  })
+  rerender(<PostItem serverId={1} post={done} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
+})
+
+test('a pending post with no files offers no Cancel button', () => {
+  render(<PostItem serverId={1} post={post({ pending: true, user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
+})
+
 test('own post offers edit and delete; others only mark unread and copy link', async () => {
   const a = actions()
   const own = post({ user_id: 'u-alice' })

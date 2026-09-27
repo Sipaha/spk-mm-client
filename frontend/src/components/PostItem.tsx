@@ -196,7 +196,18 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />
         )}
         {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
-        {post.pending && <div className="text-xs text-fg-muted">{t('post.sending')}</div>}
+        {post.pending && (
+          <div className="flex items-center gap-2 text-xs text-fg-muted">
+            {t('post.sending')}
+            {/* A post with files still waiting (e.g. offline) can be cancelled
+                (DiscardPost works on a waiting post); once every file is
+                uploaded, CreatePost may already be in flight for it, so the
+                button disappears rather than race a discard against it. */}
+            {(post.files?.length ?? 0) > 0 && post.files!.some((f) => f.state !== 'uploaded') && (
+              <button className="underline" onClick={() => actions.discard(post)}>{t('post.cancelSending')}</button>
+            )}
+          </div>
+        )}
         {post.failed && (
           <div role="alert" className="flex gap-2 text-xs text-danger">
             {t('post.failed')}

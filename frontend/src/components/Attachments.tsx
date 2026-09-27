@@ -1,7 +1,7 @@
 import type { FileView } from '../api/types'
 import { t } from '../i18n'
 import { mediaURL, useLoadFailure } from '../media'
-import { FileCard, type FileHandlers } from './FileCard'
+import { FileCard, StagedProgress, type FileHandlers } from './FileCard'
 import { fileKind, fitBox, imageSrc } from './files'
 import { MarkdownSnippet } from './MarkdownSnippet'
 import { MediaPlayer } from './MediaPlayer'
@@ -10,14 +10,42 @@ import { TextSnippet } from './TextSnippet'
 const BIG = { w: 480, h: 360 }
 const THUMB = { w: 120, h: 100 }
 
-// ImageTile loads its picture eagerly (not loading="lazy" — see Avatar).
+// ImageTile loads its picture eagerly (not loading="lazy" — see Avatar). A
+// staged file (a pending post's, not sent yet) has no post-attached file id
+// to build a feed/thumb URL from — its picture is the local one at
+// /media/<srv>/staged/<id>, scaled like feed either way (Go has no
+// separate staged-thumb variant); it also isn't openable in the viewer (the
+// viewer's own URLs assume a sent file), so it renders as a plain box with
+// its upload progress under it instead of a button.
 function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { serverId: number; file: FileView; big: boolean } & FileHandlers) {
   const src = imageSrc(file)
-  const url = !src ? '' : big ? mediaURL(serverId, 'feed', file.id, { src }) : mediaURL(serverId, 'thumb', file.id)
+  const url = !src ? '' : file.staged ? mediaURL(serverId, 'staged', file.id) : big ? mediaURL(serverId, 'feed', file.id, { src }) : mediaURL(serverId, 'thumb', file.id)
   // A failed load is a card until the server goes live again.
   const [failed, fail] = useLoadFailure(serverId, url)
   if (failed || !src) return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
   const box = big ? fitBox(file.width, file.height, BIG.w, BIG.h) : { width: THUMB.w, height: THUMB.h }
+  const img = (
+    <img
+      src={url}
+      alt={file.name}
+      width={box.width}
+      height={box.height}
+      decoding="async"
+      draggable={false}
+      onError={fail}
+      className={`block h-full w-full ${big ? 'object-contain' : 'object-cover'}`}
+    />
+  )
+  if (file.staged) {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="block shrink-0 overflow-hidden rounded border border-line bg-panel" style={{ width: box.width, height: box.height }}>
+          {img}
+        </div>
+        <StagedProgress file={file} />
+      </div>
+    )
+  }
   return (
     <button
       type="button"
@@ -27,16 +55,7 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
       className="block shrink-0 overflow-hidden rounded border border-line bg-panel focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       style={{ width: box.width, height: box.height }}
     >
-      <img
-        src={url}
-        alt={file.name}
-        width={box.width}
-        height={box.height}
-        decoding="async"
-        draggable={false}
-        onError={fail}
-        className={`block h-full w-full ${big ? 'object-contain' : 'object-cover'}`}
-      />
+      {img}
     </button>
   )
 }

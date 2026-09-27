@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
 
 export interface NoticeAction {
   label: string
@@ -29,6 +29,14 @@ interface State {
   // it never grows across a long session (see setDownloads/setDownloadsOpen).
   downloads: DownloadView[]
   downloadsOpen: boolean
+  // attachments: the open channel's composer tray (a draft, kept by Go per
+  // channel — see AGENTS.md "Вложения"); reset when the open channel
+  // changes and refetched by chat.ts's refreshAttachments right after.
+  attachments: AttachmentView[]
+  // attachError: a message the composer shows like a send error — a limit
+  // (too_large, too_many, …) or an attachment_refused event (a drop with
+  // no caller to report to). Reset with the channel, same as attachments.
+  attachError: string | null
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -42,11 +50,13 @@ interface State {
   setDownloads(list: DownloadView[]): void
   setDownloadsOpen(open: boolean): void
   patchDownloadProgress(id: number, received: number): void
+  setAttachments(list: AttachmentView[]): void
+  setAttachError(msg: string | null): void
 }
 
 const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
 
-const cleared = { sidebar: null, channel: null, editingId: null }
+const cleared = { sidebar: null, channel: null, editingId: null, attachments: [], attachError: null }
 
 export const useStore = create<State>((set, get) => ({
   servers: [],
@@ -65,6 +75,8 @@ export const useStore = create<State>((set, get) => ({
   liveEpochs: {},
   downloads: [],
   downloadsOpen: false,
+  attachments: [],
+  attachError: null,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -99,10 +111,12 @@ export const useStore = create<State>((set, get) => ({
   setChannel(serverId, ch) {
     if (get().selectedId !== serverId) return
     // A different channel: drop any in-progress edit (it belonged to the
-    // previous one). A refresh of the *same* open channel (e.g. a
-    // channel_changed event) must not interrupt an edit in progress.
+    // previous one) and the composer's attachments/error (they belong to
+    // it too — chat.ts's refreshAttachments refetches the new channel's
+    // right after). A refresh of the *same* open channel (e.g. a
+    // channel_changed event) must not interrupt an edit or a draft tray.
     const switchedChannel = get().channel?.id !== ch.id
-    set({ channel: ch, ...(switchedChannel ? { editingId: null } : {}) })
+    set({ channel: ch, ...(switchedChannel ? { editingId: null, attachments: [], attachError: null } : {}) })
   },
   setEditing: (id) => set({ editingId: id }),
   setNotice: (msg, sticky = false, action = null) =>
@@ -116,6 +130,8 @@ export const useStore = create<State>((set, get) => ({
   patchDownloadProgress(id, received) {
     set((s) => ({ downloads: s.downloads.map((d) => (d.id === id ? { ...d, received } : d)) }))
   },
+  setAttachments: (list) => set({ attachments: list }),
+  setAttachError: (msg) => set({ attachError: msg }),
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).

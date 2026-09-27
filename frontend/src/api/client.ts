@@ -1,5 +1,5 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, AppInfo, ChannelDTO, DownloadView, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
+import type { ApiEvent, AppInfo, AttachmentView, ChannelDTO, DownloadView, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -49,6 +49,19 @@ export interface Client {
   removeDownload(id: number): Promise<void>
   /** Drops every finished/failed entry. */
   clearDownloads(): Promise<void>
+  // Attachments: files attached to a channel's next message (a draft, in
+  // Go's memory — the UI never sends paths; see AGENTS.md "Вложения —
+  // модель угроз"). Not available in the transport itself: the desktop
+  // clipboard/dialog sources come from AttachFromClipboard/PickAttachments
+  // (unsupported in browser mode — Go answers "unsupported" there); a
+  // browser upload instead goes through uploadAttachmentBrowser below.
+  attachments(id: number, channelId: string): Promise<AttachmentView[]>
+  removeAttachment(id: number, attachmentId: string): Promise<void>
+  retryAttachment(id: number, attachmentId: string): Promise<void>
+  /** Desktop only: reads the system clipboard (a native paste just happened); returns how many were attached. */
+  attachFromClipboard(id: number, channelId: string): Promise<number>
+  /** Desktop only: opens the native file dialog; returns how many were attached (none: cancelled). */
+  pickAttachments(id: number, channelId: string): Promise<number>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -111,11 +124,39 @@ export const httpClient: Client = {
   revealDownload: (id) => done(post('RevealDownload', { id })),
   removeDownload: (id) => done(post('RemoveDownload', { id })),
   clearDownloads: () => done(post('ClearDownloads', {})),
+  attachments: (id, channel_id) => post('Attachments', { id, channel_id }),
+  removeAttachment: (id, attachment_id) => done(post('RemoveAttachment', { id, attachment_id })),
+  retryAttachment: (id, attachment_id) => done(post('RetryAttachment', { id, attachment_id })),
+  attachFromClipboard: (id, channel_id) => post('AttachFromClipboard', { id, channel_id }),
+  pickAttachments: (id, channel_id) => post('PickAttachments', { id, channel_id }),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
     return () => es.close()
   },
+}
+
+// uploadAttachmentBrowser (browser mode only): the one place a File's bytes
+// leave the page — a raw POST body to /api/attachments/{srv}/{channel}
+// (bearer auth like every other /api/ call). Desktop never does this: Go
+// reads the clipboard/dialog/drop itself and never sees a Blob/File/
+// FormData body (that crashes the whole app against wails:// — AGENTS.md
+// "Things that bite"). Not part of Client: desktop has no equivalent.
+export async function uploadAttachmentBrowser(serverId: number, channelId: string, file: File): Promise<AttachmentView> {
+  const headers: Record<string, string> = {}
+  const token = tokenMeta()
+  if (token) headers.Authorization = `Bearer ${token}`
+  const qs = new URLSearchParams({ name: file.name, mime: file.type || 'application/octet-stream' })
+  const r = await fetch(`/api/attachments/${serverId}/${encodeURIComponent(channelId)}?${qs}`, { method: 'POST', headers, body: file })
+  const isJSON = r.headers.get('content-type')?.includes('application/json')
+  if (!r.ok) {
+    if (isJSON) {
+      const e = (await r.json()) as { code?: string; detail?: string }
+      throw new ApiError(e.code ?? 'internal', e.detail ?? '')
+    }
+    throw new ApiError('internal', `HTTP ${r.status}`)
+  }
+  return (await r.json()) as AttachmentView
 }
 
 // Go returns CodedError whose text is "<code>: <detail>" (or just "<code>").
@@ -143,6 +184,8 @@ const EVENT_TYPES: EventType[] = [
   'channel_changed',
   'open_channel',
   'downloads_changed',
+  'attachments_changed',
+  'attachment_refused',
 ]
 
 export const wailsClient: Client = {
@@ -179,6 +222,11 @@ export const wailsClient: Client = {
   revealDownload: (id) => wcall('RevealDownload', id),
   removeDownload: (id) => wcall('RemoveDownload', id),
   clearDownloads: () => wcall('ClearDownloads'),
+  attachments: (id, channelId) => wcall('Attachments', id, channelId),
+  removeAttachment: (id, attachmentId) => wcall('RemoveAttachment', id, attachmentId),
+  retryAttachment: (id, attachmentId) => wcall('RetryAttachment', id, attachmentId),
+  attachFromClipboard: (id, channelId) => wcall('AttachFromClipboard', id, channelId),
+  pickAttachments: (id, channelId) => wcall('PickAttachments', id, channelId),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

@@ -81,8 +81,27 @@ export interface FileView {
   height?: number
   has_preview?: boolean
   // staged: a file of a post being sent — id is the attachment id and its
-  // picture comes from /media/<srv>/staged/<id>.
+  // picture comes from /media/<srv>/staged/<id>. state/sent/error are its
+  // live upload progress (present only while staged): staged | uploading |
+  // uploaded | failed, bytes sent so far, the error code of a failure.
   staged?: boolean
+  state?: AttachmentState
+  sent?: number
+  error?: string
+}
+
+export type AttachmentState = 'staged' | 'uploading' | 'uploaded' | 'failed'
+
+// AttachmentView is one file attached to a channel's next message (the
+// composer tray) — see internal/attach.Attachment / api.AttachmentView.
+export interface AttachmentView {
+  id: string
+  name: string
+  size: number
+  mime: string
+  state: AttachmentState
+  sent: number // bytes uploaded so far (== size once uploaded)
+  error: string // error code of a failed upload, '' otherwise
 }
 
 export interface SavedFile {
@@ -171,6 +190,8 @@ export type EventType =
   | 'channel_changed'
   | 'open_channel'
   | 'downloads_changed'
+  | 'attachments_changed'
+  | 'attachment_refused'
 
 export interface ApiEvent {
   type: EventType
