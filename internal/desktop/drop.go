@@ -27,7 +27,7 @@ const (
 )
 
 // dropGate remembers the paths native GTK drops on the webview carried
-// (recorded by the observer in dropobserve_gtk.go, before Wails sends them
+// (recorded by the observer in observe_gtk.go, before Wails sends them
 // through the page) and admits a WindowFilesDropped path only if a native
 // drop carried it within dropWindow — once. Page script can call Wails'
 // FilesDropped with any path; such a forged drop is refused.

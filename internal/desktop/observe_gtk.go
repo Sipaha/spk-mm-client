@@ -10,13 +10,16 @@ package desktop
 extern void spkNativeDrop(char **paths, int n);
 extern void spkPasteKey(void);
 
-// The paths of a native file drop on the webview, parsed the way Wails does
+// The paths of a file drop on the webview from another application, parsed the way Wails does
 // (g_uri_list_extract_uris + g_filename_from_uri). Connected after Wails'
 // own handler; it only reads the selection data (a void signal: every
 // handler runs, nothing is stopped).
 static void spk_on_drag_data(GtkWidget *w, GdkDragContext *ctx, gint x, gint y,
 		GtkSelectionData *sd, guint info, guint time, gpointer d) {
 	if (sd == NULL || gtk_selection_data_get_length(sd) <= 0) return;
+	// A drag that starts in this process — the page's own drag, whose
+	// text/uri-list script can set to any path — is not a native file drop.
+	if (gtk_drag_get_source_widget(ctx) != NULL) return;
 	gchar *target = gdk_atom_name(gtk_selection_data_get_target(sd));
 	gboolean uris = g_strcmp0(target, "text/uri-list") == 0;
 	g_free(target);

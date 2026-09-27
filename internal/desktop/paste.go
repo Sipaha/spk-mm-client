@@ -11,7 +11,7 @@ const pasteWindow = 1500 * time.Millisecond
 
 // pasteGate remembers the last paste key (Ctrl+V, Shift+Insert) pressed in
 // the app's window, as seen natively by the observer in
-// dropobserve_gtk.go — page script cannot fake it. AttachFromClipboard
+// observe_gtk.go — page script cannot fake it. AttachFromClipboard
 // reads the clipboard only with a fresh one, used up by that read.
 type pasteGate struct {
 	mu  sync.Mutex
