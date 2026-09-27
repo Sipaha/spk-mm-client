@@ -76,6 +76,43 @@ test('Enter with attachments but no text still sends (files only)', async () => 
   expect(onSend).toHaveBeenCalledWith('', ['a1', 'a2'])
 })
 
+// Enter twice before the event: attachments_changed (confirming a send took
+// the chips) is coalesced up to ~100ms, so a second Enter can land while
+// `attachments` (props, from the store) still lists the ones the first
+// Enter just sent. Composer must not resend them — Go's Take rejects the
+// whole call with not_found if it does, bouncing the new text back too.
+test('Enter twice before the event: a second Enter with new text sends the text only, not the already-sent attachment', async () => {
+  const onSend = vi.fn().mockResolvedValue(undefined)
+  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await userEvent.type(box, 'first{Enter}')
+  expect(onSend).toHaveBeenNthCalledWith(1, 'first', ['a1'])
+  // `attachments` prop is unchanged (as if the event hasn't arrived yet).
+  await userEvent.type(box, 'second{Enter}')
+  expect(onSend).toHaveBeenNthCalledWith(2, 'second', [])
+})
+
+test('Enter twice before the event: an empty second Enter (nothing but the already-sent attachment) sends nothing', async () => {
+  const onSend = vi.fn().mockResolvedValue(undefined)
+  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await userEvent.type(box, '{Enter}')
+  expect(onSend).toHaveBeenCalledTimes(1)
+  await userEvent.type(box, '{Enter}')
+  expect(onSend).toHaveBeenCalledTimes(1) // no new text, and a1 is already in flight
+})
+
+test('Enter twice before the event: a failed send makes its attachment sendable again on the next Enter', async () => {
+  const onSend = vi.fn().mockRejectedValueOnce(new ApiError('not_found', '')).mockResolvedValue(undefined)
+  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await userEvent.type(box, '{Enter}')
+  await screen.findByRole('alert')
+  expect(onSend).toHaveBeenNthCalledWith(1, '', ['a1'])
+  await userEvent.type(box, '{Enter}')
+  expect(onSend).toHaveBeenNthCalledWith(2, '', ['a1'])
+})
+
 test('a refused send puts the text back with the error', async () => {
   const onSend = vi.fn().mockRejectedValue(new ApiError('session_expired', ''))
   render(<Composer channel={channel()} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)

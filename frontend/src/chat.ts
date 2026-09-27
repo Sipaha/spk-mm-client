@@ -144,6 +144,11 @@ export function onAttachmentsChanged(payload: Record<string, unknown> | undefine
   const p = payload ?? {}
   const s = useStore.getState()
   if (Number(p.server_id) === s.selectedId && p.channel_id === s.channel?.id) {
+    // Bump the sequence: a refreshAttachments request made before this event
+    // can still reply after it (it's a separate round trip); without this,
+    // that older, now-stale reply would win the race and overwrite the list
+    // this event just applied.
+    attachmentsSeq++
     s.setAttachments((p.items as AttachmentView[] | undefined) ?? [])
   }
 }

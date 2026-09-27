@@ -13,11 +13,11 @@ import (
 )
 
 // AddBytes attaches bytes that come without a file on disk (a pasted
-// picture, a browser upload): they are streamed into a spool, at most limit
-// bytes (limit ≤ 0: the server's MaxFileSize only — DefaultMaxFileSize
-// while unknown; the smaller of the two otherwise). Nothing at all is
-// refused (empty_file). name is cleaned (cleanName); mime, when empty, comes
-// from the name or the content.
+// picture, a browser upload): they are streamed into a spool, refusing more
+// than limit bytes (too_large; limit ≤ 0: the server's MaxFileSize only —
+// DefaultMaxFileSize while unknown; the smaller of the two otherwise) or
+// zero bytes (empty_file). name is cleaned (cleanName); mime, when empty,
+// comes from the name or the content.
 func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limit int64) (Attachment, error) {
 	maxSize, err := s.admit(srv, ch)
 	if err != nil {

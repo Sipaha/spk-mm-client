@@ -214,7 +214,22 @@ func TestClipboardGnomeCopiedFilesWithoutURIList(t *testing.T) {
 	assert.Equal(t, []string{"cut.txt"}, names(list))
 }
 
-var screenshotName = regexp.MustCompile(`^Screenshot \d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}\.png$`)
+var screenshotName = regexp.MustCompile(`^Screenshot \d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}( \(\d+\))?\.png$`)
+
+// TestScreenshotNamesAreUniqueWithinASecond: GTK/Wayland clipboard PNGs are
+// named to the second (see AttachFromClipboard); two pastes inside the same
+// second must not collide on the same "Screenshot <date> <time>.png" — the
+// second, third, … repeat gets " (2)", " (3)", … appended, like a browser's
+// download manager. A different second (or the same second reached again
+// after a gap) starts over with no suffix.
+func TestScreenshotNamesAreUniqueWithinASecond(t *testing.T) {
+	now := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, "Screenshot 2020-01-01 00-00-00.png", nextScreenshotName(now))
+	assert.Equal(t, "Screenshot 2020-01-01 00-00-00 (2).png", nextScreenshotName(now))
+	assert.Equal(t, "Screenshot 2020-01-01 00-00-00 (3).png", nextScreenshotName(now))
+	assert.Equal(t, "Screenshot 2020-01-01 00-00-01.png", nextScreenshotName(now.Add(time.Second)))
+	assert.Equal(t, "Screenshot 2020-01-01 00-00-00.png", nextScreenshotName(now), "a later repeat of an earlier second starts over")
+}
 
 func TestClipboardPNGIsSpooledAsAScreenshot(t *testing.T) {
 	f := newChatFixture(t)

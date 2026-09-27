@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spk/spk-mm-client/internal/attach"
@@ -59,6 +60,37 @@ func (s *Service) SetFilePicker(p FilePicker) {
 // an owner that never answers must not keep a paste waiting (GTK's own
 // selection timeout is longer).
 var clipboardTimeout = 2 * time.Second
+
+// screenshotSeq guards nextScreenshotName's within-process de-duplication:
+// GTK/Wayland screenshot names only go to the second, so two pastes in the
+// same second would otherwise both spool as the same
+// "Screenshot <date> <time>.png".
+var (
+	screenshotMu     sync.Mutex
+	lastScreenshotAt string
+	screenshotSeq    int
+)
+
+// nextScreenshotName returns "Screenshot <date> <time>.png" for now,
+// unique within this process: a repeat within the same second gets
+// " (2)", " (3)", … appended (like a browser's download manager), reset
+// once the clock has moved past that second again.
+func nextScreenshotName(now time.Time) string {
+	screenshotMu.Lock()
+	defer screenshotMu.Unlock()
+	stamp := now.Format("2006-01-02 15-04-05")
+	if stamp == lastScreenshotAt {
+		screenshotSeq++
+	} else {
+		lastScreenshotAt = stamp
+		screenshotSeq = 1
+	}
+	name := "Screenshot " + stamp
+	if screenshotSeq > 1 {
+		name += fmt.Sprintf(" (%d)", screenshotSeq)
+	}
+	return name + ".png"
+}
 
 // Clipboard targets AttachFromClipboard understands.
 const (
@@ -127,7 +159,7 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 		return 0, coded(CodeClipboardFailed, err)
 	}
 	defer r.Close()
-	name := "Screenshot " + time.Now().Format("2006-01-02 15-04-05") + ".png"
+	name := nextScreenshotName(time.Now())
 	if _, err := s.att.AddBytes(id, channelID, name, "image/png", r, 0); err != nil {
 		return 0, attachError(err)
 	}

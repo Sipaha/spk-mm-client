@@ -101,8 +101,8 @@ type Attachment struct {
 }
 
 // Limits are a server's attachment settings; MaxFileSize 0 means the
-// server's config is not known yet — nothing is refused then, the server
-// decides at upload.
+// server's config is not known yet — DefaultMaxFileSize is enforced until
+// it is (see admit), the server still makes the final call at upload.
 type Limits struct {
 	Enabled     bool
 	MaxFileSize int64

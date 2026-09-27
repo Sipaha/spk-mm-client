@@ -41,6 +41,20 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
   flushRef.current = flush
   useEffect(() => () => flushRef.current(), []) // leaving the channel saves at once
 
+  // pendingSendIds: attachment ids handed to onSend but not yet confirmed
+  // gone from `attachments` — the confirming attachments_changed event is
+  // coalesced up to ~100ms (AGENTS.md), so a second Enter inside that
+  // window still sees the just-sent chips in props. Without this, that
+  // second call would resend already-taken ids and Go's Take rejects the
+  // *whole* call with not_found, bouncing the new text back too.
+  const pendingSendIds = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const ids = new Set(attachments.map((a) => a.id))
+    for (const id of pendingSendIds.current) {
+      if (!ids.has(id)) pendingSendIds.current.delete(id) // confirmed gone: sent, removed, or replaced
+    }
+  }, [attachments])
+
   const change = (v: string) => {
     setText(v)
     latest.current = v
@@ -50,16 +64,21 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
 
   const send = async () => {
     const msg = text
-    const attachmentIds = attachments.map((a) => a.id)
+    const attachmentIds = attachments.filter((a) => !pendingSendIds.current.has(a.id)).map((a) => a.id)
     if (!msg.trim() && attachmentIds.length === 0) return
     setText('')
     latest.current = ''
     flush()
     setError(null)
     useStore.getState().setAttachError(null)
+    attachmentIds.forEach((id) => pendingSendIds.current.add(id))
     try {
       await onSend(msg, attachmentIds)
     } catch (e) {
+      // Chips are never removed from `attachments` here (only tracked as
+      // in-flight above), so a failed send needs no visual restore — it
+      // only needs to make these ids sendable again on the next Enter.
+      attachmentIds.forEach((id) => pendingSendIds.current.delete(id))
       setText(msg)
       latest.current = msg
       // The pre-send flush already persisted '' as the draft; without this,

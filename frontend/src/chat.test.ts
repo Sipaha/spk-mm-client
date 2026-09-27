@@ -348,6 +348,19 @@ test('onAttachmentsChanged applies only to the channel on screen', async () => {
   expect(useStore.getState().attachments).toEqual([av('mine')])
 })
 
+test('an attachments_changed event beats a slower refreshAttachments reply requested before it', async () => {
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('a'))
+  const stale = deferred<AttachmentView[]>()
+  vi.mocked(client.attachments).mockReturnValueOnce(stale.p)
+  await openChannel(1, 'a') // fires refreshAttachments; its reply is still in flight
+  await vi.waitFor(() => expect(client.attachments).toHaveBeenCalled())
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', items: [av('newer')] })
+  expect(useStore.getState().attachments).toEqual([av('newer')])
+  stale.resolve([av('older')]) // the request made before the event resolves after it
+  await Promise.resolve()
+  expect(useStore.getState().attachments).toEqual([av('newer')]) // must not be overwritten by the stale reply
+})
+
 test('onAttachmentRefused shows a localized message in the composer, only for the channel on screen', async () => {
   setLocale('en')
   vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
