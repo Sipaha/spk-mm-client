@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spk/spk-mm-client/internal/attach"
 	"github.com/spk/spk-mm-client/internal/auth"
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/mm/rest"
@@ -51,6 +52,10 @@ type Service struct {
 	saved    map[string]savedEntry // "server/file id" → file saved this session
 	saving   map[string]*download  // "server/file id" → download in progress
 	progress map[int64]int64       // listed download in progress → bytes received
+
+	// att holds attachments of unsent messages; nil until
+	// EnableAttachments (set once, before Start).
+	att *attach.Store
 
 	mu       sync.Mutex
 	mgr      *mmsync.Manager
@@ -184,6 +189,7 @@ func (s *Service) RemoveServer(ctx context.Context, id int64) error {
 	}
 	s.sso.Cancel(id) // first: a GitLab sign-in finishing now must not start a worker
 	s.deactivate(id)
+	s.dropAttachments(id)
 	s.revoke(ctx, srv)
 	if err := s.st.DeleteServer(ctx, id); err != nil {
 		return coded(CodeInternal, err)
@@ -252,6 +258,7 @@ func (s *Service) Logout(ctx context.Context, id int64) error {
 	}
 	s.sso.Cancel(id) // first: a GitLab login still in flight must not sign back in
 	s.deactivate(id) // final snapshot flush happens before the cache is dropped below
+	s.dropAttachments(id)
 	s.revoke(ctx, srv)
 	if err := s.st.ClearSession(ctx, id); err != nil {
 		return coded(CodeInternal, err)

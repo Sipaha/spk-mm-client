@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 
+	"github.com/spk/spk-mm-client/internal/attach"
 	"github.com/spk/spk-mm-client/internal/state"
 )
 
@@ -84,6 +85,15 @@ type API interface {
 	// every finished one. Downloads in progress stay.
 	RemoveDownload(ctx context.Context, id int64) error
 	ClearDownloads(ctx context.Context) error
+
+	// Attachments are the files attached to a channel's next message, in
+	// the order added (they come from Go: clipboard, drop, file dialog,
+	// browser upload — the UI never sends paths).
+	Attachments(ctx context.Context, id int64, channelID string) ([]AttachmentView, error)
+	// RemoveAttachment drops one (its upload is cancelled).
+	RemoveAttachment(ctx context.Context, id int64, attachmentID string) error
+	// RetryAttachment sends a failed one again (never done automatically).
+	RetryAttachment(ctx context.Context, id int64, attachmentID string) error
 }
 
 // Event types pushed to the UI.
@@ -101,6 +111,10 @@ const (
 	// reloads the list then (and on events with neither field), and only
 	// patches the row in place on "received".
 	EventDownloadsChanged = "downloads_changed"
+	// EventAttachmentsChanged: the attachments of a channel changed (added,
+	// removed, state, upload progress — at most ~4 a second per upload).
+	// Payload: srv, ch, items ([]AttachmentView, the whole list).
+	EventAttachmentsChanged = "attachments_changed"
 )
 
 // Error codes. The UI maps them to localized messages (frontend/src/errors.ts).
@@ -124,6 +138,13 @@ const (
 	CodeNoFile           = "no_file"
 	CodeNoPost           = "no_post"
 	CodeTooManyReactions = "too_many_reactions"
+
+	// Attachments (internal/attach codes).
+	CodeTooLarge            = attach.CodeTooLarge
+	CodeTooMany             = attach.CodeTooMany
+	CodeAttachmentsDisabled = attach.CodeDisabled
+	CodeNotAFile            = attach.CodeNotAFile
+	CodeFileChanged         = attach.CodeChanged
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

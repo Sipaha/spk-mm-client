@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -385,4 +387,32 @@ func TestMediaStreamBaseComposesInBrowserMode(t *testing.T) {
 	assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
 	assert.Equal(t, "video/webm", resp.Header.Get("Content-Type"))
 	assert.Len(t, body, 100)
+}
+
+// The previous run's attachment spools are swept after startup, not
+// during it; the staged media kind is wired to the service.
+func TestBrowserModeSweepsOldSpoolsAndServesStaged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SPK_MM_CLIENT_HOME", home)
+	old := filepath.Join(home, "tmp", "attach-old")
+	require.NoError(t, os.MkdirAll(filepath.Dir(old), 0o700))
+	require.NoError(t, os.WriteFile(old, []byte("x"), 0o600))
+
+	srv, cancelBase, token, cleanup, err := buildBrowserServer(context.Background(), browserOpts{})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	t.Cleanup(cancelBase)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(old)
+		return errors.Is(err, os.ErrNotExist)
+	}, 5*time.Second, 10*time.Millisecond, "old spool not swept")
+
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/media/1/staged/abc", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "a known kind: no such attachment (not 400)")
 }

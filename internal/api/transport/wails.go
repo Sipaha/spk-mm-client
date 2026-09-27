@@ -103,3 +103,15 @@ func (w *API) RevealDownload(id int64) error { return w.a.RevealDownload(context
 func (w *API) RemoveDownload(id int64) error { return w.a.RemoveDownload(context.Background(), id) }
 
 func (w *API) ClearDownloads() error { return w.a.ClearDownloads(context.Background()) }
+
+func (w *API) Attachments(id int64, channelID string) ([]api.AttachmentView, error) {
+	return w.a.Attachments(context.Background(), id, channelID)
+}
+
+func (w *API) RemoveAttachment(id int64, attachmentID string) error {
+	return w.a.RemoveAttachment(context.Background(), id, attachmentID)
+}
+
+func (w *API) RetryAttachment(id int64, attachmentID string) error {
+	return w.a.RetryAttachment(context.Background(), id, attachmentID)
+}

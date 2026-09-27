@@ -18,6 +18,7 @@ func TestResolveHonoursEnvOverride(t *testing.T) {
 	assert.Equal(t, dir, p.DataDir)
 	assert.Equal(t, filepath.Join(dir, "db.sqlite"), p.DBFile)
 	assert.Equal(t, filepath.Join(dir, "media"), p.MediaDir)
+	assert.Equal(t, filepath.Join(dir, "tmp"), p.TmpDir)
 }
 
 func TestResolveDefaultsUnderHomeDotSpk(t *testing.T) {

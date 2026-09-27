@@ -239,6 +239,19 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/ClearDownloads", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return nil, h.api.ClearDownloads(ctx)
 	}))
+	type attachmentReq struct {
+		ID           int64  `json:"id"`
+		AttachmentID string `json:"attachment_id"`
+	}
+	h.mux.HandleFunc("POST /api/Attachments", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.Attachments(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/RemoveAttachment", handle(func(ctx context.Context, r *attachmentReq) (any, error) {
+		return nil, h.api.RemoveAttachment(ctx, r.ID, r.AttachmentID)
+	}))
+	h.mux.HandleFunc("POST /api/RetryAttachment", handle(func(ctx context.Context, r *attachmentReq) (any, error) {
+		return nil, h.api.RetryAttachment(ctx, r.ID, r.AttachmentID)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

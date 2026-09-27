@@ -288,3 +288,38 @@ func TestDownloadRoutes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 401, resp.StatusCode, "behind the same guard")
 }
+
+func (f *fakeAPI) Attachments(_ context.Context, id int64, channelID string) ([]api.AttachmentView, error) {
+	f.dl = append(f.dl, fmt.Sprintf("list %d/%s", id, channelID))
+	return []api.AttachmentView{{ID: "a1", Name: "x.png", Size: 3, Mime: "image/png", State: "uploading", Sent: 1, FileID: "secret"}}, nil
+}
+
+func (f *fakeAPI) RemoveAttachment(_ context.Context, id int64, attachmentID string) error {
+	f.dl = append(f.dl, fmt.Sprintf("remove %d/%s", id, attachmentID))
+	return nil
+}
+
+func (f *fakeAPI) RetryAttachment(_ context.Context, id int64, attachmentID string) error {
+	f.dl = append(f.dl, fmt.Sprintf("retry %d/%s", id, attachmentID))
+	return &api.CodedError{Code: api.CodeSessionExpired}
+}
+
+func TestAttachmentRoutes(t *testing.T) {
+	f := &fakeAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "Attachments", `{"id":3,"channel_id":"c1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"id":"a1","name":"x.png","size":3,"mime":"image/png","state":"uploading","sent":1,"error":""}]`, string(raw))
+	assert.Equal(t, 200, call(t, h, ts.URL, "RemoveAttachment", `{"id":3,"attachment_id":"a1"}`).StatusCode)
+	resp = call(t, h, ts.URL, "RetryAttachment", `{"id":3,"attachment_id":"a1"}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "session_expired", body["code"])
+	assert.Equal(t, []string{"list 3/c1", "remove 3/a1", "retry 3/a1"}, f.dl)
+}

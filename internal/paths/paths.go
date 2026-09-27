@@ -17,6 +17,9 @@ type Paths struct {
 	DataDir  string
 	DBFile   string
 	MediaDir string
+	// TmpDir holds attachment spools (attach-<id>): pasted pictures and
+	// browser uploads waiting to be sent; created when first needed.
+	TmpDir string
 }
 
 // Resolve returns ~/.spk/mm-client (house convention shared with
@@ -40,6 +43,7 @@ func Resolve() (Paths, error) {
 		DataDir:  dir,
 		DBFile:   filepath.Join(dir, "db.sqlite"),
 		MediaDir: filepath.Join(dir, "media"),
+		TmpDir:   filepath.Join(dir, "tmp"),
 	}, nil
 }
 

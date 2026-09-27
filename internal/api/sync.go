@@ -42,9 +42,13 @@ func (s *Service) Start(ctx context.Context) error {
 	return m.StartAll(ctx)
 }
 
-// Close stops every worker (each flushes its snapshot) and drops pending UI
-// events and notifications.
+// Close cancels uploads and deletes attachment spools, stops every worker
+// (each flushes its snapshot) and drops pending UI events and
+// notifications.
 func (s *Service) Close() {
+	if s.att != nil {
+		s.att.Close()
+	}
 	if m := s.manager(); m != nil {
 		m.Close()
 	}
@@ -114,6 +118,9 @@ func (s *Service) resume(ctx context.Context, before store.Server) {
 }
 
 func (s *Service) deactivate(id int64) {
+	if s.att != nil {
+		s.att.Pause(id) // first: uploads must not go on with a token about to be revoked
+	}
 	if m := s.manager(); m != nil {
 		m.Stop(id)
 	}
@@ -179,7 +186,19 @@ func (s *Service) onChanged(id int64, ch state.Change) {
 	}
 }
 
-func (s *Service) onStatus(int64, mmsync.Status) { s.co.Schedule("badge", s.refreshBadges) }
+func (s *Service) onStatus(id int64, st mmsync.Status) {
+	if st == mmsync.StatusLive && s.att != nil {
+		s.att.Wake(id) // staged attachments upload now
+	}
+	s.co.Schedule("badge", s.refreshBadges)
+}
+
+// dropAttachments forgets a server's attachments (signed out, removed).
+func (s *Service) dropAttachments(id int64) {
+	if s.att != nil {
+		s.att.DropServer(id)
+	}
+}
 
 // refreshBadges runs on the coalescer: servers_changed only when a server's
 // state or badge really changed, OnBadge only when the total did.

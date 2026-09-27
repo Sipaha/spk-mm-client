@@ -82,12 +82,13 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 	opened := &api.RecordingOpener{} // no system apps in browser mode; e2e reads them via test-API
 	svc.SetFileOpener(opened.Open)
 	revealed := recordReveals(svc)
+	svc.EnableAttachments(p.TmpDir) // sweeps old spools in the background
 	if err := svc.Start(ctx); err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
 	}
 	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
-	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc})
+	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc})
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("media cache: %w", err)

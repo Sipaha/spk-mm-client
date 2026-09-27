@@ -45,6 +45,9 @@ const (
 	KindText   Kind = "text"   // first TextLimit (or TextFullLimit with ?full=1) bytes of a text file
 	KindEmoji  Kind = "emoji"  // custom emoji picture; key emoji name
 	KindStream Kind = "stream" // audio/video passed through with Range, never cached (Streamer)
+	// KindStaged is a picture attached to a message not sent yet; key the
+	// attachment id. Read from the local file (Staged), scaled like feed.
+	KindStaged Kind = "staged"
 )
 
 // Limits of the cache and of what it accepts.
@@ -68,6 +71,7 @@ var (
 	errType     = errors.New("media: content type not allowed")
 	errUpstream = errors.New("media: unexpected upstream status")
 	errStore    = errors.New("media: cache write failed")
+	errNoObject = errors.New("media: no such object")
 )
 
 // Origin fetches objects from signed-in servers (implemented by api.Service).
@@ -79,10 +83,21 @@ type Origin interface {
 	EmojiID(ctx context.Context, serverID int64, name string) (string, error)
 }
 
+// Staged gives the files of attachments not sent yet (implemented by
+// api.Service over attach.Store).
+type Staged interface {
+	// StagedType is the media type of a server's attachment; false when
+	// that server has no such attachment.
+	StagedType(serverID int64, id string) (string, bool)
+	// OpenStaged opens the file of a server's attachment.
+	OpenStaged(serverID int64, id string) (io.ReadCloser, error)
+}
+
 type Options struct {
 	Dir      string
 	MaxBytes int64 // total size cap; 0 → DefaultMaxBytes
 	Origin   Origin
+	Staged   Staged        // nil: staged pictures are not found
 	Fetches  int           // concurrent upstream fetches; 0 → 6
 	Timeout  time.Duration // per upstream fetch; 0 → 60 s
 	Now      func() time.Time
@@ -209,7 +224,7 @@ func parse(u *url.URL) (request, bool) {
 		if q.variant != "preview" && q.variant != "file" {
 			return request{}, false
 		}
-	case KindThumb, KindStream:
+	case KindThumb, KindStream, KindStaged:
 	case KindText:
 		switch u.Query().Get("full") {
 		case "":
@@ -252,6 +267,8 @@ func (q request) spec(id string) spec {
 			p += "/preview"
 		}
 		return spec{path: p, max: 25 << 20, scale: q.kind == KindFeed}
+	case KindStaged: // a local file: no path
+		return spec{max: 25 << 20, scale: true}
 	case KindText:
 		limit := int64(TextLimit)
 		if q.variant == "full" {
@@ -284,6 +301,12 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		c.stream.Serve(w, r, q.server, q.key)
 		return
 	}
+	// Staged: only a raster picture of an attachment that exists now — a
+	// copy cached earlier is not served once the attachment is gone.
+	if q.kind == KindStaged && !c.stagedPicture(q) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		name, status := c.get(r.Context(), q)
 		if status != 0 {
@@ -304,6 +327,14 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "cache busy", http.StatusServiceUnavailable)
+}
+
+func (c *Cache) stagedPicture(q request) bool {
+	if c.o.Staged == nil {
+		return false
+	}
+	mt, ok := c.o.Staged.StagedType(q.server, q.key)
+	return ok && rasterTypes[mt]
 }
 
 // serve answers with a cached object. A corrupt one (a text entry without
@@ -459,16 +490,28 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 }
 
 func (c *Cache) fetch(q request, id, name string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.o.Timeout)
-	defer cancel()
 	sp := q.spec(id)
-	resp, err := c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return errUpstream
+	var body io.Reader
+	var contentRange string
+	if q.kind == KindStaged {
+		f, err := c.o.Staged.OpenStaged(q.server, id)
+		if err != nil {
+			return errNoObject
+		}
+		defer f.Close()
+		body = f
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), c.o.Timeout)
+		defer cancel()
+		resp, err := c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			return errUpstream
+		}
+		body, contentRange = resp.Body, resp.Header.Get("Content-Range")
 	}
 	tmp, err := os.CreateTemp(c.o.Dir, "*.tmp")
 	if err != nil {
@@ -477,9 +520,12 @@ func (c *Cache) fetch(q request, id, name string) error {
 	}
 	var size int64
 	if sp.text {
-		size, err = writeText(tmp, resp.Body, resp.Header.Get("Content-Range"), sp.max)
+		size, err = writeText(tmp, body, contentRange, sp.max)
 	} else {
-		size, err = writeImage(tmp, resp.Body, sp)
+		size, err = writeImage(tmp, body, sp)
+	}
+	if q.kind == KindStaged && errors.Is(err, errType) {
+		err = errNoObject // not a picture after all: the UI shows a type icon
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -563,7 +609,7 @@ func unauthorized(err error) bool {
 func statusFor(err error) int {
 	var re *rest.Error
 	switch {
-	case errors.Is(err, ErrNoServer):
+	case errors.Is(err, ErrNoServer), errors.Is(err, errNoObject):
 		return http.StatusNotFound
 	case errors.Is(err, errTooLarge):
 		return http.StatusRequestEntityTooLarge

@@ -47,6 +47,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	// "Show in folder": FileManager1.ShowItems (bounded), else the folder
 	// through the opener above. Only on the user's action.
 	svc.SetRevealer(desktop.ShowItem)
+	svc.EnableAttachments(p.TmpDir) // sweeps old spools in the background
 	if err := svc.Start(ctx); err != nil {
 		slog.Error("sync did not start; chats stay offline", "err", err) // never keep the window from opening
 	}
@@ -62,7 +63,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	// A nil *media.Cache in the interface would not be a nil handler:
 	// mediaH stays a nil interface when the cache cannot be opened.
 	var mediaH http.Handler
-	if mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc}); err != nil {
+	if mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc}); err != nil {
 		slog.Warn("media cache unavailable; pictures will not load", "err", err)
 	} else {
 		mediaH = mc
