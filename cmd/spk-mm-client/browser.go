@@ -83,11 +83,12 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 	svc.SetFileOpener(opened.Open)
 	revealed := recordReveals(svc)
 	svc.EnableAttachments(p.TmpDir) // sweeps old spools in the background
+	// Before Start: a failed Start still stops the sweep and the uploads.
+	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
 	if err := svc.Start(ctx); err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
 	}
-	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
 	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc})
 	if err != nil {
 		cleanup()

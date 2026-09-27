@@ -113,7 +113,7 @@ const (
 	EventDownloadsChanged = "downloads_changed"
 	// EventAttachmentsChanged: the attachments of a channel changed (added,
 	// removed, state, upload progress — at most ~4 a second per upload).
-	// Payload: srv, ch, items ([]AttachmentView, the whole list).
+	// Payload: server_id, channel_id, items ([]AttachmentView, the whole list).
 	EventAttachmentsChanged = "attachments_changed"
 )
 
@@ -145,6 +145,7 @@ const (
 	CodeAttachmentsDisabled = attach.CodeDisabled
 	CodeNotAFile            = attach.CodeNotAFile
 	CodeFileChanged         = attach.CodeChanged
+	CodeEmptyFile           = attach.CodeEmptyFile
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

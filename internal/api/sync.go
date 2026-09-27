@@ -102,6 +102,8 @@ func (s *Service) activate(ctx context.Context, before store.Server) {
 		if err := s.st.ClearCache(ctx, before.ID); err != nil {
 			slog.Warn("cache clear failed", "srv", before.ID, "err", err)
 		}
+		// The previous user's files must not be sent as the new user's.
+		s.dropAttachments(before.ID)
 	}
 	m.Start(after)
 	s.applyFocus()
@@ -118,11 +120,17 @@ func (s *Service) resume(ctx context.Context, before store.Server) {
 }
 
 func (s *Service) deactivate(id int64) {
+	// Uploads must not go on with a token about to be revoked: paused
+	// before the worker stops, and again after — the stopping worker may
+	// have gone live (Wake) in between.
 	if s.att != nil {
-		s.att.Pause(id) // first: uploads must not go on with a token about to be revoked
+		s.att.Pause(id)
 	}
 	if m := s.manager(); m != nil {
 		m.Stop(id)
+	}
+	if s.att != nil {
+		s.att.Pause(id)
 	}
 	s.co.Schedule("badge", s.refreshBadges)
 }

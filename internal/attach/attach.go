@@ -14,15 +14,19 @@
 package attach
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,12 +47,17 @@ const (
 // about ten ids).
 const MaxPerChannel = 10
 
+// DefaultMaxFileSize bounds sizes while a server's config is not known
+// (the server's own default MaxFileSize).
+const DefaultMaxFileSize = 100 << 20
+
 // Error codes; the UI shows localized messages for them.
 const (
 	CodeTooLarge       = "too_large"            // over the server's MaxFileSize (or the caller's limit)
 	CodeTooMany        = "too_many"             // MaxPerChannel reached
 	CodeDisabled       = "attachments_disabled" // the server does not take files
 	CodeNotAFile       = "not_a_file"           // not a regular file (a folder, gone, unreadable)
+	CodeEmptyFile      = "empty_file"           // 0 bytes: the server refuses Content-Length 0
 	CodeChanged        = "file_changed"         // the file changed or vanished after it was attached
 	CodeNotFound       = "not_found"            // no such attachment
 	CodeSessionExpired = "session_expired"      // 401 on upload
@@ -119,7 +128,8 @@ type Options struct {
 	Stall         time.Duration // an upload sending no bytes this long fails; 0 → 60 s
 	ProgressEvery time.Duration // shortest gap between progress reports of one upload; 0 → 250 ms
 
-	sweepHook func() // tests: runs in the sweep goroutine before it reads Dir
+	sweepHook  func() // tests: runs in the sweep goroutine before it reads Dir
+	unknownMax int64  // tests: the size bound of an unknown config; 0 → DefaultMaxFileSize
 }
 
 type key struct {
@@ -129,6 +139,7 @@ type key struct {
 
 type item struct {
 	Attachment
+	seq   uint64 // order added (across channels)
 	path  string // what is uploaded: the user's file or the spool
 	spool string // spool file name in Dir, "" for a user's file
 	mtime time.Time
@@ -141,6 +152,9 @@ type queue struct {
 	pending []*item
 	running int
 	paused  bool // the worker stopped: nothing starts until Wake
+	// epoch is bumped by every Pause: a pump that asked the backend for an
+	// uploader before it (a worker being stopped) must not use it.
+	epoch int
 }
 
 // Store holds the attachments of every server.
@@ -156,6 +170,7 @@ type Store struct {
 	lists   map[key][]*item
 	queues  map[int64]*queue
 	spools  map[string]bool // spool names in use (attachments and bodies being spooled)
+	seq     uint64          // last item.seq
 	changed chan struct{}   // closed and replaced on every state change (Wait)
 }
 
@@ -170,6 +185,9 @@ func New(o Options) *Store {
 	}
 	if o.ProgressEvery <= 0 {
 		o.ProgressEvery = 250 * time.Millisecond
+	}
+	if o.unknownMax <= 0 {
+		o.unknownMax = DefaultMaxFileSize
 	}
 	s := &Store{o: o, items: map[string]*item{}, lists: map[key][]*item{}, queues: map[int64]*queue{},
 		spools: map[string]bool{}, changed: make(chan struct{})}
@@ -235,18 +253,23 @@ func mimeOf(name string) string {
 }
 
 // admit checks what can be checked before anything is read: the server's
-// settings and the channel's count. The returned limits apply to the size.
-func (s *Store) admit(srv int64, ch string) (Limits, error) {
+// settings and the channel's count. It returns the size bound: the
+// server's MaxFileSize, or DefaultMaxFileSize while its config is unknown
+// (Enabled is then not held against it — the server decides).
+func (s *Store) admit(srv int64, ch string) (int64, error) {
 	lim, err := s.o.Backend.Limits(srv)
 	if err != nil {
-		return Limits{}, err
+		return 0, err
 	}
-	if lim.MaxFileSize > 0 && !lim.Enabled {
-		return Limits{}, fail(CodeDisabled, nil)
+	maxSize := lim.MaxFileSize
+	if maxSize <= 0 {
+		maxSize = s.o.unknownMax
+	} else if !lim.Enabled {
+		return 0, fail(CodeDisabled, nil)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return lim, s.roomLocked(srv, ch)
+	return maxSize, s.roomLocked(srv, ch)
 }
 
 func (s *Store) roomLocked(srv int64, ch string) error {
@@ -262,31 +285,58 @@ func (s *Store) roomLocked(srv int64, ch string) error {
 // AddPath attaches a file on disk (a drop, the file dialog, a copied file):
 // only its path, size and mtime are kept.
 func (s *Store) AddPath(srv int64, ch, path string) (Attachment, error) {
-	lim, err := s.admit(srv, ch)
+	maxSize, err := s.admit(srv, ch)
 	if err != nil {
 		return Attachment{}, err
 	}
 	if !filepath.IsAbs(path) {
 		return Attachment{}, fail(CodeNotAFile, fmt.Errorf("not an absolute path: %q", path))
 	}
-	fi, err := os.Stat(path)
+	f, fi, err := openRegular(path)
 	if err != nil {
 		return Attachment{}, fail(CodeNotAFile, err)
 	}
-	if !fi.Mode().IsRegular() {
-		return Attachment{}, fail(CodeNotAFile, fmt.Errorf("%s is not a regular file", fi.Mode().Type()))
-	}
-	if lim.MaxFileSize > 0 && fi.Size() > lim.MaxFileSize {
+	defer f.Close()
+	switch {
+	case fi.Size() == 0:
+		return Attachment{}, fail(CodeEmptyFile, nil)
+	case fi.Size() > maxSize:
 		return Attachment{}, fail(CodeTooLarge, nil)
 	}
-	name := fi.Name()
-	mt := mimeOf(name)
+	mt := mimeOf(path)
 	if mt == "" {
-		mt = "application/octet-stream"
+		head := make([]byte, 512)
+		n, _ := io.ReadFull(f, head)
+		mt = mediaType(http.DetectContentType(head[:n]))
 	}
-	it := &item{Attachment: Attachment{ID: newID(), Name: name, Size: fi.Size(), Mime: mt, State: StateStaged,
-		Server: srv, Channel: ch}, path: path, mtime: fi.ModTime()}
+	it := &item{Attachment: Attachment{ID: newID(), Name: filepath.Base(path), Size: fi.Size(), Mime: mt,
+		State: StateStaged, Server: srv, Channel: ch}, path: path, mtime: fi.ModTime()}
 	return s.insert(it)
+}
+
+// openRegular opens a regular file only: the type is checked before the
+// open (a FIFO would block it) and again on the open file.
+func openRegular(path string) (*os.File, os.FileInfo, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%s is not a regular file", fi.Mode().Type())
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|openFlags, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	fi, err = f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", fi.Mode().Type())
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, fi, nil
 }
 
 // insert lists a new attachment and queues its upload.
@@ -296,6 +346,8 @@ func (s *Store) insert(it *item) (Attachment, error) {
 		s.mu.Unlock()
 		return Attachment{}, err
 	}
+	s.seq++
+	it.seq = s.seq
 	s.items[it.ID] = it
 	k := key{it.Server, it.Channel}
 	s.lists[k] = append(s.lists[k], it)
@@ -497,22 +549,24 @@ func (s *Store) Pause(srv int64) {
 	s.mu.Lock()
 	q := s.queue(srv)
 	q.paused = true
+	q.epoch++
 	var back []*item
-	var chans []string
+	chans := map[string]bool{}
 	for _, it := range s.items {
 		if it.Server == srv && it.State == StateUploading {
 			s.abandonLocked(it)
 			it.State, it.Sent = StateStaged, 0
 			back = append(back, it)
-			chans = append(chans, it.Channel)
+			chans[it.Channel] = true
 		}
 	}
+	slices.SortFunc(back, func(a, b *item) int { return cmp.Compare(a.seq, b.seq) })
 	q.pending = append(back, q.pending...)
 	if len(back) > 0 {
 		s.broadcastLocked()
 	}
 	s.mu.Unlock()
-	for _, ch := range chans {
+	for ch := range chans {
 		s.notify(srv, ch)
 	}
 }
@@ -554,7 +608,7 @@ func (s *Store) Open(srv int64, id string) (*os.File, Attachment, error) {
 	}
 	path, a := it.path, it.Attachment
 	s.mu.Unlock()
-	f, err := os.Open(path)
+	f, _, err := openRegular(path)
 	if err != nil {
 		return nil, Attachment{}, fail(CodeNotFound, err)
 	}

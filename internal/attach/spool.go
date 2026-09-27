@@ -12,16 +12,17 @@ import (
 
 // AddBytes attaches bytes that come without a file on disk (a pasted
 // picture, a browser upload): they are streamed into a spool, at most limit
-// bytes (limit ≤ 0: the server's MaxFileSize only; the smaller of the two
-// otherwise). name is reduced to its last element; mime, when empty, comes
+// bytes (limit ≤ 0: the server's MaxFileSize only — DefaultMaxFileSize
+// while unknown; the smaller of the two otherwise). Nothing at all is
+// refused (empty_file). name is reduced to its last element; mime, when empty, comes
 // from the name or the content.
 func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limit int64) (Attachment, error) {
-	lim, err := s.admit(srv, ch)
+	maxSize, err := s.admit(srv, ch)
 	if err != nil {
 		return Attachment{}, err
 	}
-	if lim.MaxFileSize > 0 && (limit <= 0 || lim.MaxFileSize < limit) {
-		limit = lim.MaxFileSize
+	if limit <= 0 || maxSize < limit {
+		limit = maxSize
 	}
 	id := newID()
 	spool := spoolPrefix + id
@@ -72,16 +73,14 @@ func (s *Store) spool(name string, r io.Reader, limit int64) (*spooled, error) {
 	br := bufio.NewReaderSize(r, 512)
 	head, _ := br.Peek(512)
 	sniffed := mediaType(http.DetectContentType(head))
-	var src io.Reader = br
-	if limit > 0 {
-		src = io.LimitReader(br, limit+1)
-	}
-	n, err := io.Copy(f, src)
-	if err != nil {
+	n, err := io.Copy(f, io.LimitReader(br, limit+1))
+	switch {
+	case err != nil:
 		return nil, fail(CodeInternal, err)
-	}
-	if limit > 0 && n > limit {
+	case n > limit:
 		return nil, fail(CodeTooLarge, nil)
+	case n == 0:
+		return nil, fail(CodeEmptyFile, nil)
 	}
 	if err := f.Close(); err != nil {
 		return nil, fail(CodeInternal, err)

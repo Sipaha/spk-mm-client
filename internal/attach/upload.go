@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
@@ -27,14 +26,25 @@ var (
 
 // pump starts queued uploads of a live server, up to Parallel at a time.
 func (s *Store) pump(srv int64) {
+	s.mu.Lock()
+	q := s.queues[srv]
+	if q == nil || q.paused || len(q.pending) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	epoch := q.epoch
+	s.mu.Unlock()
 	up := s.o.Backend.Uploader(srv) // outside the lock: the backend has locks of its own
 	if up == nil {
 		return
 	}
 	var started []*item
 	s.mu.Lock()
-	q := s.queues[srv]
-	for !s.closed && q != nil && !q.paused && q.running < s.o.Parallel && len(q.pending) > 0 {
+	if s.queues[srv] != q || q.epoch != epoch { // paused (a stopped worker's uploader) or dropped meanwhile
+		s.mu.Unlock()
+		return
+	}
+	for !s.closed && !q.paused && q.running < s.o.Parallel && len(q.pending) > 0 {
 		it := q.pending[0]
 		q.pending = q.pending[1:]
 		if s.items[it.ID] != it || it.State != StateStaged {
@@ -87,13 +97,12 @@ func (s *Store) run(ctx context.Context, q *queue, it *item, gen int, up Uploade
 // is recorded as it goes, and an upload that sends nothing for Stall is
 // cancelled.
 func (s *Store) send(ctx context.Context, it *item, gen int, up Uploader) (model.FileInfo, error) {
-	f, err := os.Open(it.path)
+	f, fi, err := openRegular(it.path)
 	if err != nil {
 		return model.FileInfo{}, errChanged
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() != it.Size || !fi.ModTime().Equal(it.mtime) {
+	if fi.Size() != it.Size || !fi.ModTime().Equal(it.mtime) {
 		return model.FileInfo{}, errChanged
 	}
 	ctx, cancel := context.WithCancelCause(ctx)

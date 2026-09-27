@@ -639,3 +639,134 @@ func TestOpenGivesTheFileOfThatServersAttachment(t *testing.T) {
 	_, _, err = e.s.Open(1, "nope")
 	assert.Equal(t, CodeNotFound, codeOf(err))
 }
+
+func TestEmptyFilesAreRefused(t *testing.T) {
+	e := newEnv(t)
+	e.b.setLive(1, false)
+	_, err := e.s.AddPath(1, "c1", e.file("empty.txt", ""))
+	assert.Equal(t, CodeEmptyFile, codeOf(err), "the server refuses Content-Length 0")
+	_, err = e.s.AddBytes(1, "c1", "empty.png", "image/png", strings.NewReader(""), 0)
+	assert.Equal(t, CodeEmptyFile, codeOf(err))
+	assert.Empty(t, spools(t, e.dir), "no spool left")
+	assert.Empty(t, e.s.List(1, "c1"))
+}
+
+func TestUnknownConfigBoundsSizesByTheDefault(t *testing.T) {
+	assert.Equal(t, int64(100<<20), int64(DefaultMaxFileSize), "the server's default MaxFileSize")
+	e := newEnv(t)
+	e.b.setLive(2, false)
+	e.b.mu.Lock()
+	e.b.limits[2] = Limits{} // config not read yet
+	e.b.mu.Unlock()
+	big := filepath.Join(t.TempDir(), "sparse.bin")
+	f, err := os.Create(big)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(DefaultMaxFileSize+1)) // sparse: nothing written
+	require.NoError(t, f.Close())
+	_, err = e.s.AddPath(2, "c1", big)
+	assert.Equal(t, CodeTooLarge, codeOf(err))
+
+	e2 := newEnv(t, func(o *Options) { o.unknownMax = 10 })
+	e2.b.mu.Lock()
+	e2.b.limits[2] = Limits{}
+	e2.b.mu.Unlock()
+	_, err = e2.s.AddBytes(2, "c1", "x.bin", "", strings.NewReader(strings.Repeat("x", 11)), 0)
+	assert.Equal(t, CodeTooLarge, codeOf(err), "the spool is bounded too")
+	assert.Empty(t, spools(t, e2.dir))
+	_, err = e2.s.AddBytes(2, "c1", "x.bin", "", strings.NewReader(strings.Repeat("x", 10)), 0)
+	assert.NoError(t, err, "Enabled is not held against an unknown config")
+}
+
+func TestAddPathSniffsNamesWithoutAKnownExtension(t *testing.T) {
+	e := newEnv(t)
+	e.b.setLive(1, false)
+	a, err := e.s.AddPath(1, "c1", e.file("screenshot", string(pngHeader())))
+	require.NoError(t, err)
+	assert.Equal(t, "image/png", a.Mime)
+	b, err := e.s.AddPath(1, "c1", e.file("blob.weird", "\x00\x01\x02"))
+	require.NoError(t, err)
+	assert.Equal(t, "application/octet-stream", b.Mime)
+}
+
+func TestPauseRequeuesInTheOrderAdded(t *testing.T) {
+	e := newEnv(t, func(o *Options) { o.Parallel = 8 })
+	started := make(chan struct{}, 8)
+	e.up.setSend(blockUntilCancelled(started))
+	var ids []string
+	for i := 0; i < 8; i++ {
+		a, err := e.s.AddPath(1, "c"+string(rune('a'+i%3)), e.file("x.txt", "abc"))
+		require.NoError(t, err)
+		ids = append(ids, a.ID)
+	}
+	for range ids {
+		<-started
+	}
+	e.s.Pause(1)
+	e.s.mu.Lock()
+	var got []string
+	for _, it := range e.s.queues[1].pending {
+		got = append(got, it.ID)
+	}
+	e.s.mu.Unlock()
+	assert.Equal(t, ids, got)
+}
+
+// switchingBackend: the first Uploader call hands out the old worker's
+// uploader, but the worker is stopped (Pause) and a Wake comes while it
+// does (the new worker is not live yet then); later calls give the new
+// worker's uploader.
+type switchingBackend struct {
+	*fakeBackend
+	s        *Store
+	old, cur *fakeUploader
+	mu       sync.Mutex
+	calls    int
+}
+
+func (b *switchingBackend) Uploader(srv int64) Uploader {
+	b.mu.Lock()
+	b.calls++
+	n := b.calls
+	b.mu.Unlock()
+	switch n {
+	case 1:
+		b.s.Pause(srv)
+		b.s.Wake(srv)
+		return b.old
+	case 2:
+		return nil // the Wake above: not live yet
+	}
+	return b.cur
+}
+
+func TestAStaleUploaderIsNotUsedAfterPauseAndWake(t *testing.T) {
+	e := newEnv(t)
+	sb := &switchingBackend{fakeBackend: e.b, old: &fakeUploader{}, cur: &fakeUploader{}}
+	e.s.o.Backend = sb
+	sb.s = e.s
+	a, err := e.s.AddPath(1, "c1", e.file("x.txt", "abc"))
+	require.NoError(t, err)
+	time.Sleep(20 * time.Millisecond)
+	e.s.Wake(1) // the new worker is live
+	e.waitState(a.ID, StateUploaded)
+	assert.Zero(t, sb.old.callCount(), "the stopped worker's uploader was never used")
+	assert.Equal(t, 1, sb.cur.callCount())
+}
+
+func TestPauseAgainUndoesAWakeFromTheStoppingWorker(t *testing.T) {
+	e := newEnv(t)
+	started := make(chan struct{}, 2)
+	e.up.setSend(blockUntilCancelled(started))
+	a, err := e.s.AddPath(1, "c1", e.file("x.txt", "abc"))
+	require.NoError(t, err)
+	<-started
+	e.s.Pause(1) // before the worker stops
+	e.s.Wake(1)  // the old worker went live again meanwhile
+	<-started    // … and got the upload
+	e.s.Pause(1) // after the worker stopped
+	e.waitState(a.ID, StateStaged)
+	require.Eventually(t, func() bool { return e.up.running.Load() == 0 }, 5*time.Second, 5*time.Millisecond)
+	e.up.setSend(nil)
+	e.s.Wake(1)
+	e.waitState(a.ID, StateUploaded)
+}

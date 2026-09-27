@@ -147,8 +147,8 @@ func TestAttachmentEventCarriesTheChannelsItems(t *testing.T) {
 	require.NoError(t, err)
 	for {
 		ev := f.nextEvent(EventAttachmentsChanged)
-		assert.Equal(t, id, ev.Payload["srv"])
-		assert.Equal(t, "c-offtopic", ev.Payload["ch"])
+		assert.Equal(t, id, ev.Payload["server_id"])
+		assert.Equal(t, "c-offtopic", ev.Payload["channel_id"])
 		items := ev.Payload["items"].([]AttachmentView)
 		require.Len(t, items, 1)
 		assert.Equal(t, a.ID, items[0].ID)
@@ -226,6 +226,8 @@ func TestAttachmentMethodsCheckServerChannelAndLimits(t *testing.T) {
 	assert.Equal(t, CodeNotFound, codeOf(err))
 	_, err = f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "big.bin", "", strings.NewReader("01234567890"), 0)
 	assert.Equal(t, CodeTooLarge, codeOf(err))
+	_, err = f.svc.AddAttachmentPath(ctx, id, "c-offtopic", writeFile(t, "empty.txt", nil))
+	assert.Equal(t, CodeEmptyFile, codeOf(err))
 	var ids []string
 	for i := 0; i < attach.MaxPerChannel; i++ {
 		a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "x.txt", "", strings.NewReader("x"), 0)
@@ -333,4 +335,30 @@ func TestStagedPicturesAreServedByTheMediaCache(t *testing.T) {
 	assert.Equal(t, 404, code, "not a picture")
 	code, _ = get(fmt.Sprintf("/media/%d/staged/%s", id+1, img.ID))
 	assert.Equal(t, 404, code, "another server's key")
+}
+
+func TestSignInAsAnotherUserDropsTheAttachments(t *testing.T) {
+	f := newChatFixture(t)
+	dir := f.withAttachments()
+	fake := startFake(t)
+	id := f.live(fake)
+	ctx := context.Background()
+	fake.FailUploads(2)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "x.bin", "", strings.NewReader("abc"), 0)
+	require.NoError(t, err)
+	f.attachmentState(id, "c-offtopic", a.ID, attach.StateFailed)
+
+	// The same user again: kept.
+	_, err = f.svc.LoginWithPassword(ctx, id, "alice", "secret")
+	require.NoError(t, err)
+	_, ok := f.svc.att.Get(a.ID)
+	assert.True(t, ok, "alice's own attachment stays")
+
+	// Another user: alice's files must not be sent as bob's.
+	_, err = f.svc.LoginWithPassword(ctx, id, "bob", "secret")
+	require.NoError(t, err)
+	_, ok = f.svc.att.Get(a.ID)
+	assert.False(t, ok, "alice's attachment is gone")
+	des, _ := os.ReadDir(dir)
+	assert.Empty(t, des, "and its spool")
 }

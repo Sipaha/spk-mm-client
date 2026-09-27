@@ -67,7 +67,7 @@ func (u uploader) CheckAuth(err error) { u.w.CheckAuth(err) }
 func (s *Service) onAttachments(srv int64, ch string) {
 	s.co.Schedule(fmt.Sprintf("attachments/%d/%s", srv, ch), func() {
 		if att := s.att; att != nil {
-			s.emit(EventAttachmentsChanged, map[string]any{"srv": srv, "ch": ch, "items": att.List(srv, ch)})
+			s.emit(EventAttachmentsChanged, map[string]any{"server_id": srv, "channel_id": ch, "items": att.List(srv, ch)})
 		}
 	})
 }
