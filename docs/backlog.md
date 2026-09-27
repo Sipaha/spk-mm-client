@@ -221,18 +221,18 @@
   раньше `<header>`) — панель недостижима с экрана добавления сервера и
   вообще до открытия первого канала. — `frontend/src/components/Downloads.tsx`,
   `frontend/src/components/ChannelPane.tsx`.
-- Task 6 (загрузки, UI, откат при открытии): при клике «Показать в папке» на
+- Финальное ревью (остаток): при клике «Показать в папке» на
   уведомлении «Сохранено», если файла нет в списке загрузок (БД),
   fallback-ошибка в `frontend/src/chat.ts` (`revealSavedFile`) — hard-coded
   англоязычная строка разработчика (`no downloads-list entry for <path>`)
   вместо i18n-сообщения через `t()`. — `frontend/src/chat.ts`.
-- Task 7 (просмотрщик, текст, автофокус поиска): `consumeFocusSearch()` в
+- Финальное ревью (остаток): `consumeFocusSearch()` в
   `frontend/src/components/Viewer.tsx` читает и очищает ref прямо во время
   рендера; в React StrictMode (dev-сборка) двойной рендер теряет флаг, поэтому
   Ctrl+F при просмотре отрендеренного markdown переключает вид на Source без
   фокуса в поле поиска (production не затронут). Исправить через
   state/счётчик, очищаемый в эффекте. — `frontend/src/components/Viewer.tsx`.
-- Task 8 (память, soak): при синтетическом 10× soak (churn 200ms)
+- Soak-расследование (follow-up): при синтетическом 10× soak (churn 200ms)
   WebKitWebProcess выходит на плато примерно ~130 МБ Private_Dirty (±40 МБ
   колебания от больших недолгоживущих anonymous allocations, JS heap плоский
   ~10 МБ) — выше ~77 МБ в soak этапа 3 части 1; это не рост, baseline 97c128c
