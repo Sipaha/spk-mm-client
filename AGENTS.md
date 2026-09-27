@@ -90,14 +90,17 @@
   гард отказывает закрыто, если конфиг картинки не читается). — `TestSVGIsRefused`,
   `TestHugeDimensionsAreRefused`.
 - `internal/media` не читает картинку в память целиком (`io.ReadAll` в пути картинок запрещён —
-  вложения в куче Go не держим): `writeImage` читает заголовок из потока (`DecodeConfig`, заголовок
-  запоминается и проигрывается заново), влезающую в `FeedMax` картинку копирует потоком, а
-  масштабируемую декодирует прямо из потока (`png.Decode`/`jpeg.Decode`) и кодирует результат сразу в
-  файл кэша; хвост после данных картинки дочитывается и считается в лимит байтов. Нужны только
-  битмапы (исходный + ≤960 px). — `internal/media/memory_test.go`
+  вложения в куче Go не держим): скачанное тело сначала пишется во временный файл кэша (`*.tmp`,
+  `Cache.writeImageFrom`) — **вне** `decodeSem`, чтобы медленная загрузка не держала очередь декодов
+  и слоты `c.sem`; staged-файл (`*os.File`) читается как есть. Затем `writeImage` работает с файлом
+  (`io.ReadSeeker`): размер — `Seek`, заголовок (`DecodeConfig`) читается из файла и не копится в
+  памяти (длинные APPn у JPEG тоже), влезающая в `FeedMax` картинка копируется потоком, а
+  масштабируемая декодируется из файла под `decodeSem` (одна за раз) и кодируется сразу в файл кэша.
+  Нужны только битмапы (исходный + ≤960 px). — `internal/media/memory_test.go`
   (`TestWriteImagePassesAFittingPictureThroughWithoutReadingItWhole`,
   `TestWriteImageScalesWithoutReadingTheFileWhole`, `TestWriteImageStreamedStillEnforcesTheByteCap`,
-  `TestStagedPreviewRetainsNothing`).
+  `TestStagedPreviewRetainsNothing`, `TestWriteImageDoesNotKeepALongHeader`,
+  `TestSlowFeedDownloadDoesNotBlockOtherPictures`), `TestDownscalesRunOneAtATime`.
 - Картинка, которая не загрузилась (`/media/` ответил 404/413/415), в ленте/миниатюрах/просмотрщике
   откатывается на карточку файла, а не остаётся сломанной. —
   `frontend/src/components/Attachments.test.tsx` («a single image that fails to load (404/413/415
@@ -323,10 +326,20 @@
   `dataTransfer.files`) — тесты `Composer.test.tsx`, `ChannelPane.test.tsx` явно проверяют, что desktop-ветка
   никогда не читает `clipboardData.files` и что скрытый `<input type=file>` не рендерится в desktop-режиме
   (структурная гарантия «никаких байт с десктопа», не только доверие к поведению WebKitGTK).
+- Пост с файлами ждёт своих загрузок **без дедлайна**: офлайн — пока сервер не станет «живым»;
+  проваливается только при ошибке загрузки, отмене (discard) или остановке воркера; `createTimeout`
+  (30 с) начинается лишь после загрузок, на сам `CreatePost` — в отличие от текстового поста, который
+  проваливается через 30 с. — `internal/mmsync/actions.go` (`Worker.create`),
+  `internal/mmsync/files_test.go` (`TestSendWithFilesWaitsForTheUploadsThenCreates` — «not failed by the
+  create timeout's clock», `TestFailedUploadFailsThePostAndRetryUploadsAgain`,
+  `TestDiscardLetsTheFilesGo`, `TestStoppingWorkerLetsTheFilesOfItsPendingPostsGo`),
+  `internal/attach/attach_test.go` (`TestOfflineAttachmentsWaitForLive`, `TestWaitReportsTheOutcome`).
 - UI (Task 6): после удаления чипа Delete/Backspace фокус переходит на чип, занявший его место
-  (следующий), иначе на предыдущий, иначе в textarea композера — `AttachmentsTray` запоминает индекс
-  удаляемого чипа и текущую длину `items` (удаление идёт через store/API, не синхронно) и решает,
-  куда ставить фокус, только когда `items` действительно укоротился. —
+  (следующий), иначе на предыдущий, иначе в textarea композера — `AttachmentsTray` запоминает id и индекс
+  удаляемого чипа (удаление идёт через store/API, не синхронно) и решает, куда ставить фокус, только
+  когда чипа с этим id в `items` больше нет — неудавшееся удаление (чип остался) не двигает фокус,
+  когда позже уходит другой чип («a keyboard removal that fails does not move focus when another chip
+  goes later»). —
   `frontend/src/components/AttachmentsTray.test.tsx` («Delete on a middle chip moves focus to the
   chip that took its place», «Delete on the last chip moves focus to the previous one», «Delete on
   the only chip focuses the textarea»).
@@ -347,7 +360,7 @@
 
 - **A `fetch()` to `wails://` with a `Blob`, `File` or `FormData` body crashes the whole desktop app** (SIGSEGV in `webkit_uri_scheme_request_get_http_body`, WebKitGTK 2.52 — Wails reads every scheme request's body). Only `Uint8Array`/`ArrayBuffer` bodies are safe there. The desktop UI never sends file bytes at all (Go reads the clipboard/dialog/drop itself); browser mode posts a `File` only to `/api/attachments` over plain HTTP. — `docs/spikes/2026-09-27-attachments-spike.md` §2.6.
 - WebKitGTK never gives the page pasted or dropped file contents (`clipboardData.files`/`dataTransfer.files` are always empty — `DataTransfer::allowsFileAccess()` is `false` off Cocoa): a pasted picture is an empty `paste`, copied files a hidden `text/uri-list` whose default action inserts the paths as text. Hence the native sources in Go. — spike doc §2.1, §3.
-- WebKitGTK's own paste (Ctrl+V into the page) reads the clipboard synchronously in the UI process: with a clipboard owner that never answers, the whole window is frozen for ~30 s (measured 31 s on Xvfb, Task 4 fix-round smoke) — before and regardless of our `AttachFromClipboard`, whose own reads are async and bounded. Nothing in our code can shorten it.
+- WebKitGTK's own paste (Ctrl+V into the page) reads the clipboard synchronously in the UI process: with a clipboard owner that never answers, the whole window is frozen for ~30 s (measured 31 s on Xvfb, Task 4 fix-round smoke) — before and regardless of our `AttachFromClipboard`, whose own reads are async and bounded. Nothing in our code can shorten it. Smoke consequence: a clipboard owner process killed right after sending Ctrl+V leaves WebKit's synchronous paste waiting ~31 s for an answer that never comes, and by the time the page's paste event reaches us the 1.5 s paste-gesture window (`internal/desktop/paste.go`, `pasteWindow`) has expired (`no_paste_gesture`) — keep the owner alive until the chip appears (the memcheck/smoke scripts wait for the chip before `terminate()`).
 - Driving the desktop app from a script (smoke): `WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:<port>` + `Runtime.evaluate` over `ws://…/socket/1/1/WebPage` (`Target.sendMessageToTarget`); WebKit ignores `awaitPromise` — park the promise's result on `window` and poll it. Bindings can be called from there with a raw `fetch('/wails/runtime', {method:'POST', body: JSON.stringify({object: 0, method: 0, args: {'call-id', methodName: 'github.com/spk/spk-mm-client/internal/api/transport.API.<M>', args}})})`. Point `DBUS_SESSION_BUS_ADDRESS` at a dead socket so the smoke instance adds no tray icon to the user's session. The GTK file chooser's location bar autocompletes typed text (XTest typing mangles paths) — paste the path from a clipboard owner on the same Xvfb instead.
 - Vitest: `@wailsio/runtime` is globally mocked in `frontend/vitest.setup.ts` (its import-time drag/resize code touches `window` after jsdom teardown); tests of `wailsClient` override the mock locally.
 - Wails v3 beta.25 on Linux touches the D-Bus session bus with no timeout in several places: `SingleInstance` (inside `application.New()`, `os.Exit(1)` on failure — uninterceptable), the notifications service startup, `SystemTray.Run` (`InvokeSync(dbus.SessionBus())` on the GTK main thread — a hung bus freezes the UI), and GLib itself (`GApplication` registration in `g_application_run` — with a hung bus the window never appears). Rule: probe the bus **once** with a 2 s bound (`probeBus`) and let `integrationsFor` decide; unless it answered, disable single-instance, notifications and tray, point `DBUS_SESSION_BUS_ADDRESS` at a dead address before GTK starts, and make window close quit (no tray = no way back). Wails' theme listener runs on its own goroutine/connection and does not block the main thread. — `internal/desktop/integrations.go` (`TestIntegrationsFor`, `TestProbeBus`), `internal/desktop/busprobe_linux.go`, `internal/desktop/run.go`.

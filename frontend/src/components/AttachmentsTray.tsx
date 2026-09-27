@@ -116,12 +116,14 @@ export function AttachmentsTray({
   // that round-trips back as a prop change. `pending` remembers where the
   // removed chip was so the effect below can move focus once it actually
   // does: the chip now at that index (what was "next"), else the one before
-  // it ("previous"), else the composer's textarea (no chips left).
-  const pending = useRef<{ index: number; countBefore: number } | null>(null)
+  // it ("previous"), else the composer's textarea (no chips left). It is
+  // keyed by the removed chip's id: a removal that failed (the chip stays)
+  // never moves focus when some other chip goes later.
+  const pending = useRef<{ id: string; index: number } | null>(null)
 
   useEffect(() => {
     const p = pending.current
-    if (!p || items.length >= p.countBefore) return // removal hasn't landed yet
+    if (!p || items.some((a) => a.id === p.id)) return // removal hasn't landed (or failed)
     pending.current = null
     if (items.length === 0) {
       onFocusTextarea?.()
@@ -142,7 +144,7 @@ export function AttachmentsTray({
             onRemove={() => onRemove(a.id)}
             onRetry={() => onRetry(a.id)}
             onKeyRemove={() => {
-              pending.current = { index: i, countBefore: items.length }
+              pending.current = { id: a.id, index: i }
               onRemove(a.id)
             }}
             chipRef={(el) => {

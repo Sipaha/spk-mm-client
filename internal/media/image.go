@@ -49,61 +49,53 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// countReader counts what was read through it.
-type countReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // writeImage copies an image to dst after checking it: a raster type by
 // sniffing, at most sp.max bytes, a readable header (fail closed: an image
 // whose dimensions cannot be read is refused) of at most maxPixels. Feed
 // images above scaleMaxPixels are refused; feed PNG/JPEG larger than FeedMax
-// are scaled down. The file is streamed, never read into memory whole
-// (attachments are not held in the Go heap): only the header the decoder
-// needed is kept to replay, and scaling holds the bitmaps, not the file.
-func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
-	br := bufio.NewReaderSize(src, sniffLen)
-	head, err := br.Peek(sniffLen)
-	if err != nil && !errors.Is(err, io.EOF) {
+// are scaled down. src is a file (a staged one, or a download spooled to
+// disk first — Cache.fetch): it is never read into memory whole (attachments
+// are not held in the Go heap), the header is read and then read again, and
+// scaling holds the bitmaps only.
+func writeImage(dst io.Writer, src io.ReadSeeker, sp spec) (int64, error) {
+	size, err := src.Seek(0, io.SeekEnd)
+	if err != nil {
 		return 0, err
 	}
-	ctype := http.DetectContentType(head)
-	if len(head) == 0 || !rasterTypes[ctype] {
+	if size > sp.max {
+		return 0, errTooLarge
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	head := make([]byte, sniffLen)
+	n, err := io.ReadFull(src, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return 0, err
+	}
+	ctype := http.DetectContentType(head[:n])
+	if n == 0 || !rasterTypes[ctype] {
 		return 0, errType
 	}
-	body := &countReader{r: io.LimitReader(br, sp.max+1)}
-	// The header is read from the stream itself (a JPEG may carry EXIF far
-	// beyond the first 64 KiB) and kept to be replayed.
-	var hdr bytes.Buffer
-	cfg, _, err := image.DecodeConfig(io.TeeReader(body, &hdr))
-	switch {
-	case body.n > sp.max:
-		return 0, errTooLarge
-	case err != nil:
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	// The header is read from the file itself (a JPEG may carry EXIF far
+	// beyond the first 64 KiB); the decoder skips what it does not need.
+	cfg, _, err := image.DecodeConfig(bufio.NewReader(src))
+	if err != nil {
 		return 0, errType
 	}
 	if err := checkPixels(cfg, sp); err != nil {
 		return 0, err
 	}
-	whole := io.MultiReader(&hdr, body)
-	if sp.scale && (ctype == "image/png" || ctype == "image/jpeg") && (cfg.Width > FeedMax || cfg.Height > FeedMax) {
-		return downscale(dst, whole, body, cfg, ctype, sp.max)
-	}
-	cw := &countWriter{w: dst}
-	if _, err := io.Copy(cw, whole); err != nil {
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	if body.n > sp.max {
-		return 0, errTooLarge
+	if sp.scale && (ctype == "image/png" || ctype == "image/jpeg") && (cfg.Width > FeedMax || cfg.Height > FeedMax) {
+		return downscale(dst, bufio.NewReader(src), cfg, ctype)
 	}
-	return cw.n, nil
+	return io.Copy(dst, src)
 }
 
 // checkPixels refuses decompression bombs, and feed images too large to
@@ -119,9 +111,8 @@ func checkPixels(cfg image.Config, sp spec) error {
 
 // downscale decodes a PNG/JPEG of cfg's size from src and writes it to dst
 // fitted into FeedMax×FeedMax, keeping its format (PNG keeps transparency).
-// body is the counted stream under src: what the decoder leaves unread is
-// drained so the byte cap holds as for a copied file.
-func downscale(dst io.Writer, src io.Reader, body *countReader, cfg image.Config, ctype string, limit int64) (int64, error) {
+// One decode at a time (decodeSem): src is on disk, so no download waits.
+func downscale(dst io.Writer, src io.Reader, cfg image.Config, ctype string) (int64, error) {
 	decodeSem <- struct{}{}
 	defer func() { <-decodeSem }()
 	decodeHook()
@@ -132,13 +123,7 @@ func downscale(dst io.Writer, src io.Reader, body *countReader, cfg image.Config
 	} else {
 		img, err = jpeg.Decode(src)
 	}
-	if _, derr := io.Copy(io.Discard, body); derr != nil {
-		return 0, derr
-	}
-	switch {
-	case body.n > limit:
-		return 0, errTooLarge
-	case err != nil:
+	if err != nil {
 		return 0, errType
 	}
 	scale := min(float64(FeedMax)/float64(cfg.Width), float64(FeedMax)/float64(cfg.Height))

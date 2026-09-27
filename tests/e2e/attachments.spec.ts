@@ -130,7 +130,8 @@ test('📎 opens the file picker: a chip appears', async ({ page }) => {
   const text = unique('picked file post')
   await page.getByRole('textbox', { name: 'Message' }).fill(text)
   await page.keyboard.press('Enter')
-  await expect(feed(page).locator('article', { hasText: text }).locator('img')).toBeVisible()
+  // getByRole with the file name: a bare locator('img') also matches the post's avatar.
+  await expect(feed(page).locator('article', { hasText: text }).getByRole('img', { name: 'pick-me.png' })).toBeVisible()
   await removeServerFromMenu(page)
 })
 
@@ -161,15 +162,18 @@ test('MaxFileSize limit: attaching an over-limit file shows an error, nothing is
   // fail later, when the actual upload hits the fake's now-stricter limit).
   await page.goto('/')
   await testPost(page, 'fake/max-file-size', { bytes: 10 })
-  await signInAlice(page)
-  await openOffTopic(page)
+  try {
+    await signInAlice(page)
+    await openOffTopic(page)
 
-  await page.locator('input[type=file]').setInputFiles(join(fixtures, 'pick-me.png')) // well over 10 bytes
-  await expect(page.getByRole('alert').filter({ hasText: 'too large' })).toBeVisible()
-  await expect(tray(page)).toHaveCount(0)
-
-  await testPost(page, 'fake/max-file-size', { bytes: 0 }) // restore the default for later tests
-  await removeServerFromMenu(page)
+    await page.locator('input[type=file]').setInputFiles(join(fixtures, 'pick-me.png')) // well over 10 bytes
+    await expect(page.getByRole('alert').filter({ hasText: 'too large' })).toBeVisible()
+    await expect(tray(page)).toHaveCount(0)
+    await removeServerFromMenu(page)
+  } finally {
+    // Restore the default even when the test fails: later tests share the fake.
+    await testPost(page, 'fake/max-file-size', { bytes: 0 })
+  }
 })
 
 test('attachments only, no text, is a valid post', async ({ page }) => {
@@ -180,6 +184,12 @@ test('attachments only, no text, is a valid post', async ({ page }) => {
   await expect(tray(page).getByText(name)).toBeVisible()
   await page.keyboard.press('Enter') // empty textarea, attachment only
   await expect(tray(page)).toHaveCount(0) // the tray clears once the post is sent
-  await expect(feed(page).getByRole('img', { name })).toBeVisible()
+  const img = feed(page).getByRole('img', { name })
+  await expect(img).toBeVisible()
+  // The server created it: no longer pending, and the picture is the post's
+  // file (/feed or /thumb of its file id), not the staged attachment (/staged/<id>).
+  const post = feed(page).locator('article').filter({ has: img })
+  await expect(post.getByText('Sending…')).toHaveCount(0)
+  await expect(img).toHaveAttribute('src', /\/(feed|thumb)\//)
   await removeServerFromMenu(page)
 })

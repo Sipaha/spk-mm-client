@@ -522,7 +522,7 @@ func (c *Cache) fetch(q request, id, name string) error {
 	if sp.text {
 		size, err = writeText(tmp, body, contentRange, sp.max)
 	} else {
-		size, err = writeImage(tmp, body, sp)
+		size, err = c.writeImageFrom(tmp, body, sp)
 	}
 	if q.kind == KindStaged && errors.Is(err, errType) {
 		err = errNoObject // not a picture after all: the UI shows a type icon
@@ -546,6 +546,32 @@ func (c *Cache) fetch(q request, id, name string) error {
 	c.evictLocked(name)
 	c.mu.Unlock()
 	return nil
+}
+
+// writeImageFrom writes a picture from body: a file as it is, a download
+// spooled to a temp file of the cache first. The download is read outside
+// decodeSem (only decodes are serialised) and never whole into memory.
+func (c *Cache) writeImageFrom(dst io.Writer, body io.Reader, sp spec) (int64, error) {
+	if rs, ok := body.(io.ReadSeeker); ok {
+		return writeImage(dst, rs, sp)
+	}
+	spool, err := os.CreateTemp(c.o.Dir, "*.tmp")
+	if err != nil {
+		slog.Warn("media cache write failed", "err", err)
+		return 0, errStore
+	}
+	defer func() {
+		_ = spool.Close()
+		_ = os.Remove(spool.Name())
+	}()
+	n, err := io.Copy(spool, io.LimitReader(body, sp.max+1))
+	switch {
+	case err != nil:
+		return 0, err
+	case n > sp.max:
+		return 0, errTooLarge
+	}
+	return writeImage(dst, spool, sp)
 }
 
 // evictLocked drops least recently used objects until the cache fits its

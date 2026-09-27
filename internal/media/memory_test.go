@@ -3,14 +3,18 @@ package media
 import (
 	"bytes"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"math/rand/v2"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,4 +127,68 @@ func TestStagedPreviewRetainsNothing(t *testing.T) {
 	assert.Empty(t, c.inflight, "no fetch left in flight")
 	c.mu.Unlock()
 	_ = body
+}
+
+// jpegWithAPPn is a small JPEG with n 60 KiB APP1 segments before its frame
+// header (EXIF can sit there): DecodeConfig reads through all of them.
+func jpegWithAPPn(n int) []byte {
+	var j bytes.Buffer
+	_ = jpeg.Encode(&j, image.NewRGBA(image.Rect(0, 0, 100, 100)), nil)
+	src := j.Bytes()
+	out := append([]byte{}, src[:2]...) // SOI
+	seg := make([]byte, 60<<10)
+	for range n {
+		l := len(seg) + 2
+		out = append(out, 0xFF, 0xE1, byte(l>>8), byte(l))
+		out = append(out, seg...)
+	}
+	return append(out, src[2:]...)
+}
+
+// The header the decoder reads is not kept in memory, however long it is.
+func TestWriteImageDoesNotKeepALongHeader(t *testing.T) {
+	data := jpegWithAPPn(40)
+	var err error
+	n := allocated(func() { _, err = writeImage(io.Discard, bytes.NewReader(data), spec{max: 25 << 20, scale: true}) })
+	require.NoError(t, err)
+	t.Logf("allocated %d bytes for a %d-byte file", n, len(data))
+	assert.Less(t, n, uint64(len(data)/4))
+}
+
+// A feed picture still downloading does not hold up another one: the body
+// is spooled to disk outside the decode semaphore, which bounds decodes only.
+func TestSlowFeedDownloadDoesNotBlockOtherPictures(t *testing.T) {
+	big := pngOf(2000, 300)
+	release := make(chan struct{})
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "slow") {
+			_, _ = w.Write(big[:len(big)/2])
+			w.(http.Flusher).Flush()
+			<-release
+			_, _ = w.Write(big[len(big)/2:])
+			return
+		}
+		_, _ = w.Write(big)
+	})
+	defer close(release)
+	slowDone := make(chan int, 1)
+	go func() {
+		resp, _ := e.get("/media/1/feed/slow")
+		slowDone <- resp.StatusCode
+	}()
+	require.Eventually(t, func() bool { return e.origin.count("/api/v4/files/slow/preview") == 1 }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // the slow body is being read
+	fast := make(chan int, 1)
+	go func() {
+		resp, _ := e.get("/media/1/feed/fast")
+		fast <- resp.StatusCode
+	}()
+	select {
+	case code := <-fast:
+		assert.Equal(t, 200, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a slow download blocked another picture")
+	}
+	release <- struct{}{}
+	assert.Equal(t, 200, <-slowDone)
 }

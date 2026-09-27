@@ -113,3 +113,15 @@ test('Delete on the only chip focuses the textarea', async () => {
   rerender(<AttachmentsTray serverId={1} items={[]} onRemove={() => {}} onRetry={() => {}} onFocusTextarea={onFocusTextarea} />)
   expect(onFocusTextarea).toHaveBeenCalledTimes(1)
 })
+
+test('a keyboard removal that fails does not move focus when another chip goes later', async () => {
+  const user = userEvent.setup()
+  const items = [av({ id: 'a' }), av({ id: 'b' }), av({ id: 'c' })]
+  const { rerender } = render(<AttachmentsTray serverId={1} items={items} onRemove={() => {}} onRetry={() => {}} />)
+  chipAt(1).focus()
+  await user.keyboard('{Delete}') // removing 'b' fails: it stays in items
+  rerender(<AttachmentsTray serverId={1} items={items} onRemove={() => {}} onRetry={() => {}} />)
+  ;(document.activeElement as HTMLElement).blur()
+  rerender(<AttachmentsTray serverId={1} items={[av({ id: 'b' }), av({ id: 'c' })]} onRemove={() => {}} onRetry={() => {}} />)
+  expect(document.body).toHaveFocus() // 'a' went some other way: not a focus move of ours
+})
