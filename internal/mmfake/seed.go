@@ -35,7 +35,11 @@ func (s *Server) seed() {
 		seedPosts = 150
 	}
 	seedPosts = max(seedPosts, 0)
-	base := time.Now().Add(-time.Duration(seedPosts+o.ExtraChannels*20+10) * time.Minute).UnixMilli()
+	loadPosts := o.ExtraChannelPosts
+	if loadPosts <= 0 {
+		loadPosts = 20
+	}
+	base := time.Now().Add(-time.Duration(seedPosts+o.ExtraChannels*loadPosts+10) * time.Minute).UnixMilli()
 	s.chat.lastMs = base
 	add := func(id, typ, display, name string, users ...string) {
 		s.chat.channels[id] = &model.Channel{ID: id, Type: typ, DisplayName: display, Name: name, CreateAt: base}
@@ -97,7 +101,7 @@ func (s *Server) seed() {
 	s.chat.status["u-alice"], s.chat.status["u-bob"], s.chat.status["u-carol"] = "online", "online", "away"
 	s.seedPostLocked("c-dm-bob", "u-bob", "Hi Alice, this is Bob")
 	for i := 1; i <= o.ExtraChannels; i++ {
-		for j := 1; j <= 20; j++ {
+		for j := 1; j <= loadPosts; j++ {
 			s.seedPostLocked(fmt.Sprintf("c-load-%03d", i), "u-bob", fmt.Sprintf("Load message %d with **some** markdown and a [link](https://example.com)", j))
 		}
 	}

@@ -356,6 +356,25 @@ func (s *Server) insertPostLocked(p *fpost) {
 	s.chat.byID[p.ID] = p
 }
 
+// trimHistoryLocked drops the oldest posts of a channel beyond
+// Options.KeepPosts (soak runs). Only posts created at run time trigger it,
+// so the seed stays whole until the channel gets a new post.
+func (s *Server) trimHistoryLocked(channelID string) {
+	keep := s.opts.KeepPosts
+	list := s.chat.posts[channelID]
+	if keep <= 0 || len(list) <= keep {
+		return
+	}
+	cut := len(list) - keep
+	for _, p := range list[:cut] {
+		delete(s.chat.byID, p.ID)
+		if p.PendingPostID != "" {
+			delete(s.chat.pending, p.PendingPostID)
+		}
+	}
+	s.chat.posts[channelID] = append([]*fpost(nil), list[cut:]...)
+}
+
 type apiErr struct {
 	status int
 	id     string
@@ -403,6 +422,7 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 		}
 	}
 	s.insertPostLocked(p)
+	s.trimHistoryLocked(c.ID)
 	if in.PendingPostID != "" {
 		s.chat.pending[in.PendingPostID] = p.ID
 	}
@@ -570,7 +590,9 @@ func (s *Server) setUnread(w http.ResponseWriter, r *http.Request, u User) {
 
 // publishLocked records the event and delivers it over WebSocket (ws.go).
 func (s *Server) publishLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions []string) {
-	s.chat.events = append(s.chat.events, RecordedEvent{Name: name, To: to})
+	if s.opts.KeepPosts <= 0 { // a capped (soak) fake keeps no event log
+		s.chat.events = append(s.chat.events, RecordedEvent{Name: name, To: to})
+	}
 	s.deliverLocked(name, data, b, to, mentions)
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 // signInToFake adds the in-process fake servers and signs alice in on each,
@@ -49,4 +50,18 @@ func isDevFake(s api.ServerDTO) bool {
 	}
 	ip := net.ParseIP(u.Hostname())
 	return ip != nil && ip.IsLoopback()
+}
+
+// fakeOptions: the options of each in-process fake. A churn (soak) run seeds
+// every load channel with a full client window (state.WindowSize posts) and
+// keeps no more than that per channel: without it, the fake stored every
+// churn post and the client's windows kept filling for hours (20 → 60 posts
+// in ~100 channels), both reading as growth in the soak.
+func fakeOptions(o desktopOpts) mmfake.Options {
+	opts := mmfake.Options{ExtraChannels: o.FakeChannels}
+	if o.FakeChurn > 0 {
+		opts.ExtraChannelPosts = state.WindowSize
+		opts.KeepPosts = state.WindowSize
+	}
+	return opts
 }

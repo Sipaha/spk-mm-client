@@ -3,6 +3,7 @@ package mmfake
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -223,3 +224,47 @@ func TestUsersPrefsStatus(t *testing.T) {
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+// Soak runs (--mm-fake-churn) seed load channels with a full client window
+// and cap the fake's own history, so the in-process fake does not grow over
+// an hour of churn and the client starts at its steady state.
+func TestExtraChannelPostsSeedsTheLoadChannels(t *testing.T) {
+	s := Start(Options{ExtraChannels: 2, ExtraChannelPosts: 60})
+	t.Cleanup(s.Close)
+	assert.Len(t, s.VisiblePosts("c-load-001"), 60)
+	assert.Len(t, s.VisiblePosts("c-load-002"), 60)
+
+	d := Start(Options{ExtraChannels: 1})
+	t.Cleanup(d.Close)
+	assert.Len(t, d.VisiblePosts("c-load-001"), 20, "default stays 20 posts per load channel")
+}
+
+func TestKeepPostsCapsHistoryAndEventLog(t *testing.T) {
+	s := Start(Options{ExtraChannels: 1, KeepPosts: 5})
+	t.Cleanup(s.Close)
+	var last []model.Post
+	for i := range 12 {
+		last = append(last, s.PostAs("c-load-001", "bob", fmt.Sprintf("churn %d", i)))
+	}
+	got := s.VisiblePosts("c-load-001")
+	require.Len(t, got, 5)
+	assert.Equal(t, last[len(last)-5:], got, "the newest posts stay, oldest first")
+	s.mu.Lock()
+	_, oldKept := s.chat.byID[last[0].ID]
+	indexed := 0
+	for _, p := range s.chat.byID {
+		if p.ChannelID == "c-load-001" {
+			indexed++
+		}
+	}
+	s.mu.Unlock()
+	assert.False(t, oldKept, "a dropped post is gone from the id index too")
+	assert.Equal(t, 5, indexed, "the id index holds only the kept posts")
+	assert.Empty(t, s.Events(), "no unbounded event log in a capped (soak) fake")
+
+	c := Start(Options{ExtraChannels: 1})
+	t.Cleanup(c.Close)
+	c.PostAs("c-load-001", "bob", "x")
+	assert.Len(t, c.VisiblePosts("c-load-001"), 21, "uncapped by default")
+	assert.NotEmpty(t, c.Events())
+}

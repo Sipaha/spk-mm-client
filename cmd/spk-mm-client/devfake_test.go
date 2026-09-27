@@ -1,9 +1,12 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/state"
 	"github.com/spk/spk-mm-client/internal/store"
 )
 
@@ -119,4 +123,29 @@ func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
 	cancel()
 	<-done
 	assert.NotEmpty(t, opened)
+}
+
+// A churn (soak) run starts the fakes with full client windows in every load
+// channel and a capped history, so neither the fake's store nor the client's
+// windows grow during the soak: what grows is a real leak. A plain --mm-fake
+// run keeps the usual seed.
+func TestFakeOptionsForSoak(t *testing.T) {
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize},
+		fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}))
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50}, fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50}))
+}
+
+// SPK_MM_CLIENT_SOAK_PROFILES: a soak run leaves heap profiles for
+// `go tool pprof -base` diffs.
+func TestWriteHeapProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "heap-001.pb.gz")
+	writeHeapProfile(path)
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer f.Close()
+	zr, err := gzip.NewReader(f) // a pprof profile is a gzipped protobuf
+	require.NoError(t, err)
+	b, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "inuse_space")
 }

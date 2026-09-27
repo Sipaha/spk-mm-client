@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -42,12 +45,21 @@ func runFakeChurn(ctx context.Context, c fakeChurn) {
 		}
 		return fmt.Sprintf("c-load-%03d", 1+rand.IntN(c.channels))
 	}
+	profDir := os.Getenv("SPK_MM_CLIENT_SOAK_PROFILES")
+	if profDir != "" {
+		runtime.MemProfileRate = 64 << 10
+	}
+	minute := 0
 	for tick := 1; ; tick++ {
 		select {
 		case <-ctx.Done():
 			return
 		case <-stats.C:
 			logRuntimeMemory()
+			minute++
+			if profDir != "" {
+				writeHeapProfile(filepath.Join(profDir, fmt.Sprintf("heap-%03d.pb.gz", minute)))
+			}
 			continue
 		case <-t.C:
 		}
@@ -72,4 +84,18 @@ func logRuntimeMemory() {
 	slog.Info("go memory", "heap_alloc_mb", m.HeapAlloc/mb, "heap_inuse_mb", m.HeapInuse/mb,
 		"heap_idle_mb", m.HeapIdle/mb, "heap_released_mb", m.HeapReleased/mb, "next_gc_mb", m.NextGC/mb,
 		"sys_mb", m.Sys/mb, "num_gc", m.NumGC)
+}
+
+// writeHeapProfile saves the heap profile (as of the last GC) for a soak
+// run's `go tool pprof -base` diffs.
+func writeHeapProfile(path string) {
+	f, err := os.Create(path)
+	if err != nil {
+		slog.Warn("heap profile", "err", err)
+		return
+	}
+	defer f.Close()
+	if err := pprof.Lookup("heap").WriteTo(f, 0); err != nil {
+		slog.Warn("heap profile", "err", err)
+	}
 }

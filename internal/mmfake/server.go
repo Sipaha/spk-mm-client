@@ -34,8 +34,14 @@ type Options struct {
 
 	CRT           bool // CollapsedThreads client config: always_on vs disabled
 	SeedPosts     int  // 0 -> 150 posts in Town Square; <0 -> none
-	ExtraChannels int  // open "load-NNN" channels with 20 posts each
-	SinceLimit    int  // 0 -> 1000
+	ExtraChannels int  // open "load-NNN" channels with ExtraChannelPosts posts each
+	// ExtraChannelPosts: posts seeded in each load channel, 0 -> 20.
+	ExtraChannelPosts int
+	// KeepPosts > 0 keeps only the newest KeepPosts posts of each channel
+	// and records no event log (Events): a soak run's fake then holds a
+	// fixed amount however long the churn posts. 0 keeps everything.
+	KeepPosts  int
+	SinceLimit int // 0 -> 1000
 
 	DisableCustomEmoji bool // custom emoji endpoints answer 501 and the config says false
 }

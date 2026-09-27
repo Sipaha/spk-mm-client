@@ -73,7 +73,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		fakes := make([]*mmfake.Server, max(o.FakeServers, 1))
 		urls := make([]string, len(fakes))
 		for i := range fakes {
-			fakes[i] = mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels})
+			fakes[i] = mmfake.Start(fakeOptions(o))
 			defer fakes[i].Close()
 			urls[i] = fakes[i].URL()
 			slog.Warn("fake Mattermost server started (development only)", "url", urls[i])
