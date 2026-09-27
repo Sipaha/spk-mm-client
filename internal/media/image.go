@@ -49,11 +49,25 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// countReader counts what was read through it.
+type countReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // writeImage copies an image to dst after checking it: a raster type by
 // sniffing, at most sp.max bytes, a readable header (fail closed: an image
 // whose dimensions cannot be read is refused) of at most maxPixels. Feed
 // images above scaleMaxPixels are refused; feed PNG/JPEG larger than FeedMax
-// are scaled down.
+// are scaled down. The file is streamed, never read into memory whole
+// (attachments are not held in the Go heap): only the header the decoder
+// needed is kept to replay, and scaling holds the bitmaps, not the file.
 func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
 	br := bufio.NewReaderSize(src, sniffLen)
 	head, err := br.Peek(sniffLen)
@@ -64,31 +78,13 @@ func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
 	if len(head) == 0 || !rasterTypes[ctype] {
 		return 0, errType
 	}
-	body := io.LimitReader(br, sp.max+1)
-	if sp.scale && (ctype == "image/png" || ctype == "image/jpeg") {
-		data, err := io.ReadAll(body)
-		if err != nil {
-			return 0, err
-		}
-		if int64(len(data)) > sp.max {
-			return 0, errTooLarge
-		}
-		scaled, err := downscale(data, ctype)
-		if err != nil {
-			return 0, err
-		}
-		if scaled != nil {
-			data = scaled
-		}
-		n, err := dst.Write(data)
-		return int64(n), err
-	}
+	body := &countReader{r: io.LimitReader(br, sp.max+1)}
 	// The header is read from the stream itself (a JPEG may carry EXIF far
-	// beyond the first 64 KiB); what the decoder reads goes on to dst.
-	cw := &countWriter{w: dst}
-	cfg, _, err := image.DecodeConfig(io.TeeReader(body, cw))
+	// beyond the first 64 KiB) and kept to be replayed.
+	var hdr bytes.Buffer
+	cfg, _, err := image.DecodeConfig(io.TeeReader(body, &hdr))
 	switch {
-	case cw.n > sp.max:
+	case body.n > sp.max:
 		return 0, errTooLarge
 	case err != nil:
 		return 0, errType
@@ -96,10 +92,15 @@ func writeImage(dst io.Writer, src io.Reader, sp spec) (int64, error) {
 	if err := checkPixels(cfg, sp); err != nil {
 		return 0, err
 	}
-	if _, err := io.Copy(cw, body); err != nil {
+	whole := io.MultiReader(&hdr, body)
+	if sp.scale && (ctype == "image/png" || ctype == "image/jpeg") && (cfg.Width > FeedMax || cfg.Height > FeedMax) {
+		return downscale(dst, whole, body, cfg, ctype, sp.max)
+	}
+	cw := &countWriter{w: dst}
+	if _, err := io.Copy(cw, whole); err != nil {
 		return 0, err
 	}
-	if cw.n > sp.max {
+	if body.n > sp.max {
 		return 0, errTooLarge
 	}
 	return cw.n, nil
@@ -116,36 +117,40 @@ func checkPixels(cfg image.Config, sp spec) error {
 	return nil
 }
 
-// downscale fits a PNG/JPEG into FeedMax×FeedMax, keeping its format (PNG
-// keeps transparency); nil when it already fits.
-func downscale(data []byte, ctype string) ([]byte, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, errType
-	}
-	if err := checkPixels(cfg, spec{scale: true}); err != nil {
-		return nil, err
-	}
-	if cfg.Width <= FeedMax && cfg.Height <= FeedMax {
-		return nil, nil
-	}
+// downscale decodes a PNG/JPEG of cfg's size from src and writes it to dst
+// fitted into FeedMax×FeedMax, keeping its format (PNG keeps transparency).
+// body is the counted stream under src: what the decoder leaves unread is
+// drained so the byte cap holds as for a copied file.
+func downscale(dst io.Writer, src io.Reader, body *countReader, cfg image.Config, ctype string, limit int64) (int64, error) {
 	decodeSem <- struct{}{}
 	defer func() { <-decodeSem }()
 	decodeHook()
-	src, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, errType
+	var img image.Image
+	var err error
+	if ctype == "image/png" {
+		img, err = png.Decode(src)
+	} else {
+		img, err = jpeg.Decode(src)
+	}
+	if _, derr := io.Copy(io.Discard, body); derr != nil {
+		return 0, derr
+	}
+	switch {
+	case body.n > limit:
+		return 0, errTooLarge
+	case err != nil:
+		return 0, errType
 	}
 	scale := min(float64(FeedMax)/float64(cfg.Width), float64(FeedMax)/float64(cfg.Height))
-	dst := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(cfg.Width)*scale)), max(1, int(float64(cfg.Height)*scale))))
-	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
-	var out bytes.Buffer
+	out := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(cfg.Width)*scale)), max(1, int(float64(cfg.Height)*scale))))
+	draw.ApproxBiLinear.Scale(out, out.Bounds(), img, img.Bounds(), draw.Src, nil)
+	cw := &countWriter{w: dst}
 	if ctype == "image/png" {
-		err = png.Encode(&out, dst)
+		err = png.Encode(cw, out)
 	} else {
-		err = jpeg.Encode(&out, dst, &jpeg.Options{Quality: 85})
+		err = jpeg.Encode(cw, out, &jpeg.Options{Quality: 85})
 	}
-	return out.Bytes(), err
+	return cw.n, err
 }
 
 // writeText stores up to limit bytes of a text file (TextLimit for the feed

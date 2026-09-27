@@ -56,9 +56,11 @@ func isDevFake(s api.ServerDTO) bool {
 // every load channel with a full client window (state.WindowSize posts) and
 // keeps no more than that per channel: without it, the fake stored every
 // churn post and the client's windows kept filling for hours (20 → 60 posts
-// in ~100 channels), both reading as growth in the soak.
-func fakeOptions(o desktopOpts) mmfake.Options {
-	opts := mmfake.Options{ExtraChannels: o.FakeChannels}
+// in ~100 channels), both reading as growth in the soak. Uploads are stored
+// in filesDir, not in memory: the fakes share the client's process, and a
+// memory check pasting large pictures measured the fake keeping each one.
+func fakeOptions(o desktopOpts, filesDir string) mmfake.Options {
+	opts := mmfake.Options{ExtraChannels: o.FakeChannels, FilesDir: filesDir}
 	if o.FakeChurn > 0 {
 		opts.ExtraChannelPosts = state.WindowSize
 		opts.KeepPosts = state.WindowSize

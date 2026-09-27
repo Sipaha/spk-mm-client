@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -74,8 +76,12 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	if o.MMFake {
 		fakes := make([]*mmfake.Server, max(o.FakeServers, 1))
 		urls := make([]string, len(fakes))
+		// The fakes' uploads: each fake removes its own on Close; what a
+		// killed run left is removed here (never swept by attach: no prefix).
+		fakeFiles := filepath.Join(p.TmpDir, "mmfake")
+		_ = os.RemoveAll(fakeFiles)
 		for i := range fakes {
-			fakes[i] = mmfake.Start(fakeOptions(o))
+			fakes[i] = mmfake.Start(fakeOptions(o, fakeFiles))
 			defer fakes[i].Close()
 			urls[i] = fakes[i].URL()
 			slog.Warn("fake Mattermost server started (development only)", "url", urls[i])

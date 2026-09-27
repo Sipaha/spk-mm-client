@@ -130,9 +130,11 @@ func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
 // windows grow during the soak: what grows is a real leak. A plain --mm-fake
 // run keeps the usual seed.
 func TestFakeOptionsForSoak(t *testing.T) {
-	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize},
-		fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}))
-	assert.Equal(t, mmfake.Options{ExtraChannels: 50}, fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50}))
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize, FilesDir: "/d/tmp/mmfake"},
+		fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}, "/d/tmp/mmfake"))
+	// Uploads go to disk: the fake shares the client's process, and memory
+	// checks must not count it keeping pasted pictures.
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, FilesDir: "/d/tmp/mmfake"}, fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50}, "/d/tmp/mmfake"))
 }
 
 // SPK_MM_CLIENT_SOAK_PROFILES: a soak run leaves heap profiles for

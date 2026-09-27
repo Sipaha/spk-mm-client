@@ -14,6 +14,7 @@ import (
 	"io"
 	stdmime "mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -30,9 +31,13 @@ import (
 type ffile struct {
 	info      model.FileInfo
 	channelID string
-	data      []byte
-	thumb     []byte // JPEG fitted into 120×100; nil for non-images
-	preview   []byte // JPEG ≤1920 wide; nil unless HasPreviewImage
+	data      []byte // in memory; nil when stored on disk
+	path      string // on disk (Options.FilesDir); "" when in memory
+	// previewPath: the preview on disk next to path (it can be megabytes);
+	// preview is nil then.
+	previewPath string
+	thumb       []byte // JPEG fitted into 120×100; nil for non-images
+	preview     []byte // JPEG ≤1920 wide; nil unless HasPreviewImage
 }
 
 type femoji struct {
@@ -71,11 +76,7 @@ func patternPNG(w, h int, c color.RGBA) []byte {
 
 // scaledJPEG mirrors the server's thumbnail/preview: the image fitted into
 // maxW×maxH (0 = unbounded), JPEG-encoded.
-func scaledJPEG(data []byte, maxW, maxH int) []byte {
-	src, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil
-	}
+func scaledJPEG(src image.Image, maxW, maxH int) []byte {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	scale := 1.0
@@ -144,6 +145,18 @@ func bigLogText(lines int) []byte {
 // images get the derived images the server makes: a thumbnail always, a
 // preview except for GIF (kept animated) and SVG.
 func (s *Server) newFileLocked(id, channelID, name, mime string, data []byte) *ffile {
+	f := newFFile(id, channelID, name, mime, int64(len(data)))
+	f.data = data
+	if isPicture(mime) {
+		if d, ok := derive(data, mime); ok {
+			f.setDerived(d)
+		}
+	}
+	s.chat.files[f.info.ID] = f
+	return f
+}
+
+func newFFile(id, channelID, name, mime string, size int64) *ffile {
 	if id == "" {
 		id = "f-" + newID()[:12]
 	}
@@ -151,17 +164,28 @@ func (s *Server) newFileLocked(id, channelID, name, mime string, data []byte) *f
 	if i := strings.LastIndex(name, "."); i >= 0 {
 		ext = strings.ToLower(name[i+1:])
 	}
-	f := &ffile{channelID: channelID, data: data,
-		info: model.FileInfo{ID: id, Name: name, Extension: ext, Size: int64(len(data)), MimeType: mime}}
-	if strings.HasPrefix(mime, "image/") && mime != "image/svg+xml" {
-		if d, ok := derive(data, mime); ok {
-			f.info.Width, f.info.Height, f.thumb, f.preview = d.w, d.h, d.thumb, d.preview
-			f.info.HasPreviewImage = d.preview != nil
-		}
-	}
-	s.chat.files[id] = f
-	return f
+	return &ffile{channelID: channelID,
+		info: model.FileInfo{ID: id, Name: name, Extension: ext, Size: size, MimeType: mime}}
 }
+
+func isPicture(mime string) bool { return strings.HasPrefix(mime, "image/") && mime != "image/svg+xml" }
+
+func (f *ffile) setDerived(d derivedImage) {
+	f.info.Width, f.info.Height, f.thumb, f.preview = d.w, d.h, d.thumb, d.preview
+	f.info.HasPreviewImage = d.preview != nil
+}
+
+// open reads the file's content, from memory or from disk.
+func (f *ffile) open() (io.ReadSeekCloser, error) {
+	if f.path == "" {
+		return nopCloser{bytes.NewReader(f.data)}, nil
+	}
+	return os.Open(f.path)
+}
+
+type nopCloser struct{ io.ReadSeeker }
+
+func (nopCloser) Close() error { return nil }
 
 type derivedImage struct {
 	w, h           int
@@ -179,15 +203,33 @@ func derive(data []byte, mime string) (derivedImage, bool) {
 	if d, ok := derived.Load(key); ok {
 		return d.(derivedImage), true
 	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	d, ok := deriveFrom(bytes.NewReader(data), mime)
+	if ok {
+		derived.Store(key, d)
+	}
+	return d, ok
+}
+
+// deriveFrom reads an image from r (an upload on disk is not cached by
+// content: it is not seeded again). A readable header is enough to be a
+// picture; the thumbnail and preview need the whole image to decode.
+func deriveFrom(r io.ReadSeeker, mime string) (derivedImage, bool) {
+	cfg, _, err := image.DecodeConfig(r)
 	if err != nil {
 		return derivedImage{}, false
 	}
-	d := derivedImage{w: cfg.Width, h: cfg.Height, thumb: scaledJPEG(data, 120, 100)}
-	if mime != "image/gif" {
-		d.preview = scaledJPEG(data, 1920, 0)
+	d := derivedImage{w: cfg.Width, h: cfg.Height}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return d, true
 	}
-	derived.Store(key, d)
+	src, _, err := image.Decode(r)
+	if err != nil {
+		return d, true
+	}
+	d.thumb = scaledJPEG(src, 120, 100)
+	if mime != "image/gif" {
+		d.preview = scaledJPEG(src, 1920, 0)
+	}
 	return d, true
 }
 
@@ -286,17 +328,32 @@ func (s *Server) fileHandler(what string) func(http.ResponseWriter, *http.Reques
 		if f == nil {
 			return
 		}
-		data, ctype := f.data, f.info.MimeType
+		var content io.ReadSeekCloser
+		ctype := f.info.MimeType
 		switch what {
 		case "thumbnail":
-			data, ctype = f.thumb, "image/jpeg"
+			content, ctype = derivedContent(f.thumb), "image/jpeg"
 		case "preview":
-			data, ctype = f.preview, "image/jpeg"
+			content, ctype = derivedContent(f.preview), "image/jpeg"
+			if f.previewPath != "" {
+				var err error
+				if content, err = os.Open(f.previewPath); err != nil {
+					appError(w, 500, "api.file.get_file.app_error", "could not read the file")
+					return
+				}
+			}
+		default:
+			var err error
+			if content, err = f.open(); err != nil {
+				appError(w, 500, "api.file.get_file.app_error", "could not read the file")
+				return
+			}
 		}
-		if data == nil {
+		if content == nil {
 			appError(w, 400, "api.file.get_file_"+what+".no_"+what+".app_error", "no "+what)
 			return
 		}
+		defer content.Close()
 		w.Header().Set("Content-Type", ctype)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, max-age=86400")
@@ -304,34 +361,43 @@ func (s *Server) fileHandler(what string) func(http.ResponseWriter, *http.Reques
 		bps := s.fileThrottle
 		s.mu.Unlock()
 		if what == "" && bps > 0 {
-			streamThrottled(w, r, data, bps)
+			streamThrottled(w, r, content, f.info.Size, bps)
 			return
 		}
-		http.ServeContent(w, r, f.info.Name, time.Time{}, bytes.NewReader(data))
+		http.ServeContent(w, r, f.info.Name, time.Time{}, content)
 	}
 }
 
-// streamThrottled writes data in small chunks at roughly bytesPerSec,
-// flushing after each one so a client copying the response body observes
-// its progress growing over time instead of getting it all at once; it
-// does not support Range (SetFileThrottle is a dev/e2e knob, not used
-// together with partial requests).
-func streamThrottled(w http.ResponseWriter, r *http.Request, data []byte, bytesPerSec int) {
+// derivedContent is a derived image to serve; nil when there is none.
+func derivedContent(b []byte) io.ReadSeekCloser {
+	if b == nil {
+		return nil
+	}
+	return nopCloser{bytes.NewReader(b)}
+}
+
+// streamThrottled writes size bytes of content in small chunks at roughly
+// bytesPerSec, flushing after each one so a client copying the response
+// body observes its progress growing over time instead of getting it all
+// at once; it does not support Range (SetFileThrottle is a dev/e2e knob,
+// not used together with partial requests).
+func streamThrottled(w http.ResponseWriter, r *http.Request, content io.Reader, size int64, bytesPerSec int) {
 	const tick = 100 * time.Millisecond
-	chunk := max(1, bytesPerSec/10)
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	chunk := make([]byte, max(1, bytesPerSec/10))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
-	for len(data) > 0 {
-		n := min(chunk, len(data))
-		if _, err := w.Write(data[:n]); err != nil {
-			return
+	for {
+		n, err := io.ReadFull(content, chunk)
+		if n > 0 {
+			if _, werr := w.Write(chunk[:n]); werr != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
-		data = data[n:]
-		if flusher != nil {
-			flusher.Flush()
-		}
-		if len(data) == 0 {
+		if err != nil { // io.EOF / io.ErrUnexpectedEOF: all sent
 			return
 		}
 		select {
@@ -342,36 +408,39 @@ func streamThrottled(w http.ResponseWriter, r *http.Request, data []byte, bytesP
 	}
 }
 
-// readBodyThrottled reads r's body (capped at limit+1 bytes, so an
-// over-limit upload is detected without reading it in full) in small chunks
-// at roughly bytesPerSec when bytesPerSec > 0, so a client's upload progress
-// can be observed growing over time instead of the body landing all at
-// once — the upload-side counterpart of streamThrottled (SetUploadThrottle
-// is a dev/e2e knob, not meant to model real network behaviour).
-func readBodyThrottled(r *http.Request, limit int64, bytesPerSec int) ([]byte, error) {
+// copyBodyThrottled copies r's body to dst (capped at limit+1 bytes, so an
+// over-limit upload is detected without reading it in full), in small
+// chunks at roughly bytesPerSec when bytesPerSec > 0, so a client's upload
+// progress can be observed growing over time instead of the body landing
+// all at once — the upload-side counterpart of streamThrottled
+// (SetUploadThrottle is a dev/e2e knob, not meant to model real network
+// behaviour).
+func copyBodyThrottled(dst io.Writer, r *http.Request, limit int64, bytesPerSec int) (int64, error) {
 	body := io.LimitReader(r.Body, limit+1)
 	if bytesPerSec <= 0 {
-		return io.ReadAll(body)
+		return io.Copy(dst, body)
 	}
 	const tick = 100 * time.Millisecond
-	chunk := max(1, bytesPerSec/10)
-	buf := make([]byte, 0, chunk)
-	small := make([]byte, chunk)
+	small := make([]byte, max(1, bytesPerSec/10))
+	var total int64
 	for {
 		n, err := body.Read(small)
 		if n > 0 {
-			buf = append(buf, small[:n]...)
+			if _, werr := dst.Write(small[:n]); werr != nil {
+				return total, werr
+			}
+			total += int64(n)
 		}
 		if err == io.EOF {
-			return buf, nil
+			return total, nil
 		}
 		if err != nil {
-			return buf, err
+			return total, err
 		}
 		select {
 		case <-time.After(tick):
 		case <-r.Context().Done():
-			return buf, r.Context().Err()
+			return total, r.Context().Err()
 		}
 	}
 }
@@ -432,17 +501,28 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, u User) {
 		appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
 		return
 	}
-	data, err := readBodyThrottled(r, maxSize, bps)
-	if err != nil {
-		appError(w, 400, "api.file.upload_file.read_request.app_error", "could not read the request body")
-		return
+	var f *ffile
+	if s.filesDir != "" {
+		f = s.storeUpload(w, r, channelID, filename, maxSize, bps)
+	} else {
+		var buf bytes.Buffer
+		buf.Grow(int(r.ContentLength)) // checked ≤ maxSize: no spare capacity kept
+		if _, err := copyBodyThrottled(&buf, r, maxSize, bps); err != nil {
+			appError(w, 400, "api.file.upload_file.read_request.app_error", "could not read the request body")
+			return
+		}
+		if int64(buf.Len()) > maxSize {
+			appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
+			return
+		}
+		s.mu.Lock()
+		f = s.newFileLocked("", channelID, filename, sniffMime(filename, buf.Bytes()), buf.Bytes())
+		s.mu.Unlock()
 	}
-	if int64(len(data)) > maxSize {
-		appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
+	if f == nil {
 		return
 	}
 	s.mu.Lock()
-	f := s.newFileLocked("", channelID, filename, sniffMime(filename, data), data)
 	f.info.UserID = u.ID
 	info := f.info
 	s.mu.Unlock()
@@ -450,6 +530,53 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, u User) {
 		"file_infos": []model.FileInfo{info},
 		"client_ids": []string{clientID},
 	})
+}
+
+// storeUpload writes an upload to the fake's files dir, streamed, and
+// registers it; nil after an error answer. Pictures are decoded from the
+// file for their thumbnail and preview.
+func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, channelID, filename string, maxSize int64, bps int) *ffile {
+	tmp, err := os.CreateTemp(s.filesDir, "upload-*")
+	if err != nil {
+		appError(w, 500, "api.file.upload_file.storage.app_error", "could not store the file")
+		return nil
+	}
+	size, err := copyBodyThrottled(tmp, r, maxSize, bps)
+	var head [512]byte
+	n, _ := tmp.ReadAt(head[:], 0)
+	mime := sniffMime(filename, head[:n])
+	var d derivedImage
+	derivedOK := false
+	if err == nil && size <= maxSize && isPicture(mime) {
+		if _, err = tmp.Seek(0, io.SeekStart); err == nil {
+			d, derivedOK = deriveFrom(tmp, mime)
+		}
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	switch {
+	case err != nil:
+		_ = os.Remove(tmp.Name())
+		appError(w, 400, "api.file.upload_file.read_request.app_error", "could not read the request body")
+		return nil
+	case size > maxSize:
+		_ = os.Remove(tmp.Name())
+		appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
+		return nil
+	}
+	f := newFFile("", channelID, filename, mime, size)
+	f.path = tmp.Name()
+	if derivedOK {
+		f.setDerived(d)
+		if d.preview != nil && os.WriteFile(f.path+".preview", d.preview, 0o600) == nil {
+			f.previewPath, f.preview = f.path+".preview", nil
+		}
+	}
+	s.mu.Lock()
+	s.chat.files[f.info.ID] = f
+	s.mu.Unlock()
+	return f
 }
 
 // FailUploads makes the next n POST /api/v4/files fail with 500, like

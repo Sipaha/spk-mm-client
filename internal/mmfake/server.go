@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +50,13 @@ type Options struct {
 
 	DisableFileAttachments bool  // EnableFileAttachments client config; POST /api/v4/files answers 403 when set
 	MaxFileSize            int64 // bytes; 0 -> DefaultMaxFileSize
+
+	// FilesDir: uploaded files (POST /api/v4/files) are stored on disk in a
+	// directory of their own under it, removed on Close, instead of in
+	// memory. The dev desktop runs the fake in its own process, and a memory
+	// check of the client must not measure the fake keeping every upload.
+	// "" keeps them in memory (tests).
+	FilesDir string
 }
 
 // DefaultMaxFileSize mirrors the real server's default (model/config.go,
@@ -72,6 +81,8 @@ type Server struct {
 	hits           map[string]int
 	fileThrottle   int // bytes/sec, 0 = full speed (SetFileThrottle)
 	uploadThrottle int // bytes/sec, 0 = full speed (SetUploadThrottle)
+
+	filesDir string // uploads on disk (Options.FilesDir); "" = in memory
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.
@@ -92,6 +103,13 @@ func Start(o Options) *Server {
 		o.MaxFileSize = DefaultMaxFileSize
 	}
 	s := &Server{opts: o, sessions: map[string]string{}, pending: map[string]string{}, hub: wsHub{sessions: map[string]*wsSession{}}}
+	if o.FilesDir != "" {
+		if err := os.MkdirAll(o.FilesDir, 0o700); err != nil {
+			slog.Warn("mmfake: files dir unavailable, uploads kept in memory", "err", err)
+		} else if s.filesDir, err = os.MkdirTemp(o.FilesDir, "files-*"); err != nil {
+			slog.Warn("mmfake: files dir unavailable, uploads kept in memory", "err", err)
+		}
+	}
 	s.seed()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v4/system/ping", func(w http.ResponseWriter, _ *http.Request) {
@@ -116,6 +134,9 @@ func (s *Server) URL() string { return s.ts.URL }
 func (s *Server) Close() {
 	s.DropConnections(true)
 	s.ts.Close()
+	if s.filesDir != "" {
+		_ = os.RemoveAll(s.filesDir)
+	}
 }
 
 func (s *Server) ActiveSessions() int {
