@@ -73,3 +73,24 @@ func TestClientConfigCustomEmojiFlag(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "true", cfg.EnableCustomEmoji)
 }
+
+func TestClientConfigFileLimits(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"SiteName":"MM","MaxFileSize":"104857600","EnableFileAttachments":"true"}`))
+	})
+	cfg, err := c.ClientConfig(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "104857600", cfg.MaxFileSize)
+	assert.Equal(t, int64(104857600), cfg.MaxFileSizeBytes())
+	assert.True(t, cfg.FileAttachmentsEnabled())
+}
+
+func TestClientConfigFileLimitsDefaultsWhenAbsent(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"SiteName":"MM"}`))
+	})
+	cfg, err := c.ClientConfig(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, cfg.MaxFileSizeBytes(), "an unparseable/missing MaxFileSize is 0, not garbage")
+	assert.False(t, cfg.FileAttachmentsEnabled())
+}

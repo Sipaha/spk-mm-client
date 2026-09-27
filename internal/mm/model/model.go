@@ -119,6 +119,8 @@ type OrderedCategories struct {
 
 type FileInfo struct {
 	ID              string `json:"id"`
+	UserID          string `json:"user_id,omitempty"`
+	PostID          string `json:"post_id,omitempty"`
 	Name            string `json:"name"`
 	Extension       string `json:"extension,omitempty"`
 	Size            int64  `json:"size"`

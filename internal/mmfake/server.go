@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +45,14 @@ type Options struct {
 	SinceLimit int // 0 -> 1000
 
 	DisableCustomEmoji bool // custom emoji endpoints answer 501 and the config says false
+
+	DisableFileAttachments bool  // EnableFileAttachments client config; POST /api/v4/files answers 403 when set
+	MaxFileSize            int64 // bytes; 0 -> DefaultMaxFileSize
 }
+
+// DefaultMaxFileSize mirrors the real server's default (model/config.go,
+// FileSettings.MaxFileSize): 100 MiB.
+const DefaultMaxFileSize int64 = 100 << 20
 
 type Server struct {
 	ts       *httptest.Server
@@ -56,13 +64,14 @@ type Server struct {
 	hub      wsHub
 
 	// network conditions (test controls, see net.go)
-	down          bool
-	latency       map[string]time.Duration
-	failures      map[string]failure
-	broken        map[string]bool // BreakReplies
-	rejectResumes bool
-	hits          map[string]int
-	fileThrottle  int // bytes/sec, 0 = full speed (SetFileThrottle)
+	down           bool
+	latency        map[string]time.Duration
+	failures       map[string]failure
+	broken         map[string]bool // BreakReplies
+	rejectResumes  bool
+	hits           map[string]int
+	fileThrottle   int // bytes/sec, 0 = full speed (SetFileThrottle)
+	uploadThrottle int // bytes/sec, 0 = full speed (SetUploadThrottle)
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.
@@ -78,6 +87,9 @@ func Start(o Options) *Server {
 			{ID: "u-bob", Username: "bob", Password: "secret"},
 			{ID: "u-carol", Username: "carol", Password: "secret"},
 		}
+	}
+	if o.MaxFileSize == 0 {
+		o.MaxFileSize = DefaultMaxFileSize
 	}
 	s := &Server{opts: o, sessions: map[string]string{}, pending: map[string]string{}, hub: wsHub{sessions: map[string]*wsSession{}}}
 	s.seed()
@@ -193,6 +205,8 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 		"CollapsedThreads":       crt,
 		"TeammateNameDisplay":    "username",
 		"EnableCustomEmoji":      fmt.Sprint(!s.opts.DisableCustomEmoji),
+		"EnableFileAttachments":  fmt.Sprint(!s.opts.DisableFileAttachments),
+		"MaxFileSize":            strconv.FormatInt(s.opts.MaxFileSize, 10),
 	})
 }
 

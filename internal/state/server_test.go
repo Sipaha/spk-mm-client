@@ -61,6 +61,18 @@ func TestCRTFromConfigAndPreference(t *testing.T) {
 	}
 }
 
+func TestBootstrapCarriesFileLimits(t *testing.T) {
+	s := newFixture()
+	assert.Zero(t, s.MaxFileSize(), "unknown before any bootstrap")
+	assert.False(t, s.FileAttachmentsEnabled())
+	b := fixture()
+	b.Config.MaxFileSize = 104857600
+	b.Config.EnableFileAttachments = true
+	s.Bootstrap(b)
+	assert.Equal(t, int64(104857600), s.MaxFileSize())
+	assert.True(t, s.FileAttachmentsEnabled())
+}
+
 func TestBadgeSkipsMutedAndArchived(t *testing.T) {
 	s := newFixture()
 	b := s.Badge()

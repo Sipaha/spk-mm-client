@@ -11,7 +11,10 @@ import (
 	_ "image/gif" // image.Decode of uploaded GIFs
 	"image/jpeg"
 	"image/png"
+	"io"
+	stdmime "mime"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -209,6 +212,7 @@ func (s *Server) allUserIDs() []string {
 func (s *Server) mediaRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/users/{uid}/image", s.handleAuthed(s.userImage))
 	mux.HandleFunc("POST /api/v4/users/status/ids", s.handleAuthed(s.statusesByIDs))
+	mux.HandleFunc("POST /api/v4/files", s.handleAuthed(s.uploadFile))
 	mux.HandleFunc("GET /api/v4/files/{fid}", s.handleAuthed(s.fileHandler("")))
 	mux.HandleFunc("GET /api/v4/files/{fid}/thumbnail", s.handleAuthed(s.fileHandler("thumbnail")))
 	mux.HandleFunc("GET /api/v4/files/{fid}/preview", s.handleAuthed(s.fileHandler("preview")))
@@ -338,6 +342,120 @@ func streamThrottled(w http.ResponseWriter, r *http.Request, data []byte, bytesP
 	}
 }
 
+// readBodyThrottled reads r's body (capped at limit+1 bytes, so an
+// over-limit upload is detected without reading it in full) in small chunks
+// at roughly bytesPerSec when bytesPerSec > 0, so a client's upload progress
+// can be observed growing over time instead of the body landing all at
+// once — the upload-side counterpart of streamThrottled (SetUploadThrottle
+// is a dev/e2e knob, not meant to model real network behaviour).
+func readBodyThrottled(r *http.Request, limit int64, bytesPerSec int) ([]byte, error) {
+	body := io.LimitReader(r.Body, limit+1)
+	if bytesPerSec <= 0 {
+		return io.ReadAll(body)
+	}
+	const tick = 100 * time.Millisecond
+	chunk := max(1, bytesPerSec/10)
+	buf := make([]byte, 0, chunk)
+	small := make([]byte, chunk)
+	for {
+		n, err := body.Read(small)
+		if n > 0 {
+			buf = append(buf, small[:n]...)
+		}
+		if err == io.EOF {
+			return buf, nil
+		}
+		if err != nil {
+			return buf, err
+		}
+		select {
+		case <-time.After(tick):
+		case <-r.Context().Done():
+			return buf, r.Context().Err()
+		}
+	}
+}
+
+// sniffMime guesses a MIME type for an uploaded file the way the real
+// server does when the client sends none: by extension first, falling back
+// to sniffing the content.
+func sniffMime(name string, data []byte) string {
+	if ext := filepath.Ext(name); ext != "" {
+		if t := stdmime.TypeByExtension(ext); t != "" {
+			if i := strings.IndexByte(t, ';'); i >= 0 {
+				t = t[:i]
+			}
+			return t
+		}
+	}
+	return http.DetectContentType(data)
+}
+
+// uploadFile implements the server's "simple" upload mode (api4/file.go
+// uploadFileStream): channel_id, filename and an optional client_id in the
+// query, a raw body with a required Content-Length. Multipart mode is not
+// implemented — the client only ever sends one file per request.
+func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, u User) {
+	q := r.URL.Query()
+	channelID, filename, clientID := q.Get("channel_id"), q.Get("filename"), q.Get("client_id")
+	s.mu.Lock()
+	failing := s.chat.failUploads > 0
+	if failing {
+		s.chat.failUploads--
+	}
+	member := s.isMemberLocked(channelID, u.ID)
+	disabled := s.opts.DisableFileAttachments
+	maxSize := s.opts.MaxFileSize
+	bps := s.uploadThrottle
+	s.mu.Unlock()
+	switch {
+	// failing is checked first, like createPost's failPosts: "the next n
+	// uploads fail" is unconditional, not gated on whether the request
+	// would otherwise have succeeded.
+	case failing:
+		appError(w, 500, "app.upload.upload_data.app_error", "injected failure")
+		return
+	case !member:
+		appError(w, 403, "api.context.permissions.app_error", "no permission")
+		return
+	case disabled:
+		appError(w, 403, "api.file.attachments.disabled.app_error", "file attachments are disabled")
+		return
+	case r.ContentLength <= 0:
+		appError(w, 400, "api.file.upload_file.read_request.app_error", "Content-Length is required")
+		return
+	case r.ContentLength > maxSize:
+		appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
+		return
+	}
+	data, err := readBodyThrottled(r, maxSize, bps)
+	if err != nil {
+		appError(w, 400, "api.file.upload_file.read_request.app_error", "could not read the request body")
+		return
+	}
+	if int64(len(data)) > maxSize {
+		appError(w, 413, "api.file.upload_file.too_large_detailed.app_error", "file too large")
+		return
+	}
+	s.mu.Lock()
+	f := s.newFileLocked("", channelID, filename, sniffMime(filename, data), data)
+	f.info.UserID = u.ID
+	info := f.info
+	s.mu.Unlock()
+	writeJSON(w, 201, map[string]any{
+		"file_infos": []model.FileInfo{info},
+		"client_ids": []string{clientID},
+	})
+}
+
+// FailUploads makes the next n POST /api/v4/files fail with 500, like
+// FailPosts does for posts (send-failure/retry tests).
+func (s *Server) FailUploads(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chat.failUploads = n
+}
+
 func (s *Server) fileInfo(w http.ResponseWriter, r *http.Request, u User) {
 	if f := s.fileFor(w, r, u); f != nil {
 		writeJSON(w, 200, f.info)
@@ -415,8 +533,10 @@ func (s *Server) SetPicture(username string) int64 {
 func (s *Server) PostFile(channelID, username, message, name, mime string, data []byte) model.Post {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	uid := s.userIDByName(username)
 	f := s.newFileLocked("", channelID, name, mime, data)
-	p, e := s.createPostLocked(s.userIDByName(username), model.Post{ChannelID: channelID, Message: message, FileIDs: []string{f.info.ID}})
+	f.info.UserID = uid // as if uid had just uploaded it: createPostLocked only attaches the uploader's own files
+	p, e := s.createPostLocked(uid, model.Post{ChannelID: channelID, Message: message, FileIDs: []string{f.info.ID}})
 	if e != nil {
 		panic("mmfake: PostFile: " + e.id)
 	}

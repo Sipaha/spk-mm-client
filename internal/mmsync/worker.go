@@ -702,6 +702,8 @@ func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool
 	b.Config = state.Config{CollapsedThreads: cfg.CollapsedThreads, TeammateNameDisplay: cfg.TeammateNameDisplay,
 		LockTeammateNameDisplay: cfg.LockTeammateNameDisplay == "true",
 		CustomEmoji:             cfg.EnableCustomEmoji == "true",
+		MaxFileSize:             cfg.MaxFileSizeBytes(),
+		EnableFileAttachments:   cfg.FileAttachmentsEnabled(),
 	}
 	if b.Me, err = w.rc.Me(ctx); err != nil {
 		return b, false, err

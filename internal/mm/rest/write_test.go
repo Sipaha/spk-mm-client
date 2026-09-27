@@ -31,6 +31,32 @@ func TestCreatePostSendsPendingIDAndAccepts201(t *testing.T) {
 	assert.Equal(t, "p1", p.ID)
 }
 
+func TestCreatePostSendsFileIDs(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var in map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
+		assert.Equal(t, []any{"f1", "f2"}, in["file_ids"])
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"p1","channel_id":"c1","file_ids":["f1","f2"]}`))
+	})
+	p, err := c.CreatePost(context.Background(), model.Post{ChannelID: "c1", FileIDs: []string{"f1", "f2"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f1", "f2"}, p.FileIDs)
+}
+
+func TestCreatePostWithoutFileIDsOmitsTheField(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var in map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
+		_, has := in["file_ids"]
+		assert.False(t, has, "no file_ids field when there are no attachments")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"p1"}`))
+	})
+	_, err := c.CreatePost(context.Background(), model.Post{ChannelID: "c1", Message: "hi"})
+	require.NoError(t, err)
+}
+
 func TestCreatePostIsNotRetriedOnServerError(t *testing.T) {
 	var n atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {

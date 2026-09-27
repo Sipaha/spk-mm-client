@@ -27,6 +27,26 @@ func TestBootstrapLoadsEverything(t *testing.T) {
 	h.eventually(func() bool { return h.view("c-town").Posts[58].Author == "carol" }, "authors are resolved after the page lands")
 }
 
+// TestBootstrapCarriesFileLimits confirms the fake's MaxFileSize/
+// EnableFileAttachments (config/client?format=old strings) reach
+// state.Config as an int64/bool through fetchMeta.
+func TestBootstrapCarriesFileLimits(t *testing.T) {
+	h := newHarness(t, mmfake.Options{MaxFileSize: 12345, DisableFileAttachments: false})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch did not finish")
+	assert.Equal(t, int64(12345), h.w.State().MaxFileSize())
+	assert.True(t, h.w.State().FileAttachmentsEnabled())
+}
+
+func TestBootstrapCarriesFileAttachmentsDisabled(t *testing.T) {
+	h := newHarness(t, mmfake.Options{DisableFileAttachments: true})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch did not finish")
+	assert.False(t, h.w.State().FileAttachmentsEnabled())
+}
+
 func TestLivePostArrivesCountsAndNotifies(t *testing.T) {
 	h := newHarness(t, mmfake.Options{})
 	h.start()

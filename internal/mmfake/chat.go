@@ -19,18 +19,19 @@ type fpost struct {
 }
 
 type chatData struct {
-	teams      []model.Team
-	channels   map[string]*model.Channel
-	members    map[string]map[string]*model.ChannelMember // channel → user → member
-	posts      map[string][]*fpost                        // channel → by CreateAt; includes deleted + history rows
-	byID       map[string]*fpost
-	pending    map[string]string // pending_post_id → post id
-	prefs      map[string][]model.Preference
-	status     map[string]string
-	events     []RecordedEvent
-	lastMs     int64
-	sinceLimit int
-	failPosts  int
+	teams       []model.Team
+	channels    map[string]*model.Channel
+	members     map[string]map[string]*model.ChannelMember // channel → user → member
+	posts       map[string][]*fpost                        // channel → by CreateAt; includes deleted + history rows
+	byID        map[string]*fpost
+	pending     map[string]string // pending_post_id → post id
+	prefs       map[string][]model.Preference
+	status      map[string]string
+	events      []RecordedEvent
+	lastMs      int64
+	sinceLimit  int
+	failPosts   int
+	failUploads int
 
 	files      map[string]*ffile
 	emoji      map[string]*femoji // by id
@@ -380,6 +381,28 @@ type apiErr struct {
 	id     string
 }
 
+// attachFilesLocked mirrors attachFileIDsToPost (app/post.go): ids that do
+// not exist, belong to another channel, were uploaded by another user, or
+// are already attached to a post are silently dropped; duplicates are
+// removed; survivors get post_id stamped on their FileInfo.
+func (s *Server) attachFilesLocked(postID, channelID, userID string, ids []string) []model.FileInfo {
+	seen := make(map[string]bool, len(ids))
+	var out []model.FileInfo
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		f := s.chat.files[id]
+		if f == nil || f.channelID != channelID || f.info.UserID != userID || f.info.PostID != "" {
+			continue
+		}
+		f.info.PostID = postID
+		out = append(out, f.info)
+	}
+	return out
+}
+
 func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *apiErr) {
 	c := s.chat.channels[in.ChannelID]
 	if c == nil || !s.isMemberLocked(c.ID, userID) {
@@ -394,8 +417,12 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	p := &fpost{Post: model.Post{ID: newID(), ChannelID: c.ID, UserID: userID, RootID: in.RootID,
 		Message: in.Message, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
 	if len(in.FileIDs) > 0 {
-		p.FileIDs = append([]string(nil), in.FileIDs...)
-		p.Metadata = &model.PostMetadata{Files: s.fileInfosLocked(in.FileIDs)}
+		if files := s.attachFilesLocked(p.ID, c.ID, userID, in.FileIDs); len(files) > 0 {
+			for _, fi := range files {
+				p.FileIDs = append(p.FileIDs, fi.ID)
+			}
+			p.Metadata = &model.PostMetadata{Files: files}
+		}
 	}
 	root := in.RootID == ""
 	c.LastPostAt = now

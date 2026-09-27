@@ -174,6 +174,8 @@ func classify(resp *http.Response) error {
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		e.Kind = KindAuth
+	case resp.StatusCode == http.StatusRequestEntityTooLarge:
+		e.Kind = KindTooLarge
 	case resp.StatusCode >= 500:
 		e.Kind = KindNetwork
 	default:

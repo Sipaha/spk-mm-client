@@ -10,9 +10,10 @@ type ErrKind int
 // ErrKind values classify why a request failed, so callers can branch on
 // network vs. auth vs. other API errors without string-matching messages.
 const (
-	KindNetwork ErrKind = iota + 1 // transport failure, timeout, 5xx
-	KindAuth                       // 401/403: token missing, expired or revoked
-	KindAPI                        // any other 4xx
+	KindNetwork  ErrKind = iota + 1 // transport failure, timeout, 5xx
+	KindAuth                        // 401/403: token missing, expired or revoked
+	KindAPI                         // any other 4xx
+	KindTooLarge                    // 413: the upload is over the server's MaxFileSize
 )
 
 // Error is every failure the client returns. ID/Message come from the
@@ -46,5 +47,6 @@ func kindOf(err error) ErrKind {
 	return 0
 }
 
-func IsAuth(err error) bool    { return kindOf(err) == KindAuth }
-func IsNetwork(err error) bool { return kindOf(err) == KindNetwork }
+func IsAuth(err error) bool     { return kindOf(err) == KindAuth }
+func IsNetwork(err error) bool  { return kindOf(err) == KindNetwork }
+func IsTooLarge(err error) bool { return kindOf(err) == KindTooLarge }

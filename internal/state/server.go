@@ -23,6 +23,8 @@ type Config struct {
 	TeammateNameDisplay     string `json:"teammate_name_display"`
 	LockTeammateNameDisplay bool   `json:"lock_teammate_name_display"`
 	CustomEmoji             bool   `json:"custom_emoji,omitempty"`
+	MaxFileSize             int64  `json:"max_file_size,omitempty"`
+	EnableFileAttachments   bool   `json:"enable_file_attachments,omitempty"`
 }
 
 type Bootstrap struct {
@@ -208,6 +210,20 @@ func (s *Server) CRT() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.crtLocked()
+}
+
+// MaxFileSize is the server's upload limit in bytes (0: unknown — no
+// bootstrap yet, or the server did not report it).
+func (s *Server) MaxFileSize() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.MaxFileSize
+}
+
+func (s *Server) FileAttachmentsEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.EnableFileAttachments
 }
 
 func (s *Server) TeamIDs() []string {

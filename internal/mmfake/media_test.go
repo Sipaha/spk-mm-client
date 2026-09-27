@@ -2,6 +2,7 @@ package mmfake
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -23,6 +24,20 @@ func (a authed) raw(method, path string, hdr http.Header) (*http.Response, []byt
 	for k, vs := range hdr {
 		req.Header[k] = vs
 	}
+	req.Header.Set("Authorization", "Bearer "+a.tok)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(a.t, err)
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp, b
+}
+
+// rawPost sends a raw-body POST; Go's client sets Content-Length from the
+// byte slice automatically, like the real uploader does for the simple
+// upload mode.
+func (a authed) rawPost(path string, body []byte) (*http.Response, []byte) {
+	a.t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, a.s.URL()+path, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+a.tok)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(a.t, err)
@@ -220,4 +235,125 @@ func TestPictureChangeIsBroadcast(t *testing.T) {
 	last := evs[len(evs)-1]
 	assert.Equal(t, "user_updated", last.Name)
 	assert.ElementsMatch(t, []string{"u-alice", "u-bob", "u-carol"}, last.To)
+}
+
+// TestUploadFileSimpleMode covers the happy path of the simple upload mode:
+// channel_id/filename/client_id in the query, a raw body, 201 with
+// file_infos/client_ids, and the FileInfo carrying the uploader.
+func TestUploadFileSimpleMode(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	resp, body := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=note.txt&client_id=att-1", []byte("hello upload"))
+	require.Equal(t, 201, resp.StatusCode)
+	var out struct {
+		FileInfos []model.FileInfo `json:"file_infos"`
+		ClientIDs []string         `json:"client_ids"`
+	}
+	require.NoError(t, json.Unmarshal(body, &out))
+	require.Len(t, out.FileInfos, 1)
+	fi := out.FileInfos[0]
+	assert.Equal(t, "note.txt", fi.Name)
+	assert.Equal(t, int64(len("hello upload")), fi.Size)
+	assert.Equal(t, "u-bob", fi.UserID)
+	assert.Equal(t, "", fi.PostID)
+	assert.NotEmpty(t, fi.ID)
+	assert.Equal(t, []string{"att-1"}, out.ClientIDs)
+
+	// The file is now readable through the normal file routes.
+	var info model.FileInfo
+	require.Equal(t, 200, a.call("GET", "/api/v4/files/"+fi.ID+"/info", nil, &info))
+	assert.Equal(t, fi.ID, info.ID)
+}
+
+// TestUploadFileRequiresChannelMembership mirrors PermissionUploadFile: a
+// user who is not a member of the target channel gets 403, and nothing is
+// stored.
+func TestUploadFileRequiresChannelMembership(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-secret&filename=x.txt", []byte("x"))
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// TestUploadFileEmptyBodyIs400 mirrors "Content-Length 0 -> 400": a raw
+// zero-byte upload is refused before anything is stored.
+func TestUploadFileEmptyBodyIs400(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=empty.txt", []byte{})
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+// TestUploadFileDisabledIs403 checks EnableFileAttachments=false gives the
+// same AppError id as the real server.
+func TestUploadFileDisabledIs403(t *testing.T) {
+	s := Start(Options{DisableFileAttachments: true})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	resp, body := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", []byte("x"))
+	assert.Equal(t, 403, resp.StatusCode)
+	assert.Contains(t, string(body), "api.file.attachments.disabled.app_error")
+
+	var cfg map[string]string
+	require.Equal(t, 200, a.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, "false", cfg["EnableFileAttachments"])
+}
+
+// TestUploadFileOverMaxSizeIs413 checks the fake's configurable MaxFileSize
+// limit and its default (100 MiB, exposed in the client config).
+func TestUploadFileOverMaxSizeIs413(t *testing.T) {
+	s := Start(Options{MaxFileSize: 10})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", bytes.Repeat([]byte("x"), 11))
+	assert.Equal(t, 413, resp.StatusCode)
+
+	resp, _ = a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", bytes.Repeat([]byte("x"), 10))
+	assert.Equal(t, 201, resp.StatusCode)
+
+	def := Start(Options{})
+	defer def.Close()
+	b := loginAs(t, def, "bob")
+	var cfg map[string]string
+	require.Equal(t, 200, b.call("GET", "/api/v4/config/client?format=old", nil, &cfg))
+	assert.Equal(t, strconv.FormatInt(DefaultMaxFileSize, 10), cfg["MaxFileSize"])
+}
+
+// TestFailUploadsInjectsAServerError lets a test make the next n uploads
+// fail with 500, like FailPosts does for posts.
+func TestFailUploadsInjectsAServerError(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	s.FailUploads(1)
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", []byte("x"))
+	assert.Equal(t, 500, resp.StatusCode)
+	resp, _ = a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=x.txt", []byte("x"))
+	assert.Equal(t, 201, resp.StatusCode)
+}
+
+// TestUploadThrottleSlowsReadingTheBody is the upload-side counterpart of
+// TestFileThrottleSlowsPlainDownloadOnly: it makes the fake read the request
+// body slowly, in small chunks, so an e2e test can catch upload progress
+// mid-way (0 restores full speed).
+func TestUploadThrottleSlowsReadingTheBody(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "bob")
+	data := bytes.Repeat([]byte("x"), 300)
+
+	s.SetUploadThrottle(1000) // chunk 100 B/100 ms: 300 B takes 2 waits, ~200 ms
+	start := time.Now()
+	resp, _ := a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=slow.bin", data)
+	require.Equal(t, 201, resp.StatusCode)
+	assert.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "throttled upload waits between chunks")
+
+	s.SetUploadThrottle(0)
+	start = time.Now()
+	resp, _ = a.rawPost("/api/v4/files?channel_id=c-offtopic&filename=fast.bin", data)
+	require.Equal(t, 201, resp.StatusCode)
+	assert.Less(t, time.Since(start), 150*time.Millisecond, "0 restores full-speed reading")
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
 )
@@ -18,9 +19,21 @@ type ClientConfig struct {
 	TeammateNameDisplay     string `json:"TeammateNameDisplay"`
 	LockTeammateNameDisplay string `json:"LockTeammateNameDisplay"`
 	EnableCustomEmoji       string `json:"EnableCustomEmoji"`
+	MaxFileSize             string `json:"MaxFileSize"`
+	EnableFileAttachments   string `json:"EnableFileAttachments"`
 }
 
 func (c ClientConfig) GitLabEnabled() bool { return c.EnableSignUpWithGitLab == "true" }
+
+// MaxFileSizeBytes parses MaxFileSize (a decimal string in format=old); an
+// empty or unparseable value is 0 — callers should treat 0 as "unknown",
+// not as a real zero-byte limit.
+func (c ClientConfig) MaxFileSizeBytes() int64 {
+	n, _ := strconv.ParseInt(c.MaxFileSize, 10, 64)
+	return n
+}
+
+func (c ClientConfig) FileAttachmentsEnabled() bool { return c.EnableFileAttachments == "true" }
 
 type User = model.User
 

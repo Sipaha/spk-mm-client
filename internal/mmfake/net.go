@@ -126,6 +126,16 @@ func (s *Server) SetFileThrottle(bytesPerSec int) {
 	s.fileThrottle = bytesPerSec
 }
 
+// SetUploadThrottle makes POST /api/v4/files (the simple upload mode) read
+// its request body slowly, in small chunks, so an e2e test can catch an
+// upload's progress mid-way — the upload-side counterpart of
+// SetFileThrottle (0 restores full-speed reading).
+func (s *Server) SetUploadThrottle(bytesPerSec int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.uploadThrottle = bytesPerSec
+}
+
 // RejectResumes makes the WebSocket endpoint close every socket that asks
 // to resume (connection_id given) right after the upgrade, without a hello —
 // what the real server does with a connection_id it does not accept.

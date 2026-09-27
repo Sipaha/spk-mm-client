@@ -11,20 +11,23 @@ import (
 // createPostReq is the subset of a Post the server needs; sending the whole
 // model.Post would post zero-valued fields (props, create_at) we never set.
 type createPostReq struct {
-	ChannelID     string `json:"channel_id"`
-	Message       string `json:"message"`
-	RootID        string `json:"root_id,omitempty"`
-	PendingPostID string `json:"pending_post_id,omitempty"`
-	UserID        string `json:"user_id,omitempty"`
+	ChannelID     string   `json:"channel_id"`
+	Message       string   `json:"message"`
+	RootID        string   `json:"root_id,omitempty"`
+	PendingPostID string   `json:"pending_post_id,omitempty"`
+	UserID        string   `json:"user_id,omitempty"`
+	FileIDs       []string `json:"file_ids,omitempty"`
 }
 
 // CreatePost is never retried on transport errors (do() only retries GET);
 // resending with the same pending_post_id is safe — the server returns the
-// already-created post for 30 s.
+// already-created post for 30 s. FileIDs must already be uploaded (see
+// Client.UploadFile); the server silently drops any id it cannot attach.
 func (c *Client) CreatePost(ctx context.Context, p model.Post) (model.Post, error) {
 	var out model.Post
 	_, err := c.do(ctx, http.MethodPost, "/api/v4/posts",
-		createPostReq{ChannelID: p.ChannelID, Message: p.Message, RootID: p.RootID, PendingPostID: p.PendingPostID, UserID: p.UserID}, &out)
+		createPostReq{ChannelID: p.ChannelID, Message: p.Message, RootID: p.RootID, PendingPostID: p.PendingPostID,
+			UserID: p.UserID, FileIDs: p.FileIDs}, &out)
 	return out, err
 }
 

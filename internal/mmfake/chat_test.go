@@ -112,6 +112,46 @@ func TestCreateIsIdempotentByPendingIDAndCountsMentions(t *testing.T) {
 	assert.Equal(t, s.Channel("c-offtopic").TotalMsgCount, s.Member("c-offtopic", "bob").MsgCount, "own post is read")
 }
 
+// TestCreatePostValidatesFileIDs mirrors attachFileIDsToPost (app/post.go):
+// unknown ids, ids from another channel, ids uploaded by another user and
+// ids already attached to a post are silently dropped; duplicates are
+// removed; survivors get post_id stamped.
+func TestCreatePostValidatesFileIDs(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+
+	s.mu.Lock()
+	own := s.newFileLocked("f-own", "c-offtopic", "own.txt", "text/plain", []byte("mine"))
+	own.info.UserID = "u-bob"
+	otherChannel := s.newFileLocked("f-other-channel", "c-secret", "sec.txt", "text/plain", []byte("nope"))
+	otherChannel.info.UserID = "u-bob"
+	notMine := s.newFileLocked("f-not-mine", "c-offtopic", "notmine.txt", "text/plain", []byte("nope"))
+	notMine.info.UserID = "u-alice"
+	s.mu.Unlock()
+
+	b := loginAs(t, s, "bob")
+	var p model.Post
+	ids := []string{"f-own", "f-own", "f-missing", "f-other-channel", "f-not-mine"}
+	body := map[string]any{"channel_id": "c-offtopic", "message": "files", "file_ids": ids}
+	require.Equal(t, 201, b.call("POST", "/api/v4/posts", body, &p))
+	assert.Equal(t, []string{"f-own"}, p.FileIDs, "unknown/other-channel/other-user ids are dropped, duplicates removed")
+	require.NotNil(t, p.Metadata)
+	require.Len(t, p.Metadata.Files, 1)
+	assert.Equal(t, "f-own", p.Metadata.Files[0].ID)
+
+	// The file is now attached: reusing it on a second post drops it too.
+	var p2 model.Post
+	body2 := map[string]any{"channel_id": "c-offtopic", "message": "again", "file_ids": []string{"f-own"}}
+	require.Equal(t, 201, b.call("POST", "/api/v4/posts", body2, &p2))
+	assert.Empty(t, p2.FileIDs, "a file already attached to a post cannot be attached again")
+	assert.Nil(t, p2.Metadata)
+
+	s.mu.Lock()
+	info := s.chat.files["f-own"].info
+	s.mu.Unlock()
+	assert.Equal(t, p.ID, info.PostID, "post_id is stamped on the file")
+}
+
 func TestDMCountsAsMention(t *testing.T) {
 	s := Start(Options{})
 	defer s.Close()
