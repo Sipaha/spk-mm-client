@@ -115,3 +115,11 @@ func (w *API) RemoveAttachment(id int64, attachmentID string) error {
 func (w *API) RetryAttachment(id int64, attachmentID string) error {
 	return w.a.RetryAttachment(context.Background(), id, attachmentID)
 }
+
+func (w *API) AttachFromClipboard(id int64, channelID string) (int, error) {
+	return w.a.AttachFromClipboard(context.Background(), id, channelID)
+}
+
+func (w *API) PickAttachments(id int64, channelID string) (int, error) {
+	return w.a.PickAttachments(context.Background(), id, channelID)
+}

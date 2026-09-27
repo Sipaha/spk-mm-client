@@ -325,3 +325,32 @@ func TestAttachmentRoutes(t *testing.T) {
 	assert.Equal(t, "session_expired", body["code"])
 	assert.Equal(t, []string{"list 3/c1", "remove 3/a1", "retry 3/a1"}, f.dl)
 }
+
+func (f *fakeAPI) AttachFromClipboard(_ context.Context, id int64, channelID string) (int, error) {
+	f.dl = append(f.dl, fmt.Sprintf("paste %d/%s", id, channelID))
+	return 2, nil
+}
+
+func (f *fakeAPI) PickAttachments(_ context.Context, id int64, channelID string) (int, error) {
+	f.dl = append(f.dl, fmt.Sprintf("pick %d/%s", id, channelID))
+	return 0, &api.CodedError{Code: api.CodeUnsupported}
+}
+
+func TestAttachmentSourceRoutes(t *testing.T) {
+	f := &fakeAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "AttachFromClipboard", `{"id":3,"channel_id":"c1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	var n int
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&n))
+	assert.Equal(t, 2, n)
+	resp = call(t, h, ts.URL, "PickAttachments", `{"id":3,"channel_id":"c1"}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "unsupported", body["code"])
+	assert.Equal(t, []string{"paste 3/c1", "pick 3/c1"}, f.dl)
+}

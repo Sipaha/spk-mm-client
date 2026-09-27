@@ -164,6 +164,9 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 	httpAPI := transport.NewHTTP(svc, em)
 	token := httpAPI.AuthToken()
 	mux.Handle("/api/", httpAPI)
+	// The page's files as raw bodies: the same guards as /api/ (bearer —
+	// never a query token on a POST —, Origin, and the loopback Host below).
+	mux.Handle("POST /api/attachments/{srv}/{channel}", transport.AuthGuard(token, transport.OriginGuard(uploadHandler(svc))))
 	if testAPI {
 		tm := http.NewServeMux()
 		tm.HandleFunc("POST /api/_test/deeplink", func(w http.ResponseWriter, r *http.Request) {

@@ -41,9 +41,10 @@ func Run(ctx context.Context, o Options) error {
 	var shutDown atomic.Bool
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	onShutdown := func() {
+	onShutdown := func() { // a Wails shutdown task: on the GTK main thread
 		shutDown.Store(true)
 		cancel()
+		cancelFileDialogs()
 	}
 	// winMu guards both the window pointer and the "show was requested
 	// before the window existed" flag *together*, plus serializes every
@@ -191,8 +192,32 @@ func Run(ctx context.Context, o Options) error {
 		BackgroundColour: application.NewRGBA(31, 31, 35, 255),
 		URL:              "/",
 		DevToolsEnabled:  devToolsEnabled,
-		Linux:            application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MM_CLIENT_GPU"))},
+		// Files dragged in from a file manager: Wails takes the drag at the
+		// GTK level (the page gets no drag events) and reports the native
+		// paths of a drop onto an element with data-file-drop-target as
+		// WindowFilesDropped below. WebKitGTK never gives the page the
+		// files' contents itself (docs/spikes/2026-09-27-attachments-spike.md).
+		EnableFileDrop: true,
+		Linux:          application.LinuxWindow{WebviewGpuPolicy: webviewGPUPolicy(os.Getenv("SPK_MM_CLIENT_GPU"))},
 	})
+	w.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+		var attrs map[string]string
+		if d := e.Context().DropTargetDetails(); d != nil {
+			attrs = d.Attributes
+		}
+		filesDropped(o.Service, attrs, e.Context().DroppedFiles())
+	})
+	// Attachment sources that read the system themselves — the UI never
+	// hands Go a path: the GTK clipboard (Ctrl+V) and the 📎 dialog.
+	o.Service.SetClipboard(newClipboard())
+	o.Service.SetFilePicker(&filePicker{title: pickerTitle(messagesLanguage(os.Getenv)), window: func() application.Window {
+		winMu.Lock()
+		defer winMu.Unlock()
+		if win == nil {
+			return nil
+		}
+		return win
+	}})
 	if feat.closeHides() {
 		w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 			e.Cancel()

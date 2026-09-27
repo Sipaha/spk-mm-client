@@ -128,6 +128,15 @@ func (s *Service) AddAttachmentBytes(ctx context.Context, id int64, channelID, n
 	return a, attachError(err)
 }
 
+// AttachmentSizeLimit is the largest file a server takes: its
+// MaxFileSize, attach.DefaultMaxFileSize while that is not known.
+func (s *Service) AttachmentSizeLimit(id int64) int64 {
+	if lim, err := (attachBackend{s}).Limits(id); err == nil && lim.MaxFileSize > 0 {
+		return lim.MaxFileSize
+	}
+	return attach.DefaultMaxFileSize
+}
+
 // Attachments implements API.
 func (s *Service) Attachments(_ context.Context, id int64, channelID string) ([]AttachmentView, error) {
 	if s.att == nil {

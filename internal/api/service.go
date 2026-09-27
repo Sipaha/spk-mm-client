@@ -62,6 +62,10 @@ type Service struct {
 	notifier Notifier
 	fileOpen Opener   // hands saved files to the system; nil: save only
 	reveal   Revealer // shows a saved file in the file manager; nil: open its folder
+	// clipboard and picker are the desktop's attachment sources; nil:
+	// unsupported (browser mode).
+	clipboard Clipboard
+	picker    FilePicker
 	// streamBase gives the desktop's media stream address; nil: "/media".
 	streamBase func() (string, error)
 	badgeFns   []func(Badge)

@@ -1,0 +1,271 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/spk/spk-mm-client/internal/attach"
+)
+
+// Clipboard reads the system clipboard for AttachFromClipboard (desktop:
+// GTK, asked on its main thread asynchronously — see
+// internal/desktop/clipboard_gtk.go). Every method gives up when ctx ends.
+type Clipboard interface {
+	// Targets are the formats the clipboard offers now.
+	Targets(ctx context.Context) ([]string, error)
+	// Contents of one target; the caller closes it.
+	Contents(ctx context.Context, target string) (io.ReadCloser, error)
+	// ImagePNG is the clipboard's picture as PNG, converted from whatever
+	// image format the owner offers; the caller closes it.
+	ImagePNG(ctx context.Context) (io.ReadCloser, error)
+}
+
+// FilePicker asks the user for files to attach (desktop: the native
+// open-file dialog). It returns once the user closes it; none: cancelled.
+type FilePicker interface {
+	PickFiles(ctx context.Context) ([]string, error)
+}
+
+// SetClipboard sets where AttachFromClipboard reads from; nil (browser
+// mode, where the page gets the pasted files itself): unsupported.
+func (s *Service) SetClipboard(c Clipboard) {
+	s.mu.Lock()
+	s.clipboard = c
+	s.mu.Unlock()
+}
+
+// SetFilePicker sets the dialog of PickAttachments; nil (browser mode, an
+// <input type=file> there): unsupported.
+func (s *Service) SetFilePicker(p FilePicker) {
+	s.mu.Lock()
+	s.picker = p
+	s.mu.Unlock()
+}
+
+// clipboardTimeout bounds each clipboard request: an owner that never
+// answers must not keep a paste waiting (GTK's own selection timeout is
+// longer).
+var clipboardTimeout = 2 * time.Second
+
+// Clipboard targets AttachFromClipboard understands.
+const (
+	targetURIList     = "text/uri-list"
+	targetGnomeCopied = "x-special/gnome-copied-files"
+	targetPNG         = "image/png"
+)
+
+// maxFileListSize bounds a file list read from the clipboard.
+const maxFileListSize = 1 << 20
+
+// AttachFromClipboard implements API: files copied in a file manager are
+// attached by path; otherwise a picture (PNG as is, any other format
+// converted to PNG) is spooled as "Screenshot <date> <time>.png"; anything
+// else attaches nothing. It returns how many were attached (they arrive
+// with attachments_changed); an error says why (the first one) when some
+// or all were refused.
+func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID string) (int, error) {
+	s.mu.Lock()
+	cb := s.clipboard
+	s.mu.Unlock()
+	if cb == nil {
+		return 0, coded(CodeUnsupported, nil)
+	}
+	if err := s.attachTarget(ctx, id, channelID); err != nil {
+		return 0, err
+	}
+	targets, err := clipboardCall(ctx, cb.Targets)
+	if err != nil {
+		return 0, coded(CodeClipboardFailed, err)
+	}
+	offered := map[string]bool{}
+	image := ""
+	for _, t := range targets {
+		offered[t] = true
+		if image == "" && strings.HasPrefix(t, "image/") {
+			image = t
+		}
+	}
+	var paths []string
+	if offered[targetURIList] {
+		paths = parseURIList(s.clipboardText(ctx, cb, targetURIList))
+	}
+	if len(paths) == 0 && offered[targetGnomeCopied] {
+		paths = parseGnomeCopiedFiles(s.clipboardText(ctx, cb, targetGnomeCopied))
+	}
+	switch {
+	case len(paths) > 0:
+		return s.addPaths(id, channelID, paths)
+	case image == "":
+		return 0, nil
+	}
+	var r io.ReadCloser
+	if offered[targetPNG] {
+		r, err = clipboardCall(ctx, func(ctx context.Context) (io.ReadCloser, error) { return cb.Contents(ctx, targetPNG) })
+	} else {
+		r, err = clipboardCall(ctx, cb.ImagePNG)
+	}
+	if err != nil {
+		return 0, coded(CodeClipboardFailed, err)
+	}
+	defer r.Close()
+	name := "Screenshot " + time.Now().Format("2006-01-02 15-04-05") + ".png"
+	if _, err := s.att.AddBytes(id, channelID, name, "image/png", r, 0); err != nil {
+		return 0, attachError(err)
+	}
+	return 1, nil
+}
+
+// clipboardCall is one clipboard request, bounded by clipboardTimeout.
+func clipboardCall[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, clipboardTimeout)
+	defer cancel()
+	return fn(ctx)
+}
+
+// clipboardText reads a small text target; a failure reads as empty.
+func (s *Service) clipboardText(ctx context.Context, cb Clipboard, target string) string {
+	r, err := clipboardCall(ctx, func(ctx context.Context) (io.ReadCloser, error) { return cb.Contents(ctx, target) })
+	if err != nil {
+		slog.Warn("clipboard target unreadable", "target", target, "err", err)
+		return ""
+	}
+	defer r.Close()
+	b, err := io.ReadAll(io.LimitReader(r, maxFileListSize))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// parseURIList gives the local paths of a text/uri-list (RFC 2483):
+// file:// URIs with no host or localhost, percent-decoded; links and other
+// schemes are left out.
+func parseURIList(list string) []string {
+	var out []string
+	for _, line := range strings.Split(list, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		u, err := url.Parse(line)
+		if err != nil || !strings.EqualFold(u.Scheme, "file") || u.Opaque != "" {
+			continue
+		}
+		if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+			continue
+		}
+		if !strings.HasPrefix(u.Path, "/") || strings.ContainsRune(u.Path, 0) {
+			continue
+		}
+		out = append(out, u.Path)
+	}
+	return out
+}
+
+// parseGnomeCopiedFiles reads x-special/gnome-copied-files ("copy" or
+// "cut", then one URI a line); a cut is attached like a copy — nothing is
+// ever moved.
+func parseGnomeCopiedFiles(data string) []string {
+	first, rest, _ := strings.Cut(data, "\n")
+	switch strings.TrimSpace(first) {
+	case "copy", "cut":
+		data = rest
+	}
+	return parseURIList(data)
+}
+
+// PickAttachments implements API: the file dialog (only on the user's
+// click — never at startup), then the chosen files by path.
+func (s *Service) PickAttachments(ctx context.Context, id int64, channelID string) (int, error) {
+	s.mu.Lock()
+	p := s.picker
+	s.mu.Unlock()
+	if p == nil {
+		return 0, coded(CodeUnsupported, nil)
+	}
+	if err := s.attachTarget(ctx, id, channelID); err != nil {
+		return 0, err
+	}
+	if err := s.attachRoom(id, channelID); err != nil {
+		return 0, err
+	}
+	paths, err := p.PickFiles(ctx)
+	if err != nil {
+		return 0, coded(CodeInternal, err)
+	}
+	return s.addPaths(id, channelID, paths)
+}
+
+// attachRoom refuses before a dialog opens what would be refused after
+// it: attachments off on the server, or the channel full.
+func (s *Service) attachRoom(id int64, channelID string) error {
+	lim, err := attachBackend{s}.Limits(id)
+	if err != nil {
+		return err
+	}
+	if lim.MaxFileSize > 0 && !lim.Enabled {
+		return coded(CodeAttachmentsDisabled, nil)
+	}
+	if len(s.att.List(id, channelID)) >= attach.MaxPerChannel {
+		return coded(CodeTooMany, nil)
+	}
+	return nil
+}
+
+// AttachDropped attaches files dropped onto a channel (desktop: Wails'
+// WindowFilesDropped). Nobody waits for the answer, so a refusal reaches
+// the UI as attachment_refused. Wails passes the dropped paths through the
+// page, so page script could forge a drop: only regular files are taken,
+// and they are only staged — shown as chips, sent by the user alone.
+func (s *Service) AttachDropped(ctx context.Context, id int64, channelID string, paths []string) int {
+	if err := s.attachTarget(ctx, id, channelID); err != nil {
+		s.refused(id, channelID, err)
+		return 0
+	}
+	n, err := s.addPaths(id, channelID, paths)
+	if err != nil {
+		s.refused(id, channelID, err)
+	}
+	return n
+}
+
+func (s *Service) refused(id int64, channelID string, err error) {
+	code := CodeInternal
+	var ce *CodedError
+	if errors.As(err, &ce) {
+		code = ce.Code
+	}
+	slog.Info("dropped files refused", "server", id, "code", code, "err", err)
+	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "code": code})
+}
+
+// addPaths attaches files by path in order (the caller checked the
+// target). A file that cannot be taken (a folder, empty, too large) is
+// skipped; a refusal that holds for the rest too (the channel is full,
+// attachments are off) stops. It returns how many were attached and the
+// first refusal.
+func (s *Service) addPaths(id int64, channelID string, paths []string) (int, error) {
+	n := 0
+	var first error
+	for _, p := range paths {
+		_, err := s.att.AddPath(id, channelID, p)
+		if err == nil {
+			n++
+			continue
+		}
+		err = attachError(err)
+		if first == nil {
+			first = err
+		}
+		var ce *CodedError
+		if !errors.As(err, &ce) || (ce.Code != CodeNotAFile && ce.Code != CodeEmptyFile && ce.Code != CodeTooLarge) {
+			break
+		}
+	}
+	return n, first
+}

@@ -96,6 +96,13 @@ type API interface {
 	RemoveAttachment(ctx context.Context, id int64, attachmentID string) error
 	// RetryAttachment sends a failed one again (never done automatically).
 	RetryAttachment(ctx context.Context, id int64, attachmentID string) error
+	// AttachFromClipboard attaches what the system clipboard holds: copied
+	// files by path, or a picture; it returns how many (desktop only — Go
+	// reads the clipboard itself; browser mode: unsupported).
+	AttachFromClipboard(ctx context.Context, id int64, channelID string) (int, error)
+	// PickAttachments opens the file dialog and attaches the chosen files;
+	// it returns how many (desktop only; browser mode: unsupported).
+	PickAttachments(ctx context.Context, id int64, channelID string) (int, error)
 }
 
 // Event types pushed to the UI.
@@ -117,6 +124,10 @@ const (
 	// removed, state, upload progress — at most ~4 a second per upload).
 	// Payload: server_id, channel_id, items ([]AttachmentView, the whole list).
 	EventAttachmentsChanged = "attachments_changed"
+	// EventAttachmentRefused: files dropped onto a channel were (partly)
+	// refused — a drop has no caller to answer. Payload: server_id,
+	// channel_id, code (the first refusal: not_a_file, too_large, …).
+	EventAttachmentRefused = "attachment_refused"
 )
 
 // Error codes. The UI maps them to localized messages (frontend/src/errors.ts).
@@ -148,6 +159,8 @@ const (
 	CodeNotAFile            = attach.CodeNotAFile
 	CodeFileChanged         = attach.CodeChanged
 	CodeEmptyFile           = attach.CodeEmptyFile
+	CodeUnsupported         = "unsupported"      // not in this mode (clipboard, file dialog in browser mode)
+	CodeClipboardFailed     = "clipboard_failed" // the clipboard did not answer in time or could not be read
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

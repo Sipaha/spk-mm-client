@@ -253,6 +253,12 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/RetryAttachment", handle(func(ctx context.Context, r *attachmentReq) (any, error) {
 		return nil, h.api.RetryAttachment(ctx, r.ID, r.AttachmentID)
 	}))
+	h.mux.HandleFunc("POST /api/AttachFromClipboard", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.AttachFromClipboard(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/PickAttachments", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.PickAttachments(ctx, r.ID, r.ChannelID)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 
