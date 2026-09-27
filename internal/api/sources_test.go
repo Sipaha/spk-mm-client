@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -57,6 +58,9 @@ type fakeClipboard struct {
 	mu      sync.Mutex
 	data    map[string][]byte
 	hang    bool // every request waits for ctx
+	delay   time.Duration
+	noKey   bool // no paste key press seen
+	gests   int
 	asked   []string
 	closed  int
 	opened  int
@@ -78,8 +82,13 @@ func (r countingCloser) Close() error {
 func (c *fakeClipboard) ask(ctx context.Context, what string) error {
 	c.mu.Lock()
 	c.asked = append(c.asked, what)
-	hang := c.hang
+	hang, delay := c.hang, c.delay
 	c.mu.Unlock()
+	select {
+	case <-time.After(delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if hang {
 		<-ctx.Done()
 		return ctx.Err()
@@ -92,6 +101,13 @@ func (c *fakeClipboard) reader(b []byte) io.ReadCloser {
 	c.opened++
 	c.mu.Unlock()
 	return countingCloser{Reader: bytes.NewReader(b), c: c}
+}
+
+func (c *fakeClipboard) TakePasteGesture() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gests++
+	return !c.noKey
 }
 
 func (c *fakeClipboard) Targets(ctx context.Context) ([]string, error) {
@@ -376,4 +392,114 @@ func TestDroppedFilesAreAttachedAndRefusalsReported(t *testing.T) {
 	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", []string{t.TempDir()}))
 	ev := f.nextEvent(EventAttachmentRefused)
 	assert.Equal(t, map[string]any{"server_id": id, "channel_id": "c-offtopic", "code": CodeNotAFile}, ev.Payload)
+}
+
+// Page script can call AttachFromClipboard at any time; only a paste key
+// the user really pressed lets it read the clipboard.
+func TestClipboardWithoutAPasteKeyReadsNothing(t *testing.T) {
+	f := newChatFixture(t)
+	f.withAttachments()
+	id := f.live(startFake(t))
+	cb := &fakeClipboard{noKey: true, data: map[string][]byte{"image/png": tinyPNG()}}
+	f.svc.SetClipboard(cb)
+
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	assert.Zero(t, n)
+	var ce *CodedError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, CodeNoPasteGesture, ce.Code)
+	assert.Empty(t, cb.requests(), "nothing read")
+	assert.Equal(t, 1, cb.gests)
+}
+
+// One deadline bounds the whole paste, not each request.
+func TestClipboardDeadlineCoversTheWholeCall(t *testing.T) {
+	f := newChatFixture(t)
+	f.withAttachments()
+	id := f.live(startFake(t))
+	defer func(d time.Duration) { clipboardTimeout = d }(clipboardTimeout)
+	clipboardTimeout = 150 * time.Millisecond
+	f.svc.SetClipboard(&fakeClipboard{delay: 60 * time.Millisecond, data: map[string][]byte{
+		"text/uri-list": []byte("https://example.com/\r\n"),
+		"image/png":     tinyPNG(),
+	}})
+
+	start := time.Now()
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	assert.Less(t, time.Since(start), 300*time.Millisecond)
+	assert.Zero(t, n)
+	var ce *CodedError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, CodeClipboardFailed, ce.Code)
+}
+
+// Nothing of the app's own data (database with tokens, caches, spools) is
+// ever staged — not through a symlink either; other symlinks are staged as
+// their target.
+func TestAppDataIsNeverStaged(t *testing.T) {
+	f := newChatFixture(t)
+	f.withAttachments()
+	id := f.live(startFake(t))
+	data := t.TempDir()
+	f.svc.ProtectDir(data)
+	secret := filepath.Join(data, "mm-client.sqlite")
+	require.NoError(t, os.WriteFile(secret, []byte("tokens"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(data, "tmp"), 0o700))
+	spool := filepath.Join(data, "tmp", "attach-x")
+	require.NoError(t, os.WriteFile(spool, []byte("spool"), 0o600))
+	outside := t.TempDir()
+	link := filepath.Join(outside, "innocent.txt")
+	require.NoError(t, os.Symlink(secret, link))
+	target := writeFile(t, "real-name.txt", []byte("ok"))
+	alias := filepath.Join(outside, "alias.txt")
+	require.NoError(t, os.Symlink(target, alias))
+
+	var ce *CodedError
+	p := &fakePicker{paths: []string{secret, spool, link, data}}
+	f.svc.SetFilePicker(p)
+	n, err := f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	assert.Zero(t, n)
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, CodeAppData, ce.Code)
+
+	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", []string{link}))
+	ev := f.nextEvent(EventAttachmentRefused)
+	assert.Equal(t, CodeAppData, ev.Payload["code"])
+
+	cb := &fakeClipboard{data: map[string][]byte{"text/uri-list": []byte(fileURI(secret) + "\r\n")}}
+	f.svc.SetClipboard(cb)
+	_, err = f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, CodeAppData, ce.Code)
+
+	p.paths = []string{alias}
+	n, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	assert.Equal(t, []string{"real-name.txt"}, names(list), "a symlink is staged as its target")
+}
+
+func TestDropRefusalIsReported(t *testing.T) {
+	f := newChatFixture(t)
+	f.svc.DropRefused(3, "c-town", CodeNotDropped)
+	ev := f.nextEvent(EventAttachmentRefused)
+	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town", "code": CodeNotDropped}, ev.Payload)
+}
+
+// The attachment sources take a server and a channel only: the UI has no
+// way to hand Go a path (the rule as a whole is kept by review — a
+// reflection test cannot tell a path from another string).
+func TestAttachmentSourcesTakeNoPaths(t *testing.T) {
+	api := reflect.TypeFor[API]()
+	want := reflect.TypeFor[func(context.Context, int64, string) (int, error)]()
+	for _, name := range []string{"AttachFromClipboard", "PickAttachments"} {
+		m, ok := api.MethodByName(name)
+		require.True(t, ok, name)
+		assert.Equal(t, want, m.Type, name)
+	}
+	for i := range api.NumMethod() {
+		m := api.Method(i)
+		assert.NotContains(t, strings.ToLower(m.Name), "path", "no API method is about paths: %s", m.Name)
+	}
 }

@@ -223,48 +223,68 @@
   block; fixed height until expanded»), `frontend/src/components/MarkdownView.test.tsx`
   («renders heading, list, code and table; a remote image is a link, not an <img>»),
   `frontend/src/components/Viewer.test.tsx`.
-- Вложения: UI **никогда не передаёт в Go пути** ни в одном методе API — Go сам читает буфер обмена
-  (`AttachFromClipboard`), сам открывает диалог 📎 (`PickAttachments`), а пути перетаскивания берёт из
-  Wails `WindowFilesDropped`; в browser-режиме страница шлёт байты `File` сырым телом (`POST
-  /api/attachments/{srv}/{channel}?name=&mime=`). Иначе XSS в ленте прочитал бы `~/.ssh/id_rsa`. —
-  `TestClipboardFileListIsAttachedByPath`, `TestPickAttachmentsAttachesTheChosenFiles`,
-  `TestDroppedFilesAreAttachedAndRefusalsReported`, `TestDropOnAChannelAttachesItsPaths`.
+- Вложения — модель угроз: скрипт страницы (XSS в отрендеренном контенте) может вызвать **любую**
+  привязку, в т.ч. `SendPost`, а вложения грузятся на сервер сразу — значит, всё, что скрипт сумел
+  поставить во вложения, он может и отправить. Поэтому: (1) UI **никогда не передаёт в Go пути** — ни в
+  одном методе API; источники вложений принимают только сервер и канал (`AttachFromClipboard`,
+  `PickAttachments`); общее правило держится ревью (рефлексией путь от строки не отличить);
+  (2) каждый источник требует **нативного** действия пользователя, которое страница подделать не может
+  (буфер — нажатая клавиша вставки, drop — нативный drop на webview, 📎 — клик в модальном системном
+  диалоге); (3) файлы каталога данных приложения (`~/.spk/mm-client`: база с токенами, кэши, спулы) не
+  ставятся никогда, симлинк сначала разрешается (`EvalSymlinks`) — и ставится как свой target (с его
+  именем). Остаётся: файл, который пользователь действительно вставил/уронил/выбрал, скрипт может
+  отправить без спроса. — `TestAttachmentSourcesTakeNoPaths`, `TestAppDataIsNeverStaged`,
+  `TestClipboardWithoutAPasteKeyReadsNothing`, `TestForgedDropIsRefused`,
+  `TestNativeDropOnAChannelAttachesItsPaths`, `TestPickAttachmentsAttachesTheChosenFiles`.
 - Буфер обмена GTK (`internal/desktop/clipboard_gtk.go`, cgo за тегами `wails && gtk3`, заглушка —
-  `clipboard_other.go`): GTK зовётся только на главном потоке (`application.InvokeAsync`), только
-  асинхронно (`gtk_clipboard_request_*`, не `wait_*` — вложенный цикл и повторная входимость), ответ ждёт
-  горутина привязки с таймаутом в Go (`clipboardTimeout` = 2 с): зависший владелец буфера не блокирует ни
-  UI, ни вызов (`clipboard_failed`), а поздний ответ освобождается (`pending`), не утекает. Ждать ответа на
-  главном потоке нельзя — он и отвечает. Байты буфера копируются в память C и читаются оттуда в спул, в
-  кучу Go целиком не попадают. Порядок: список файлов (`text/uri-list` — только `file://` без хоста или
-  `localhost`, с percent-декодированием; иначе `x-special/gnome-copied-files`, «cut» — как copy, ничего
-  не перемещается) → каждый `AddPath`; иначе картинка: `image/png` как есть, иной формат — в PNG через
-  gdk-pixbuf (кодирование — вне главного потока), имя `Screenshot YYYY-MM-DD HH-MM-SS.png`; иначе ничего.
-  — `TestHungClipboardOwnerTimesOut`, `TestPendingLateAnswerIsFreed`,
+  `clipboard_other.go`): читается **только в течение 1,5 с после нативного Ctrl+V / Ctrl+Shift+V /
+  Shift+Insert** в окне (`key-press-event` на GtkWindow в `observe_gtk.go`, событие не поглощается; для
+  нелатинских раскладок сверяется физическая клавиша), нажатие расходуется одним чтением, иначе
+  `no_paste_gesture` и ничего не читается; вставка из контекстного меню не поддерживается (решение
+  реестра). GTK зовётся только на главном потоке (`application.InvokeAsync`), только асинхронно
+  (`gtk_clipboard_request_*`, не `wait_*`), весь вызов — под одним дедлайном в Go (`clipboardTimeout` =
+  2 с): зависший владелец не блокирует наш вызов (`clipboard_failed`), поздний ответ освобождается
+  (`pending`). Ждать ответа на главном потоке нельзя — он и отвечает. Байты буфера копируются в память C
+  и читаются оттуда в спул, в кучу Go целиком не попадают. Порядок: список файлов (`text/uri-list` —
+  только `file://` без хоста или `localhost`, с percent-декодированием; иначе
+  `x-special/gnome-copied-files`, «cut» — как copy) → каждый путь; иначе картинка: `image/png` как есть,
+  иной формат — в PNG через gdk-pixbuf (вне главного потока), имя `Screenshot YYYY-MM-DD HH-MM-SS.png`;
+  иначе ничего. — `TestClipboardWithoutAPasteKeyReadsNothing`, `TestPasteGateTakesARecentKeyOnce`,
+  `TestHungClipboardOwnerTimesOut`, `TestClipboardDeadlineCoversTheWholeCall`, `TestPendingLateAnswerIsFreed`,
   `TestPendingRacingAnswerAndTimeoutNeitherLeaksNorLoses`, `TestParseURIListKeepsLocalFilesOnly`,
   `TestParseGnomeCopiedFilesTreatsCutAsCopy`, `TestClipboardPNGIsSpooledAsAScreenshot`,
   `TestClipboardOtherImageIsConvertedToPNG`, `TestClipboardGnomeCopiedFilesWithoutURIList`,
   `TestClipboardTextAttachesNothing`, `TestClipboardFolderIsRefusedOthersAttached`; настоящий буфер —
   смоук на своём Xvfb (отчёт Task 4 плана `docs/plans/2026-09-27-stage3-attachments.md`).
 - Перетаскивание файлов: окно создаётся с `EnableFileDrop: true` — Wails забирает drag с путями на уровне
-  GTK (страница drag-событий не видит) и отдаёт drop только на элемент с `data-file-drop-target`;
-  `data-srv`/`data-channel` этого элемента выбирают канал (`filesDropped`), иначе drop игнорируется. Отказ
-  (каталог, пустой, слишком большой, лимит) приходит событием `attachment_refused {server_id, channel_id,
-  code}` — у drop нет вызывающего. **Подделка drop:** Wails гоняет пути через JS (`handlePlatformFileDrop`
-  → `FilesDropped`), так что скрипт страницы может «уронить» любой путь; решение (реестр SDD): берутся
-  только обычные файлы, они лишь попадают в видимые чипы, отправка — только явным действием
-  пользователя; своего cgo-наблюдателя drag нет. — `TestDropWithoutAChannelTargetIsIgnored`,
+  GTK (страница drag-событий не видит), отдаёт пути через JS (`handlePlatformFileDrop` → `FilesDropped`)
+  и зовёт `WindowFilesDropped` только для элемента с `data-file-drop-target`; его `data-srv`/`data-channel`
+  выбирают канал (`filesDropped`). Путь через JS подделываем, поэтому наш наблюдатель
+  `drag-data-received` на самом webview (`observe_gtk.go`, подключён после обработчика Wails и ничего не
+  останавливает) записывает пути **нативного** drop, и `dropGate` пропускает путь из `WindowFilesDropped`
+  только если нативный drop нёс его за последние 5 с — один раз; прочие — отказ `not_dropped`. Не больше
+  100 путей за drop (остальное — `too_many`). Отказы приходят событием `attachment_refused {server_id,
+  channel_id, code}` — у drop нет вызывающего. Нет наблюдателя (не нашёлся webview, не-GTK) — отказ всем
+  drop. — `TestForgedDropIsRefused`, `TestNativeDropOnAChannelAttachesItsPaths`, `TestHugeDropIsCapped`,
+  `TestDropGateStaysBounded`, `TestDropWithoutAChannelTargetIsIgnored`, `TestDropRefusalIsReported`,
   `TestDroppedFilesAreAttachedAndRefusalsReported`.
+- Имена вложений из любого источника (путь или страница) чистятся одинаково (`attach.cleanName`):
+  последний элемент пути, без управляющих и format-символов (bidi, zero-width), `.`/`..`/пусто →
+  `attachment`, ≤ 200 рун с коротким расширением. — `TestCleanNameKeepsWhatAFileNameShows`,
+  `TestAddPathCleansTheName`, `TestBrowserUploadNameIsCleaned`.
 - Диалог 📎 (`internal/desktop/picker.go`) — единственный модальный диалог: только по клику
-  пользователя (привязка `PickAttachments`, не на старте), никогда не с главного потока GTK и не под
-  локами (Wails крутит его `gtk_dialog_run`-ом на главном потоке, горутина ждёт), один за раз (второй клик
-  ничего не делает); до открытия проверяются канал, `EnableFileAttachments` и лимит 10. `gtk_dialog_run` —
-  вложенный цикл, который выход из приложения не завершает: задача завершения Wails закрывает открытый
-  диалог (`cancelFileDialogs`), иначе выход из трея/SIGTERM висел бы до закрытия диалога (смоук Task 4). —
-  `TestPickAttachmentsChecksBeforeTheDialog`, `TestNoClipboardOrPickerIsUnsupported`.
+  пользователя (привязка `PickAttachments`, не на старте), никогда не с главного потока GTK (Wails крутит
+  его `gtk_dialog_run`-ом на главном потоке, горутина ждёт), не держит локов, которых ждёт кто-то ещё
+  (его `TryLock` — только его собственный), один за раз (второй клик ничего не делает); до открытия
+  проверяются канал, `EnableFileAttachments` и лимит 10. `gtk_dialog_run` — вложенный цикл, который выход
+  из приложения не завершает: задача завершения Wails отменяет открытый диалог и каждый, что откроется
+  после неё (`cancelFileDialogs` + emission hook на `map`), иначе выход из трея/SIGTERM висел бы до
+  закрытия диалога (смоук Task 4). — `TestPickAttachmentsChecksBeforeTheDialog`,
+  `TestNoClipboardOrPickerIsUnsupported`.
 - Browser-маршрут загрузки `POST /api/attachments/{srv}/{channel}` — те же защиты, что у `/api/`
   (bearer только заголовком — не query-токен на POST, `OriginGuard`, `LoopbackHostGuard`), сырое тело через
   `http.MaxBytesReader(MaxFileSize)` (413 `too_large` и по `Content-Length`, и по потоку), имя очищается:
-  последний элемент пути, без управляющих и bidi-символов, ≤ 200 рун. — `TestBrowserUploadAttachesTheRawBody`,
+  как у всех вложений (`attach.cleanName`). — `TestBrowserUploadAttachesTheRawBody`,
   `TestBrowserUploadNeedsTokenOriginAndLoopbackHost`, `TestBrowserUploadOverMaxFileSizeIs413`,
   `TestBrowserUploadNameIsCleaned`, `TestBrowserUploadErrors`.
 - Каждый созданный Playwright-контекст/страница (в `browser_run_code_unsafe` или в скриптах)
@@ -276,6 +296,7 @@
 
 - **A `fetch()` to `wails://` with a `Blob`, `File` or `FormData` body crashes the whole desktop app** (SIGSEGV in `webkit_uri_scheme_request_get_http_body`, WebKitGTK 2.52 — Wails reads every scheme request's body). Only `Uint8Array`/`ArrayBuffer` bodies are safe there. The desktop UI never sends file bytes at all (Go reads the clipboard/dialog/drop itself); browser mode posts a `File` only to `/api/attachments` over plain HTTP. — `docs/spikes/2026-09-27-attachments-spike.md` §2.6.
 - WebKitGTK never gives the page pasted or dropped file contents (`clipboardData.files`/`dataTransfer.files` are always empty — `DataTransfer::allowsFileAccess()` is `false` off Cocoa): a pasted picture is an empty `paste`, copied files a hidden `text/uri-list` whose default action inserts the paths as text. Hence the native sources in Go. — spike doc §2.1, §3.
+- WebKitGTK's own paste (Ctrl+V into the page) reads the clipboard synchronously in the UI process: with a clipboard owner that never answers, the whole window is frozen for ~30 s (measured 31 s on Xvfb, Task 4 fix-round smoke) — before and regardless of our `AttachFromClipboard`, whose own reads are async and bounded. Nothing in our code can shorten it.
 - Driving the desktop app from a script (smoke): `WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:<port>` + `Runtime.evaluate` over `ws://…/socket/1/1/WebPage` (`Target.sendMessageToTarget`); WebKit ignores `awaitPromise` — park the promise's result on `window` and poll it. Bindings can be called from there with a raw `fetch('/wails/runtime', {method:'POST', body: JSON.stringify({object: 0, method: 0, args: {'call-id', methodName: 'github.com/spk/spk-mm-client/internal/api/transport.API.<M>', args}})})`. Point `DBUS_SESSION_BUS_ADDRESS` at a dead socket so the smoke instance adds no tray icon to the user's session. The GTK file chooser's location bar autocompletes typed text (XTest typing mangles paths) — paste the path from a clipboard owner on the same Xvfb instead.
 - Vitest: `@wailsio/runtime` is globally mocked in `frontend/vitest.setup.ts` (its import-time drag/resize code touches `window` after jsdom teardown); tests of `wailsClient` override the mock locally.
 - Wails v3 beta.25 on Linux touches the D-Bus session bus with no timeout in several places: `SingleInstance` (inside `application.New()`, `os.Exit(1)` on failure — uninterceptable), the notifications service startup, `SystemTray.Run` (`InvokeSync(dbus.SessionBus())` on the GTK main thread — a hung bus freezes the UI), and GLib itself (`GApplication` registration in `g_application_run` — with a hung bus the window never appears). Rule: probe the bus **once** with a 2 s bound (`probeBus`) and let `integrationsFor` decide; unless it answered, disable single-instance, notifications and tray, point `DBUS_SESSION_BUS_ADDRESS` at a dead address before GTK starts, and make window close quit (no tray = no way back). Wails' theme listener runs on its own goroutine/connection and does not block the main thread. — `internal/desktop/integrations.go` (`TestIntegrationsFor`, `TestProbeBus`), `internal/desktop/busprobe_linux.go`, `internal/desktop/run.go`.

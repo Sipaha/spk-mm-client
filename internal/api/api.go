@@ -161,6 +161,9 @@ const (
 	CodeEmptyFile           = attach.CodeEmptyFile
 	CodeUnsupported         = "unsupported"      // not in this mode (clipboard, file dialog in browser mode)
 	CodeClipboardFailed     = "clipboard_failed" // the clipboard did not answer in time or could not be read
+	CodeNoPasteGesture      = "no_paste_gesture" // no Ctrl+V / Shift+Insert just pressed in the window: the clipboard is not read
+	CodeNotDropped          = "not_dropped"      // a "dropped" path the native drop did not carry (forged by page script)
+	CodeAppData             = "app_data"         // a file of the app's own data directory (database, caches, spools)
 )
 
 // CodedError is what API methods return: a stable code for the UI plus a

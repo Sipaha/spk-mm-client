@@ -8,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // AddBytes attaches bytes that come without a file on disk (a pasted
 // picture, a browser upload): they are streamed into a spool, at most limit
 // bytes (limit ≤ 0: the server's MaxFileSize only — DefaultMaxFileSize
 // while unknown; the smaller of the two otherwise). Nothing at all is
-// refused (empty_file). name is reduced to its last element; mime, when empty, comes
+// refused (empty_file). name is cleaned (cleanName); mime, when empty, comes
 // from the name or the content.
 func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limit int64) (Attachment, error) {
 	maxSize, err := s.admit(srv, ch)
@@ -39,7 +41,7 @@ func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limi
 		return Attachment{}, err
 	}
 	it.ID, it.Server, it.Channel, it.State = id, srv, ch, StateStaged
-	it.Name = baseName(name)
+	it.Name = cleanName(name)
 	it.Mime = mediaType(mimeType)
 	if it.Mime == "" {
 		it.Mime = mimeOf(it.Name)
@@ -93,13 +95,36 @@ func (s *Store) spool(name string, r io.Reader, limit int64) (*spooled, error) {
 		sniffed: sniffed}, nil
 }
 
-// baseName keeps the last element of a name from outside (no directories).
-func baseName(name string) string {
-	name = strings.TrimSpace(name[strings.LastIndexAny(name, `/\`)+1:])
+// maxName bounds an attachment's name, in runes.
+const maxName = 200
+
+// cleanName makes a file name from outside (the page, a file on disk)
+// safe to show and send: its last path element, without control and
+// format characters (bidi overrides, zero-width marks — a name must read
+// as what it is), at most maxName runes (a short extension kept);
+// "attachment" when nothing is left.
+func cleanName(name string) string {
+	name = name[strings.LastIndexAny(name, `/\`)+1:]
+	var b strings.Builder
+	for _, r := range name {
+		if r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	name = strings.TrimSpace(b.String())
 	if name == "" || name == "." || name == ".." {
 		return "attachment"
 	}
-	return name
+	if utf8.RuneCountInString(name) <= maxName {
+		return name
+	}
+	ext := filepath.Ext(name)
+	if utf8.RuneCountInString(ext) > 16 {
+		ext = ""
+	}
+	stem := []rune(strings.TrimSuffix(name, ext))
+	return string(stem[:maxName-utf8.RuneCountInString(ext)]) + ext
 }
 
 // mediaType drops parameters ("text/plain; charset=utf-8" → "text/plain").

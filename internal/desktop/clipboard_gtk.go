@@ -93,6 +93,13 @@ type gtkClipboard struct{}
 
 func newClipboard() api.Clipboard { return gtkClipboard{} }
 
+// pasteKeys are the paste keys observed natively (observe_gtk.go).
+var pasteKeys = newPasteGate()
+
+// TakePasteGesture: a Ctrl+V / Shift+Insert pressed in the window within
+// pasteWindow, used up now.
+func (gtkClipboard) TakePasteGesture() bool { return pasteKeys.take() }
+
 var errNoClipboardData = errors.New("the clipboard has no such data")
 
 // cData is selection data copied into C memory.

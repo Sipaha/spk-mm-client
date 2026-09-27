@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +18,12 @@ import (
 // GTK, asked on its main thread asynchronously — see
 // internal/desktop/clipboard_gtk.go). Every method gives up when ctx ends.
 type Clipboard interface {
+	// TakePasteGesture reports (and uses up) a paste key — Ctrl+V or
+	// Shift+Insert — the user pressed in the app's window just now, as
+	// seen natively (not by the page). Page script can call
+	// AttachFromClipboard whenever it likes; without this the clipboard
+	// is not read.
+	TakePasteGesture() bool
 	// Targets are the formats the clipboard offers now.
 	Targets(ctx context.Context) ([]string, error)
 	// Contents of one target; the caller closes it.
@@ -47,9 +55,9 @@ func (s *Service) SetFilePicker(p FilePicker) {
 	s.mu.Unlock()
 }
 
-// clipboardTimeout bounds each clipboard request: an owner that never
-// answers must not keep a paste waiting (GTK's own selection timeout is
-// longer).
+// clipboardTimeout bounds a whole paste (every clipboard request of it):
+// an owner that never answers must not keep a paste waiting (GTK's own
+// selection timeout is longer).
 var clipboardTimeout = 2 * time.Second
 
 // Clipboard targets AttachFromClipboard understands.
@@ -62,8 +70,9 @@ const (
 // maxFileListSize bounds a file list read from the clipboard.
 const maxFileListSize = 1 << 20
 
-// AttachFromClipboard implements API: files copied in a file manager are
-// attached by path; otherwise a picture (PNG as is, any other format
+// AttachFromClipboard implements API. Only right after a native paste key
+// (TakePasteGesture; a paste from a context menu is not supported):
+// files copied in a file manager are attached by path; otherwise a picture (PNG as is, any other format
 // converted to PNG) is spooled as "Screenshot <date> <time>.png"; anything
 // else attaches nothing. It returns how many were attached (they arrive
 // with attachments_changed); an error says why (the first one) when some
@@ -75,10 +84,15 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	if cb == nil {
 		return 0, coded(CodeUnsupported, nil)
 	}
+	if !cb.TakePasteGesture() {
+		return 0, coded(CodeNoPasteGesture, nil)
+	}
 	if err := s.attachTarget(ctx, id, channelID); err != nil {
 		return 0, err
 	}
-	targets, err := clipboardCall(ctx, cb.Targets)
+	ctx, cancel := context.WithTimeout(ctx, clipboardTimeout)
+	defer cancel()
+	targets, err := cb.Targets(ctx)
 	if err != nil {
 		return 0, coded(CodeClipboardFailed, err)
 	}
@@ -105,9 +119,9 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	}
 	var r io.ReadCloser
 	if offered[targetPNG] {
-		r, err = clipboardCall(ctx, func(ctx context.Context) (io.ReadCloser, error) { return cb.Contents(ctx, targetPNG) })
+		r, err = cb.Contents(ctx, targetPNG)
 	} else {
-		r, err = clipboardCall(ctx, cb.ImagePNG)
+		r, err = cb.ImagePNG(ctx)
 	}
 	if err != nil {
 		return 0, coded(CodeClipboardFailed, err)
@@ -120,16 +134,9 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	return 1, nil
 }
 
-// clipboardCall is one clipboard request, bounded by clipboardTimeout.
-func clipboardCall[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
-	ctx, cancel := context.WithTimeout(ctx, clipboardTimeout)
-	defer cancel()
-	return fn(ctx)
-}
-
 // clipboardText reads a small text target; a failure reads as empty.
 func (s *Service) clipboardText(ctx context.Context, cb Clipboard, target string) string {
-	r, err := clipboardCall(ctx, func(ctx context.Context) (io.ReadCloser, error) { return cb.Contents(ctx, target) })
+	r, err := cb.Contents(ctx, target)
 	if err != nil {
 		slog.Warn("clipboard target unreadable", "target", target, "err", err)
 		return ""
@@ -219,9 +226,16 @@ func (s *Service) attachRoom(id int64, channelID string) error {
 
 // AttachDropped attaches files dropped onto a channel (desktop: Wails'
 // WindowFilesDropped). Nobody waits for the answer, so a refusal reaches
-// the UI as attachment_refused. Wails passes the dropped paths through the
-// page, so page script could forge a drop: only regular files are taken,
-// and they are only staged — shown as chips, sent by the user alone.
+// the UI as attachment_refused.
+//
+// Threat model: page script (an XSS in rendered content) can call every
+// binding, and Wails passes dropped paths through the page, so a drop can
+// be forged. The desktop therefore passes here only paths a native GTK
+// drop on the webview carried moments ago (internal/desktop dropGate);
+// others are refused (not_dropped) before they get here. Staged files
+// upload at once and page script could also call SendPost, so what
+// remains is a file the user really dropped (or pasted, or picked) — the
+// app's own data is refused even then (addPaths).
 func (s *Service) AttachDropped(ctx context.Context, id int64, channelID string, paths []string) int {
 	if err := s.attachTarget(ctx, id, channelID); err != nil {
 		s.refused(id, channelID, err)
@@ -234,6 +248,13 @@ func (s *Service) AttachDropped(ctx context.Context, id int64, channelID string,
 	return n
 }
 
+// DropRefused reports files of a drop refused before AttachDropped (not
+// carried by the native drop, too many at once).
+func (s *Service) DropRefused(id int64, channelID, code string) {
+	slog.Info("dropped files refused", "server", id, "code", code)
+	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "code": code})
+}
+
 func (s *Service) refused(id int64, channelID string, err error) {
 	code := CodeInternal
 	var ce *CodedError
@@ -244,28 +265,68 @@ func (s *Service) refused(id int64, channelID string, err error) {
 	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "code": code})
 }
 
+// ProtectDir sets the app's data directory (database with tokens, caches,
+// spools): no file in it is ever staged from a path — not through a
+// symlink either.
+func (s *Service) ProtectDir(dir string) {
+	s.mu.Lock()
+	s.protected = dir
+	s.mu.Unlock()
+}
+
 // addPaths attaches files by path in order (the caller checked the
-// target). A file that cannot be taken (a folder, empty, too large) is
+// target). Symlinks are resolved first: a file is staged as its target
+// (name included), and refused when that is in the app's data directory.
+// A file that cannot be taken (a folder, empty, too large, app data) is
 // skipped; a refusal that holds for the rest too (the channel is full,
 // attachments are off) stops. It returns how many were attached and the
 // first refusal.
 func (s *Service) addPaths(id int64, channelID string, paths []string) (int, error) {
+	s.mu.Lock()
+	protected := s.protected
+	s.mu.Unlock()
 	n := 0
 	var first error
 	for _, p := range paths {
-		_, err := s.att.AddPath(id, channelID, p)
+		err := s.addPath(id, channelID, p, protected)
 		if err == nil {
 			n++
 			continue
 		}
-		err = attachError(err)
 		if first == nil {
 			first = err
 		}
 		var ce *CodedError
-		if !errors.As(err, &ce) || (ce.Code != CodeNotAFile && ce.Code != CodeEmptyFile && ce.Code != CodeTooLarge) {
+		if !errors.As(err, &ce) || (ce.Code != CodeNotAFile && ce.Code != CodeEmptyFile && ce.Code != CodeTooLarge && ce.Code != CodeAppData) {
 			break
 		}
 	}
 	return n, first
+}
+
+func (s *Service) addPath(id int64, channelID, path, protected string) error {
+	if !filepath.IsAbs(path) {
+		return coded(CodeNotAFile, fmt.Errorf("not an absolute path: %q", path))
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return coded(CodeNotAFile, err)
+	}
+	if within(resolved, protected) {
+		return coded(CodeAppData, fmt.Errorf("%q is in the app's data directory", path))
+	}
+	_, err = s.att.AddPath(id, channelID, resolved)
+	return attachError(err)
+}
+
+// within reports whether path (resolved) is dir or inside it.
+func within(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	rel, err := filepath.Rel(filepath.Clean(dir), path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

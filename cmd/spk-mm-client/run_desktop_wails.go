@@ -48,6 +48,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	// through the opener above. Only on the user's action.
 	svc.SetRevealer(desktop.ShowItem)
 	svc.EnableAttachments(p.TmpDir) // sweeps old spools in the background
+	svc.ProtectDir(p.DataDir)       // the database, caches and spools are never attached
 	if err := svc.Start(ctx); err != nil {
 		slog.Error("sync did not start; chats stay offline", "err", err) // never keep the window from opening
 	}

@@ -66,6 +66,7 @@ type Service struct {
 	// unsupported (browser mode).
 	clipboard Clipboard
 	picker    FilePicker
+	protected string // the app's data directory: never staged
 	// streamBase gives the desktop's media stream address; nil: "/media".
 	streamBase func() (string, error)
 	badgeFns   []func(Badge)

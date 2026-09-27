@@ -83,6 +83,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 	svc.SetFileOpener(opened.Open)
 	revealed := recordReveals(svc)
 	svc.EnableAttachments(p.TmpDir) // sweeps old spools in the background
+	svc.ProtectDir(p.DataDir)       // the database, caches and spools are never attached
 	// Before Start: a failed Start still stops the sweep and the uploads.
 	closers = append(closers, svc.Close) // runs first: workers flush before the DB closes
 	if err := svc.Start(ctx); err != nil {

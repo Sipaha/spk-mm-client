@@ -6,23 +6,17 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"path/filepath"
 	"strconv"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/spk/spk-mm-client/internal/api"
 )
-
-// maxUploadName bounds a file name from the page, in runes.
-const maxUploadName = 200
 
 // uploadHandler takes one file from the page (browser mode: pasted,
 // dropped or picked) as the raw request body — no JSON, base64 or
 // multipart — and spools it as an attachment of the channel's next
 // message: POST /api/attachments/{srv}/{channel}?name=&mime=. At most the
-// server's MaxFileSize is read (413 over it). The desktop never sends
+// server's MaxFileSize is read (413 over it); the store cleans the name
+// (last path element, no control/format characters, ≤ 200 runes). The desktop never sends
 // bytes: there Go reads the clipboard and the files itself.
 func uploadHandler(svc *api.Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +32,7 @@ func uploadHandler(svc *api.Service) http.Handler {
 		}
 		body := &limitedBody{r: http.MaxBytesReader(w, r.Body, limit)}
 		q := r.URL.Query()
-		a, err := svc.AddAttachmentBytes(r.Context(), srv, r.PathValue("channel"), uploadName(q.Get("name")), uploadMime(q.Get("mime")), body, limit)
+		a, err := svc.AddAttachmentBytes(r.Context(), srv, r.PathValue("channel"), q.Get("name"), uploadMime(q.Get("mime")), body, limit)
 		if err != nil {
 			var ce *api.CodedError
 			if !errors.As(err, &ce) {
@@ -75,30 +69,6 @@ func (b *limitedBody) Read(p []byte) (int, error) {
 		b.over = true
 	}
 	return n, err
-}
-
-// uploadName cleans a file name from the page: its last path element,
-// without control or bidi-override characters (a name must read as what
-// it is), at most maxUploadName runes (the extension kept).
-func uploadName(raw string) string {
-	raw = raw[strings.LastIndexAny(raw, `/\`)+1:]
-	var b strings.Builder
-	for _, r := range raw {
-		if r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	name := strings.TrimSpace(b.String())
-	if utf8.RuneCountInString(name) <= maxUploadName {
-		return name
-	}
-	ext := filepath.Ext(name)
-	if utf8.RuneCountInString(ext) > 16 {
-		ext = ""
-	}
-	stem := []rune(strings.TrimSuffix(name, ext))
-	return string(stem[:maxUploadName-utf8.RuneCountInString(ext)]) + ext
 }
 
 // uploadMime keeps a well-formed media type ("" otherwise: the store

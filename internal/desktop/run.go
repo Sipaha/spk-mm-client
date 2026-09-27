@@ -5,6 +5,7 @@ package desktop
 import (
 	"context"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime"
@@ -205,8 +206,23 @@ func Run(ctx context.Context, o Options) error {
 		if d := e.Context().DropTargetDetails(); d != nil {
 			attrs = d.Attributes
 		}
-		filesDropped(o.Service, attrs, e.Context().DroppedFiles())
+		filesDropped(o.Service, nativeDrops, attrs, e.Context().DroppedFiles())
 	})
+	// The native observers (drops on the webview, paste keys) go in once
+	// the window exists, on the GTK main thread; until then — or if they
+	// cannot — drops are refused and the clipboard is not read.
+	go func() {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			return
+		}
+		application.InvokeSync(func() {
+			if !observeNatively(w.NativeWindow()) {
+				slog.Warn("native drop observer not installed: dropped files will be refused")
+			}
+		})
+	}()
 	// Attachment sources that read the system themselves — the UI never
 	// hands Go a path: the GTK clipboard (Ctrl+V) and the 📎 dialog.
 	o.Service.SetClipboard(newClipboard())
@@ -268,6 +284,9 @@ func Run(ctx context.Context, o Options) error {
 	}()
 	return app.Run()
 }
+
+// nativeDrops are the paths of native file drops (observe_gtk.go).
+var nativeDrops = newDropGate()
 
 func webviewGPUPolicy(env string) application.WebviewGpuPolicy {
 	switch parseGPUPolicy(env) {

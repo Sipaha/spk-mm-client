@@ -310,7 +310,7 @@ func (s *Store) AddPath(srv int64, ch, path string) (Attachment, error) {
 		n, _ := io.ReadFull(f, head)
 		mt = mediaType(http.DetectContentType(head[:n]))
 	}
-	it := &item{Attachment: Attachment{ID: newID(), Name: filepath.Base(path), Size: fi.Size(), Mime: mt,
+	it := &item{Attachment: Attachment{ID: newID(), Name: cleanName(filepath.Base(path)), Size: fi.Size(), Mime: mt,
 		State: StateStaged, Server: srv, Channel: ch}, path: path, mtime: fi.ModTime()}
 	return s.insert(it)
 }

@@ -13,7 +13,8 @@ import (
 // files at once. It is the one modal dialog of the app, opened only by
 // the user's click (a binding call — never at startup) and never from the
 // GTK main thread: Wails runs it there as a nested loop and the calling
-// goroutine waits for it, so no lock may be held around it.
+// goroutine waits for it, so it holds no lock another path waits on (the
+// TryLock below is only its own).
 type filePicker struct {
 	open   sync.Mutex // one dialog at a time: a second click while it is open does nothing
 	window func() application.Window
