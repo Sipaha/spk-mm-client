@@ -55,8 +55,8 @@ func (f *fakeAPI) ClearDownloads(context.Context) error {
 	return nil
 }
 
-func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message string) error {
-	f.sent = append(f.sent, fmt.Sprintf("%d/%s/%s", id, channelID, message))
+func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message string, attachmentIDs []string) error {
+	f.sent = append(f.sent, fmt.Sprintf("%d/%s/%s/%v", id, channelID, message, attachmentIDs))
 	return nil
 }
 
@@ -219,7 +219,9 @@ func TestChatRoutes(t *testing.T) {
 
 	resp := call(t, h, ts.URL, "SendPost", `{"id":3,"channel_id":"c1","message":"hi"}`)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, []string{"3/c1/hi"}, f.sent)
+	resp = call(t, h, ts.URL, "SendPost", `{"id":3,"channel_id":"c1","message":"","attachment_ids":["a1","a2"]}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/c1/hi/[]", "3/c1//[a1 a2]"}, f.sent)
 
 	resp = call(t, h, ts.URL, "GetChannel", `{"id":3,"channel_id":"c1"}`)
 	var ch map[string]any

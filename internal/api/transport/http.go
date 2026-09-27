@@ -157,11 +157,12 @@ func (h *HTTP) routes() {
 		return nil, h.api.LoadOlder(ctx, r.ID, r.ChannelID)
 	}))
 	h.mux.HandleFunc("POST /api/SendPost", handle(func(ctx context.Context, r *struct {
-		ID        int64  `json:"id"`
-		ChannelID string `json:"channel_id"`
-		Message   string `json:"message"`
+		ID            int64    `json:"id"`
+		ChannelID     string   `json:"channel_id"`
+		Message       string   `json:"message"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}) (any, error) {
-		return nil, h.api.SendPost(ctx, r.ID, r.ChannelID, r.Message)
+		return nil, h.api.SendPost(ctx, r.ID, r.ChannelID, r.Message, r.AttachmentIDs)
 	}))
 	h.mux.HandleFunc("POST /api/RetryPost", handle(func(ctx context.Context, r *struct {
 		ID        int64  `json:"id"`

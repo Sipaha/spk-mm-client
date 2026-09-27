@@ -138,7 +138,8 @@ export const discardPost = (serverId: number, channelId: string, pendingId: stri
   client.discardPost(serverId, channelId, pendingId).catch(report)
 }
 
-export const sendPost = (serverId: number, channelId: string, message: string) => client.sendPost(serverId, channelId, message)
+export const sendPost = (serverId: number, channelId: string, message: string, attachmentIds: string[] = []) =>
+  client.sendPost(serverId, channelId, message, attachmentIds)
 
 export const saveDraft = (serverId: number, channelId: string, text: string) => {
   client.saveDraft(serverId, channelId, text).catch(() => {}) // a lost draft is not worth an error banner

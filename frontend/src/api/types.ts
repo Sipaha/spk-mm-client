@@ -80,6 +80,9 @@ export interface FileView {
   width?: number
   height?: number
   has_preview?: boolean
+  // staged: a file of a post being sent — id is the attachment id and its
+  // picture comes from /media/<srv>/staged/<id>.
+  staged?: boolean
 }
 
 export interface SavedFile {

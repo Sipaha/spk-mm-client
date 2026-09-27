@@ -122,10 +122,10 @@ func TestChatThroughService(t *testing.T) {
 	assert.Equal(t, "t-fake", v.TeamID)
 	assert.Equal(t, "fake", v.TeamName)
 
-	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "hello from service"))
+	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "hello from service", nil))
 	f.eventually(func() bool { return f.has(id, "c-offtopic", "hello from service") }, "sent post not visible")
 
-	assert.Equal(t, CodeEmptyMessage, codeOf(f.svc.SendPost(ctx, id, "c-offtopic", "  \n ")))
+	assert.Equal(t, CodeEmptyMessage, codeOf(f.svc.SendPost(ctx, id, "c-offtopic", "  \n ", nil)))
 	_, err = f.svc.OpenChannel(ctx, id, "c-nope")
 	assert.Equal(t, CodeNoChannel, codeOf(err))
 }

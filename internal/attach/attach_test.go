@@ -523,32 +523,97 @@ func TestWaitReportsTheOutcome(t *testing.T) {
 	require.NoError(t, err)
 	b, err := e.s.AddPath(1, "c1", e.file("y.txt", "abc"))
 	require.NoError(t, err)
-	res := make(chan error, 1)
-	go func() { res <- e.s.Wait(context.Background(), []string{a.ID, b.ID}) }()
+	type result struct {
+		ids []string
+		err error
+	}
+	res := make(chan result, 1)
+	go func() {
+		ids, err := e.s.Wait(context.Background(), []string{b.ID, a.ID})
+		res <- result{ids, err}
+	}()
 	select {
-	case err := <-res:
-		t.Fatalf("returned while staged: %v", err)
+	case r := <-res:
+		t.Fatalf("returned while staged: %v", r.err)
 	case <-time.After(30 * time.Millisecond):
 	}
 	e.b.setLive(1, true)
 	e.s.Wake(1)
-	require.NoError(t, <-res)
+	r := <-res
+	require.NoError(t, r.err)
+	assert.Equal(t, []string{"f-" + b.ID, "f-" + a.ID}, r.ids, "the server file ids, in the order asked")
 
 	e.up.setSend(func(context.Context, io.Reader, int64, func(int64)) error {
 		return &rest.Error{Kind: rest.KindNetwork, Err: errors.New("down")}
 	})
 	c, err := e.s.AddPath(1, "c1", e.file("z.txt", "abc"))
 	require.NoError(t, err)
-	assert.Equal(t, CodeUnreachable, codeOf(e.s.Wait(context.Background(), []string{a.ID, c.ID})))
+	_, err = e.s.Wait(context.Background(), []string{a.ID, c.ID})
+	assert.Equal(t, CodeUnreachable, codeOf(err))
 	require.NoError(t, e.s.Remove(c.ID))
-	assert.Equal(t, CodeNotFound, codeOf(e.s.Wait(context.Background(), []string{c.ID})))
+	_, err = e.s.Wait(context.Background(), []string{c.ID})
+	assert.Equal(t, CodeNotFound, codeOf(err))
 
 	e.b.setLive(1, false)
 	d, err := e.s.AddPath(1, "c1", e.file("w.txt", "abc"))
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	assert.ErrorIs(t, e.s.Wait(ctx, []string{d.ID}), context.DeadlineExceeded)
+	_, err = e.s.Wait(ctx, []string{d.ID})
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestTakeMovesAttachmentsFromTheComposerToAPost(t *testing.T) {
+	e := newEnv(t)
+	e.b.setLive(1, false)
+	a, err := e.s.AddBytes(1, "c1", "shot.png", "image/png", strings.NewReader("png bytes"), 0)
+	require.NoError(t, err)
+	b, err := e.s.AddPath(1, "c1", e.file("b.txt", "abc"))
+	require.NoError(t, err)
+	other, err := e.s.AddPath(1, "c2", e.file("o.txt", "abc"))
+	require.NoError(t, err)
+
+	// All or nothing: another channel's, another server's, unknown ids.
+	_, err = e.s.Take(1, "c1", []string{a.ID, other.ID})
+	assert.Equal(t, CodeNotFound, codeOf(err))
+	_, err = e.s.Take(2, "c1", []string{a.ID})
+	assert.Equal(t, CodeNotFound, codeOf(err))
+	_, err = e.s.Take(1, "c1", []string{a.ID, "nope"})
+	assert.Equal(t, CodeNotFound, codeOf(err))
+	require.Len(t, e.s.List(1, "c1"), 2, "nothing taken by a refused Take")
+
+	before := e.chg.count()
+	got, err := e.s.Take(1, "c1", []string{b.ID, a.ID, b.ID})
+	require.NoError(t, err)
+	require.Len(t, got, 2, "a repeated id is taken once")
+	assert.Equal(t, []string{b.ID, a.ID}, []string{got[0].ID, got[1].ID}, "in the order given")
+	assert.True(t, got[0].Taken && got[1].Taken)
+	assert.Equal(t, "shot.png", got[1].Name)
+	assert.Empty(t, e.s.List(1, "c1"), "gone from the composer")
+	assert.Greater(t, e.chg.count(), before, "the composer is told")
+	_, err = e.s.Take(1, "c1", []string{a.ID})
+	assert.Equal(t, CodeNotFound, codeOf(err), "taken once only")
+
+	// Taken ones do not count against the composer's limit.
+	for i := 0; i < MaxPerChannel; i++ {
+		_, err := e.s.AddBytes(1, "c1", "x.txt", "", strings.NewReader("x"), 0)
+		require.NoError(t, err)
+	}
+
+	// They stay alive for the post: uploaded, waited for, and their spool
+	// is kept until they are removed.
+	assert.Contains(t, spools(t, e.dir), spoolPrefix+a.ID)
+	e.b.setLive(1, true)
+	e.s.Wake(1)
+	ids, err := e.s.Wait(context.Background(), []string{a.ID, b.ID})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f-" + a.ID, "f-" + b.ID}, ids)
+	pic, ok := e.s.Get(a.ID)
+	require.True(t, ok)
+	assert.True(t, pic.Taken)
+	require.NoError(t, e.s.Remove(a.ID))
+	assert.NotContains(t, spools(t, e.dir), spoolPrefix+a.ID)
+	assert.Len(t, e.s.List(1, "c1"), MaxPerChannel, "removing a taken one leaves the composer alone")
 }
 
 func TestPauseReturnsRunningUploadsToTheQueue(t *testing.T) {

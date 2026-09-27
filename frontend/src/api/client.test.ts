@@ -57,6 +57,7 @@ test('http client chat methods post snake_case bodies', async () => {
     async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
   )
   await httpClient.sendPost(3, 'c1', 'hi')
+  await httpClient.sendPost(3, 'c1', '', ['a1', 'a2'])
   await httpClient.editPost(3, 'p1', 'v2')
   await httpClient.sidebar(3, '')
   await httpClient.downloadFile(3, 'f1')
@@ -69,7 +70,8 @@ test('http client chat methods post snake_case bodies', async () => {
   await httpClient.removeDownload(7)
   await httpClient.clearDownloads()
   expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
-    ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi' }],
+    ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi', attachment_ids: [] }],
+    ['/api/SendPost', { id: 3, channel_id: 'c1', message: '', attachment_ids: ['a1', 'a2'] }],
     ['/api/EditPost', { id: 3, post_id: 'p1', message: 'v2' }],
     ['/api/Sidebar', { id: 3, team_id: '' }],
     ['/api/DownloadFile', { id: 3, file_id: 'f1' }],

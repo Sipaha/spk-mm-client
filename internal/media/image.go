@@ -23,6 +23,10 @@ import (
 // image. SVG (text/xml) is never among them: it can carry scripts.
 var rasterTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true, "image/bmp": true}
 
+// IsRaster reports whether a media type is one of the raster pictures the
+// cache shows (a staged attachment gets a preview only then).
+func IsRaster(mime string) bool { return rasterTypes[mime] }
+
 // sniffLen is what http.DetectContentType looks at.
 const sniffLen = 512
 

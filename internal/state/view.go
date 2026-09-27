@@ -7,7 +7,9 @@ import (
 )
 
 // FileView is what the feed needs to show a file: previews come from
-// /media/ by id; width/height fix the image box before it loads.
+// /media/ by id; width/height fix the image box before it loads. Staged: a
+// file of a post being sent — ID is the attachment id and its picture
+// comes from /media/<srv>/staged/<id>.
 type FileView struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -17,6 +19,7 @@ type FileView struct {
 	Width      int    `json:"width,omitempty"`
 	Height     int    `json:"height,omitempty"`
 	HasPreview bool   `json:"has_preview,omitempty"`
+	Staged     bool   `json:"staged,omitempty"`
 }
 
 type ReactionView struct {
@@ -103,7 +106,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
 			// Keys the feed row across confirmation: the eventual real post
 			// echoes this same id back as its own PendingPostID.
-			PendingPostID: p.ID})
+			PendingPostID: p.ID, Files: p.Files})
 	}
 	return v, true
 }

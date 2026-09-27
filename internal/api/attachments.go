@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
+	"path/filepath"
+	"strings"
 
 	"github.com/spk/spk-mm-client/internal/attach"
 	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mmsync"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 // AttachmentView is a file attached to a channel's next message.
@@ -132,15 +136,68 @@ func (s *Service) Attachments(_ context.Context, id int64, channelID string) ([]
 	return s.att.List(id, channelID), nil
 }
 
-// attachmentOf is a server's attachment.
+// attachmentOf is an attachment in a server's composer (one taken by a
+// post being sent is the post's: RetryPost, DiscardPost).
 func (s *Service) attachmentOf(id int64, attachmentID string) error {
 	if s.att == nil {
 		return coded(CodeNotFound, nil)
 	}
-	if a, ok := s.att.Get(attachmentID); !ok || a.Server != id {
+	if a, ok := s.att.Get(attachmentID); !ok || a.Server != id || a.Taken {
 		return coded(CodeNotFound, nil)
 	}
 	return nil
+}
+
+// postFiles gives the sync workers the uploads of the posts they send.
+type postFiles struct{ s *Service }
+
+var _ mmsync.Files = postFiles{}
+
+var errNoAttachments = errors.New("attachments are not enabled")
+
+func (p postFiles) Wait(ctx context.Context, ids []string) ([]string, error) {
+	if p.s.att == nil {
+		return nil, errNoAttachments
+	}
+	return p.s.att.Wait(ctx, ids)
+}
+
+func (p postFiles) Retry(ids []string) {
+	if p.s.att == nil {
+		return
+	}
+	for _, id := range ids {
+		_ = p.s.att.Retry(id) // a gone one fails the post's Wait
+	}
+}
+
+func (p postFiles) Release(ids []string) {
+	if p.s.att == nil {
+		return
+	}
+	for _, id := range ids {
+		_ = p.s.att.Remove(id) // gone already: nothing to let go of
+	}
+}
+
+// stagedFile shows an attachment of a post being sent like a server file:
+// its picture comes from /media/<srv>/staged/<id>; a raster picture's size
+// is read from its header so the feed's box is final before it loads.
+func (s *Service) stagedFile(a attach.Attachment) state.FileView {
+	fv := state.FileView{ID: a.ID, Name: a.Name, Ext: strings.ToLower(strings.TrimPrefix(filepath.Ext(a.Name), ".")),
+		Size: a.Size, Mime: a.Mime, Staged: true}
+	if !media.IsRaster(a.Mime) {
+		return fv
+	}
+	f, _, err := s.att.Open(a.Server, a.ID)
+	if err != nil {
+		return fv
+	}
+	defer f.Close()
+	if c, _, err := image.DecodeConfig(f); err == nil {
+		fv.Width, fv.Height = c.Width, c.Height
+	}
+	return fv
 }
 
 // RemoveAttachment implements API.

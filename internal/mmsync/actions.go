@@ -11,7 +11,10 @@ import (
 	"github.com/spk/spk-mm-client/internal/state"
 )
 
-var ErrEmptyMessage = errors.New("mmsync: empty message")
+var (
+	ErrEmptyMessage  = errors.New("mmsync: empty message")
+	ErrNoAttachments = errors.New("mmsync: attachments are not enabled")
+)
 
 // OpenChannel makes the channel current: moves it to the front of the fetch
 // queue and marks it read if the window is focused.
@@ -80,21 +83,54 @@ func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
 	return nil
 }
 
-func (w *Worker) Send(channelID, message string) error {
-	if strings.TrimSpace(message) == "" {
+// Send shows the post at once (with its attachments' local files) and
+// sends it in the background: once every attachment is uploaded, the post
+// is created with their file ids. A text is needed only without files.
+func (w *Worker) Send(channelID, message string, files ...state.FileView) error {
+	if strings.TrimSpace(message) == "" && len(files) == 0 {
 		return ErrEmptyMessage
 	}
-	p := w.st.AddPending(channelID, "", message)
+	if len(files) > 0 && w.cfg.Files == nil {
+		return ErrNoAttachments
+	}
+	p := w.st.AddPending(channelID, "", message, files...)
 	w.changed(state.Change{Channels: []string{channelID}})
+	if len(files) > 0 {
+		// Sending is the user asking: an upload that failed in the
+		// composer is tried again.
+		w.cfg.Files.Retry(attachmentIDs(p))
+	}
 	w.startCreate(p)
 	return nil
 }
 
+func attachmentIDs(p state.Pending) []string {
+	ids := make([]string, 0, len(p.Files))
+	for _, f := range p.Files {
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
+// create waits for the post's uploads — without a deadline: offline they
+// wait for the server to be live, and each fails on its own (error, stall,
+// removal); the worker stopping ends the wait — then creates the post
+// under createTimeout.
 func (w *Worker) create(ctx context.Context, p state.Pending) {
+	var fileIDs []string
+	if len(p.Files) > 0 {
+		ids, err := w.cfg.Files.Wait(ctx, attachmentIDs(p))
+		if err != nil {
+			slog.Warn("send failed: attachments not uploaded", "srv", w.srv.ID, "channel", p.ChannelID, "err", err)
+			w.changed(w.st.FailPending(p.ChannelID, p.ID))
+			return
+		}
+		fileIDs = ids
+	}
 	cctx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
 	post, err := w.rc.CreatePost(cctx, model.Post{ChannelID: p.ChannelID, RootID: p.RootID, Message: p.Message,
-		PendingPostID: p.ID, UserID: w.st.Me().ID})
+		PendingPostID: p.ID, UserID: w.st.Me().ID, FileIDs: fileIDs})
 	if err != nil {
 		if sessionExpired(err) {
 			w.signalAuth()
@@ -108,25 +144,46 @@ func (w *Worker) create(ctx context.Context, p state.Pending) {
 
 // Retry resends a failed post with the same pending id: if the first
 // attempt did reach the server, it returns the existing post (no duplicate).
+// Its failed uploads are sent again; uploaded files keep their ids.
 func (w *Worker) Retry(channelID, pendingID string) {
 	p, ok := w.st.RetryPending(channelID, pendingID)
 	if !ok {
 		return
 	}
 	w.changed(state.Change{Channels: []string{channelID}})
+	if len(p.Files) > 0 {
+		w.cfg.Files.Retry(attachmentIDs(p))
+	}
 	w.startCreate(p)
 }
 
 // startCreate sends p in the background; if the worker is stopping, p is
-// marked failed at once instead of hanging as pending.
+// marked failed at once instead of hanging as pending, and its attachments
+// are let go of (Run has released those of its pending posts already).
 func (w *Worker) startCreate(p state.Pending) {
 	if !w.goBG(func(ctx context.Context) { w.create(ctx, p) }) {
 		w.changed(w.st.FailPending(p.ChannelID, p.ID))
+		if len(p.Files) > 0 {
+			w.cfg.Files.Release(attachmentIDs(p))
+		}
 	}
 }
 
+// Discard drops a pending post; its attachments are let go of (uploads
+// cancelled, spools deleted) through changed.
 func (w *Worker) Discard(channelID, pendingID string) {
 	w.changed(w.st.DropPending(channelID, pendingID))
+}
+
+// releaseFiles lets go of the attachments of pending posts that are gone
+// (confirmed by the server, discarded, their channel left).
+func (w *Worker) releaseFiles() {
+	if w.cfg.Files == nil {
+		return
+	}
+	if ids := w.st.TakeReleased(); len(ids) > 0 {
+		w.cfg.Files.Release(ids)
+	}
 }
 
 func (w *Worker) Edit(ctx context.Context, postID, message string) error {

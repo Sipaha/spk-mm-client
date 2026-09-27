@@ -44,10 +44,26 @@ type Hooks struct {
 	Notify  func(serverID int64, c state.NotifyCandidate)
 }
 
+// Files uploads the attachments of posts being sent (the api layer wires
+// the attachment store). Its methods must not call back into the worker.
+type Files interface {
+	// Wait returns the server file ids of the attachments ids (in order)
+	// once every one is uploaded; an error once one failed or is gone, or
+	// once ctx ends. It does not time out by itself: an upload waits for
+	// the server to be live and fails on its own stall timer.
+	Wait(ctx context.Context, ids []string) ([]string, error)
+	// Retry uploads the failed ones among ids again (the user asked).
+	Retry(ids []string)
+	// Release lets the attachments go — their post was confirmed,
+	// discarded or lost: uploads are cancelled, spools deleted.
+	Release(ids []string)
+}
+
 type Config struct {
 	Store       *store.Store
 	HTTPClient  *http.Client
 	Hooks       Hooks
+	Files       Files // nil: posts cannot carry attachments
 	Now         func() time.Time
 	FlushEvery  time.Duration
 	MinBackoff  time.Duration
@@ -231,6 +247,7 @@ func (w *Worker) setStatus(s Status) {
 }
 
 func (w *Worker) changed(c state.Change) {
+	w.releaseFiles()
 	if !c.Empty() && w.cfg.Hooks.Changed != nil {
 		w.cfg.Hooks.Changed(w.srv.ID, c)
 	}
@@ -331,6 +348,14 @@ func (w *Worker) Run(ctx context.Context) {
 	w.bgMu.Unlock()
 	w.cancelLife()
 	w.bg.Wait()
+	// Pending posts live only in this worker's memory: their attachments
+	// go with them.
+	w.releaseFiles()
+	if w.cfg.Files != nil {
+		if ids := w.st.PendingAttachments(); len(ids) > 0 {
+			w.cfg.Files.Release(ids)
+		}
+	}
 	fctx, cancel := context.WithTimeout(context.Background(), finalFlushTime)
 	w.flush(fctx)
 	cancel()

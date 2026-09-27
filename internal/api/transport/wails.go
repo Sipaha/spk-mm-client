@@ -44,8 +44,8 @@ func (w *API) GetChannel(id int64, channelID string) (api.ChannelDTO, error) {
 func (w *API) LoadOlder(id int64, channelID string) error {
 	return w.a.LoadOlder(context.Background(), id, channelID)
 }
-func (w *API) SendPost(id int64, channelID, message string) error {
-	return w.a.SendPost(context.Background(), id, channelID, message)
+func (w *API) SendPost(id int64, channelID, message string, attachmentIDs []string) error {
+	return w.a.SendPost(context.Background(), id, channelID, message, attachmentIDs)
 }
 func (w *API) RetryPost(id int64, channelID, pendingID string) error {
 	return w.a.RetryPost(context.Background(), id, channelID, pendingID)

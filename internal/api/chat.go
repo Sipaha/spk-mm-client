@@ -8,6 +8,7 @@ import (
 
 	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mmsync"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 // worker returns the sync worker of a signed-in server.
@@ -112,12 +113,33 @@ func (s *Service) LoadOlder(ctx context.Context, id int64, channelID string) err
 	return actionError(w.LoadOlder(rctx, channelID))
 }
 
-func (s *Service) SendPost(ctx context.Context, id int64, channelID, message string) error {
+// SendPost implements API. Attachments move from the composer to the
+// pending post at once (all or none); the post is created once they are
+// uploaded.
+func (s *Service) SendPost(ctx context.Context, id int64, channelID, message string, attachmentIDs []string) error {
 	w, err := s.writer(ctx, id)
 	if err != nil {
 		return err
 	}
-	return actionError(w.Send(channelID, message))
+	if len(attachmentIDs) == 0 {
+		return actionError(w.Send(channelID, message))
+	}
+	if s.att == nil {
+		return coded(CodeNotFound, nil)
+	}
+	taken, err := s.att.Take(id, channelID, attachmentIDs)
+	if err != nil {
+		return attachError(err)
+	}
+	files := make([]state.FileView, 0, len(taken))
+	for _, a := range taken {
+		files = append(files, s.stagedFile(a))
+	}
+	if err := w.Send(channelID, message, files...); err != nil {
+		postFiles{s}.Release(attachmentIDs)
+		return actionError(err)
+	}
+	return nil
 }
 
 func (s *Service) RetryPost(ctx context.Context, id int64, channelID, pendingID string) error {

@@ -97,6 +97,7 @@ type Attachment struct {
 	Server  int64  `json:"-"`
 	Channel string `json:"-"`
 	FileID  string `json:"-"` // the server's file id once uploaded
+	Taken   bool   `json:"-"` // moved to a post being sent (Take): no longer in the composer
 }
 
 // Limits are a server's attachment settings; MaxFileSize 0 means the
@@ -496,12 +497,52 @@ func (s *Store) Retry(id string) error {
 	return nil
 }
 
-// Wait returns once every attachment in ids is uploaded (nil), one of them
-// failed (an *Error with its code) or is gone (CodeNotFound), or ctx ends.
-func (s *Store) Wait(ctx context.Context, ids []string) error {
+// Take moves attachments of a channel from its composer list to a post
+// being sent: they are no longer listed (nor counted against
+// MaxPerChannel), but stay alive — uploads go on, Wait, Retry and Remove
+// work — until the post removes them. All or nothing: an id that is not
+// in that channel's list (unknown, another server's or channel's, taken
+// already) fails the whole call with CodeNotFound. A repeated id is taken
+// once; the result keeps the order given.
+func (s *Store) Take(srv int64, ch string, ids []string) ([]Attachment, error) {
+	s.mu.Lock()
+	k := key{srv, ch}
+	var take []*item
+	for _, id := range ids {
+		it := s.items[id]
+		if it == nil || it.Taken || it.Server != srv || it.Channel != ch {
+			s.mu.Unlock()
+			return nil, fail(CodeNotFound, fmt.Errorf("attachment %s", id))
+		}
+		if !slices.Contains(take, it) {
+			take = append(take, it)
+		}
+	}
+	out := make([]Attachment, 0, len(take))
+	for _, it := range take {
+		it.Taken = true
+		out = append(out, it.Attachment)
+	}
+	l := slices.DeleteFunc(s.lists[k], func(it *item) bool { return it.Taken })
+	if len(l) == 0 {
+		delete(s.lists, k)
+	} else {
+		s.lists[k] = l
+	}
+	s.mu.Unlock()
+	if len(take) > 0 {
+		s.notify(srv, ch)
+	}
+	return out, nil
+}
+
+// Wait returns the server file ids of the attachments in ids (in that
+// order) once every one is uploaded; an *Error with its code once one of
+// them failed, CodeNotFound once one is gone; or ctx's error.
+func (s *Store) Wait(ctx context.Context, ids []string) ([]string, error) {
 	for {
 		s.mu.Lock()
-		done, err := true, error(nil)
+		fileIDs, err := make([]string, 0, len(ids)), error(nil)
 		for _, id := range ids {
 			it := s.items[id]
 			switch {
@@ -509,8 +550,8 @@ func (s *Store) Wait(ctx context.Context, ids []string) error {
 				err = fail(CodeNotFound, fmt.Errorf("attachment %s", id))
 			case it.State == StateFailed:
 				err = fail(it.Error, fmt.Errorf("attachment %s", id))
-			case it.State != StateUploaded:
-				done = false
+			case it.State == StateUploaded:
+				fileIDs = append(fileIDs, it.FileID)
 			}
 			if err != nil {
 				break
@@ -519,15 +560,15 @@ func (s *Store) Wait(ctx context.Context, ids []string) error {
 		changed := s.changed
 		s.mu.Unlock()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if done {
-			return nil
+		if len(fileIDs) == len(ids) {
+			return fileIDs, nil
 		}
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }

@@ -86,6 +86,7 @@ type Server struct {
 
 	// Task 7: posts, pending, active channel.
 	pending       map[string][]Pending
+	released      []string // attachments of pending posts dropped since the last TakeReleased
 	drafts        map[string]string
 	active        string
 	focused       bool
@@ -181,6 +182,9 @@ func (s *Server) Bootstrap(b Bootstrap) {
 // deleted server-side). The caller removes it from s.chans.
 func (s *Server) forgetChannelLocked(id string) {
 	delete(s.drafts, id)
+	for _, p := range s.pending[id] {
+		s.releaseLocked(p)
+	}
 	delete(s.pending, id)
 	s.dirty.dropChan(id)
 }

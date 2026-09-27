@@ -23,7 +23,9 @@ export interface Client {
   openChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
   loadOlder(id: number, channelId: string): Promise<void>
-  sendPost(id: number, channelId: string, message: string): Promise<void>
+  // attachmentIds: the channel's composer attachments sent with the message
+  // (none: text only; the text may be empty when there are some).
+  sendPost(id: number, channelId: string, message: string, attachmentIds?: string[]): Promise<void>
   retryPost(id: number, channelId: string, pendingId: string): Promise<void>
   discardPost(id: number, channelId: string, pendingId: string): Promise<void>
   editPost(id: number, postId: string, message: string): Promise<void>
@@ -90,7 +92,8 @@ export const httpClient: Client = {
   openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
-  sendPost: (id, channel_id, message) => done(post('SendPost', { id, channel_id, message })),
+  sendPost: (id, channel_id, message, attachmentIds = []) =>
+    done(post('SendPost', { id, channel_id, message, attachment_ids: attachmentIds })),
   retryPost: (id, channel_id, pending_id) => done(post('RetryPost', { id, channel_id, pending_id })),
   discardPost: (id, channel_id, pending_id) => done(post('DiscardPost', { id, channel_id, pending_id })),
   editPost: (id, post_id, message) => done(post('EditPost', { id, post_id, message })),
@@ -158,7 +161,7 @@ export const wailsClient: Client = {
   openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
-  sendPost: (id, channelId, message) => wcall('SendPost', id, channelId, message),
+  sendPost: (id, channelId, message, attachmentIds = []) => wcall('SendPost', id, channelId, message, attachmentIds),
   retryPost: (id, channelId, pendingId) => wcall('RetryPost', id, channelId, pendingId),
   discardPost: (id, channelId, pendingId) => wcall('DiscardPost', id, channelId, pendingId),
   editPost: (id, postId, message) => wcall('EditPost', id, postId, message),

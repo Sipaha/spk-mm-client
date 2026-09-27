@@ -54,7 +54,9 @@ type API interface {
 	OpenChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error
-	SendPost(ctx context.Context, id int64, channelID, message string) error
+	// SendPost sends a message with the channel's attachments attachmentIDs
+	// (none: text only; the text may be empty when there are some).
+	SendPost(ctx context.Context, id int64, channelID, message string, attachmentIDs []string) error
 	RetryPost(ctx context.Context, id int64, channelID, pendingID string) error
 	DiscardPost(ctx context.Context, id int64, channelID, pendingID string) error
 	EditPost(ctx context.Context, id int64, postID, message string) error

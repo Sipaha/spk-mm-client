@@ -16,6 +16,9 @@ type Pending struct {
 	Message   string `json:"message"`
 	CreateAt  int64  `json:"create_at"`
 	Failed    bool   `json:"failed,omitempty"`
+	// Files are the post's attachments while it is being sent (FileView.ID
+	// is the attachment id, Staged is set).
+	Files []FileView `json:"files,omitempty"`
 }
 
 // seenSet remembers recent post ids so a post delivered twice (REST
@@ -329,7 +332,8 @@ func (s *Server) SyncItemFor(channelID string) (SyncItem, bool) {
 
 // ---- pending (optimistic) posts ----
 
-func (s *Server) AddPending(channelID, rootID, message string) Pending {
+// AddPending shows a post being sent, with its attachments' local files.
+func (s *Server) AddPending(channelID, rootID, message string, files ...FileView) Pending {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now().UnixMilli()
@@ -337,7 +341,7 @@ func (s *Server) AddPending(channelID, rootID, message string) Pending {
 	for n := 1; s.pendingIndexLocked(channelID, id) >= 0; n++ {
 		id = s.me.ID + ":" + strconv.FormatInt(now, 10) + "-" + strconv.Itoa(n)
 	}
-	p := Pending{ID: id, ChannelID: channelID, RootID: rootID, Message: message, CreateAt: now}
+	p := Pending{ID: id, ChannelID: channelID, RootID: rootID, Message: message, CreateAt: now, Files: slices.Clone(files)}
 	s.pending[channelID] = append(s.pending[channelID], p)
 	return p
 }
@@ -355,11 +359,13 @@ func (s *Server) FailPending(channelID, id string) Change {
 	return Change{Channels: []string{channelID}}
 }
 
+// RetryPending takes a failed post back to sending; one still being sent
+// is left alone (a second send would race the first).
 func (s *Server) RetryPending(channelID, id string) (Pending, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.pendingIndexLocked(channelID, id)
-	if i < 0 {
+	if i < 0 || !s.pending[channelID][i].Failed {
 		return Pending{}, false
 	}
 	s.pending[channelID][i].Failed = false
@@ -377,7 +383,46 @@ func (s *Server) dropPendingLocked(channelID, id string) {
 	if id == "" {
 		return
 	}
-	s.pending[channelID] = slices.DeleteFunc(s.pending[channelID], func(p Pending) bool { return p.ID == id })
+	s.pending[channelID] = slices.DeleteFunc(s.pending[channelID], func(p Pending) bool {
+		if p.ID != id {
+			return false
+		}
+		s.releaseLocked(p)
+		return true
+	})
+}
+
+// releaseLocked records the attachments of a pending post that is gone.
+func (s *Server) releaseLocked(p Pending) {
+	for _, f := range p.Files {
+		s.released = append(s.released, f.ID)
+	}
+}
+
+// TakeReleased gives the attachment ids of pending posts dropped since the
+// last call — confirmed by the server, discarded, or gone with their
+// channel — so their files can be let go of.
+func (s *Server) TakeReleased() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.released
+	s.released = nil
+	return out
+}
+
+// PendingAttachments gives the attachment ids of every pending post.
+func (s *Server) PendingAttachments() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, l := range s.pending {
+		for _, p := range l {
+			for _, f := range p.Files {
+				out = append(out, f.ID)
+			}
+		}
+	}
+	return out
 }
 
 // ---- posts from the user's own actions ----
