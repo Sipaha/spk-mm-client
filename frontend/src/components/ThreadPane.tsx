@@ -8,32 +8,13 @@ import {
 import { formatLocale } from '../format'
 import { t } from '../i18n'
 import { useStore } from '../store'
+import { useNarrow } from '../useNarrow'
 import { Composer } from './Composer'
 import { Feed, type FeedData } from './Feed'
 import { fileKind } from './files'
 import { IconChevronLeft, IconClose } from './icons'
 import type { PostActions } from './PostItem'
 import { Viewer } from './Viewer'
-
-const NARROW_QUERY = '(max-width: 1023px)'
-
-// useNarrow: the panel overlays the feed instead of sitting beside it below
-// 1024px window width (Task 6 brief, spike's "variant C"). Guarded for
-// environments without matchMedia (defensive only — not expected in a real
-// browser or WebKitGTK).
-function useNarrow(): boolean {
-  const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-  const [narrow, setNarrow] = useState(() => (supported ? window.matchMedia(NARROW_QUERY).matches : false))
-  useEffect(() => {
-    if (!supported) return
-    const mql = window.matchMedia(NARROW_QUERY)
-    const onChange = () => setNarrow(mql.matches)
-    onChange()
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }, [supported])
-  return narrow
-}
 
 interface Props {
   server: ServerDTO
@@ -169,7 +150,11 @@ export function ThreadPane({ server, thread, onClose }: Props) {
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
+      // Width comes from the --spk-thread-width CSS var the splitter drives
+      // (App.tsx; theme brief scope 3a) — narrow (overlay) mode ignores it
+      // entirely and is never resizable.
+      style={narrow ? undefined : { width: 'var(--spk-thread-width, 420px)' }}
+      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
     >
       <header className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         {narrow && (

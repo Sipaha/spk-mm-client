@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { ApiError, client, isDesktop } from './api/client'
 import type { ServerDTO } from './api/types'
 import {
@@ -10,17 +10,93 @@ import { ChannelPane } from './components/ChannelPane'
 import { ServerPanel } from './components/ServerPanel'
 import { ServerRail } from './components/ServerRail'
 import { Sidebar } from './components/Sidebar'
+import { Splitter } from './components/Splitter'
+import {
+  SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
+} from './components/splitter'
 import { ThreadPane } from './components/ThreadPane'
 import { IconClose } from './components/icons'
 import { errorMessage } from './errors'
 import { t } from './i18n'
 import { useStore } from './store'
+import { useNarrow } from './useNarrow'
+
+// useWindowWidth: only used to re-clamp the splitters on resize (theme
+// brief 2026-09-28 scope 3a) — rAF-throttled like Feed.tsx's own resize-
+// driven work, not a per-pixel state stream.
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(() => window.innerWidth)
+  useEffect(() => {
+    let raf = 0
+    const onResize = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => setWidth(window.innerWidth))
+    }
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
+  return width
+}
 
 export function App() {
   const {
     servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, notice, noticeSticky,
     noticeAction, setError, loginFailed, setInfo, showSignIn, setNotice,
   } = useStore()
+
+  // Sidebar/thread-panel splitter widths (theme brief 2026-09-28 scope 3a):
+  // app-wide, not per server. Nothing here blocks startup — these defaults
+  // render immediately, client.getLayout() below only overrides them once
+  // it resolves.
+  const [sidebarWidth, setSidebarWidthState] = useState(SIDEBAR_DEFAULT)
+  const [threadWidth, setThreadWidthState] = useState(THREAD_DEFAULT)
+  const windowWidth = useWindowWidth()
+  const narrow = useNarrow()
+  const threadOpen = Boolean(thread) && !narrow
+
+  useEffect(() => {
+    client
+      .getLayout()
+      .then((l) => {
+        if (l.sidebar_width > 0) setSidebarWidthState((w) => clampSidebarWidth(l.sidebar_width, window.innerWidth, l.thread_width || w))
+        if (l.thread_width > 0) setThreadWidthState((w) => clampThreadWidth(l.thread_width, window.innerWidth, l.sidebar_width || w))
+      })
+      .catch(() => {})
+  }, [])
+
+  // Keep both widths inside their (window-size-dependent) bounds as the
+  // window resizes — the floor always wins, so on a very narrow window the
+  // feed is what gives, not either pane going below its own minimum.
+  useEffect(() => {
+    setSidebarWidthState((w) => clampSidebarWidth(w, windowWidth, threadOpen ? threadWidth : 0))
+  }, [windowWidth, threadOpen, threadWidth])
+  useEffect(() => {
+    if (!threadOpen) return
+    setThreadWidthState((w) => clampThreadWidth(w, windowWidth, sidebarWidth))
+  }, [windowWidth, threadOpen, sidebarWidth])
+
+  // The CSS vars Sidebar.tsx/ThreadPane.tsx read (var(--spk-…, default)):
+  // committed here so a resize-driven clamp (above) or the initial load
+  // (above) is visible even though neither goes through Splitter's own
+  // live rAF path.
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty('--spk-sidebar-width', `${sidebarWidth}px`)
+  }, [sidebarWidth])
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty('--spk-thread-width', `${threadWidth}px`)
+  }, [threadWidth])
+
+  const commitSidebarWidth = (w: number) => {
+    setSidebarWidthState(w)
+    void client.setSidebarWidth(w).catch(() => {})
+  }
+  const commitThreadWidth = (w: number) => {
+    setThreadWidthState(w)
+    void client.setThreadWidth(w).catch(() => {})
+  }
 
   useEffect(() => {
     client.appInfo().then(setInfo).catch(() => {})
@@ -140,12 +216,36 @@ export function App() {
             onRemove={() => remove(selected)}
             onReauth={() => showSignIn(selected.id)}
           />
+          <Splitter
+            value={sidebarWidth}
+            {...sidebarBounds(windowWidth, threadOpen ? threadWidth : 0)}
+            defaultValue={sidebarWidth}
+            sign={1}
+            cssVar="--spk-sidebar-width"
+            label={t('layout.resizeSidebar')}
+            onCommit={commitSidebarWidth}
+          />
           <main className="flex min-w-0 flex-1 flex-col">
             {banner}
             {info}
             <div className="relative flex min-h-0 flex-1">
               <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />
-              {thread && <ThreadPane server={selected} thread={thread} onClose={() => closeThread(selected.id)} />}
+              {thread && (
+                <>
+                  {!narrow && (
+                    <Splitter
+                      value={threadWidth}
+                      {...threadBounds(windowWidth, sidebarWidth)}
+                      defaultValue={THREAD_DEFAULT}
+                      sign={-1}
+                      cssVar="--spk-thread-width"
+                      label={t('layout.resizeThread')}
+                      onCommit={commitThreadWidth}
+                    />
+                  )}
+                  <ThreadPane server={selected} thread={thread} onClose={() => closeThread(selected.id)} />
+                </>
+              )}
             </div>
           </main>
         </>

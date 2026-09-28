@@ -99,7 +99,14 @@ export function Sidebar(p: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const teams = p.sidebar?.teams ?? []
   return (
-    <aside aria-label={t('sidebar.label')} className="flex w-64 shrink-0 flex-col bg-sidebar text-sm text-fg-muted">
+    <aside
+      aria-label={t('sidebar.label')}
+      // Width comes from the --spk-sidebar-width CSS var the splitter drives
+      // (App.tsx; theme brief scope 3a) — 256px (the old fixed w-64) until
+      // the saved value (or a live drag) sets it.
+      style={{ width: 'var(--spk-sidebar-width, 256px)' }}
+      className="flex shrink-0 flex-col bg-sidebar text-sm text-fg-muted"
+    >
       <header className="relative flex items-center justify-between gap-2 px-3 py-2">
         <div className="min-w-0">
           <div className="truncate font-semibold text-fg">{p.server.name}</div>

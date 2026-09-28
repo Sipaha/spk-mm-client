@@ -198,6 +198,8 @@ const ru = {
   'downloads.error': 'Ошибка: {detail}',
   'downloads.progress': '{received} из {total}',
   'downloads.savedAt': '{size} · {time}',
+  'layout.resizeSidebar': 'Изменить ширину боковой панели',
+  'layout.resizeThread': 'Изменить ширину панели треда',
 } as const
 
 type Key = keyof typeof ru
@@ -399,6 +401,8 @@ const en: Record<Key, string> = {
   'downloads.error': 'Error: {detail}',
   'downloads.progress': '{received} of {total}',
   'downloads.savedAt': '{size} · {time}',
+  'layout.resizeSidebar': 'Resize sidebar',
+  'layout.resizeThread': 'Resize thread panel',
 }
 
 export const dict = { ru, en }
