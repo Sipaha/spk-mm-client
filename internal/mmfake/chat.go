@@ -448,13 +448,21 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 			return s.chat.byID[id].Post, nil
 		}
 	}
-	// Mirrors app/post.go:299-306: the root must exist, be undeleted, be in
-	// the same channel, and not itself be a reply — a reply to a reply is
-	// rejected outright.
+	// Mirrors app/post.go:280-305 — three different outcomes, not one
+	// (fix round 1: this used to collapse all three into 400 root_id):
+	// missing/deleted root -> 400 root_id.app_error; root in a different
+	// channel -> 500 channel_root_id.app_error; root is itself a reply ->
+	// 400 root_id.app_error (reply-to-reply is rejected outright).
 	var root *fpost
 	if in.RootID != "" {
 		root = s.chat.byID[in.RootID]
-		if root == nil || root.DeleteAt != 0 || root.ChannelID != c.ID || root.RootID != "" {
+		if root == nil || root.DeleteAt != 0 {
+			return model.Post{}, &apiErr{400, "api.post.create_post.root_id.app_error"}
+		}
+		if root.ChannelID != c.ID {
+			return model.Post{}, &apiErr{500, "api.post.create_post.channel_root_id.app_error"}
+		}
+		if root.RootID != "" {
 			return model.Post{}, &apiErr{400, "api.post.create_post.root_id.app_error"}
 		}
 	}

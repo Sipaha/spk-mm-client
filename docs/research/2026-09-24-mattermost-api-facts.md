@@ -422,10 +422,14 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
   запрошенный пост** (`pl.AddPost(&post); pl.AddOrder(id)` до цикла по
   ответам, `post_store.go:733–734` (CRT) и «add post/order for the found
   root» в `Get` без CRT). `has_next` — `LIMIT perPage+1`, сервер отбрасывает
-  последний элемент и выставляет `true` (`post_store.go:686–692`, `879–887`);
-  без `perPage` (`opts.PerPage == 0`) `has_next` не выставляется вовсе
-  (Go-указатель `nil`, не `false`) — модель `PostList.HasNext *bool
-  json:"has_next,omitempty"`.
+  последний элемент и выставляет `true` (`post_store.go:686–692`,
+  `879–887`); **сервер выставляет `list.HasNext = &hasNext` безусловно**
+  (`post_store.go:709`, `894` — присваивание вне `if opts.PerPage != 0`):
+  без `perPage` `hasNext` остаётся `false` (лимита нет — значит, отдан весь
+  тред), но указатель не `nil` (fix round 1: предыдущая версия этого
+  раздела и фейк ошибочно утверждали, что без `perPage` `has_next`
+  отсутствует вовсе). Модель — `PostList.HasNext *bool
+  json:"has_next,omitempty"`; фейк теперь тоже всегда его выставляет.
 - `collapsedThreads=true` требует, чтобы `id` был корнем
   (`WHERE RootId = id` в CRT-запросе, `post_store.go:611–619`): у сервера
   нет явной 400-проверки на это в прочитанном коде — с id ответа CRT-запрос
@@ -462,9 +466,19 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
 - Удаление корня — **одно** `post_deleted` только для корня; ответы
   помечаются удалёнными молча (`post_store.go:972–1007`,
   `WHERE Id=? OR RootId=?`) — клиент каскадирует сам.
-- Ответ на ответ запрещён: `root_id`, указывающий на пост с непустым своим
-  `root_id`, — 400 `api.post.create_post.root_id.app_error`
-  (`app/post.go:299–306`); корень должен быть в том же канале, не удалён.
+- `root_id` при создании поста — три разных исхода, не один
+  (`app/post.go:280–305`, fix round 1 — предыдущая версия этого раздела
+  ошибочно сводила все три к одному 400):
+  - корня нет или он удалён (`Store().Post().Get(...)` возвращает
+    `ErrNotFound` — удалённые не отдаются, `DeleteAt=0` в `WHERE`) → 400
+    `api.post.create_post.root_id.app_error`;
+  - корень **есть, но не в том канале**, что у нового поста
+    (`!parentPostList.IsChannelId(post.ChannelId)`, после успешного чтения,
+    т.е. без ошибки стора) → **500** `api.post.create_post.channel_root_id.app_error`
+    (именно 500, не 400 — код так и делает, `http.StatusInternalServerError`);
+  - корень есть, в том же канале, но сам является ответом (`rootPost.RootId
+    != ""`) → 400 `api.post.create_post.root_id.app_error` (ответ на ответ
+    запрещён).
 
 ### 8.3 `teams/unread` и `threads?totalsOnly`
 

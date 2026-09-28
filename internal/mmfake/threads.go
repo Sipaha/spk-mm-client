@@ -111,26 +111,35 @@ func (s *Server) participantUsersLocked(ids []string) []model.User {
 	return out
 }
 
-func (s *Server) prefValueLocked(userID, category, name string) string {
+// prefLocked reports a preference's value and whether the row exists at
+// all — crtForLocked needs to tell "no preference" (fall back to the
+// config default) apart from "preference present but not \"on\"".
+func (s *Server) prefLocked(userID, category, name string) (string, bool) {
 	for _, p := range s.chat.prefs[userID] {
 		if p.Category == category && p.Name == name {
-			return p.Value
+			return p.Value, true
 		}
 	}
-	return ""
+	return "", false
 }
 
-// crtForLocked mirrors IsCRTEnabledForUser (app/channel.go:2883-2897):
-// disabled -> never, always_on -> always, default_on/default_off -> the
-// display_settings/collapsed_reply_threads preference, defaulting to on.
+// crtForLocked mirrors IsCRTEnabledForUser (app/channel.go:2883-2897)
+// exactly: disabled -> never, always_on -> always; default_on/default_off
+// set the *default* (fix round 1: this used to treat default_on and
+// default_off asymmetrically — "off" vs. "on" — instead of matching the
+// real server, where the config only sets the default and, once a
+// preference row exists at all, enabled is decided solely by whether its
+// value is exactly "on", the same test for both modes).
 func (s *Server) crtForLocked(userID string) bool {
 	switch s.chat.crtMode {
 	case "always_on":
 		return true
-	case "default_on":
-		return s.prefValueLocked(userID, "display_settings", "collapsed_reply_threads") != "off"
-	case "default_off":
-		return s.prefValueLocked(userID, "display_settings", "collapsed_reply_threads") == "on"
+	case "default_on", "default_off":
+		enabled := s.chat.crtMode == "default_on"
+		if v, ok := s.prefLocked(userID, "display_settings", "collapsed_reply_threads"); ok {
+			enabled = v == "on"
+		}
+		return enabled
 	default: // "disabled" or unset
 		return false
 	}
@@ -337,9 +346,11 @@ func (s *Server) postThread(w http.ResponseWriter, r *http.Request, u User) {
 		list.Order = append(list.Order, p.ID)
 		list.Posts[p.ID] = p.Post
 	}
-	if hasPerPage {
-		list.HasNext = &hasNext
-	}
+	// has_next is always present (post_store.go:709,894 set it
+	// unconditionally) — without perPage there is no LIMIT, so it is always
+	// false (the whole thread was returned), never nil. Fix round 1: this
+	// used to only appear when perPage was given.
+	list.HasNext = &hasNext
 	writeJSON(w, 200, list)
 }
 

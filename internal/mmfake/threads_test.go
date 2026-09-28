@@ -1,6 +1,9 @@
 package mmfake
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"strconv"
 	"testing"
 
@@ -9,6 +12,32 @@ import (
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
 )
+
+// callErr is authed.call (chat_test.go) but also decodes the AppError body's
+// "id" — needed to tell the three different root_id outcomes apart (fix
+// round 1: they used to all be 400 root_id.app_error; now missing/deleted
+// root and reply-to-reply are 400 root_id.app_error, but root-in-another-
+// channel is 500 channel_root_id.app_error).
+func (a authed) callErr(method, path string, body any) (status int, errID string) {
+	a.t.Helper()
+	var rd *bytes.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	} else {
+		rd = bytes.NewReader(nil)
+	}
+	req, _ := http.NewRequest(method, a.s.URL()+path, rd)
+	req.Header.Set("Authorization", "Bearer "+a.tok)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(a.t, err)
+	defer resp.Body.Close()
+	var e struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	return resp.StatusCode, e.ID
+}
 
 func TestPostThreadPagesUpWithoutGapsOrDuplicates(t *testing.T) {
 	s := Start(Options{SeedPosts: -1})
@@ -79,7 +108,11 @@ func TestPostThreadHasNextBoundary(t *testing.T) {
 	var whole model.PostList
 	require.Equal(t, 200, a.call("GET", "/api/v4/posts/"+root+"/thread", nil, &whole))
 	assert.Len(t, whole.Order, 6, "no perPage: the whole thread, root + 5 replies")
-	assert.Nil(t, whole.HasNext)
+	// has_next is always present (post_store.go:709,894 set it
+	// unconditionally, fix round 1): no perPage means no LIMIT, so it is
+	// false (everything was returned), not nil/absent.
+	require.NotNil(t, whole.HasNext)
+	assert.False(t, *whole.HasNext)
 }
 
 func TestPostThreadErrors(t *testing.T) {
@@ -124,13 +157,26 @@ func TestReplyToAReplyIsRejected(t *testing.T) {
 	assert.Equal(t, 400, status)
 }
 
-func TestReplyRootMustBeInTheSameChannel(t *testing.T) {
+func TestReplyRootIDErrorMapping(t *testing.T) {
 	s := Start(Options{SeedPosts: -1})
 	defer s.Close()
 	root := s.PostAs("c-town", "alice", "root here")
+	reply := s.ReplyAs("c-town", root.ID, "bob", "a reply") // target for the reply-to-reply case below
 	a := loginAs(t, s, "alice")
-	status := a.call("POST", "/api/v4/posts", map[string]any{"channel_id": "c-offtopic", "root_id": root.ID, "message": "x"}, nil)
-	assert.Equal(t, 400, status)
+
+	status, id := a.callErr("POST", "/api/v4/posts", map[string]any{"channel_id": "c-town", "root_id": "unknown-post", "message": "x"})
+	assert.Equal(t, 400, status, "missing root")
+	assert.Equal(t, "api.post.create_post.root_id.app_error", id)
+
+	// root exists, but in a different channel than the new post: the real
+	// server returns 500 here, not 400 (app/post.go:293-301, fix round 1).
+	status, id = a.callErr("POST", "/api/v4/posts", map[string]any{"channel_id": "c-offtopic", "root_id": root.ID, "message": "x"})
+	assert.Equal(t, 500, status, "root in another channel")
+	assert.Equal(t, "api.post.create_post.channel_root_id.app_error", id)
+
+	status, id = a.callErr("POST", "/api/v4/posts", map[string]any{"channel_id": "c-town", "root_id": reply.ID, "message": "x"})
+	assert.Equal(t, 400, status, "reply-to-reply")
+	assert.Equal(t, "api.post.create_post.root_id.app_error", id)
 }
 
 func TestReplyCarriesTheThreadsReplyCount(t *testing.T) {
@@ -218,6 +264,68 @@ func TestThreadUpdatedNotSentWhenCRTIsOff(t *testing.T) {
 	f := read(t, aliceWS)
 	assert.Equal(t, "posted", f.Event)
 	noFrame(t, aliceWS) // CRT disabled: no thread_updated
+}
+
+func TestCRTDefaultOnOffFollowsThePreferenceExactly(t *testing.T) {
+	// app/channel.go:2883-2897 (IsCRTEnabledForUser): default_on/default_off
+	// only set the *default*; once a display_settings/collapsed_reply_threads
+	// preference row exists at all, CRT is on iff its value is exactly "on"
+	// — the same test for both modes, not "on" for one and "!= off" for the
+	// other (fix round 1).
+	setPref := func(s *Server, username, value string) {
+		s.mu.Lock()
+		uid := s.userIDByName(username)
+		s.chat.prefs[uid] = []model.Preference{{UserID: uid, Category: "display_settings", Name: "collapsed_reply_threads", Value: value}}
+		s.mu.Unlock()
+	}
+	clearPref := func(s *Server, username string) {
+		s.mu.Lock()
+		delete(s.chat.prefs, s.userIDByName(username))
+		s.mu.Unlock()
+	}
+	// crtForLocked is exercised through its one observable effect: whether
+	// a reply's thread_updated reaches a CRT-enabled subscriber.
+	replyAndExpect := func(t *testing.T, mode string, setup func(*Server), wantCRT bool) {
+		t.Helper()
+		s := Start(Options{SeedPosts: -1})
+		defer s.Close()
+		s.SetCollapsedThreads(mode)
+		root := s.PostAs("c-town", "alice", "root")
+		setup(s)
+		tok := loginAs(t, s, "alice")
+		ws := dialWS(t, s, tok.tok, "")
+		require.Equal(t, "hello", read(t, ws).Event)
+
+		s.ReplyAs("c-town", root.ID, "bob", "r1")
+		f := read(t, ws)
+		require.Equal(t, "posted", f.Event)
+		if wantCRT {
+			assert.Equal(t, "thread_updated", read(t, ws).Event)
+		} else {
+			noFrame(t, ws)
+		}
+	}
+
+	t.Run("default_on, no preference row: on", func(t *testing.T) {
+		replyAndExpect(t, "default_on", func(s *Server) { clearPref(s, "alice") }, true)
+	})
+	t.Run("default_on, preference off: off", func(t *testing.T) {
+		replyAndExpect(t, "default_on", func(s *Server) { setPref(s, "alice", "off") }, false)
+	})
+	t.Run("default_off, no preference row: off", func(t *testing.T) {
+		replyAndExpect(t, "default_off", func(s *Server) { clearPref(s, "alice") }, false)
+	})
+	t.Run("default_off, preference on: on", func(t *testing.T) {
+		replyAndExpect(t, "default_off", func(s *Server) { setPref(s, "alice", "on") }, true)
+	})
+	t.Run("default_off, preference present but not exactly on: off", func(t *testing.T) {
+		// A naive "!= off" test (fix round 1's bug, mirrored for default_on)
+		// would wrongly turn this on.
+		replyAndExpect(t, "default_off", func(s *Server) { setPref(s, "alice", "maybe") }, false)
+	})
+	t.Run("default_on, preference present but not exactly on: off", func(t *testing.T) {
+		replyAndExpect(t, "default_on", func(s *Server) { setPref(s, "alice", "maybe") }, false)
+	})
 }
 
 func TestMarkThreadReadPublishesThreadReadChangedAnd404sWithoutSubscription(t *testing.T) {
