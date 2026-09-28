@@ -244,3 +244,87 @@ func (s *Server) setRecentLocked(list []recentEmoji) model.Preference {
 	s.dirty.meta = true
 	return p
 }
+
+// ---- who reacted (reaction chip tooltip/modal) ----
+
+// Reactor is one entry in a "who reacted" list: a user who reacted,
+// resolved to a display name and avatar version where the profile is
+// known. Name == "" means the profile is not loaded (an unknown/unfetched
+// reactor — the UI shows a placeholder).
+type Reactor struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
+}
+
+// ReactionUsersView answers "who reacted with this emoji": everyone who
+// reacted except me (the UI adds "You"), oldest reaction first. Unknown
+// counts the Users whose Name is still "".
+type ReactionUsersView struct {
+	Users   []Reactor `json:"users"`
+	Unknown int       `json:"unknown"`
+}
+
+// ReactorIDs lists the ids of everyone (except me) who put emoji on
+// postID, oldest reaction first — read from whichever copy of the post
+// state currently holds (feed window, history or the thread cache; see
+// findPostLocked). ok=false: the post is not held anywhere right now (the
+// caller has nothing to show). A held post with no matching reaction
+// returns an empty, ok=true slice.
+func (s *Server) ReactorIDs(postID, emoji string) (ids []string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, found := s.findPostLocked(postID)
+	if !found {
+		return nil, false
+	}
+	if p.Metadata == nil {
+		return []string{}, true
+	}
+	list := make([]model.Reaction, 0, len(p.Metadata.Reactions))
+	for _, r := range p.Metadata.Reactions {
+		if r.EmojiName == emoji && r.UserID != s.me.ID {
+			list = append(list, r)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].CreateAt < list[j].CreateAt })
+	ids = make([]string, len(list))
+	for i, r := range list {
+		ids[i] = r.UserID
+	}
+	return ids, true
+}
+
+// MissingAmong filters ids to the ones without a loaded profile — the set
+// a caller needs to fetch (e.g. POST users/ids) before ResolveReactors can
+// name everyone.
+func (s *Server) MissingAmong(ids []string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, id := range ids {
+		if _, ok := s.users[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ResolveReactors resolves ids (in the given order) to display
+// names/avatar versions from whatever profiles state already holds — call
+// it after fetching MissingAmong's ids so as many resolve as possible; a
+// profile that never loaded (e.g. the fetch failed) stays an empty Reactor
+// name and counts toward Unknown, never blocking the caller.
+func (s *Server) ResolveReactors(ids []string) ReactionUsersView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := ReactionUsersView{Users: make([]Reactor, len(ids))}
+	for i, id := range ids {
+		name := s.displayNameLocked(id)
+		if name == "" {
+			out.Unknown++
+		}
+		out.Users[i] = Reactor{ID: id, Name: name, Avatar: s.avatarLocked(id)}
+	}
+	return out
+}

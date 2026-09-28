@@ -116,6 +116,28 @@ func (s *Server) ReactAs(username, postID, emoji string) {
 	}
 }
 
+// ReactAsUnknown reacts as a synthetic user id outside the fake's user
+// directory (Options.Users): POST /users/ids will never resolve it, so it
+// stays "unknown" client-side however many times it is fetched — for
+// testing how a reactor list handles a profile it can never load, without
+// touching the shared, immutable Options.Users list (every read site in
+// this package assumes it never changes after Start — see AGENTS.md).
+// Channel membership is granted here, under the same lock as every other
+// mutation of s.chat.members, so reactLocked's membership check passes.
+func (s *Server) ReactAsUnknown(userID, channelID, postID, emoji string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chat.members[channelID] == nil {
+		s.chat.members[channelID] = map[string]*model.ChannelMember{}
+	}
+	if s.chat.members[channelID][userID] == nil {
+		s.chat.members[channelID][userID] = &model.ChannelMember{ChannelID: channelID, UserID: userID, NotifyProps: defaultNotify()}
+	}
+	if _, e := s.reactLocked(userID, postID, emoji, true); e != nil {
+		panic("mmfake: ReactAsUnknown: " + e.id)
+	}
+}
+
 func (s *Server) UnreactAs(username, postID, emoji string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

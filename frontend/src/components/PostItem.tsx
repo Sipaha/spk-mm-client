@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { Attachment, EmojiDTO, FileView, PostView } from '../api/types'
+import type { Attachment, EmojiDTO, FileView, PostView, ReactionUsersDTO } from '../api/types'
 import { invalidateRecent, useQuickReactions } from '../emoji/recent'
 import { errorMessage } from '../errors'
 import { formatTime } from '../format'
@@ -31,6 +31,9 @@ export interface PostActions {
   open(file: FileView): void
   react(post: PostView, emoji: string, add: boolean): Promise<void>
   emojiInfo(): Promise<EmojiDTO>
+  // reactionUsers: who reacted with emoji on this post — for the reaction
+  // chip's hover/focus tooltip and its "and N others" modal.
+  reactionUsers(post: PostView, emoji: string): Promise<ReactionUsersDTO>
 }
 
 interface Props {
@@ -279,7 +282,15 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           />
         )}
         {post.reactions && post.reactions.length > 0 && (
-          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => react(r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />
+          <Reactions
+            serverId={serverId}
+            postId={post.id}
+            reactions={post.reactions}
+            me={me}
+            onToggle={(r) => react(r.emoji, !r.mine)}
+            onAdd={canReact ? openPicker : undefined}
+            loadReactors={(_postId, emoji) => actions.reactionUsers(post, emoji)}
+          />
         )}
         {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
         {post.pending && (

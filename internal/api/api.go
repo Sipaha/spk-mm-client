@@ -94,6 +94,9 @@ type API interface {
 	OpenFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 	AddReaction(ctx context.Context, id int64, postID, emoji string) error
 	RemoveReaction(ctx context.Context, id int64, postID, emoji string) error
+	// ReactionUsers answers a reaction chip's "who reacted": everyone
+	// except me (the UI adds "You"), oldest reaction first.
+	ReactionUsers(ctx context.Context, id int64, postID, emoji string) (ReactionUsersDTO, error)
 	EmojiInfo(ctx context.Context, id int64) (EmojiDTO, error)
 	// MediaStreamBase is where <video>/<audio> take files from:
 	// <base>/<server id>/stream/<file id> (the /media/<srv>/<kind>/<key>

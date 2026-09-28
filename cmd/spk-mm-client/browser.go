@@ -370,6 +370,28 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"post_id": id})
 		}))
+		// react-extra: n reactions from synthetic user ids outside the
+		// fake's user directory (mmfake.ReactAsUnknown) — for e2e coverage
+		// of a reactor list with many entries the client can never name,
+		// without seeding extra named accounts into the shared fake.
+		tm.HandleFunc("POST /api/_test/fake/react-extra", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ChannelID string `json:"channel_id"`
+				Message   string `json:"message"`
+				Emoji     string `json:"emoji"`
+				N         int    `json:"n"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			id := fake.FindPost(in.ChannelID, in.Message)
+			if id == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"code": "no_post"})
+				return
+			}
+			for i := 0; i < in.N; i++ {
+				fake.ReactAsUnknown(fmt.Sprintf("u-extra-%d", i), in.ChannelID, id, in.Emoji)
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"post_id": id})
+		}))
 		mux.Handle("/api/_test/", transport.AuthGuard(token, transport.OriginGuard(tm)))
 		slog.Warn("test-api routes enabled at /api/_test/* — development only")
 	}

@@ -33,3 +33,20 @@ func TestReactionsThroughService(t *testing.T) {
 	fake.SetFailure("/api/v4/reactions", 0)
 	assert.Equal(t, CodeNoPost, codeOf(f.svc.AddReaction(ctx, id, "nope", "fire")))
 }
+
+func TestReactionUsersThroughService(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.loaded(id, "c-offtopic") }, "off-topic not loaded")
+	post := fake.FindPost("c-offtopic", "Welcome to off-topic")
+
+	v, err := f.svc.ReactionUsers(ctx, id, post, "+1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bob", "carol"}, []string{v.Users[0].Name, v.Users[1].Name})
+	assert.Equal(t, 0, v.Unknown)
+
+	_, err = f.svc.ReactionUsers(ctx, id, "nope", "+1")
+	assert.Equal(t, CodeNoPost, codeOf(err))
+}

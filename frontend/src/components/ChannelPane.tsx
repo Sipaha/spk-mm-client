@@ -4,7 +4,7 @@ import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
   editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
+  react, reactionUsers, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
 } from '../chat'
 import { errorMessage } from '../errors'
 import { formatLocale } from '../format'
@@ -85,6 +85,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       open: (f) => void openFile(server.id, f),
       react: (p, emoji, add) => react(server.id, p.id, emoji, add),
       emojiInfo: () => emojiInfo(server.id),
+      reactionUsers: (p, emoji) => reactionUsers(server.id, p.id, emoji),
     }),
     [server.id, server.url, channelId, teamName],
   )

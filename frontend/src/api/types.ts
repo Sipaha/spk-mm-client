@@ -135,6 +135,19 @@ export interface ReactionView {
   mine: boolean
 }
 
+export interface Reactor {
+  id: string
+  name: string // '' = unknown/profile not loaded — shown as a placeholder
+  avatar: string // picture version; '' = none yet
+}
+
+// "Who reacted" for a chip's tooltip/modal: everyone except me (the UI adds
+// "You"), oldest reaction first.
+export interface ReactionUsersDTO {
+  users: Reactor[]
+  unknown: number
+}
+
 export interface EmojiDTO {
   recent: string[] // most used first
   custom: string[]

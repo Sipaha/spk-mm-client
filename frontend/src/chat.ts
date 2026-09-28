@@ -385,6 +385,11 @@ export function react(serverId: number, postId: string, emoji: string, add: bool
 
 export const emojiInfo = (serverId: number) => client.emojiInfo(serverId)
 
+// reactionUsers: no report() on failure — the tooltip/modal that calls this
+// shows its own "…"/unknown state and must never surface a global error
+// banner for a hover.
+export const reactionUsers = (serverId: number, postId: string, emoji: string) => client.reactionUsers(serverId, postId, emoji)
+
 export function editLastOwn(ch: ChannelDTO) {
   for (let i = ch.posts.length - 1; i >= 0; i--) {
     const p = ch.posts[i]

@@ -91,6 +91,11 @@ func (f *fakeAPI) EmojiInfo(_ context.Context, id int64) (api.EmojiDTO, error) {
 	return api.EmojiDTO{Recent: []string{fmt.Sprint(id), "+1"}, Custom: []string{"partyparrot"}, CustomEnabled: true}, nil
 }
 
+func (f *fakeAPI) ReactionUsers(_ context.Context, id int64, postID, emoji string) (api.ReactionUsersDTO, error) {
+	f.reacted = append(f.reacted, fmt.Sprintf("who/%d/%s/%s", id, postID, emoji))
+	return api.ReactionUsersDTO{Users: []api.Reactor{{ID: "u-bob", Name: "bob", Avatar: "3"}}, Unknown: 1}, nil
+}
+
 func (f *fakeAPI) MediaStreamBase(context.Context) (string, error) { return "/media", nil }
 
 func (f *fakeAPI) DownloadFile(_ context.Context, id int64, fileID string) (api.SavedFile, error) {
@@ -274,6 +279,13 @@ func TestChatRoutes(t *testing.T) {
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"recent":["3","+1"],"custom":["partyparrot"],"custom_enabled":true}`, string(raw))
+
+	resp = call(t, h, ts.URL, "ReactionUsers", `{"id":3,"post_id":"p1","emoji":"+1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	raw, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"users":[{"id":"u-bob","name":"bob","avatar":"3"}],"unknown":1}`, string(raw))
+	assert.Equal(t, []string{"3/p1/+1", "-3/p1/+1", "who/3/p1/+1"}, f.reacted)
 
 	resp = call(t, h, ts.URL, "MediaStreamBase", `{}`)
 	assert.Equal(t, 200, resp.StatusCode)

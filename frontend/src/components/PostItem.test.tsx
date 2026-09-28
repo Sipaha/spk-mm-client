@@ -15,6 +15,7 @@ const actions = (): PostActions => ({
   cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), save: vi.fn(), copyLink: vi.fn(),
   view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn().mockResolvedValue(undefined),
   emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
+  reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
 })
 const me = { id: 'u-alice', username: 'alice' }
 const dto = (o: Partial<EmojiDTO> = {}): EmojiDTO => ({ recent: [], custom: [], custom_enabled: false, ...o })

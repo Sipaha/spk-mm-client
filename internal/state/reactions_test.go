@@ -197,3 +197,45 @@ func TestAClickKeepsThePinOfAWaitingIntent(t *testing.T) {
 	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "still pinned")
 }
+
+// ---- who reacted (reactor tooltip/modal) ----
+
+func TestReactorIDsOrderedOldestFirstExcludingMe(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocalWas("p", "+1", true) // me (u1): excluded from the result
+	// bob's reaction predates carol's.
+	s.reactLocked("off", model.Reaction{UserID: "u2", PostID: "p", EmojiName: "+1", CreateAt: 10}, true, true)
+	s.reactLocked("off", model.Reaction{UserID: "u3", PostID: "p", EmojiName: "+1", CreateAt: 20}, true, true)
+	ids, ok := s.ReactorIDs("p", "+1")
+	require.True(t, ok)
+	assert.Equal(t, []string{"u2", "u3"}, ids, "bob (oldest) before carol, me excluded")
+	none, ok := s.ReactorIDs("p", "tada")
+	require.True(t, ok, "the post is held, just with no reactions of this emoji")
+	assert.Empty(t, none)
+}
+
+func TestReactorIDsPostNotHeld(t *testing.T) {
+	s := newFixture()
+	_, ok := s.ReactorIDs("nope", "+1")
+	assert.False(t, ok)
+}
+
+func TestMissingAmong(t *testing.T) {
+	s := newFixture() // u1, u2, u3 are known
+	assert.Equal(t, []string{"u9"}, s.MissingAmong([]string{"u2", "u9", "u3"}))
+	assert.Empty(t, s.MissingAmong([]string{"u1", "u2"}))
+}
+
+func TestResolveReactors(t *testing.T) {
+	s := newFixture()
+	v := s.ResolveReactors([]string{"u2", "u9", "u3"})
+	assert.Equal(t, ReactionUsersView{
+		Users: []Reactor{
+			{ID: "u2", Name: "bob", Avatar: "0"},
+			{ID: "u9", Name: "", Avatar: ""},
+			{ID: "u3", Name: "carol", Avatar: "0"},
+		},
+		Unknown: 1,
+	}, v)
+}

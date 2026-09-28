@@ -7,6 +7,7 @@ import type {
   DownloadView,
   EmojiDTO,
   EventType,
+  ReactionUsersDTO,
   SavedFile,
   ServerDTO,
   SidebarDTO,
@@ -61,6 +62,8 @@ export interface Client {
   openFile(id: number, fileId: string): Promise<SavedFile>
   addReaction(id: number, postId: string, emoji: string): Promise<void>
   removeReaction(id: number, postId: string, emoji: string): Promise<void>
+  /** Who reacted with emoji on postId: everyone except me (the UI adds "You"), oldest first. */
+  reactionUsers(id: number, postId: string, emoji: string): Promise<ReactionUsersDTO>
   emojiInfo(id: number): Promise<EmojiDTO>
   /** Base of audio/video URLs: `${base}/${serverId}/stream/${fileId}` ("/media" in the browser, a loopback URL in desktop). */
   mediaStreamBase(): Promise<string>
@@ -152,6 +155,7 @@ export const httpClient: Client = {
   openFile: (id, file_id) => post('OpenFile', { id, file_id }),
   addReaction: (id, post_id, emoji) => done(post('AddReaction', { id, post_id, emoji })),
   removeReaction: (id, post_id, emoji) => done(post('RemoveReaction', { id, post_id, emoji })),
+  reactionUsers: (id, post_id, emoji) => post('ReactionUsers', { id, post_id, emoji }),
   emojiInfo: (id) => post('EmojiInfo', { id }),
   mediaStreamBase: () => post('MediaStreamBase', {}),
   downloads: () => post('Downloads', {}),
@@ -258,6 +262,7 @@ export const wailsClient: Client = {
   openFile: (id, fileId) => wcall('OpenFile', id, fileId),
   addReaction: (id, postId, emoji) => wcall('AddReaction', id, postId, emoji),
   removeReaction: (id, postId, emoji) => wcall('RemoveReaction', id, postId, emoji),
+  reactionUsers: (id, postId, emoji) => wcall('ReactionUsers', id, postId, emoji),
   emojiInfo: (id) => wcall('EmojiInfo', id),
   mediaStreamBase: () => wcall('MediaStreamBase'),
   downloads: () => wcall('Downloads'),

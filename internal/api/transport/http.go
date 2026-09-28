@@ -262,6 +262,9 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/EmojiInfo", handle(func(ctx context.Context, r *idReq) (any, error) {
 		return h.api.EmojiInfo(ctx, r.ID)
 	}))
+	h.mux.HandleFunc("POST /api/ReactionUsers", handle(func(ctx context.Context, r *reactReq) (any, error) {
+		return h.api.ReactionUsers(ctx, r.ID, r.PostID, r.Emoji)
+	}))
 	h.mux.HandleFunc("POST /api/MediaStreamBase", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return h.api.MediaStreamBase(ctx)
 	}))

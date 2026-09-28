@@ -1,0 +1,69 @@
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { setLocale } from '../i18n'
+import { ReactorsModal } from './ReactorsModal'
+
+beforeEach(() => setLocale('en'))
+
+function anchor() {
+  const el = document.createElement('button')
+  el.textContent = 'anchor'
+  document.body.appendChild(el)
+  return el
+}
+
+test('unresolved reactors show as "Unknown user" rows, real ones by name', () => {
+  const a = anchor()
+  render(
+    <ReactorsModal
+      serverId={1}
+      emoji="+1"
+      count={3}
+      mine={false}
+      meId="u-alice"
+      users={[{ id: 'u-bob', name: 'bob', avatar: '' }, { id: 'u-x1', name: '', avatar: '' }]}
+      anchorEl={a}
+      onClose={() => {}}
+    />,
+  )
+  const dialog = screen.getByRole('dialog')
+  const rows = within(dialog).getAllByRole('listitem')
+  expect(rows).toHaveLength(2)
+  expect(rows[0]).toHaveTextContent('bob')
+  expect(rows[1]).toHaveTextContent('Unknown user')
+  a.remove()
+})
+
+test('Tab past the last focusable element wraps to the first (focus trap)', async () => {
+  const user = userEvent.setup()
+  const a = anchor()
+  render(
+    <ReactorsModal
+      serverId={1}
+      emoji="+1"
+      count={1}
+      mine={false}
+      meId="u-alice"
+      users={[{ id: 'u-bob', name: 'bob', avatar: '' }]}
+      anchorEl={a}
+      onClose={() => {}}
+    />,
+  )
+  const close = screen.getByRole('button', { name: 'Close' })
+  expect(close).toHaveFocus() // opens focused on Close — the only focusable element here
+  await user.tab()
+  expect(close).toHaveFocus() // wrapped straight back to itself
+  await user.tab({ shift: true })
+  expect(close).toHaveFocus()
+  a.remove()
+})
+
+test('closing returns focus to the anchor chip', () => {
+  const a = anchor()
+  const { unmount } = render(
+    <ReactorsModal serverId={1} emoji="+1" count={1} mine={false} meId="u-alice" users={[]} anchorEl={a} onClose={() => {}} />,
+  )
+  unmount()
+  expect(a).toHaveFocus()
+  a.remove()
+})
