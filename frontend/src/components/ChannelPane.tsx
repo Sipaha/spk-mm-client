@@ -14,8 +14,7 @@ import { Composer } from './Composer'
 import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
-import { channelGlyph } from './glyph'
-import { IconDownload } from './icons'
+import { ChannelTypeMarker, IconDownload } from './icons'
 import type { PostActions } from './PostItem'
 import { Viewer } from './Viewer'
 
@@ -107,7 +106,9 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
     >
       <header className="flex min-w-0 items-baseline gap-3 border-b border-line bg-panel px-4 py-2">
         <h1 className="shrink-0 font-semibold text-fg">
-          <span className="mr-1 text-fg-subtle">{channelGlyph(channel.type)}</span>
+          <span className="mr-1 inline-flex items-center text-fg-subtle">
+            <ChannelTypeMarker type={channel.type} />
+          </span>
           {channel.name}
         </h1>
         {channel.header && (

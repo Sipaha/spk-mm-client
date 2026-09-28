@@ -39,3 +39,21 @@ test.each(names)('%s has at least one path or group with drawable content', (nam
   const { container } = render(<Component />)
   expect(container.querySelector('svg path')).toBeInTheDocument()
 })
+
+// ChannelTypeMarker isn't a plain Icon* wrapper (it switches on channel
+// type, and direct messages render plain "@" text, not an icon), so it's
+// covered separately rather than by the generic sweep above.
+test('ChannelTypeMarker: private/group/public are icons, direct message stays plain "@" text', () => {
+  const { container: priv } = render(<Icons.ChannelTypeMarker type="P" />)
+  expect(priv.querySelector('svg')).toBeInTheDocument()
+
+  const { container: group } = render(<Icons.ChannelTypeMarker type="G" />)
+  expect(group.querySelector('svg')).toBeInTheDocument()
+
+  const { container: pub } = render(<Icons.ChannelTypeMarker type="O" />)
+  expect(pub.querySelector('svg')).toBeInTheDocument()
+
+  const { container: dm } = render(<Icons.ChannelTypeMarker type="D" />)
+  expect(dm.querySelector('svg')).toBeNull()
+  expect(dm).toHaveTextContent('@')
+})

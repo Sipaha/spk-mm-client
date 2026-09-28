@@ -2,8 +2,7 @@ import { useState } from 'react'
 import type { CategoryView, ChannelItem, ServerDTO, SidebarDTO } from '../api/types'
 import { t } from '../i18n'
 import { Avatar, presenceLabel } from './Avatar'
-import { channelGlyph } from './glyph'
-import { IconChevronDown, IconChevronRight, IconMore } from './icons'
+import { ChannelTypeMarker, IconChevronDown, IconChevronRight, IconMore } from './icons'
 
 interface Props {
   server: ServerDTO
@@ -57,7 +56,9 @@ function ChannelRow({ serverId, item, active, onClick }: { serverId: number; ite
       {person ? (
         <Avatar serverId={serverId} userId={item.user_id!} version={item.avatar} name={item.name} status={status} size={20} surface="sidebar" />
       ) : (
-        <span className="w-4 shrink-0 text-center text-xs opacity-70">{channelGlyph(item.type)}</span>
+        <span className="flex w-4 shrink-0 items-center justify-center text-xs opacity-70">
+          <ChannelTypeMarker type={item.type} size={14} />
+        </span>
       )}
       <span className="truncate">{item.name}</span>
       {item.mentions > 0 && <MentionPill n={item.mentions} />}

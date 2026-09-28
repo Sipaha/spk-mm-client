@@ -10,8 +10,11 @@
 // "0 -960 960 960" viewBox; SYMBOL normalizes that onto our own
 // "0 0 24 24" box via a transform so every icon shares one wrapper.
 //
-// Real emoji (message text, reactions, channel-type glyphs) never go
-// through here — see EmojiGlyph.tsx and glyph.ts.
+// Real emoji (message text, reactions) never go through here — see
+// EmojiGlyph.tsx, whose glyph is computed at runtime from server data.
+// Channel-type markers (private/group/public) are fixed UI icons, not
+// emoji, and are defined below (IconLock/IconGroup/IconHash) — glyph.ts
+// no longer exists (fix round 1, controller finding on f13caf3).
 
 export interface IconProps {
   size?: number
@@ -219,4 +222,49 @@ export function IconReply(p: IconProps) {
       <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" />
     </Icon>
   )
+}
+
+export function IconLock(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
+    </Icon>
+  )
+}
+
+export function IconGroup(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+    </Icon>
+  )
+}
+
+export function IconHash(p: IconProps) {
+  return (
+    <Symbol {...p}>
+      <path d="m240-160 40-160H120l20-80h160l40-160H180l20-80h160l40-160h80l-40 160h160l40-160h80l-40 160h160l-20 80H660l-40 160h160l-20 80H600l-40 160h-80l40-160H360l-40 160h-80Zm140-240h160l40-160H420l-40 160Z" />
+    </Symbol>
+  )
+}
+
+// ChannelTypeMarker: the channel list row / channel header type indicator
+// (private, group DM, public) — an icon, exactly like any other UI glyph
+// (fix round 1, controller finding on f13caf3: this used to live in
+// glyph.ts as plain-text emoji/characters, which is what the guard test
+// and the Ruling target). Direct messages stay plain "@" text — there is
+// no "direct message" pictogram in the fixed icon list and "@" is not an
+// emoji/dingbat/arrow glyph (it is plain ASCII, same register as the "#"
+// this replaces for public channels).
+export function ChannelTypeMarker({ type, size, className }: { type: string; size?: number; className?: string }) {
+  switch (type) {
+    case 'P':
+      return <IconLock size={size} className={className} />
+    case 'G':
+      return <IconGroup size={size} className={className} />
+    case 'D':
+      return <span className={className}>@</span>
+    default:
+      return <IconHash size={size} className={className} />
+  }
 }

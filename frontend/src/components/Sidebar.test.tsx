@@ -110,5 +110,6 @@ test('DM rows show the partner picture with presence; bots have no dot; groups k
   expect(bob.querySelector('[data-status="online"]')).not.toBeNull()
   const ci = screen.getByRole('button', { name: 'ci' })
   expect(ci.querySelector('[data-status]')).toBeNull()
-  expect(screen.getByRole('button', { name: /alice, bob, carol/ })).toHaveTextContent('👥')
+  // The group DM's type marker is IconGroup (an svg icon), not emoji text.
+  expect(screen.getByRole('button', { name: /alice, bob, carol/ }).querySelector('svg')).not.toBeNull()
 })
