@@ -99,12 +99,17 @@
   токен ушёл бы открытым текстом), 401/403 — ответ пути, а не сессии: без `CheckAuth`/повторного
   входа, в негативный кэш; (2) **хост сервера с другой схемой или портом** — отказ (иначе прокси
   картинок сервера отредиректил бы туда с токеном); (3) внешний при `HasImageProxy` —
-  `/api/v4/image?url=` по (1); (4) иначе — напрямую **без** токена/cookie, только http(s) без
+  `/api/v4/image?url=` по (1); редирект **самого** `/api/v4/image` за пределы origin — это передача
+  прокси atmos/camo: ответ не следуется с сессией (`http.ErrUseLastResponse`), а его цель качается
+  как (4) — без токена, с её гардами адресов, 2 слотами (слот общего пула меняется на внешний),
+  таймаутом, лимитом редиректов и негативным кэшем, как браузер webapp (редирект без cookie); любой
+  другой редирект пути сессии — правила (1); (4) иначе — напрямую **без** токена/cookie, только http(s) без
   userinfo, ≤ 3 редиректов, без прокси окружения (`HTTP(S)_PROXY` игнорируется — `docs/backlog.md`),
   таймаут 10 с на всё, свои 2 слота (`extSem`, не 6 общих `c.sem` — зависший хост не держит аватары),
   любой отказ внешнего хоста — в негативный кэш на 5 мин. Каждый dial (редиректы тоже) проверяет
   реальный IP (`allowedAddr`, зона адреса отбрасывается): никогда — loopback, link-local (и
-  169.254.169.254), unspecified, multicast, служебные диапазоны (документация, бенчмарки, 6to4,
+  169.254.169.254), метаданные облаков в частных диапазонах (`fd00:ec2::254`, `100.100.100.200`),
+  unspecified, multicast, служебные диапазоны (документация, бенчмарки, 6to4,
   Teredo, ORCHID, IPv4-compatible/translated, local-use NAT64, site-local, discard; well-known NAT64 —
   по вложенному IPv4; NAT64 с префиксом оператора не отличить от публичного адреса); частные
   (RFC 1918, ULA, CGNAT) — **только** если хост самого сервера резолвится в частный адрес
@@ -122,6 +127,8 @@
   `TestPostIconStalledExternalHostDoesNotBlockOtherPictures`, `TestPostIconExternalFailureIsRememberedLonger`,
   `TestPostIconExternalRasterOnlySizeCapAndNegativeCache`, `TestPostIconThroughTheImageProxy`,
   `TestPostIconFetchesOnlyWhileLive`, `TestPostIconAcceptsAVersion`,
+  `TestPostIconCamoRedirectIsFetchedWithoutTheSession`, `TestPostIconCamoRedirectToARefusedAddressIsRefused`,
+  `TestPostIconStalledCamoDoesNotBlockOtherPictures`,
   `TestPostViewWebhookOverridesFollowTheServerConfig`, `TestPostViewWebhookOverridesOffInConfig`,
   `TestPostViewIconVersionFollowsTheIconURL`, `TestNotifySenderFollowsTheUsernameOverride`,
   `TestMediaPostIconThroughTheService`, `TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway`,

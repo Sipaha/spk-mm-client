@@ -243,7 +243,9 @@ func TestAllowedAddr(t *testing.T) {
 		"::", "::1", "fe80::1", "fe80::1%eth0", "ff02::1", "::ffff:127.0.0.1", "::ffff:169.254.169.254",
 		"64:ff9b::7f00:1", "64:ff9b::7f00:1%x", "2002:a00:1::1", "2002:c0a8:101::1%x", "2001::1", "2001:db8::1",
 		// M1: IPv4-compatible, local-use NAT64, site-local, discard, IPv4-translated, benchmarking, ORCHID.
-		"::a00:1", "::808:808", "64:ff9b:1::a00:1", "fec0::1", "100::1", "::ffff:0:a00:1", "2001:2::1", "2001:10::1", "2001:20::1"}
+		"::a00:1", "::808:808", "64:ff9b:1::a00:1", "fec0::1", "100::1", "::ffff:0:a00:1", "2001:2::1", "2001:10::1", "2001:20::1",
+		// R1: cloud metadata inside ranges an intranet server may use — AWS IMDS over IPv6 (ULA), Alibaba (CGNAT).
+		"fd00:ec2::254", "100.100.100.200", "::ffff:100.100.100.200", "64:ff9b::6464:64c8"}
 	intranetOnly := []string{"10.1.2.3", "172.16.0.1", "192.168.1.1", "100.64.0.1", "fc00::1", "fd12::1",
 		"::ffff:10.0.0.1", "64:ff9b::a00:1", "64:ff9b::a00:1%x", "fd12::1%eth0"}
 	public := []string{"8.8.8.8", "140.82.112.3", "2606:4700::1111", "::ffff:8.8.8.8", "64:ff9b::808:808", "2606:4700::1111%x"}
@@ -412,6 +414,15 @@ func TestIconRedirectPolicy(t *testing.T) {
 	} {
 		assert.ErrorIs(t, check(req(u), via), errBlocked, u)
 	}
+	// R2: off the origin right after the image endpoint is its proxy
+	// (atmos/camo): handed over (ErrUseLastResponse — nothing is sent with
+	// the session), the caller fetches it without credentials.
+	img := []*http.Request{req("https://mm.example/chat/api/v4/image?url=https%3A%2F%2Fg%2Fx.png")}
+	assert.ErrorIs(t, check(req("https://camo.example/abc"), img), http.ErrUseLastResponse)
+	assert.ErrorIs(t, check(req("http://mm.example/x.png"), img), http.ErrUseLastResponse, "no session goes there either")
+	assert.NoError(t, check(req("https://mm.example/chat/static/b.png"), img), "same origin: round-1 rules")
+	assert.ErrorIs(t, check(req("https://mm.example/chat/api/v4/users/me"), img), errBlocked)
+	assert.ErrorIs(t, check(req("https://camo.example/abc"), append(img, via[0])), errBlocked, "only the image endpoint's own redirect")
 	long := []*http.Request{via[0], via[0], via[0], via[0]}
 	assert.ErrorIs(t, check(req("https://mm.example/chat/static/b.png"), long), errBlocked, "at most maxRedirects")
 }
@@ -430,8 +441,6 @@ func TestPostIconServerRedirectsNeverCarryTheToken(t *testing.T) {
 			http.Redirect(w, r, "http://localhost:"+xPort+"/host.png", http.StatusFound)
 		case "/static/to-api":
 			http.Redirect(w, r, "/api/v4/users/me", http.StatusFound)
-		case "/api/v4/image": // the image proxy redirecting (MM does for a URL of its own host)
-			http.Redirect(w, r, x.URL+"/proxy.png", http.StatusFound)
 		case "/static/to-self":
 			http.Redirect(w, r, "/static/img.png", http.StatusFound)
 		case "/static/img.png":
@@ -440,13 +449,12 @@ func TestPostIconServerRedirectsNeverCarryTheToken(t *testing.T) {
 	})
 	base := e.origin.url
 	e.withIcons(testIcons{
-		"port":  {URL: "/static/to-port", Base: base, Live: true},
-		"host":  {URL: "/static/to-host", Base: base, Live: true},
-		"api":   {URL: "/static/to-api", Base: base, Live: true},
-		"proxy": {URL: "https://gitlab.example/fox.png", Base: base, ImageProxy: true, Live: true},
-		"self":  {URL: "/static/to-self", Base: base, Live: true},
+		"port": {URL: "/static/to-port", Base: base, Live: true},
+		"host": {URL: "/static/to-host", Base: base, Live: true},
+		"api":  {URL: "/static/to-api", Base: base, Live: true},
+		"self": {URL: "/static/to-self", Base: base, Live: true},
 	}, allowAll)
-	for _, p := range []string{"port", "host", "api", "proxy"} {
+	for _, p := range []string{"port", "host", "api"} {
 		resp, _ := e.get("/media/1/posticon/" + p)
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode, p)
 	}
@@ -479,11 +487,14 @@ func TestPostIconServerRedirectToPlainHTTPIsRefused(t *testing.T) {
 		"rel":   {URL: "/static/x.png", Base: o.URL, Live: true},
 		"proxy": {URL: "https://gitlab.example/fox.png", Base: o.URL, ImageProxy: true, Live: true},
 	}, url: o.URL, tr: o.Client().Transport}, allowAll)
-	for _, p := range []string{"rel", "proxy"} {
-		resp, _ := e.get("/media/1/posticon/" + p)
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode, p)
-	}
+	resp, _ := e.get("/media/1/posticon/rel")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a static path's redirect off the origin")
 	assert.Zero(t, x.total())
+	// The image endpoint handing over to its proxy (atmos/camo) is fetched
+	// by the credential-less client: plain http, but no token on it.
+	resp, _ = e.get("/media/1/posticon/proxy")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, x.count("/clear.png"))
 	assert.Empty(t, x.creds)
 }
 
@@ -628,4 +639,115 @@ func TestPostIconAcceptsAVersion(t *testing.T) {
 	assert.Equal(t, 1, e.origin.count("/static/i.png"), "one picture whatever the version")
 	resp, _ = e.get("/media/1/posticon/p1?v=../x")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// R2: an atmos/camo image proxy — MM's /api/v4/image redirects to the camo
+// host. That one target is fetched like an external icon (no session), as
+// the webapp's browser does (it follows without the cookie).
+func TestPostIconCamoRedirectIsFetchedWithoutTheSession(t *testing.T) {
+	img := pngOf(6, 6)
+	camo := newExt(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/camo/abc" {
+			_, _ = w.Write(img)
+		}
+	}) // same host as the server, another port: Go would forward the token
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/image":
+			http.Redirect(w, r, camo.URL+"/camo/abc", http.StatusFound)
+		case "/static/to-camo":
+			http.Redirect(w, r, camo.URL+"/camo/abc", http.StatusFound)
+		}
+	})
+	e.withIcons(testIcons{
+		"proxied":  {URL: "https://gitlab.example/fox.png", Base: e.origin.url, ImageProxy: true, Live: true},
+		"relative": {URL: "/api/v4/image?url=" + url.QueryEscape("https://gitlab.example/fox.png"), Base: e.origin.url, Live: true},
+		"static":   {URL: "/static/to-camo", Base: e.origin.url, Live: true},
+	}, allowAll)
+	resp, body := e.get("/media/1/posticon/proxied")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, img, body)
+	resp, _ = e.get("/media/1/posticon/relative")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	camo.mu.Lock()
+	assert.Empty(t, camo.creds, "no token, cookie or API marker on the camo host")
+	camo.mu.Unlock()
+	hits := camo.count("/camo/abc")
+	resp, _ = e.get("/media/1/posticon/static")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "only the image endpoint hands over; other paths keep round 1")
+	assert.Equal(t, hits, camo.count("/camo/abc"))
+}
+
+func TestPostIconCamoRedirectToARefusedAddressIsRefused(t *testing.T) {
+	camo := newExt(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(pngOf(1, 1)) })
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("to") {
+		case "ftp":
+			http.Redirect(w, r, "ftp://gitlab.example/x.png", http.StatusFound)
+		case "userinfo":
+			http.Redirect(w, r, "http://u:p@gitlab.example/x.png", http.StatusFound)
+		default:
+			http.Redirect(w, r, camo.URL+"/camo/lan", http.StatusFound)
+		}
+	})
+	e.withIcons(testIcons{
+		"lan":      {URL: "https://gitlab.example/a.png", Base: e.origin.url, ImageProxy: true, Live: true},
+		"ftp":      {URL: "/api/v4/image?to=ftp", Base: e.origin.url, Live: true},
+		"userinfo": {URL: "/api/v4/image?to=userinfo", Base: e.origin.url, Live: true},
+	}, nil) // the real guards: the camo target is loopback
+	for _, p := range []string{"lan", "lan", "ftp", "userinfo"} {
+		resp, _ := e.get("/media/1/posticon/" + p)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, p)
+	}
+	assert.Zero(t, camo.total(), "refused at dial time")
+	assert.Equal(t, 3, e.origin.count("/api/v4/image"), "lan's refusal is remembered (asked once), ftp and userinfo once each")
+}
+
+// R2: a camo fetch takes an external slot, not one of the shared ones.
+func TestPostIconStalledCamoDoesNotBlockOtherPictures(t *testing.T) {
+	stall := make(chan struct{})
+	var started atomic.Int32
+	camo := newExt(t, func(_ http.ResponseWriter, r *http.Request) {
+		started.Add(1)
+		select {
+		case <-stall:
+		case <-r.Context().Done():
+		}
+	})
+	img := pngOf(4, 4)
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/image" {
+			http.Redirect(w, r, camo.URL+"/"+r.URL.Query().Get("url"), http.StatusFound)
+			return
+		}
+		_, _ = w.Write(img)
+	})
+	icons := testIcons{}
+	for i := range 8 {
+		id := "c" + string(rune('a'+i))
+		icons[id] = PostIcon{URL: "https://gitlab.example/" + id, Base: e.origin.url, ImageProxy: true, Live: true}
+	}
+	e.withIcons(icons, allowAll)
+	t.Cleanup(func() { close(stall) })
+	for id := range icons {
+		go func() {
+			if resp, err := http.Get(e.srv.URL + "/media/1/posticon/" + id); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	require.Eventually(t, func() bool { return started.Load() == extFetches }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int32(extFetches), started.Load(), "no more than extFetches camo fetches at once")
+	done := make(chan int, 1)
+	go func() {
+		resp, _ := e.get("/media/1/avatar/u1?v=1")
+		done <- resp.StatusCode
+	}()
+	select {
+	case status := <-done:
+		assert.Equal(t, http.StatusOK, status)
+	case <-time.After(5 * time.Second):
+		t.Fatal("an avatar waited for stalled camo fetches")
+	}
 }

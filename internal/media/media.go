@@ -505,8 +505,10 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 		return
 	}
 	c.mu.Unlock()
-	err := c.fetch(q, id, name)
-	<-sem
+	sl := &slot{c: c, sem: sem}
+	err := c.fetch(q, id, name, sl)
+	<-sl.sem
+	external = sl.external() // a camo handover moved it out
 	status := 0
 	if err != nil {
 		status = statusFor(err)
@@ -538,7 +540,28 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	close(cl.done)
 }
 
-func (c *Cache) fetch(q request, id, name string) error {
+// slot is the fetch slot a fill holds: one of the shared ones, or an
+// external icon's own.
+type slot struct {
+	c   *Cache
+	sem chan struct{}
+}
+
+func (s *slot) external() bool { return s.sem == s.c.extSem }
+
+// toExternal trades a shared slot for an external one (not holding the
+// shared one while it waits): a fetch that turned out to go to a host out
+// there (a camo handover) must not hold what other pictures need.
+func (s *slot) toExternal() {
+	if s.external() {
+		return
+	}
+	<-s.sem
+	s.c.extSem <- struct{}{}
+	s.sem = s.c.extSem
+}
+
+func (c *Cache) fetch(q request, id, name string, sl *slot) error {
 	sp := q.spec(id)
 	var body io.Reader
 	var contentRange string
@@ -555,7 +578,7 @@ func (c *Cache) fetch(q request, id, name string) error {
 		var resp *http.Response
 		var err error
 		if q.kind == KindPostIcon {
-			resp, err = c.openIcon(ctx, q)
+			resp, err = c.openIcon(ctx, q, sl)
 		} else {
 			resp, err = c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
 		}

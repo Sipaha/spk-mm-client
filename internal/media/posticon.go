@@ -28,7 +28,9 @@ import (
 //   - the server's host on another scheme or port: refused (a redirect or a
 //     request there would take the token in cleartext or to another service);
 //   - elsewhere, with the server's image proxy on (HasImageProxy): through
-//     /api/v4/image?url=, with the session, as the webapp does;
+//     /api/v4/image?url=, with the session, as the webapp does; when that
+//     endpoint redirects off the origin (an atmos/camo proxy), the target
+//     is fetched like the next case — without the session;
 //   - elsewhere without it: directly, WITHOUT any credentials, http/https
 //     only, public addresses only — private ranges too when the server itself
 //     is on a private address (an intranet, where the webapp's browser
@@ -176,17 +178,27 @@ func port(u *url.URL) string {
 
 // iconRedirect is the redirect policy of the session's icon fetches: only
 // to an image path of the server's exact origin, at most maxRedirects —
-// anything else is refused, never retried without the session.
+// anything else is refused, never retried with the session. One exception:
+// the image endpoint (/api/v4/image) redirecting off the origin is its
+// atmos/camo proxy handing over — that answer is kept
+// (http.ErrUseLastResponse: nothing is sent there with the session) and
+// openIcon fetches the target like an external icon, without credentials.
 func iconRedirect(base string) func(*http.Request, []*http.Request) error {
 	b, err := url.Parse(base)
 	return func(req *http.Request, via []*http.Request) error {
-		if err != nil || len(via) > maxRedirects || req.URL.User != nil || !sameOrigin(req.URL, b) {
+		if err != nil || len(via) == 0 || len(via) > maxRedirects {
 			return errBlocked
 		}
-		if _, ok := iconPath(req.URL, b); !ok {
-			return errBlocked
+		if sameOrigin(req.URL, b) {
+			if _, ok := iconPath(req.URL, b); !ok || req.URL.User != nil {
+				return errBlocked
+			}
+			return nil
 		}
-		return nil
+		if from, ok := iconPath(via[len(via)-1].URL, b); ok && strings.SplitN(from, "?", 2)[0] == "/api/v4/image" {
+			return http.ErrUseLastResponse
+		}
+		return errBlocked
 	}
 }
 
@@ -214,22 +226,52 @@ func (c *Cache) postIcon(q request) (string, iconRoute, int) {
 // openIcon starts a posticon download. Every route needs the server live,
 // the external one too: offline nothing is fetched (ErrNoServer, not
 // remembered), and pictures on disk are still served.
-func (c *Cache) openIcon(ctx context.Context, q request) (*http.Response, error) {
+func (c *Cache) openIcon(ctx context.Context, q request, sl *slot) (*http.Response, error) {
 	if !q.icon.live {
 		return nil, ErrNoServer
 	}
-	if q.icon.ext == "" {
-		resp, err := c.o.PostIcons.GetIcon(ctx, q.server, q.icon.path, iconRedirect(q.icon.base))
-		if err != nil && errors.Is(err, errBlocked) {
+	if q.icon.ext != "" {
+		return c.fetchExternal(ctx, q.icon.ext, q.icon.base)
+	}
+	resp, err := c.o.PostIcons.GetIcon(ctx, q.server, q.icon.path, iconRedirect(q.icon.base))
+	if err != nil {
+		if errors.Is(err, errBlocked) {
 			return nil, errBlocked
 		}
-		return resp, err
+		return nil, err
 	}
+	if !isRedirect(resp.StatusCode) {
+		return resp, nil
+	}
+	// The image endpoint's proxy handing over (iconRedirect): its target is
+	// fetched without the session, by the external client with its guards,
+	// its slots, its timeout, its redirect limit and its negative cache.
+	loc, err := resp.Request.URL.Parse(resp.Header.Get("Location"))
+	_ = resp.Body.Close()
+	if err != nil || (loc.Scheme != "http" && loc.Scheme != "https") || loc.Host == "" || loc.User != nil || len(loc.String()) > maxIconURL {
+		return nil, errBlocked
+	}
+	loc.Fragment, loc.RawFragment = "", ""
+	sl.toExternal()
+	return c.fetchExternal(ctx, loc.String(), q.icon.base)
+}
+
+func isRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
+// fetchExternal GETs rawURL without any credentials: the strict client, or
+// the intranet one for a server on a private address.
+func (c *Cache) fetchExternal(ctx context.Context, rawURL, base string) (*http.Response, error) {
 	ext := c.ext
-	if c.intranet(ctx, q.icon.base) {
+	if c.intranet(ctx, base) {
 		ext = c.extIntranet
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, q.icon.ext, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, errNoObject
 	}
@@ -359,6 +401,10 @@ var special = []netip.Prefix{
 	netip.MustParsePrefix("64:ff9b:1::/48"), netip.MustParsePrefix("fec0::/10"), netip.MustParsePrefix("2002::/16"),
 	netip.MustParsePrefix("2001::/32"), netip.MustParsePrefix("2001:2::/48"), netip.MustParsePrefix("2001:10::/28"),
 	netip.MustParsePrefix("2001:20::/28"), netip.MustParsePrefix("2001:db8::/32"),
+	// Cloud metadata inside ranges an intranet server may use: AWS IMDS
+	// over IPv6 (ULA), Alibaba Cloud (CGNAT). 169.254.169.254 and the rest
+	// are link-local — refused anyway.
+	netip.MustParsePrefix("fd00:ec2::254/128"), netip.MustParsePrefix("100.100.100.200/32"),
 }
 
 var (
