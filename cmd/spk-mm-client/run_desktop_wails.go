@@ -81,7 +81,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		fakeFiles := filepath.Join(p.TmpDir, "mmfake")
 		_ = os.RemoveAll(fakeFiles)
 		for i := range fakes {
-			fakes[i] = mmfake.Start(fakeOptions(o, fakeFiles))
+			fakes[i] = mmfake.Start(fakeOptions(o, i, fakeFiles))
 			defer fakes[i].Close()
 			urls[i] = fakes[i].URL()
 			slog.Warn("fake Mattermost server started (development only)", "url", urls[i])

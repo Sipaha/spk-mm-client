@@ -179,13 +179,19 @@ func TestFakeChurnPostsRepliesAndOpensThreads(t *testing.T) {
 // windows grow during the soak: what grows is a real leak. A plain --mm-fake
 // run keeps the usual seed.
 func TestFakeOptionsForSoak(t *testing.T) {
-	// CRT on: the soak's replies go through the thread panel, its reads and
-	// the thread badges, not only the feed.
+	// CRT alternates by fake: the first (and every even one) has it on — the
+	// soak's replies go through the thread panel, its reads and the thread
+	// badges —, the next off — replies inline in the feed with their context
+	// line —, so a run with 2+ servers drives both modes.
+	churn := desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}
 	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize, FilesDir: "/d/tmp/mmfake", CRT: true},
-		fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}, "/d/tmp/mmfake"))
+		fakeOptions(churn, 0, "/d/tmp/mmfake"))
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize, FilesDir: "/d/tmp/mmfake"},
+		fakeOptions(churn, 1, "/d/tmp/mmfake"))
+	assert.True(t, fakeOptions(churn, 2, "/d/tmp/mmfake").CRT)
 	// Uploads go to disk: the fake shares the client's process, and memory
 	// checks must not count it keeping pasted pictures.
-	assert.Equal(t, mmfake.Options{ExtraChannels: 50, FilesDir: "/d/tmp/mmfake"}, fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50}, "/d/tmp/mmfake"))
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, FilesDir: "/d/tmp/mmfake"}, fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50}, 0, "/d/tmp/mmfake"))
 }
 
 // SPK_MM_CLIENT_SOAK_PROFILES: a soak run leaves heap profiles for
