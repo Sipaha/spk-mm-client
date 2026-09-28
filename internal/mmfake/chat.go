@@ -68,6 +68,7 @@ func (s *Server) chatRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/users/me/teams/{tid}/channels/categories", s.handleAuthed(s.categories))
 	mux.HandleFunc("GET /api/v4/users/me/preferences", s.handleAuthed(s.getPrefs))
 	mux.HandleFunc("PUT /api/v4/users/me/preferences", s.handleAuthed(s.putPrefs))
+	mux.HandleFunc("POST /api/v4/users/me/preferences/delete", s.handleAuthed(s.deletePrefs))
 	mux.HandleFunc("GET /api/v4/users/me/status", s.handleAuthed(s.getStatus))
 	mux.HandleFunc("POST /api/v4/users/ids", s.handleAuthed(s.usersByIDs))
 	mux.HandleFunc("GET /api/v4/channels/{cid}/posts", s.handleAuthed(s.channelPosts))
@@ -184,6 +185,32 @@ func (s *Server) putPrefs(w http.ResponseWriter, r *http.Request, u User) {
 	b, _ := json.Marshal(in)
 	s.publishLocked("preferences_changed", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil)
 	writeJSON(w, 200, map[string]string{"status": "OK"})
+}
+
+func (s *Server) deletePrefs(w http.ResponseWriter, r *http.Request, u User) {
+	var in []model.Preference
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		appError(w, 400, "api.preference.bad_body", err.Error())
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range in {
+		s.deletePrefLocked(u.ID, p.Category, p.Name)
+	}
+	b, _ := json.Marshal(in)
+	s.publishLocked("preferences_deleted", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil)
+	writeJSON(w, 200, map[string]string{"status": "OK"})
+}
+
+func (s *Server) deletePrefLocked(userID, category, name string) {
+	list := s.chat.prefs[userID]
+	for i := range list {
+		if list[i].Category == category && list[i].Name == name {
+			s.chat.prefs[userID] = slices.Delete(list, i, i+1)
+			return
+		}
+	}
 }
 
 func (s *Server) upsertPrefLocked(p model.Preference) {

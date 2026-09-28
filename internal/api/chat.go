@@ -192,6 +192,16 @@ func (s *Service) MarkUnread(ctx context.Context, id int64, postID string) error
 	return actionError(w.MarkUnread(rctx, postID))
 }
 
+func (s *Service) SetPostSaved(ctx context.Context, id int64, postID string, saved bool) error {
+	w, err := s.writer(ctx, id)
+	if err != nil {
+		return err
+	}
+	rctx, cancel := s.bounded(ctx)
+	defer cancel()
+	return actionError(w.SetSaved(rctx, postID, saved))
+}
+
 func (s *Service) SaveDraft(ctx context.Context, id int64, channelID, text string) error {
 	w, err := s.worker(ctx, id)
 	if err != nil {

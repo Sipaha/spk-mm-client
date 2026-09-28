@@ -93,6 +93,24 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
   await removeServerFromMenu(page)
 })
 
+test('save a post for later: hover, Save, reload keeps it, then unsave', async ({ page }) => {
+  await signInAlice(page)
+  const post = feed(page).locator('article', { hasText: 'Message #140' })
+  await post.hover()
+  await post.getByRole('button', { name: 'Save' }).click()
+  await expect(post.getByRole('button', { name: 'Remove from saved' })).toHaveAttribute('aria-pressed', 'true')
+
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  const postAfterReload = feed(page).locator('article', { hasText: 'Message #140' })
+  await postAfterReload.hover()
+  await expect(postAfterReload.getByRole('button', { name: 'Remove from saved' })).toHaveAttribute('aria-pressed', 'true')
+
+  await postAfterReload.getByRole('button', { name: 'Remove from saved' }).click()
+  await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'false')
+  await removeServerFromMenu(page)
+})
+
 test('history loads up to the first message', async ({ page }) => {
   await signInAlice(page)
   // Scroll up only once the feed has settled at its end, as a user would: a

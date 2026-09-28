@@ -135,6 +135,15 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 				} else {
 					delete(s.prefs, prefKey{p.Category, p.Name})
 				}
+				// flagged_post's name is a post id: a Save/Unsave from another
+				// device must repaint that post's channel, the same way a
+				// reaction does -- every other preference only needs the
+				// Sidebar/Badge refresh below.
+				if p.Category == flaggedPostCategory {
+					if ch, ok := s.channelOfPostLocked(p.Name); ok && !slices.Contains(eff.Channels, ch) {
+						eff.Channels = append(eff.Channels, ch)
+					}
+				}
 			}
 			s.dirty.meta = true
 			eff.Sidebar, eff.Badge = true, true

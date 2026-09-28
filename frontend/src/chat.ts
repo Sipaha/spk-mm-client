@@ -1,5 +1,5 @@
 import { ApiError, client, uploadAttachmentBrowser } from './api/client'
-import type { AttachmentView, ChannelDTO, DownloadView } from './api/types'
+import type { AttachmentView, ChannelDTO, DownloadView, PostView } from './api/types'
 import { errorMessage } from './errors'
 import { t } from './i18n'
 import { useStore } from './store'
@@ -232,6 +232,16 @@ export const deletePost = (serverId: number, postId: string) => {
 
 export const markUnread = (serverId: number, postId: string) => {
   client.markUnread(serverId, postId).catch(report)
+}
+
+// setPostSaved: the toolbar's bookmark button. State only ever comes from
+// post.saved (the server's flagged_post preference, applied to the feed by
+// preferences_changed/preferences_deleted like a reaction) — no optimistic
+// local flip to roll back, so a failure (offline, session_expired) just
+// reports like any other action and the button's next render reflects
+// whatever post.saved still says.
+export const setPostSaved = (serverId: number, post: PostView, saved: boolean) => {
+  client.setPostSaved(serverId, post.id, saved).catch(report)
 }
 
 // Same permalink form as Mattermost: <server>/<team>/pl/<post id>.

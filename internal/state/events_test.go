@@ -222,6 +222,36 @@ func TestMembershipAndPreferenceEvents(t *testing.T) {
 	assert.True(t, s.CRT())
 }
 
+// TestFlaggedPostPrefEventMarksTheChannelChanged mirrors how a reaction
+// event does it (AGENTS.md/task-3-brief: "как делают реакции") — a
+// flagged_post preference_changed/preferences_deleted event echoes another
+// device's Save/Unsave and must repaint the post's channel, not just the
+// sidebar/badge every preference change already does.
+func TestFlaggedPostPrefEventMarksTheChannelChanged(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	pb, _ := json.Marshal([]model.Preference{{UserID: "u1", Category: "flagged_post", Name: "p", Value: "true"}})
+	db, _ := json.Marshal(map[string]string{"preferences": string(pb)})
+	eff := s.ApplyEvent(ws.Event{Type: "preferences_changed", Data: db})
+	assert.Equal(t, []string{"off"}, eff.Channels)
+	v, _ := s.ChannelView("off")
+	require.Len(t, v.Posts, 1)
+	assert.True(t, v.Posts[0].Saved)
+
+	eff = s.ApplyEvent(ws.Event{Type: "preferences_deleted", Data: db})
+	assert.Equal(t, []string{"off"}, eff.Channels)
+	v, _ = s.ChannelView("off")
+	assert.False(t, v.Posts[0].Saved)
+
+	// A flagged_post pref for a post we don't hold: no channel to repaint,
+	// but the sidebar/badge still refresh like any preference change.
+	pb, _ = json.Marshal([]model.Preference{{UserID: "u1", Category: "flagged_post", Name: "elsewhere", Value: "true"}})
+	db, _ = json.Marshal(map[string]string{"preferences": string(pb)})
+	eff = s.ApplyEvent(ws.Event{Type: "preferences_changed", Data: db})
+	assert.Empty(t, eff.Channels)
+	assert.True(t, eff.Sidebar)
+}
+
 func TestPostInHiddenDMAsksToShowIt(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()

@@ -62,6 +62,9 @@ func (w *API) DeletePost(id int64, postID string) error {
 func (w *API) MarkUnread(id int64, postID string) error {
 	return w.a.MarkUnread(context.Background(), id, postID)
 }
+func (w *API) SetPostSaved(id int64, postID string, saved bool) error {
+	return w.a.SetPostSaved(context.Background(), id, postID, saved)
+}
 func (w *API) SaveDraft(id int64, channelID, text string) error {
 	return w.a.SaveDraft(context.Background(), id, channelID, text)
 }

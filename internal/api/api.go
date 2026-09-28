@@ -62,6 +62,8 @@ type API interface {
 	EditPost(ctx context.Context, id int64, postID, message string) error
 	DeletePost(ctx context.Context, id int64, postID string) error
 	MarkUnread(ctx context.Context, id int64, postID string) error
+	// SetPostSaved saves/unsaves a post for later (flagged_post preference).
+	SetPostSaved(ctx context.Context, id int64, postID string, saved bool) error
 	SaveDraft(ctx context.Context, id int64, channelID, text string) error
 	DownloadFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 	OpenFile(ctx context.Context, id int64, fileID string) (SavedFile, error)

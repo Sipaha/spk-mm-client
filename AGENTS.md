@@ -406,6 +406,38 @@
   закрывается в том же вызове (`try`/`finally` → `ctx.close()`); окна не оставляются открытыми.
   После работы с браузером проверить, что не осталось висящих контекстов — пользователь уже
   жаловался на «наплодил pw окон» (Task 14, ledger).
+- UI pass (2026-09-28): панель действий поста рендерится только для «горячего» поста (наведение/
+  фокус или открытое своё меню «…»/пикер реакций) — не скрытый CSS-ом тулбар в каждой строке ленты,
+  иначе с картинками быстрых реакций каждая скрытая панель грузила бы чужие эмодзи-картинки.
+  `PostItem` держит локальный `hot` (`pointerenter`/`focusin` → true, `pointerleave`/`focusout` → false,
+  если фокус ушёл из статьи и не открыто меню/пикер); состояние не трогает виртуализатор ленты. —
+  `frontend/src/components/PostItem.test.tsx` («the toolbar is not rendered before hover/focus; it
+  stays visible while the "…" menu is open after the pointer leaves», «a pending or failed post shows
+  no toolbar at all, hovered or not»).
+- UI pass (2026-09-28): любая иконка кнопки/ссылки/чипа/строки списка/бейджа — инлайн-SVG-компонент
+  из `frontend/src/components/icons.tsx` (`viewBox="0 0 24 24"`, `fill="currentColor"`, `aria-hidden`),
+  не сырой символ эмодзи/dingbat/стрелка; библиотеку иконок не подключаем (25 путей дешевле бандла и
+  рантайм-памяти). Настоящие эмодзи сообщений/реакций (`EmojiGlyph.tsx`, `frontend/src/emoji/`) —
+  исключение, они вычисляются из данных сервера в рантайме и не матчатся сканом. —
+  `frontend/src/components/noEmojiIcons.test.ts` (сканирует все `.ts`/`.tsx` под `frontend/src` на
+  символы из широкого диапазона «похоже на иконку», не только `components/*.tsx` — узкий скан уже
+  однажды пропустил каналовые маркеры приватности).
+- «Сохранить» пост (панель действий, `IconBookmark`/`IconBookmarkFilled`) — предпочтение
+  `flagged_post` (имя — id поста, значение `"true"`; снятие — `DELETE`-подобный
+  `POST /api/v4/users/{user_id}/preferences/delete`, у нас всегда `me`, как и у сохранения). Пишет
+  `internal/mmsync.Worker.SetSaved` (не повторяется при ошибке, как остальные `POST`; успешный ответ
+  сразу обновляет `state.Server` — `SetPostSaved` — не дожидаясь эха `preferences_changed`/
+  `preferences_deleted`); `needs_reauth` отказывает сразу `session_expired`, как и другие действия
+  записи (`s.writer()`). `PostView.Saved` вычисляется только из хранимых предпочтений
+  (`prefKey{"flagged_post", postID}`), никакого оптимистичного локального состояния в UI — кнопка не
+  может «залипнуть». Приход `flagged_post` по WS (`preferences_changed`/`preferences_deleted`, любое
+  устройство) помечает канал этого поста изменённым — так же, как реакция, — не только
+  Sidebar/Badge, которые обновляет любое предпочтение. —
+  `internal/state/view_test.go` (`TestPostViewSavedComesFromFlaggedPostPref`),
+  `internal/state/events_test.go` (`TestFlaggedPostPrefEventMarksTheChannelChanged`),
+  `internal/mmsync/saved_test.go`, `internal/api/saved_test.go`
+  (`TestSetPostSavedSessionExpired`), `frontend/src/components/PostItem.test.tsx` («save button:
+  not-saved and saved states, and the click it sends»).
 
 ## Things that bite
 

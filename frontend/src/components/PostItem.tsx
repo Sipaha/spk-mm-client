@@ -8,7 +8,7 @@ import { t } from '../i18n'
 import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
 import { EmojiGlyph } from './EmojiGlyph'
-import { IconAddReaction, IconMore } from './icons'
+import { IconAddReaction, IconBookmark, IconBookmarkFilled, IconMore } from './icons'
 import { Markdown } from './Markdown'
 import PostMenu from './PostMenu'
 import { Reactions } from './Reactions'
@@ -24,6 +24,7 @@ export interface PostActions {
   cancelEdit(): void
   remove(post: PostView): void
   markUnread(post: PostView): void
+  save(post: PostView, saved: boolean): void
   copyLink(post: PostView): void
   view(post: PostView, fileId: string): void
   download(file: FileView): void
@@ -132,9 +133,17 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
   )
 }
 
-function ToolButton({ label, onClick, children }: { label: string; onClick(e: React.MouseEvent<HTMLButtonElement>): void; children: React.ReactNode }) {
+function ToolButton({
+  label, onClick, children, pressed, className = 'text-fg-muted',
+}: {
+  label: string
+  onClick(e: React.MouseEvent<HTMLButtonElement>): void
+  children: React.ReactNode
+  pressed?: boolean
+  className?: string
+}) {
   return (
-    <button aria-label={label} title={label} onClick={onClick} className="flex h-8 w-8 items-center justify-center rounded text-fg-muted hover:bg-hover">
+    <button aria-label={label} title={label} aria-pressed={pressed} onClick={onClick} className={`flex h-8 w-8 items-center justify-center rounded hover:bg-hover ${className}`}>
       {children}
     </button>
   )
@@ -286,6 +295,16 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           {canReact && (
             <ToolButton label={t('reaction.add')} onClick={(e) => openPicker(e.currentTarget)}>
               <IconAddReaction size={20} />
+            </ToolButton>
+          )}
+          {canReact && (
+            <ToolButton
+              label={post.saved ? t('post.unsave') : t('post.saveForLater')}
+              pressed={!!post.saved}
+              className={post.saved ? 'text-accent' : 'text-fg-muted'}
+              onClick={() => actions.save(post, !post.saved)}
+            >
+              {post.saved ? <IconBookmarkFilled size={20} /> : <IconBookmark size={20} />}
             </ToolButton>
           )}
           {replyButton}

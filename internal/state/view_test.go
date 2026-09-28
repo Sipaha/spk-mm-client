@@ -53,6 +53,23 @@ func TestChannelViewComposition(t *testing.T) {
 	assert.Equal(t, v.Posts[3].ID, v.Posts[3].PendingPostID, "a local pending entry is keyed by its own id")
 }
 
+func TestPostViewSavedComesFromFlaggedPostPref(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	p1 := mkPost("p1", "off", "u2", 1000)
+	p2 := mkPost("p2", "off", "u2", 2000)
+	s.SetWindow("off", []model.Post{p1, p2}, true, 5)
+	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetPostSaved("p1", true))
+	v, ok := s.ChannelView("off")
+	require.True(t, ok)
+	require.Len(t, v.Posts, 2)
+	assert.True(t, v.Posts[0].Saved)
+	assert.False(t, v.Posts[1].Saved)
+	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetPostSaved("p1", false))
+	v, _ = s.ChannelView("off")
+	assert.False(t, v.Posts[0].Saved)
+}
+
 func TestFileViewCarriesWhatPreviewsNeed(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()

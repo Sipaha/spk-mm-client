@@ -191,6 +191,13 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/MarkUnread", handle(func(ctx context.Context, r *postReq) (any, error) {
 		return nil, h.api.MarkUnread(ctx, r.ID, r.PostID)
 	}))
+	h.mux.HandleFunc("POST /api/SetPostSaved", handle(func(ctx context.Context, r *struct {
+		ID     int64  `json:"id"`
+		PostID string `json:"post_id"`
+		Saved  bool   `json:"saved"`
+	}) (any, error) {
+		return nil, h.api.SetPostSaved(ctx, r.ID, r.PostID, r.Saved)
+	}))
 	h.mux.HandleFunc("POST /api/SaveDraft", handle(func(ctx context.Context, r *struct {
 		ID        int64  `json:"id"`
 		ChannelID string `json:"channel_id"`

@@ -4,7 +4,7 @@ import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
   editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost, uploadAttachments,
+  react, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
 } from '../chat'
 import { errorMessage } from '../errors'
 import { formatLocale } from '../format'
@@ -74,6 +74,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         if (confirm(t('post.deleteConfirm'))) deletePost(server.id, p.id)
       },
       markUnread: (p) => markUnread(server.id, p.id),
+      save: (p, saved) => setPostSaved(server.id, p, saved),
       copyLink: (p) => copyLink(server.url, teamName, p.id),
       view: (p, fileId) => {
         const files = (p.files ?? []).filter((f) => fileKind(f) !== 'other')

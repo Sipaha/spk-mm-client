@@ -89,6 +89,8 @@ func TestPatchDeleteViewUnreadPrefs(t *testing.T) {
 			_, _ = w.Write([]byte(`{"channel_id":"c1","msg_count":3,"last_viewed_at":7}`))
 		case "/api/v4/users/me/preferences":
 			_, _ = w.Write([]byte(`{"status":"OK"}`))
+		case "/api/v4/users/me/preferences/delete":
+			_, _ = w.Write([]byte(`{"status":"OK"}`))
 		}
 	})
 	ctx := context.Background()
@@ -101,9 +103,10 @@ func TestPatchDeleteViewUnreadPrefs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), u.MsgCount)
 	require.NoError(t, c.SavePreferences(ctx, []model.Preference{{UserID: "u1", Category: "direct_channel_show", Name: "u2", Value: "true"}}))
+	require.NoError(t, c.DeletePreferences(ctx, []model.Preference{{UserID: "u1", Category: "flagged_post", Name: "p1", Value: "true"}}))
 	assert.Equal(t, []string{
 		"PUT /api/v4/posts/p1/patch", "DELETE /api/v4/posts/p1", "POST /api/v4/channels/members/me/view",
-		"POST /api/v4/users/me/posts/p1/set_unread", "PUT /api/v4/users/me/preferences",
+		"POST /api/v4/users/me/posts/p1/set_unread", "PUT /api/v4/users/me/preferences", "POST /api/v4/users/me/preferences/delete",
 	}, seen)
 }
 

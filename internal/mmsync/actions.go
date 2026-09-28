@@ -217,6 +217,26 @@ func (w *Worker) MarkUnread(ctx context.Context, postID string) error {
 
 func (w *Worker) SaveDraft(channelID, text string) { w.st.SetDraft(channelID, text) }
 
+// SetSaved saves/unsaves a post for later (the webapp's flagged_post
+// preference, named by the post's id, value "true"; unsaving deletes it).
+// Not retried on transport errors like every other write here; on success
+// the state updates at once instead of waiting for the preferences_changed/
+// preferences_deleted WS echo (mirrors Edit/Delete/MarkUnread).
+func (w *Worker) SetSaved(ctx context.Context, postID string, saved bool) error {
+	pref := model.Preference{UserID: w.st.Me().ID, Category: "flagged_post", Name: postID, Value: "true"}
+	var err error
+	if saved {
+		err = w.rc.SavePreferences(ctx, []model.Preference{pref})
+	} else {
+		err = w.rc.DeletePreferences(ctx, []model.Preference{pref})
+	}
+	if err != nil {
+		return w.actionErr(err)
+	}
+	w.changed(w.st.SetPostSaved(postID, saved))
+	return nil
+}
+
 func (w *Worker) actionErr(err error) error {
 	if sessionExpired(err) {
 		w.signalAuth()

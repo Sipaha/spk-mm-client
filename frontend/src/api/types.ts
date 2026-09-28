@@ -160,6 +160,7 @@ export interface PostView {
   attachments?: Attachment[]
   files?: FileView[]
   reactions?: ReactionView[]
+  saved?: boolean
 }
 
 export interface ChannelDTO {

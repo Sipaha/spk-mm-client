@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, DownloadView, PostView, ServerDTO, SidebarDTO } from './api/types'
 import { setLocale } from './i18n'
 import { useStore } from './store'
 
@@ -23,6 +23,7 @@ vi.mock('./api/client', () => ({
     retryAttachment: vi.fn(),
     pickAttachments: vi.fn(),
     attachFromClipboard: vi.fn(),
+    setPostSaved: vi.fn(),
   },
   uploadAttachmentBrowser: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -37,8 +38,12 @@ const {
   attachFromClipboard, clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost,
   loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
   openDownloadsPanel, openFile, pickAttachments, refreshChannel, refreshDownloads,
-  removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, uploadAttachments,
+  removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, setPostSaved, uploadAttachments,
 } = await import('./chat')
+
+const post = (over: Partial<PostView> = {}): PostView => ({
+  id: 'p1', user_id: 'u-bob', author: 'bob', message: 'hi', create_at: 1, ...over,
+})
 
 const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
   id: 1, server_id: 1, file_id: 'f1', name: 'a.txt', path: '/d/a.txt', size: 10, mime: 'text/plain',
@@ -82,6 +87,7 @@ beforeEach(() => {
   vi.mocked(client.retryAttachment).mockReset().mockResolvedValue(undefined)
   vi.mocked(client.pickAttachments).mockReset()
   vi.mocked(client.attachFromClipboard).mockReset()
+  vi.mocked(client.setPostSaved).mockReset().mockResolvedValue(undefined)
   vi.mocked(uploadAttachmentBrowser).mockReset()
   useStore.setState({
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
@@ -380,6 +386,20 @@ test('removeAttachment/retryAttachment call the API and report a failure globall
 
   vi.mocked(client.removeAttachment).mockRejectedValueOnce(new Error('boom'))
   await removeAttachment(1, 'a1')
+  await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
+})
+
+// UI (Task 3 brief): the save button's state comes only from post.saved (no
+// optimistic local flip to roll back), so a failure just needs the same
+// global error report every other one-off post action (markUnread,
+// deletePost, removeAttachment) already gets — never a "stuck" button.
+test('setPostSaved calls the API and reports a failure globally, like markUnread', async () => {
+  setPostSaved(1, post({ id: 'p1' }), true)
+  expect(client.setPostSaved).toHaveBeenCalledWith(1, 'p1', true)
+
+  vi.mocked(client.setPostSaved).mockRejectedValueOnce(new Error('boom'))
+  setPostSaved(1, post({ id: 'p1' }), false)
+  expect(client.setPostSaved).toHaveBeenCalledWith(1, 'p1', false)
   await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
 })
 

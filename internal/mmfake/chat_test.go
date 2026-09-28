@@ -263,6 +263,28 @@ func TestUsersPrefsStatus(t *testing.T) {
 	assert.Equal(t, "mention", me.NotifyProps["desktop"])
 }
 
+func TestDeletePreferencesRemovesAndPublishesDeleted(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	require.Equal(t, 200, a.call("PUT", "/api/v4/users/me/preferences",
+		[]model.Preference{{UserID: "u-alice", Category: "flagged_post", Name: "p1", Value: "true"}}, nil))
+	assert.Equal(t, "true", s.Preference("alice", "flagged_post", "p1"))
+
+	n := len(s.Events())
+	require.Equal(t, 200, a.call("POST", "/api/v4/users/me/preferences/delete",
+		[]model.Preference{{UserID: "u-alice", Category: "flagged_post", Name: "p1", Value: "true"}}, nil))
+	assert.Empty(t, s.Preference("alice", "flagged_post", "p1"))
+	evs := s.Events()
+	require.Greater(t, len(evs), n)
+	assert.Equal(t, "preferences_deleted", evs[len(evs)-1].Name)
+	assert.Equal(t, []string{"u-alice"}, evs[len(evs)-1].To)
+
+	// deleting an unknown pref is a no-op, not an error.
+	require.Equal(t, 200, a.call("POST", "/api/v4/users/me/preferences/delete",
+		[]model.Preference{{UserID: "u-alice", Category: "flagged_post", Name: "nope", Value: "true"}}, nil))
+}
+
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
 // Soak runs (--mm-fake-churn) seed load channels with a full client window

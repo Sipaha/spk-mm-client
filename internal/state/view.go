@@ -54,6 +54,8 @@ type PostView struct {
 	Attachments   []model.Attachment `json:"attachments,omitempty"`
 	Files         []FileView         `json:"files,omitempty"`
 	Reactions     []ReactionView     `json:"reactions,omitempty"`
+	// Saved: a flagged_post preference for this post — see SetPostSaved.
+	Saved bool `json:"saved,omitempty"`
 }
 
 type ChannelView struct {
@@ -135,6 +137,7 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
 		EditAt: p.EditAt, ReplyCount: p.ReplyCount, System: p.IsSystem(), Attachments: p.Props.Attachments,
 		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
+	v.Saved = s.prefs[prefKey{flaggedPostCategory, p.ID}] == "true"
 	v.Author = s.displayNameLocked(p.UserID)
 	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" {
 		v.Author = string(p.Props.OverrideUsername)

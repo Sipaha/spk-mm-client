@@ -12,7 +12,7 @@ const post = (o: Partial<PostView> = {}): PostView => ({
 })
 const actions = (): PostActions => ({
   link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
-  cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), copyLink: vi.fn(),
+  cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), save: vi.fn(), copyLink: vi.fn(),
   view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
   emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
 })
@@ -384,5 +384,46 @@ test('replyButton renders in the toolbar between "add reaction" and "…"; absen
     <PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyButton={<button aria-label="Reply">Reply</button>} />,
   )
   const names = within(toolbar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-  expect(names).toEqual(['Add reaction', 'Reply', 'More actions'])
+  expect(names).toEqual(['Add reaction', 'Save', 'Reply', 'More actions'])
+})
+
+// Task 3 brief: "сохранить" sits after "добавить реакцию" and before the
+// reply slot; aria-pressed/aria-label track post.saved (state comes only
+// from the prop — no optimistic local flip), and the icon swaps
+// IconBookmark/IconBookmarkFilled with a text-accent class once saved.
+test('save button: not-saved and saved states, and the click it sends', async () => {
+  const a = actions()
+  const { container, rerender } = render(<PostItem serverId={1} post={post({ saved: false })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  const toolbar = await screen.findByTestId('post-toolbar')
+  const btn = within(toolbar).getByRole('button', { name: 'Save' })
+  expect(btn).toHaveAttribute('aria-pressed', 'false')
+  expect(btn.className).toContain('text-fg-muted')
+  await userEvent.click(btn)
+  expect(a.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), true)
+
+  rerender(<PostItem serverId={1} post={post({ saved: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const savedBtn = within(toolbar).getByRole('button', { name: 'Remove from saved' })
+  expect(savedBtn).toHaveAttribute('aria-pressed', 'true')
+  expect(savedBtn.className).toContain('text-accent')
+  await userEvent.click(savedBtn)
+  expect(a.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), false)
+})
+
+// Review Focus #4: pending/failed/system posts get no "save" either, same
+// gating as quick reactions and "add reaction" (canReact).
+test('pending, failed and system posts offer no save button', async () => {
+  const { container, rerender } = render(<PostItem serverId={1} post={post({ system: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  await screen.findByTestId('post-toolbar')
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Remove from saved' })).toBeNull()
+
+  rerender(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+
+  rerender(<PostItem serverId={1} post={post({ failed: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
 })

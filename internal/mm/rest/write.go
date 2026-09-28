@@ -60,6 +60,14 @@ func (c *Client) SavePreferences(ctx context.Context, prefs []model.Preference) 
 	return err
 }
 
+// DeletePreferences removes preferences (the real server's route is
+// POST /api/v4/users/{user_id}/preferences/delete — "me" like every other
+// write here). Used to unsave a post (flagged_post).
+func (c *Client) DeletePreferences(ctx context.Context, prefs []model.Preference) error {
+	_, err := c.do(ctx, http.MethodPost, "/api/v4/users/me/preferences/delete", prefs, nil)
+	return err
+}
+
 // SaveReaction adds a reaction as r.UserID (must be the session's user).
 // Not retried on transport errors, like every POST; adding an existing
 // reaction is harmless anyway.

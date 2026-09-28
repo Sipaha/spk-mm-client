@@ -26,6 +26,7 @@ type fakeAPI struct {
 	sent    []string
 	reacted []string
 	dl      []string
+	saved   []string
 }
 
 func (f *fakeAPI) Downloads(context.Context) ([]api.DownloadView, error) {
@@ -67,6 +68,11 @@ func (f *fakeAPI) AddReaction(_ context.Context, id int64, postID, emoji string)
 
 func (f *fakeAPI) RemoveReaction(_ context.Context, id int64, postID, emoji string) error {
 	f.reacted = append(f.reacted, fmt.Sprintf("-%d/%s/%s", id, postID, emoji))
+	return nil
+}
+
+func (f *fakeAPI) SetPostSaved(_ context.Context, id int64, postID string, saved bool) error {
+	f.saved = append(f.saved, fmt.Sprintf("%d/%s/%v", id, postID, saved))
 	return nil
 }
 
@@ -241,6 +247,10 @@ func TestChatRoutes(t *testing.T) {
 	resp = call(t, h, ts.URL, "RemoveReaction", `{"id":3,"post_id":"p1","emoji":"+1"}`)
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, []string{"3/p1/+1", "-3/p1/+1"}, f.reacted)
+
+	resp = call(t, h, ts.URL, "SetPostSaved", `{"id":3,"post_id":"p1","saved":true}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/p1/true"}, f.saved)
 
 	resp = call(t, h, ts.URL, "EmojiInfo", `{"id":3}`)
 	assert.Equal(t, 200, resp.StatusCode)

@@ -31,6 +31,7 @@ export interface Client {
   editPost(id: number, postId: string, message: string): Promise<void>
   deletePost(id: number, postId: string): Promise<void>
   markUnread(id: number, postId: string): Promise<void>
+  setPostSaved(id: number, postId: string, saved: boolean): Promise<void>
   saveDraft(id: number, channelId: string, text: string): Promise<void>
   downloadFile(id: number, fileId: string): Promise<SavedFile>
   openFile(id: number, fileId: string): Promise<SavedFile>
@@ -112,6 +113,7 @@ export const httpClient: Client = {
   editPost: (id, post_id, message) => done(post('EditPost', { id, post_id, message })),
   deletePost: (id, post_id) => done(post('DeletePost', { id, post_id })),
   markUnread: (id, post_id) => done(post('MarkUnread', { id, post_id })),
+  setPostSaved: (id, post_id, saved) => done(post('SetPostSaved', { id, post_id, saved })),
   saveDraft: (id, channel_id, text) => done(post('SaveDraft', { id, channel_id, text })),
   downloadFile: (id, file_id) => post('DownloadFile', { id, file_id }),
   openFile: (id, file_id) => post('OpenFile', { id, file_id }),
@@ -210,6 +212,7 @@ export const wailsClient: Client = {
   editPost: (id, postId, message) => wcall('EditPost', id, postId, message),
   deletePost: (id, postId) => wcall('DeletePost', id, postId),
   markUnread: (id, postId) => wcall('MarkUnread', id, postId),
+  setPostSaved: (id, postId, saved) => wcall('SetPostSaved', id, postId, saved),
   saveDraft: (id, channelId, text) => wcall('SaveDraft', id, channelId, text),
   downloadFile: (id, fileId) => wcall('DownloadFile', id, fileId),
   openFile: (id, fileId) => wcall('OpenFile', id, fileId),
