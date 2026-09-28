@@ -118,6 +118,38 @@ test('"×" and Esc (focus in the panel) close the panel and return focus to the 
   expect(channelFeed).toHaveFocus()
 })
 
+// Task 6 brief ("при открытии фокус — в композер панели"): opening a
+// thread — from "N replies", the reply button, a notification — puts the
+// caret in the panel's composer; opening another thread in the same panel
+// does it again. A later re-render of the same thread (a live reply) must
+// not steal focus back from wherever the user moved it.
+test('opening a thread focuses the panel composer; a re-render of the same thread does not steal focus', () => {
+  const { rerender } = render(
+    <>
+      <button>elsewhere</button>
+      <ThreadPane server={server()} thread={thread()} onClose={() => {}} />
+    </>,
+  )
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus()
+
+  screen.getByRole('button', { name: 'elsewhere' }).focus()
+  rerender(
+    <>
+      <button>elsewhere</button>
+      <ThreadPane server={server()} thread={thread({ posts: [...thread().posts, post({ id: 'r2', root_id: 'root', message: 'live' })] })} onClose={() => {}} />
+    </>,
+  )
+  expect(screen.getByRole('button', { name: 'elsewhere' })).toHaveFocus()
+
+  rerender(
+    <>
+      <button>elsewhere</button>
+      <ThreadPane server={server()} thread={thread({ root_id: 'other', posts: [post({ id: 'other' })] })} onClose={() => {}} />
+    </>,
+  )
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus()
+})
+
 test('Esc is ignored while focus is outside the panel (e.g. a portalled popover)', async () => {
   const onClose = vi.fn()
   render(

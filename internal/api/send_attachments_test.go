@@ -193,45 +193,6 @@ func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
 // thread panel's. onAttachments now always emits both when the pending
 // post's progress actually changed.
 //
-// Fix round 2 (re-review of 29904b4): SendReply's own pending-add Change
-// always carries both Channels and Threads (internal/mmsync/actions.go
-// send()), independent of onAttachments entirely — so the first version of
-// this test passed even with onAttachments reverted to its old
-// thread-only behavior: it was really observing SendReply's own event,
-// never onAttachments' progress-driven one.
-//
-// Two timing-based fixes (drain-then-wait-for-one-more, then count-over-a-
-// window) both turned out to be flaky or outright broken against the real
-// fake server: a small file's progress callback reports "fully sent"
-// essentially in one shot (the body is read from a spooled file in one or
-// two Read calls well under any buffering threshold, regardless of how
-// slowly mmfake's copyBodyThrottled then drains the *server* side of the
-// connection) — so onAttachments' own progress-driven call and SendReply's
-// own pending-add call land within the same ~100ms coalescing window
-// essentially every time, and a second, later, distinguishable occurrence
-// of either event may simply never happen, at any file size or throttle
-// this test controls from the outside.
-//
-// The reliable fix is to stop relying on that timing at all: take the
-// server offline (f.offline, the same helper
-// TestFailedUploadFailsThePostAndRetryKeepsWhatWasUploaded uses) before
-// attaching anything, so the attachment provably stays staged — nothing
-// can progress it — and SendReply's own pending-add burst is the only
-// thing that can happen. Once that is drained, coming back online is the
-// one and only thing left that can produce a channel_changed/
-// thread_changed pair: onAttachments' progress path, deterministically —
-// not a race against how fast a small file's Read calls happen to land
-// (client-side, a small spooled file is read to completion in one or two
-// Reads regardless of how slowly the *server* then drains the
-// connection, so a real upload's progress callback fires once, not many
-// times), and not contaminated by an unrelated resync: going back online
-// after f.offline also lets the worker reconnect, and a reconnect's own
-// metadata refresh can touch channel_changed for reasons that have
-// nothing to do with this attachment (confirmed: that alone was still
-// enough to pass with onAttachments reverted to thread-only). Staying
-// offline throughout and driving the one call under test directly — the
-// same call attach.Store's own OnChange hook makes on a real progress
-// report — removes every source of that but the fix itself.
 // TestSendReplyUploadProgressTellsBothChannelAndThread proves onAttachments'
 // "always both" behaviour (attachments.go) for a reply's progress with a
 // change RefreshPendingProgress must actually notice on its own — not just

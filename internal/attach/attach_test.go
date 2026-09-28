@@ -673,17 +673,13 @@ func TestPauseReturnsRunningUploadsToTheQueue(t *testing.T) {
 	e.waitState(a.ID, StateUploaded)
 }
 
-// Fix round 1 (review item 5): a thread's reply composer left behind
-// (channel left, taking its held threads with it — internal/state
-// TakeForgottenComposers) can still be sitting on staged attachments and
-// their spools; ReleaseComposer drops those, but never something already
-// mid-upload (left to finish or fail on its own — a channel-leave race is
-// rare and the alternative, cancelling an in-flight PUT, is worse).
-// Fix round 2 (review item 2): ReleaseComposer used to leave a
-// StateUploading item listed, so it reappeared (stuck mid-upload forever,
-// nothing left to retry it) if the user rejoined the channel or reopened
-// the thread. It must unlist everything, including one still uploading —
-// and cancel that upload, same as Remove does.
+// A thread's reply composer left behind (channel left, taking its held
+// threads with it — internal/state TakeForgottenComposers) can still be
+// sitting on attachments and their spools; ReleaseComposer drops them all,
+// including one still uploading — whose upload it cancels, same as Remove
+// does. (Fix round 2, review item 2: an uploading item used to stay listed
+// and reappeared, stuck mid-upload, when the user rejoined the channel or
+// reopened the thread.)
 func TestReleaseComposerDropsEverythingIncludingUploading(t *testing.T) {
 	e := newEnv(t, func(o *Options) { o.Parallel = 1 })
 	started := make(chan struct{}, 1)

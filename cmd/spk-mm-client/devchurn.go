@@ -17,11 +17,13 @@ import (
 
 // fakeChurn drives a dev desktop run for memory soak tests
 // (--mm-fake-churn): every tick bob posts to a random channel
-// of a random fake server, and every few ticks the UI is asked to open a
-// random channel (the same path a notification click takes), so the feed,
-// markdown rendering and channel switching all keep running for hours.
-// Posts carry no @mention: the soak must not flood the desktop with
-// notifications.
+// of a random fake server — every third post a reply to one of the
+// channel's recent roots —, and every few ticks the UI is asked to open a
+// random channel (the same path a notification click takes; every fifth
+// time a reply's notification: the channel and a thread in the panel), so
+// the feed, markdown rendering, channel switching, the thread panel and the
+// thread cache all keep running for hours. Posts carry no @mention: the
+// soak must not flood the desktop with notifications.
 type fakeChurn struct {
 	every     time.Duration
 	fakes     []*mmfake.Server
@@ -30,7 +32,12 @@ type fakeChurn struct {
 	open      func(serverID int64, channelID, rootID string)
 }
 
-const churnSwitchEvery = 5 // ticks between channel switches
+const (
+	churnSwitchEvery = 5 // ticks between channel switches
+	churnReplyEvery  = 3 // every third post is a reply
+	churnThreadEvery = 5 // every fifth switch opens a thread
+	churnRecentRoots = 5 // a reply or a thread opening picks one of this many newest roots
+)
 
 var churnWords = strings.Fields("sync window feed cache render **bold** _italic_ `code` [link](https://example.com) memory budget webkit gtk channel server")
 
@@ -68,12 +75,37 @@ func runFakeChurn(ctx context.Context, c fakeChurn) {
 		for j := range words {
 			words[j] = churnWords[rand.IntN(len(churnWords))]
 		}
-		c.fakes[i].PostAs(channel(), "bob", strings.Join(words, " ")) // bob is a member of every seeded channel
+		ch, root := channel(), ""
+		if tick%churnReplyEvery == 0 {
+			root = recentRoot(c.fakes[i], ch)
+		}
+		c.fakes[i].ReplyAs(ch, root, "bob", strings.Join(words, " ")) // bob is a member of every seeded channel
 		if tick%churnSwitchEvery == 0 {
 			j := rand.IntN(len(c.serverIDs))
-			c.open(c.serverIDs[j], channel(), "")
+			ch, root := channel(), ""
+			if (tick/churnSwitchEvery)%churnThreadEvery == 0 {
+				root = recentRoot(c.fakes[j], ch)
+			}
+			c.open(c.serverIDs[j], ch, root)
 		}
 	}
+}
+
+// recentRoot is one of the newest churnRecentRoots user roots of a channel
+// ("" if it has none). Only the churn posts to a fake while it runs, so the
+// root is still there (not trimmed by KeepPosts) when the reply lands.
+func recentRoot(f *mmfake.Server, channelID string) string {
+	posts := f.VisiblePosts(channelID)
+	roots := make([]string, 0, churnRecentRoots)
+	for i := len(posts) - 1; i >= 0 && len(roots) < churnRecentRoots; i-- {
+		if p := posts[i]; p.RootID == "" && p.Type == "" {
+			roots = append(roots, p.ID)
+		}
+	}
+	if len(roots) == 0 {
+		return ""
+	}
+	return roots[rand.IntN(len(roots))]
 }
 
 // logRuntimeMemory logs the Go heap figures a soak run compares over time.

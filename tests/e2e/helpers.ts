@@ -61,5 +61,37 @@ export async function removeServerFromMenu(page: Page) {
   await expect(page.getByRole('heading', { name: 'Add a Mattermost server' })).toBeVisible()
 }
 
-export const feed = (page: Page) => page.getByRole('log', { name: 'Messages' })
+// feed: the channel's own feed. The thread panel has a "Messages" log of its
+// own, so the role and name alone are ambiguous while a panel is open.
+export const feed = (page: Page) => page.locator('[role="log"][data-feed="channel"]')
 export const unique = (label: string) => `${label} ${Date.now().toString(36)}`
+
+// ---- threads ----
+
+export const threadPane = (page: Page) => page.getByRole('complementary', { name: 'Thread', exact: true })
+export const threadFeed = (page: Page) => threadPane(page).locator('[role="log"][data-feed="thread"]')
+export const threadComposer = (page: Page) => threadPane(page).getByRole('textbox', { name: 'Message' })
+
+// setCRT switches the fake's CollapsedThreads mode; a signed-in client sees
+// it only after its next bootstrap (sign-in or fake/drop {lose:true}).
+export async function setCRT(page: Page, mode: 'always_on' | 'default_on' | 'default_off' | 'disabled') {
+  if (!page.url().startsWith('http')) await page.goto('/')
+  await testPost(page, 'fake/crt', { mode })
+}
+
+export async function fakePost(page: Page, channelId: string, username: string, message: string, rootId = '') {
+  return ((await testPost(page, 'fake/post', { channel_id: channelId, username, message, root_id: rootId })) as { id: string }).id
+}
+
+// seedThread: bob posts a root, then each reply alternates carol/bob.
+export async function seedThread(page: Page, root: string, replies: string[], channelId = 'c-town') {
+  const rootId = await fakePost(page, channelId, 'bob', root)
+  const replyIds: string[] = []
+  for (const [i, text] of replies.entries()) replyIds.push(await fakePost(page, channelId, i % 2 ? 'bob' : 'carol', text, rootId))
+  return { rootId, replyIds }
+}
+
+// rootRow: the root's row in the channel feed, by its (unique) text.
+export const rootRow = (page: Page, text: string) => feed(page).locator('article', { hasText: text })
+export const repliesLink = (page: Page, text: string, n: number) =>
+  rootRow(page, text).getByRole('button', { name: new RegExp(`^Replies: ${n}( ·|$)`) })

@@ -3,7 +3,6 @@ package main
 import (
 	"compress/gzip"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -93,11 +92,15 @@ func TestSignInToFakeSeveral(t *testing.T) {
 
 // --mm-fake-churn: posts land in the fakes and the UI is asked to switch
 // channels (open_channel), so a long dev run exercises feed/channel churn.
-func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
+// Every third post is a reply to a recent root of its channel and every
+// fifth switch opens a thread (a reply notification's click: channel +
+// root), so the soak also drives the thread panel and the thread cache.
+func TestFakeChurnPostsRepliesAndOpensThreads(t *testing.T) {
 	fake := mmfake.Start(mmfake.Options{ExtraChannels: 3})
 	t.Cleanup(fake.Close)
+	type opening struct{ ch, root string }
 	var mu sync.Mutex
-	var opened []string
+	var opened []opening
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -106,24 +109,69 @@ func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
 			every: time.Millisecond, fakes: []*mmfake.Server{fake}, serverIDs: []int64{7}, channels: 3,
 			open: func(id int64, ch, root string) {
 				assert.Equal(t, int64(7), id)
-				assert.Empty(t, root, "the churn opens channels, not threads")
 				mu.Lock()
-				opened = append(opened, ch)
+				opened = append(opened, opening{ch, root})
 				mu.Unlock()
 			},
 		})
 	}()
-	posted := func() int {
+	channels := []string{"c-town", "c-load-001", "c-load-002", "c-load-003"}
+	posts := func() (roots, replies int) {
+		for _, ch := range channels {
+			for _, p := range fake.VisiblePosts(ch) {
+				if p.RootID == "" {
+					roots++
+				} else {
+					replies++
+				}
+			}
+		}
+		return roots, replies
+	}
+	threadOpens := func() int {
+		mu.Lock()
+		defer mu.Unlock()
 		n := 0
-		for i := 1; i <= 3; i++ {
-			n += len(fake.VisiblePosts(fmt.Sprintf("c-load-%03d", i)))
+		for _, o := range opened {
+			if o.root != "" {
+				n++
+			}
 		}
 		return n
 	}
-	require.Eventually(t, func() bool { return posted() > 3*20+20 }, 5*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { _, r := posts(); return r >= 30 && threadOpens() >= 3 }, 10*time.Second, 5*time.Millisecond)
 	cancel()
 	<-done
-	assert.NotEmpty(t, opened)
+
+	// Every reply went to a root of its own channel; every thread opening
+	// names a root of the channel it opens.
+	rootOf := map[string]string{} // root id -> channel
+	for _, ch := range channels {
+		for _, p := range fake.VisiblePosts(ch) {
+			if p.RootID == "" {
+				rootOf[p.ID] = ch
+			}
+		}
+	}
+	for _, ch := range channels {
+		for _, p := range fake.VisiblePosts(ch) {
+			if p.RootID != "" {
+				assert.Equal(t, ch, rootOf[p.RootID], "a reply goes to a root of its channel")
+			}
+		}
+	}
+	threads := threadOpens()
+	mu.Lock()
+	defer mu.Unlock()
+	channelOpens := 0
+	for _, o := range opened {
+		if o.root == "" {
+			channelOpens++
+			continue
+		}
+		assert.Equal(t, o.ch, rootOf[o.root], "a thread opening names a root of its channel")
+	}
+	assert.Greater(t, channelOpens, threads, "most switches still open a channel")
 }
 
 // A churn (soak) run starts the fakes with full client windows in every load
@@ -131,7 +179,9 @@ func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
 // windows grow during the soak: what grows is a real leak. A plain --mm-fake
 // run keeps the usual seed.
 func TestFakeOptionsForSoak(t *testing.T) {
-	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize, FilesDir: "/d/tmp/mmfake"},
+	// CRT on: the soak's replies go through the thread panel, its reads and
+	// the thread badges, not only the feed.
+	assert.Equal(t, mmfake.Options{ExtraChannels: 50, ExtraChannelPosts: state.WindowSize, KeepPosts: state.WindowSize, FilesDir: "/d/tmp/mmfake", CRT: true},
 		fakeOptions(desktopOpts{MMFake: true, FakeChannels: 50, FakeChurn: 2 * time.Second}, "/d/tmp/mmfake"))
 	// Uploads go to disk: the fake shares the client's process, and memory
 	// checks must not count it keeping pasted pictures.

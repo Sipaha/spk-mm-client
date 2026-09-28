@@ -59,11 +59,15 @@ func isDevFake(s api.ServerDTO) bool {
 // in ~100 channels), both reading as growth in the soak. Uploads are stored
 // in filesDir, not in memory: the fakes share the client's process, and a
 // memory check pasting large pictures measured the fake keeping each one.
+// A churn run has collapsed reply threads on, so its replies go through the
+// thread panel, the thread reads and the thread badges, not only the feed
+// (KeepPosts trims the replies and the threads of trimmed roots too).
 func fakeOptions(o desktopOpts, filesDir string) mmfake.Options {
 	opts := mmfake.Options{ExtraChannels: o.FakeChannels, FilesDir: filesDir}
 	if o.FakeChurn > 0 {
 		opts.ExtraChannelPosts = state.WindowSize
 		opts.KeepPosts = state.WindowSize
+		opts.CRT = true
 	}
 	return opts
 }

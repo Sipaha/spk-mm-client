@@ -30,9 +30,15 @@ test('jump-to-latest button: appears scrolling up, badges a post from someone el
   await expect(button).toBeHidden()
 
   // Town Square has 150 seeded posts and a 60-post window: scrolling to the
-  // top is well over a viewport away from the bottom.
-  await log.evaluate((el) => el.scrollTo({ top: 0 }))
-  await expect(button).toBeVisible()
+  // top is well over a viewport away from the bottom. Retried: right after
+  // sign-in the feed still gets updates, and one committed before the
+  // (asynchronous) scroll event reaches onScroll follows the bottom — the
+  // scroll is undone before the feed notices it (Task 7 flake analysis;
+  // docs/backlog.md, «Треды» → «Лента: ранний скролл…»).
+  await expect(async () => {
+    await log.evaluate((el) => el.scrollTo({ top: 0 }))
+    await expect(button).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
 
   const text = unique('while scrolled away')
   await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: text })

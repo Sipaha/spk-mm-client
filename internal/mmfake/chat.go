@@ -395,7 +395,9 @@ func (s *Server) insertPostLocked(p *fpost) {
 
 // trimHistoryLocked drops the oldest posts of a channel beyond
 // Options.KeepPosts (soak runs). Only posts created at run time trigger it,
-// so the seed stays whole until the channel gets a new post.
+// so the seed stays whole until the channel gets a new post. A dropped root
+// takes its thread record and subscriptions with it (a reply to it is then
+// refused like one to a deleted root).
 func (s *Server) trimHistoryLocked(channelID string) {
 	keep := s.opts.KeepPosts
 	list := s.chat.posts[channelID]
@@ -408,6 +410,8 @@ func (s *Server) trimHistoryLocked(channelID string) {
 		if p.PendingPostID != "" {
 			delete(s.chat.pending, p.PendingPostID)
 		}
+		delete(s.chat.threads, p.ID)
+		delete(s.chat.threadMembers, p.ID)
 	}
 	s.chat.posts[channelID] = append([]*fpost(nil), list[cut:]...)
 }
@@ -506,7 +510,6 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 		}
 	}
 	s.insertPostLocked(p)
-	s.trimHistoryLocked(c.ID)
 	if in.PendingPostID != "" {
 		s.chat.pending[in.PendingPostID] = p.ID
 	}
@@ -515,6 +518,9 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	if !isRoot {
 		followers, notifyThread = s.subscribeReplyLocked(c, root, p, now)
 	}
+	// After the thread bookkeeping: a root trimmed by this very reply must
+	// not get its thread record back.
+	s.trimHistoryLocked(c.ID)
 	b, _ := json.Marshal(p.Post)
 	sender, _ := s.userByID(userID)
 	s.publishLocked("posted", map[string]any{

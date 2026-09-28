@@ -330,3 +330,28 @@ func TestKeepPostsCapsHistoryAndEventLog(t *testing.T) {
 	assert.Len(t, c.VisiblePosts("c-load-001"), 21, "uncapped by default")
 	assert.NotEmpty(t, c.Events())
 }
+
+// A capped (soak) fake stays in a steady state with replies too: a trimmed
+// root takes its thread record and subscriptions with it (the churn replies
+// to recent roots for hours), and thread reads are not logged.
+func TestKeepPostsDropsTheThreadsOfTrimmedRoots(t *testing.T) {
+	s := Start(Options{ExtraChannels: 1, KeepPosts: 6, CRT: true})
+	t.Cleanup(s.Close)
+	var last model.Post
+	for i := range 40 {
+		last = s.PostAs("c-load-001", "bob", fmt.Sprintf("root %d", i))
+		s.ReplyAs("c-load-001", last.ID, "alice", "reply")
+	}
+	s.mu.Lock()
+	threads, members := len(s.chat.threads), len(s.chat.threadMembers)
+	s.mu.Unlock()
+	assert.LessOrEqual(t, threads, 6, "thread records of trimmed roots are dropped")
+	assert.LessOrEqual(t, members, 6, "subscriptions of trimmed roots are dropped")
+
+	a := loginAs(t, s, "alice")
+	for range 5 {
+		require.Equal(t, 200, a.call("PUT", "/api/v4/users/me/teams/t-fake/threads/"+last.ID+"/read/999999999999", nil, nil))
+	}
+	assert.Empty(t, s.ThreadReads(), "no unbounded thread-read log in a capped (soak) fake")
+	assert.Equal(t, 5, s.ThreadReadTries())
+}

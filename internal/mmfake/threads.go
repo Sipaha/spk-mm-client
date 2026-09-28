@@ -498,7 +498,9 @@ func (s *Server) markThreadRead(w http.ResponseWriter, r *http.Request, u User) 
 	if root != nil {
 		channelID = root.ChannelID
 	}
-	s.chat.threadReads = append(s.chat.threadReads, ThreadRead{RootID: rid, TeamID: tid, TS: ts})
+	if s.opts.KeepPosts <= 0 { // a capped (soak) fake keeps no thread-read log
+		s.chat.threadReads = append(s.chat.threadReads, ThreadRead{RootID: rid, TeamID: tid, TS: ts})
+	}
 	resp := s.threadResponseLocked(rid, u.ID)
 	s.publishLocked("thread_read_changed", map[string]any{
 		"thread_id": rid, "timestamp": ts, "unread_mentions": m.unreadMentions, "unread_replies": resp.UnreadReplies,
