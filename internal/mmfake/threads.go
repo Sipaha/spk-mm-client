@@ -251,12 +251,20 @@ func (s *Server) subscribeReplyLocked(c *model.Channel, root, reply *fpost, now 
 // one reply decrements the root's reply_count and any subscriber's
 // unread_mentions the reply had contributed. No separate event — the
 // post_deleted the caller already publishes covers it (§3 of the spike).
-func (s *Server) deleteReplyEffectsLocked(p *fpost) {
+func (s *Server) deleteReplyEffectsLocked(p *fpost, now int64) {
 	root := s.chat.byID[p.RootID]
 	if root == nil {
 		return
 	}
 	root.ReplyCount = max(root.ReplyCount-1, 0)
+	// post_store.go Delete: the root's update_at moves to the deletion
+	// time; updateThreadAfterReplyDeletion recomputes last_reply_at from
+	// the replies left.
+	root.UpdateAt = now
+	root.LastReplyAt = 0
+	for _, r := range s.repliesLocked(root.ID) {
+		root.LastReplyAt = max(root.LastReplyAt, r.CreateAt)
+	}
 	for uid, m := range s.chat.threadMembers[p.RootID] {
 		if slices.Contains(p.mentions, uid) {
 			m.unreadMentions = max(m.unreadMentions-1, 0)

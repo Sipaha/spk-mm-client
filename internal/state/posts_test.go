@@ -46,17 +46,17 @@ func windowIDs(s *Server, ch string) []string {
 func TestSetWindowTrimsAndKeepsNewerWSPosts(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000)}, true, 5)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000)}, true, 5, 0)
 	s.ApplyEvent(postedEv(mkPost("ws", "off", "u2", 3000)))
 	// a slower page fetch finishing after the WS post must not drop it
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, true, 6)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, true, 6, 0)
 	assert.Equal(t, []string{"a", "b", "ws"}, windowIDs(s, "off"))
 
 	var page []model.Post
 	for i := 0; i < WindowSize+5; i++ {
 		page = append(page, mkPost(fmt.Sprint("p", i), "town", "u2", int64(10+i)))
 	}
-	s.SetWindow("town", page, true, 7)
+	s.SetWindow("town", page, true, 7, 0)
 	s.mu.Lock()
 	w := s.chans["town"].Win
 	s.mu.Unlock()
@@ -67,7 +67,7 @@ func TestSetWindowTrimsAndKeepsNewerWSPosts(t *testing.T) {
 
 func TestMergeSinceDropsDeletedAndHistory(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, false, 5)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, false, 5, 0)
 	s.MarkStale(10)
 	edited := mkPost("a", "off", "u2", 1000)
 	edited.Message, edited.EditAt, edited.UpdateAt = "edited", 4000, 4000
@@ -77,7 +77,7 @@ func TestMergeSinceDropsDeletedAndHistory(t *testing.T) {
 	del.DeleteAt, del.UpdateAt = 4100, 4100
 	older := mkPost("old", "off", "u2", 500) // before the window start: not ours to insert
 	newer := mkPost("c", "off", "u2", 4200)
-	s.MergeSince("off", []model.Post{older, hist, edited, del, newer}, 99)
+	s.MergeSince("off", []model.Post{older, hist, edited, del, newer}, 99, 0)
 	assert.Equal(t, []string{"a", "c"}, windowIDs(s, "off"))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,7 +90,7 @@ func TestMergeSinceDropsDeletedAndHistory(t *testing.T) {
 
 func TestMarkStaleAndSyncItemsPriority(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("town", []model.Post{mkPost("t1", "town", "u2", 1)}, false, 5)
+	s.SetWindow("town", []model.Post{mkPost("t1", "town", "u2", 1)}, false, 5, 0)
 	s.MarkStale(50)
 	items := s.SyncItems()
 	byID := map[string]SyncItem{}
@@ -116,11 +116,11 @@ func TestMarkStaleAndSyncItemsPriority(t *testing.T) {
 
 func TestAppendOlderOnlyForActiveChannel(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 100)}, false, 5)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 100)}, false, 5, 0)
+	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
 	assert.Equal(t, "w1", s.OldestPostID("town"), "not active: ignored")
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
+	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
 	assert.Equal(t, "o1", s.OldestPostID("town"))
 	v, _ := s.ChannelView("town")
 	assert.Equal(t, []string{"o1", "w1"}, []string{v.Posts[0].ID, v.Posts[1].ID})
@@ -139,9 +139,9 @@ func TestTrimmedWindowPostMovesToOlderForActiveChannel(t *testing.T) {
 	for i := 0; i < WindowSize; i++ {
 		page = append(page, mkPost(fmt.Sprint("w", i), "town", "u2", int64(100+i)))
 	}
-	s.SetWindow("town", page, true, 5)
+	s.SetWindow("town", page, true, 5, 0)
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{mkPost("old1", "town", "u2", 50)}, false)
+	s.AppendOlder("town", []model.Post{mkPost("old1", "town", "u2", 50)}, false, 0)
 	s.ClearGuard()
 	s.ApplyEvent(postedEv(mkPost("new1", "town", "u2", int64(100+WindowSize))))
 
@@ -156,11 +156,11 @@ func TestTrimmedWindowPostMovesToOlderForActiveChannel(t *testing.T) {
 // history) must clear HasMore even though s.older stays empty.
 func TestHasMoreFalseAfterEmptyFinalAppendOlder(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("town", []model.Post{mkPost("t1", "town", "u2", 100)}, false, 5)
+	s.SetWindow("town", []model.Post{mkPost("t1", "town", "u2", 100)}, false, 5, 0)
 	s.SetActive("town")
 	v, _ := s.ChannelView("town")
 	assert.True(t, v.HasMore, "sanity: window incomplete, nothing fetched yet")
-	s.AppendOlder("town", nil, true)
+	s.AppendOlder("town", nil, true, 0)
 	v, _ = s.ChannelView("town")
 	assert.False(t, v.HasMore, "AppendOlder said there is nothing older left")
 }
@@ -184,7 +184,7 @@ func windowPost(s *Server, ch, id string) (model.Post, bool) {
 func TestUpsertPreservesPendingPostIDAcrossLaterUpdatesWithoutIt(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
-	s.SetWindow("off", nil, true, 0)
+	s.SetWindow("off", nil, true, 0, 0)
 	created := mkPost("real1", "off", "u2", 1000)
 	created.PendingPostID = "u2:1"
 	s.PostCreated(created)
@@ -214,11 +214,11 @@ func TestSetWindowKeepsNewerLocalReplyCount(t *testing.T) {
 			s := crtFixture(crt)
 			root := mkPost("root", "town", "u2", 1000)
 			root.ReplyCount, root.LastReplyAt, root.UpdateAt = 1, 2000, 2000
-			s.SetWindow("town", []model.Post{root}, true, 5)
+			s.SetWindow("town", []model.Post{root}, true, 5, 0)
 			s.ApplyEvent(postedEv(reply("r2", "root", "u3", 3000, 2)))
 
 			old := root // read before r2
-			s.SetWindow("town", []model.Post{old}, true, 6)
+			s.SetWindow("town", []model.Post{old}, true, 6, 0)
 			n, last := rootCount(t, s, "town", "root")
 			assert.Equal(t, int64(2), n, "SetWindow: an older page keeps the live count")
 			assert.Equal(t, int64(3000), last)
@@ -233,7 +233,7 @@ func TestSetWindowKeepsNewerLocalReplyCount(t *testing.T) {
 
 			fresh := root // read after r2 and one more reply we missed
 			fresh.ReplyCount, fresh.LastReplyAt, fresh.UpdateAt = 3, 3500, 3500
-			s.SetWindow("town", []model.Post{fresh}, true, 7)
+			s.SetWindow("town", []model.Post{fresh}, true, 7, 0)
 			n, last = rootCount(t, s, "town", "root")
 			assert.Equal(t, int64(3), n, "a newer page takes its own count")
 			assert.Equal(t, int64(3500), last)
@@ -245,7 +245,7 @@ func TestSetWindowKeepsNewerLocalReplyCount(t *testing.T) {
 // (its read state is the thread's), only roots do.
 func TestNeedsViewUnderCRTCountsRootsOnly(t *testing.T) {
 	s := crtFixture(true)
-	s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5)
+	s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5, 0)
 	require.False(t, s.NeedsView("town"), "sanity: town is read")
 	s.ApplyEvent(postedEv(reply("r1", "root", "u2", 5000, 1), "u1"))
 	assert.False(t, s.NeedsView("town"), "a reply (even one mentioning us) is not the channel's to read")
@@ -255,4 +255,34 @@ func TestNeedsViewUnderCRTCountsRootsOnly(t *testing.T) {
 	s = crtFixture(false)
 	s.ApplyEvent(postedEv(reply("r1", "root", "u2", 5000, 1)))
 	assert.True(t, s.NeedsView("town"), "without CRT a reply is an ordinary message")
+}
+
+// Review, important 3: a page requested before ResetWindows (possibly in
+// the other CRT mode) is dropped on landing — it must not install a window
+// as Loaded that nothing refetches. A page requested after goes in.
+func TestPageFromBeforeResetWindowsIsDropped(t *testing.T) {
+	s := crtFixture(false)
+	s.SetActive("town")
+	_, gen := s.FetchMode()
+	s.SetWindow("town", []model.Post{mkPost("a", "town", "u2", 100)}, false, 5, gen)
+	s.ResetWindows()
+
+	s.MergeSince("town", []model.Post{mkPost("b", "town", "u2", 200)}, 6, gen)
+	s.SetWindow("off", []model.Post{mkPost("c", "off", "u2", 100)}, true, 6, gen)
+	s.AppendOlder("town", []model.Post{mkPost("o", "town", "u2", 50)}, true, gen)
+	for _, ch := range []string{"town", "off"} {
+		it, ok := s.SyncItemFor(ch)
+		require.True(t, ok, "%s still needs a fetch", ch)
+		assert.False(t, it.Loaded, ch)
+	}
+	v, _ := s.ChannelView("town")
+	assert.Empty(t, v.Posts)
+
+	crt, gen2 := s.FetchMode()
+	assert.False(t, crt)
+	assert.NotEqual(t, gen, gen2)
+	s.SetWindow("town", []model.Post{mkPost("a", "town", "u2", 100)}, false, 7, gen2)
+	s.AppendOlder("town", []model.Post{mkPost("o", "town", "u2", 50)}, true, gen2)
+	v, _ = s.ChannelView("town")
+	assert.Equal(t, []string{"o", "a"}, []string{v.Posts[0].ID, v.Posts[1].ID})
 }

@@ -104,7 +104,7 @@ func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
 	if !need {
 		return
 	}
-	crt := w.st.CRT()
+	crt, gen := w.st.FetchMode()
 	started := w.cfg.Now().UnixMilli()
 	var err error
 	if it.Loaded {
@@ -113,12 +113,12 @@ func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
 		switch {
 		case err != nil:
 		case len(l.Order) >= w.cfg.sinceLimit:
-			err = w.loadLatest(ctx, it.ChannelID, crt, started)
+			err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
 		default:
-			w.st.MergeSince(it.ChannelID, l.Ascending(), started)
+			w.st.MergeSince(it.ChannelID, l.Ascending(), started, gen)
 		}
 	} else {
-		err = w.loadLatest(ctx, it.ChannelID, crt, started)
+		err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
@@ -145,11 +145,11 @@ func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
 	w.changed(state.Change{Sidebar: true, Channels: []string{it.ChannelID}})
 }
 
-func (w *Worker) loadLatest(ctx context.Context, channelID string, crt bool, started int64) error {
+func (w *Worker) loadLatest(ctx context.Context, channelID string, crt bool, gen uint64, started int64) error {
 	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, CollapsedThreads: crt})
 	if err != nil {
 		return err
 	}
-	w.st.SetWindow(channelID, l.Ascending(), l.PrevPostID == "", started)
+	w.st.SetWindow(channelID, l.Ascending(), l.PrevPostID == "", started, gen)
 	return nil
 }

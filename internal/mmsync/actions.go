@@ -70,11 +70,12 @@ func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
 	if before == "" {
 		return nil
 	}
-	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: before, CollapsedThreads: w.st.CRT()})
+	crt, gen := w.st.FetchMode()
+	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: before, CollapsedThreads: crt})
 	if err != nil {
 		return w.actionErr(err)
 	}
-	w.st.AppendOlder(channelID, l.Ascending(), l.PrevPostID == "")
+	w.st.AppendOlder(channelID, l.Ascending(), l.PrevPostID == "", gen)
 	w.loadUsers(ctx)
 	if channelID == w.st.Active() {
 		w.requestStatuses() // authors of the older posts

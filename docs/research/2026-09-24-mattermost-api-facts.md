@@ -57,7 +57,7 @@ read limit с запасом). При заполненной на 50% очере
 | `hello` | `server_version`, `connection_id`, `server_hostname` | user_id |
 | `posted` | `post` (**JSON-строка**), `channel_type`, `channel_display_name`, `channel_name`, `sender_name`, `team_id`, `set_online`; `mentions` / `followers` — JSON-строка-массив, содержит **только id получателя**, если он упомянут/подписчик; `should_ack` только при `posted_ack=true` | channel_id |
 | `post_edited` | `post` (JSON-строка) | channel_id |
-| `post_deleted` | `post` (JSON-строка) | channel_id |
+| `post_deleted` | `post` (JSON-строка) — пост **до** удаления: `delete_at` 0, `update_at` его собственный (`app/post.go` `DeletePost`: `GetSingle`, затем `Store.Delete`, затем `CleanUpAfterPostDeletion` маршалит ту копию) | channel_id |
 | `channel_viewed` | **в 10.11 не отправляется** | — |
 | `multiple_channels_viewed` | `channel_times` {channel_id: last_viewed_at} | user_id |
 | `post_unread` | `msg_count`, `msg_count_root`, `mention_count`, `mention_count_root`, `urgent_mention_count`, `last_viewed_at`, `post_id` | team_id, channel_id, user_id |
@@ -111,7 +111,12 @@ read limit с запасом). При заполненной на 50% очере
   `[]User{id,username,first_name,last_name,nickname,delete_at,update_at,is_bot,notify_props(только свой),locale}`.
 - `GET /channels/{id}/posts` — `per_page` (≤200, по умолч. 60), `before`,
   `after`, `since`, `page`, `collapsedThreads`, `collapsedThreadsExtended`,
-  `skipFetchThreads`. Приоритет: since > after > before. Ответ
+  `skipFetchThreads`. Приоритет: since > after > before. Без CRT
+  `reply_count` приходит только с `skipFetchThreads=true` (подзапрос COUNT в
+  `getRootPosts`/`getParentsPosts`/`GetPostsSince`), иначе 0, а в `posts`
+  добавляются все треды страницы; клиент шлёт `skipFetchThreads=true` всегда.
+  При CRT `reply_count` берётся из `Threads`. `post_edited` несёт настоящий
+  `reply_count` (`GetSingle`). Ответ
   `{order[],posts{id:Post},next_post_id,prev_post_id}`; конец истории —
   `prev_post_id == ""` на странице `before`/первой странице.
   Post: `id, create_at, update_at, edit_at, delete_at, is_pinned, user_id,
@@ -461,8 +466,12 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
   времени относительно ответа) `UpdateAt` корня, что важно для правила
   «не затирать более новый локальный счётчик» (Task 2/3).
 - Удаление одного ответа уменьшает `reply_count` треда и корня на сервере
-  (`updateThreadAfterReplyDeletion`) без отдельного события про корень —
-  тот же `post_deleted` покрывает это. Фейк: `deleteReplyEffectsLocked`.
+  (`updateThreadAfterReplyDeletion`, `last_reply_at` пересчитывается по
+  оставшимся ответам) без отдельного события про корень — тот же
+  `post_deleted` покрывает это; `UpdateAt` корня сдвигается на время
+  удаления (`post_store.go:1004–1014`). Время удаления знает только строка
+  `since=` (`delete_at`); в `post_deleted` его нет (см. таблицу событий).
+  Фейк: `deleteReplyEffectsLocked`.
 - Удаление корня — **одно** `post_deleted` только для корня; ответы
   помечаются удалёнными молча (`post_store.go:972–1007`,
   `WHERE Id=? OR RootId=?`) — клиент каскадирует сам.

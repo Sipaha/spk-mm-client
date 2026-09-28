@@ -76,7 +76,7 @@ func TestSessionEndDrainsBufferedEvents(t *testing.T) {
 		Channels: []model.Channel{{ID: "town", TeamID: "t1", Type: model.ChannelOpen, DisplayName: "Town", CreateAt: 1}},
 		Members:  []model.ChannelMember{{ChannelID: "town", UserID: "u1", NotifyProps: map[string]string{"desktop": "default", "mark_unread": "all"}}},
 	})
-	w.st.SetWindow("town", nil, true, 1)
+	w.st.SetWindow("town", nil, true, 1, 0)
 	w.st.ClearGuard()
 
 	pb, _ := json.Marshal(model.Post{ID: "p1", ChannelID: "town", UserID: "u2", Message: "buffered", CreateAt: 5000, UpdateAt: 5000})

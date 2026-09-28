@@ -21,7 +21,7 @@ func counts(s *Server, id string) (model.Channel, model.ChannelMember) {
 func TestPostedBumpsCountsAndInsertsIntoLoadedWindow(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
-	s.SetWindow("town", nil, true, 5)
+	s.SetWindow("town", nil, true, 5, 0)
 	eff := s.ApplyEvent(postedEv(mkPost("p1", "town", "u2", 5000), "u1"))
 	info, m := counts(s, "town")
 	assert.Equal(t, int64(11), info.TotalMsgCount)
@@ -75,7 +75,7 @@ func TestCRTReplyUpdatesRootNotFeed(t *testing.T) {
 	s := New(fixedNow)
 	s.Bootstrap(b)
 	s.ClearGuard()
-	s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5)
+	s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5, 0)
 	reply := mkPost("r1", "town", "u3", 2000)
 	reply.RootID = "root"
 	s.ApplyEvent(postedEv(reply, "u1"))
@@ -93,7 +93,7 @@ func TestPendingReplacedByEchoEitherOrder(t *testing.T) {
 	for _, echoFirst := range []bool{false, true} {
 		s := newFixture()
 		s.ClearGuard()
-		s.SetWindow("off", nil, true, 5)
+		s.SetWindow("off", nil, true, 5, 0)
 		pd := s.AddPending("off", "", "hello")
 		assert.Contains(t, pd.ID, "u1:")
 		v, _ := s.ChannelView("off")
@@ -136,7 +136,7 @@ func TestFailRetryDropPending(t *testing.T) {
 
 func TestEditDeleteReactionEvents(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, true, 5)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, true, 5, 0)
 	e := mkPost("a", "off", "u2", 1000)
 	e.Message, e.EditAt, e.UpdateAt = "changed", 3000, 3000
 	eff := s.ApplyEvent(postEv("post_edited", e))
@@ -277,7 +277,7 @@ func TestPostedAfterPageAlreadyContainsItStillBumpsCounters(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
 	p := mkPost("p1", "off", "u2", 5000)
-	s.SetWindow("off", []model.Post{p}, true, 5) // prefetch already landed p1
+	s.SetWindow("off", []model.Post{p}, true, 5, 0) // prefetch already landed p1
 	assert.Equal(t, []string{"p1"}, windowIDs(s, "off"))
 	eff := s.ApplyEvent(postedEv(p))
 	info, _ := counts(s, "off")
@@ -297,7 +297,7 @@ func TestCRTReplyAlreadyReflectedByRESTDoesNotDoubleBump(t *testing.T) {
 	s.ClearGuard()
 	root := mkPost("root", "town", "u2", 1000)
 	root.ReplyCount, root.LastReplyAt = 1, 2000 // REST already counted this reply
-	s.SetWindow("town", []model.Post{root}, true, 5)
+	s.SetWindow("town", []model.Post{root}, true, 5, 0)
 	reply := mkPost("r1", "town", "u3", 2000)
 	reply.RootID = "root"
 	s.ApplyEvent(postedEv(reply, "u1"))
@@ -344,7 +344,7 @@ func TestReplyCountComesFromPostedOnce(t *testing.T) {
 			s := crtFixture(crt)
 			root := mkPost("root", "town", "u2", 1000)
 			root.ReplyCount, root.LastReplyAt = 2, 2000
-			s.SetWindow("town", []model.Post{root}, true, 5)
+			s.SetWindow("town", []model.Post{root}, true, 5, 0)
 
 			// The server says 5: replies we never saw are counted too.
 			mine := reply("r5", "root", "u1", 3000, 5)
@@ -377,40 +377,79 @@ func TestReplyCountComesFromPostedOnce(t *testing.T) {
 			assert.Equal(t, int64(4000), v.Posts[0].LastReplyAt, "PostView carries last_reply_at")
 		})
 	}
+
+	// Review, important 2: a repeat of a reply never re-assigns its (by
+	// then outdated) total, and a deleted reply stays deleted.
+	t.Run("deleted own reply, late echo", func(t *testing.T) { // (a)
+		s := crtFixture(false)
+		s.SetWindow("town", []model.Post{threadRoot(4, 2000)}, true, 5, 0)
+		r5 := reply("r5", "root", "u1", 3000, 5)
+		s.PostCreated(r5)
+		s.RemovePost("r5")
+		n, _ := rootCount(t, s, "town", "root")
+		require.Equal(t, int64(4), n)
+		s.ApplyEvent(postedEv(r5)) // the echo, late
+		n, _ = rootCount(t, s, "town", "root")
+		assert.Equal(t, int64(4), n, "not raised back")
+		assert.NotContains(t, windowIDs(s, "town"), "r5", "not brought back")
+	})
+	t.Run("other reply deleted, late REST response", func(t *testing.T) { // (b)
+		s := crtFixture(true)
+		s.SetWindow("town", []model.Post{threadRoot(4, 2000)}, true, 5, 0)
+		r5 := reply("r5", "root", "u1", 3000, 5)
+		s.ApplyEvent(postedEv(r5))
+		s.ApplyEvent(deletedEv(reply("r3", "root", "u3", 1500, 3)))
+		n, _ := rootCount(t, s, "town", "root")
+		require.Equal(t, int64(4), n)
+		s.PostCreated(r5) // our CreatePost's response, late
+		n, _ = rootCount(t, s, "town", "root")
+		assert.Equal(t, int64(4), n, "the repeat does not re-assign its total")
+	})
+}
+
+// deletedEv is post_deleted as MM 10.11 sends it: the post as read before
+// the deletion (app/post.go DeletePost), so delete_at 0 and update_at its
+// own last update.
+func deletedEv(p model.Post) ws.Event {
+	p.DeleteAt = 0
+	return postEv("post_deleted", p)
+}
+
+// threadRoot is a root as a page shows it after replies at the given times:
+// the server moved its update_at to the newest one.
+func threadRoot(n, lastReplyAt int64) model.Post {
+	root := mkPost("root", "town", "u2", 1000)
+	root.ReplyCount, root.LastReplyAt, root.UpdateAt = n, lastReplyAt, lastReplyAt
+	return root
 }
 
 // Review focus 1: a deleted reply lowers its root's count exactly once
 // whether the REST DeletePost result, the post_deleted event, or both (in
-// either order, replayed) report it; never below zero.
+// either order, replayed) report it; never below zero. Events are shaped
+// like the real server's (delete_at 0), and the root like a real page
+// (update_at at its newest reply).
 func TestReplyDeleteDecrementsOnce(t *testing.T) {
 	for _, crt := range []bool{true, false} {
 		for _, restFirst := range []bool{true, false} {
 			t.Run(fmt.Sprintf("crt=%v/restFirst=%v", crt, restFirst), func(t *testing.T) {
 				s := crtFixture(crt)
-				root := mkPost("root", "town", "u2", 1000)
-				root.ReplyCount, root.LastReplyAt = 2, 2100
-				s.SetWindow("town", []model.Post{root, reply("r1", "root", "u1", 2000, 1), reply("r2", "root", "u3", 2100, 2)}, true, 5)
+				r1, r2 := reply("r1", "root", "u1", 2000, 1), reply("r2", "root", "u3", 2100, 2)
+				s.SetWindow("town", []model.Post{threadRoot(2, 2100), r1, r2}, true, 5, 0)
 
-				gone := reply("r1", "root", "u1", 2000, 0)
-				gone.DeleteAt, gone.UpdateAt = 5000, 5000
 				if restFirst {
 					s.RemovePost("r1")
-					s.ApplyEvent(postEv("post_deleted", gone))
+					s.ApplyEvent(deletedEv(r1))
 				} else {
-					s.ApplyEvent(postEv("post_deleted", gone))
+					s.ApplyEvent(deletedEv(r1))
 					s.RemovePost("r1")
 				}
-				s.ApplyEvent(postEv("post_deleted", gone))
+				s.ApplyEvent(deletedEv(r1))
 				n, _ := rootCount(t, s, "town", "root")
 				assert.Equal(t, int64(1), n, "decremented once")
 				assert.NotContains(t, windowIDs(s, "town"), "r1")
 
-				gone2 := reply("r2", "root", "u3", 2100, 0)
-				gone2.DeleteAt, gone2.UpdateAt = 5100, 5100
-				s.ApplyEvent(postEv("post_deleted", gone2))
-				gone3 := reply("r3", "root", "u3", 2200, 0) // a reply we never held
-				gone3.DeleteAt, gone3.UpdateAt = 5200, 5200
-				s.ApplyEvent(postEv("post_deleted", gone3))
+				s.ApplyEvent(deletedEv(r2))
+				s.ApplyEvent(deletedEv(reply("r3", "root", "u3", 2200, 3))) // a reply we never held
 				n, _ = rootCount(t, s, "town", "root")
 				assert.Equal(t, int64(0), n, "never below zero")
 			})
@@ -418,26 +457,47 @@ func TestReplyDeleteDecrementsOnce(t *testing.T) {
 	}
 }
 
-// A root that already reflects the deletion (fetched after it: the server
-// moves the root's update_at to the deletion time) is not lowered again by
-// the late post_deleted event.
+// A since= row is the one read that carries the deletion time: a root
+// read at or after it (the server moved its update_at there) already has
+// the lower count and is not lowered again.
 func TestReplyDeleteAfterFresherRootIsNotCountedTwice(t *testing.T) {
-	s := crtFixture(true)
-	root := mkPost("root", "town", "u2", 1000)
-	root.ReplyCount, root.LastReplyAt, root.UpdateAt = 1, 2000, 5000 // page read after r1 was deleted
-	s.SetWindow("town", []model.Post{root}, true, 5)
+	s := crtFixture(false)
+	root := threadRoot(1, 2000)
+	root.UpdateAt = 5000 // read after r1 was deleted at 5000
+	s.SetWindow("town", []model.Post{root}, true, 5, 0)
+	s.MarkStale(10)
 	gone := reply("r1", "root", "u1", 3000, 0)
 	gone.DeleteAt, gone.UpdateAt = 5000, 5000
-	s.ApplyEvent(postEv("post_deleted", gone))
+	s.MergeSince("town", []model.Post{gone}, 99, 0)
 	n, _ := rootCount(t, s, "town", "root")
 	assert.Equal(t, int64(1), n)
+}
+
+// Minor 4: a deletion with a known time moves the root's update_at there,
+// like the server — a page read before the deletion then cannot raise the
+// count back.
+func TestPageReadBeforeReplyDeletionKeepsTheLowerCount(t *testing.T) {
+	s := crtFixture(false)
+	r1 := reply("r1", "root", "u3", 2000, 1)
+	before := threadRoot(2, 2100)
+	s.SetWindow("town", []model.Post{before, r1, reply("r2", "root", "u3", 2100, 2)}, true, 5, 0)
+	s.MarkStale(10)
+	gone := r1
+	gone.DeleteAt, gone.UpdateAt = 5000, 5000
+	s.MergeSince("town", []model.Post{gone}, 99, 0)
+	n, _ := rootCount(t, s, "town", "root")
+	require.Equal(t, int64(1), n)
+
+	s.SetWindow("town", []model.Post{before, r1}, true, 100, 0) // requested before the deletion
+	n, _ = rootCount(t, s, "town", "root")
+	assert.Equal(t, int64(1), n, "the older page does not bring the deleted reply's count back")
 }
 
 // Spike §4.1 п.4: the server does not mark the channel viewed for a CRT
 // reply (app/post.go: isCRTReply), so neither do we.
 func TestOwnCRTReplyDoesNotMarkTheChannelRead(t *testing.T) {
 	s := crtFixture(true)
-	s.SetWindow("off", []model.Post{mkPost("root", "off", "u2", 1000)}, true, 5)
+	s.SetWindow("off", []model.Post{mkPost("root", "off", "u2", 1000)}, true, 5, 0)
 	before, mb := counts(s, "off")
 	r := mkPost("r1", "off", "u1", 5000)
 	r.RootID = "root"

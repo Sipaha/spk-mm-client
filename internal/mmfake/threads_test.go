@@ -401,3 +401,35 @@ func TestFollowingAndSeedThread(t *testing.T) {
 	assert.False(t, s.Following("unknown-root", "alice"))
 	assert.Len(t, s.VisiblePosts("c-town"), 5, "root + 4 replies")
 }
+
+// Like MM 10.11 (app/post.go DeletePost → CleanUpAfterPostDeletion):
+// post_deleted carries the post as read before the deletion — delete_at 0,
+// update_at its own — and the root's update_at moves to the deletion time,
+// with last_reply_at recomputed from the replies left (post_store.go
+// Delete, updateThreadAfterReplyDeletion).
+func TestReplyDeletionEventAndRootLikeTheServer(t *testing.T) {
+	s := Start(Options{SeedPosts: -1})
+	defer s.Close()
+	root := s.PostAs("c-town", "alice", "root")
+	r1 := s.ReplyAs("c-town", root.ID, "bob", "r1")
+	r2 := s.ReplyAs("c-town", root.ID, "carol", "r2")
+	a := loginAs(t, s, "alice")
+	conn := dialWS(t, s, a.tok, "")
+	require.Equal(t, "hello", read(t, conn).Event)
+
+	s.DeleteAs(r2.ID)
+	ev := read(t, conn)
+	require.Equal(t, "post_deleted", ev.Event)
+	var got model.Post
+	require.NoError(t, json.Unmarshal([]byte(ev.Data["post"].(string)), &got))
+	assert.Equal(t, r2.ID, got.ID)
+	assert.Zero(t, got.DeleteAt, "the pre-deletion copy")
+	assert.Equal(t, r2.UpdateAt, got.UpdateAt)
+
+	var thread model.PostList
+	require.Equal(t, 200, a.call("GET", "/api/v4/posts/"+root.ID+"/thread?perPage=60&direction=up", nil, &thread))
+	rt := thread.Posts[root.ID]
+	assert.Equal(t, int64(1), rt.ReplyCount)
+	assert.Equal(t, r1.CreateAt, rt.LastReplyAt, "recomputed from the replies left")
+	assert.Greater(t, rt.UpdateAt, r2.UpdateAt, "moved to the deletion time")
+}

@@ -23,7 +23,7 @@ func TestChannelViewComposition(t *testing.T) {
 		Files:     []model.FileInfo{{ID: "f1", Name: "a.pdf", Size: 10, MimeType: "application/pdf"}},
 		Reactions: []model.Reaction{{UserID: "u2", EmojiName: "+1"}, {UserID: "u1", EmojiName: "+1"}, {UserID: "u3", EmojiName: "tada"}},
 	}
-	s.SetWindow("off", []model.Post{bot, sys, withMeta}, false, 5)
+	s.SetWindow("off", []model.Post{bot, sys, withMeta}, false, 5, 0)
 	s.MarkStale(6)
 	s.SetDraft("off", "draft text")
 	newSince := s.SetActive("off")
@@ -59,7 +59,7 @@ func TestPostViewSavedComesFromFlaggedPostPref(t *testing.T) {
 	s.ClearGuard()
 	p1 := mkPost("p1", "off", "u2", 1000)
 	p2 := mkPost("p2", "off", "u2", 2000)
-	s.SetWindow("off", []model.Post{p1, p2}, true, 5)
+	s.SetWindow("off", []model.Post{p1, p2}, true, 5, 0)
 	assert.Equal(t, Change{Channels: []string{"off"}}, s.SetPostSaved("p1", true))
 	v, ok := s.ChannelView("off")
 	require.True(t, ok)
@@ -76,7 +76,7 @@ func TestFileViewCarriesWhatPreviewsNeed(t *testing.T) {
 	s.ClearGuard()
 	p := mkPost("p", "off", "u2", 1000)
 	p.Metadata = &model.PostMetadata{Files: []model.FileInfo{{ID: "f1", Name: "a.png", Extension: "png", Size: 10, MimeType: "image/png", Width: 640, Height: 480, HasPreviewImage: true}}}
-	s.SetWindow("off", []model.Post{p}, true, 5)
+	s.SetWindow("off", []model.Post{p}, true, 5, 0)
 	v, _ := s.ChannelView("off")
 	assert.Equal(t, []FileView{{ID: "f1", Name: "a.png", Ext: "png", Size: 10, Mime: "image/png", Width: 640, Height: 480, HasPreview: true}}, v.Posts[0].Files)
 }
@@ -98,7 +98,7 @@ func TestChannelViewDMNameAndUnknownChannel(t *testing.T) {
 func TestPendingReplyIsNotInTheCRTFeed(t *testing.T) {
 	for _, crt := range []bool{true, false} {
 		s := crtFixture(crt)
-		s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5)
+		s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5, 0)
 		s.AddPending("town", "root", "a reply")
 		s.AddPending("town", "", "a root")
 		v, _ := s.ChannelView("town")
@@ -128,7 +128,7 @@ func TestNonCRTReplyCarriesRootContext(t *testing.T) {
 	hist.Message = "from history"
 	s.SetWindow("town", []model.Post{long, file,
 		reply("r1", "long", "u3", 2000, 1), reply("r2", "file", "u2", 2100, 1),
-		reply("r3", "hist", "u3", 2200, 1), reply("r4", "gone", "u3", 2300, 1)}, false, 5)
+		reply("r3", "hist", "u3", 2200, 1), reply("r4", "gone", "u3", 2300, 1)}, false, 5, 0)
 
 	byID := func() map[string]PostView {
 		v, _ := s.ChannelView("town")
@@ -150,7 +150,7 @@ func TestNonCRTReplyCarriesRootContext(t *testing.T) {
 	assert.Empty(t, v["long"].RootAuthor, "roots carry no context")
 
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{hist}, true)
+	s.AppendOlder("town", []model.Post{hist}, true, 0)
 	v = byID()
 	assert.Equal(t, "bob", v["r3"].RootAuthor, "root found in the loaded history")
 	assert.Equal(t, "from history", v["r3"].RootSnippet)

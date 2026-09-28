@@ -78,28 +78,25 @@ func (s *Server) trimWindowLocked(ch *Chan) {
 }
 
 // keepNewerReplies gives p (a fresh read of a post held as local) the
-// local reply count when p's own is older: the server moves a root's
-// update_at to each reply's time, so a root whose update_at is behind the
-// newest reply applied live was read before it.
+// local reply count when p's own is older. The server moves a root's
+// update_at to each reply's time and to each reply deletion's time
+// (post_store.go Save/Delete), and so does replyGoneLocked for a deletion
+// with a known time: a root whose update_at is behind the newest reply
+// applied live, or behind the local copy's update_at, was read before it.
+//
+// A count of 0 is taken as is: every read we make carries the real count —
+// pages and since= rows (skipFetchThreads=true: a COUNT subquery without
+// CRT, the Threads table with it) and post_edited (GetSingle's subquery).
 func keepNewerReplies(p *model.Post, local model.Post) {
-	if p.UpdateAt < local.LastReplyAt {
+	if p.UpdateAt < max(local.LastReplyAt, local.UpdateAt) {
 		p.ReplyCount, p.LastReplyAt = local.ReplyCount, local.LastReplyAt
 	}
-}
-
-// keepRepliesOnUpdate is keepNewerReplies for a single post's update (an
-// edit echo, a since= row): one without a reply count keeps the local one.
-func keepRepliesOnUpdate(p *model.Post, local model.Post) {
-	if p.ReplyCount == 0 {
-		p.ReplyCount, p.LastReplyAt = local.ReplyCount, local.LastReplyAt
-	}
-	keepNewerReplies(p, local)
 }
 
 func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 	if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
 		if p.UpdateAt >= ch.Win.Posts[i].UpdateAt {
-			keepRepliesOnUpdate(&p, ch.Win.Posts[i])
+			keepNewerReplies(&p, ch.Win.Posts[i])
 			// An update that doesn't carry pending_post_id (e.g. a plain
 			// edit echo) must not erase the value the confirmation set —
 			// the frontend keys its feed row by it across the pending ->
@@ -119,7 +116,6 @@ func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 
 // removeLocked deletes the post d and its replies (they die with the
 // root). A deleted reply lowers its root's count — see replyGoneLocked.
-// d.RootID may be unknown ("") and d.UpdateAt 0 (not the deletion time).
 func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
 	gone := func(p model.Post) bool { return p.ID == d.ID || p.RootID == d.ID }
 	n := len(ch.Win.Posts)
@@ -138,19 +134,26 @@ func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
 
 // replyGoneLocked lowers the root's reply count for the deleted reply d,
 // once per id however many paths report it (REST DeletePost, post_deleted,
-// a since= page) — the gone ring — and never below 0. A root read at or
-// after the deletion (the server moves its update_at to the deletion time)
-// already has the lower count and is left alone.
+// a since= row) — the gone ring — and never below 0.
+//
+// Only a since= row carries the deletion time (d.DeleteAt): the server
+// moves the root's update_at to it, so a root read at or after it already
+// has the lower count and is left alone; one lowered here takes that
+// update_at too, so a page read before the deletion cannot raise the count
+// back (keepNewerReplies). post_deleted carries the post as read before the
+// deletion (delete_at 0, app/post.go DeletePost), and our own DeletePost
+// knows no time: those always lower the count, once.
 func (s *Server) replyGoneLocked(ch *Chan, d model.Post) bool {
 	if d.RootID == "" || s.gone.has(d.ID) {
 		return false
 	}
 	s.gone.add(d.ID)
 	return s.eachRootLocked(ch, d.RootID, func(r *model.Post) bool {
-		if r.ReplyCount == 0 || (d.UpdateAt != 0 && r.UpdateAt >= d.UpdateAt) {
+		if r.ReplyCount == 0 || (d.DeleteAt != 0 && r.UpdateAt >= d.DeleteAt) {
 			return false
 		}
 		r.ReplyCount--
+		r.UpdateAt = max(r.UpdateAt, d.DeleteAt)
 		return true
 	})
 }
@@ -172,18 +175,17 @@ func (s *Server) eachRootLocked(ch *Chan, rootID string, f func(*model.Post) boo
 	return changed
 }
 
-// replyPosted updates root for its new reply p: the reply's own
-// reply_count is the thread's total at its moment (the server fills it
-// in), taken unless an even newer reply was applied already; without it
-// (0), a reply not counted yet (new id, newer than LastReplyAt) adds one.
-func replyPosted(root *model.Post, p model.Post, isNew bool) bool {
+// replyPosted updates root for its new reply p (first delivery only: a
+// repeat — REST response vs WS echo, a replayed event — may carry a total
+// a deletion has lowered since). The reply's own reply_count is the
+// thread's total at its moment (the server fills it in), taken unless an
+// even newer reply was applied already; without it (0), a reply newer
+// than LastReplyAt adds one.
+func replyPosted(root *model.Post, p model.Post) bool {
 	switch {
 	case p.ReplyCount > 0 && p.CreateAt >= root.LastReplyAt:
-		if root.ReplyCount == p.ReplyCount && root.LastReplyAt == p.CreateAt {
-			return false
-		}
 		root.ReplyCount = p.ReplyCount
-	case p.ReplyCount == 0 && isNew && p.CreateAt > root.LastReplyAt:
+	case p.ReplyCount == 0 && p.CreateAt > root.LastReplyAt:
 		root.ReplyCount++
 	default:
 		return false
@@ -199,11 +201,14 @@ func replyPosted(root *model.Post, p model.Post, isNew bool) bool {
 // window's first post: a catch-up overflow reloads only the latest page, and
 // keeping history across that hole would hide it; HasMore then follows the
 // new window.
-func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64) {
+//
+// gen is FetchMode's generation when the page was requested: a page from
+// before a ResetWindows is dropped.
+func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
-	if ch == nil {
+	if ch == nil || gen != s.winGen {
 		return
 	}
 	crt := s.crtLocked()
@@ -242,12 +247,12 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 }
 
 // MergeSince applies a posts?since= response (edits, deletions, new posts)
-// and marks the window caught up.
-func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64) {
+// and marks the window caught up. gen: as in SetWindow.
+func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
-	if ch == nil {
+	if ch == nil || gen != s.winGen {
 		return
 	}
 	crt := s.crtLocked()
@@ -274,11 +279,12 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 
 // AppendOlder adds a page of history above the window while the channel is
 // open. It lives only in memory and is dropped when the user leaves.
-func (s *Server) AppendOlder(channelID string, posts []model.Post, complete bool) {
+// gen: as in SetWindow.
+func (s *Server) AppendOlder(channelID string, posts []model.Post, complete bool, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
-	if ch == nil || channelID != s.active {
+	if ch == nil || channelID != s.active || gen != s.winGen {
 		return
 	}
 	crt := s.crtLocked()
@@ -305,11 +311,25 @@ func (s *Server) OldestPostID(channelID string) string {
 	return ""
 }
 
+// FetchMode is what a post fetch is requested with: the CRT mode and the
+// window generation, read together. The generation is handed back to
+// SetWindow/MergeSince/AppendOlder, which drop a page requested before a
+// ResetWindows — it may be of the other mode, or land on a window that is
+// no longer there as Loaded. (The same pattern guards the thread cache
+// against ResetThreads.)
+func (s *Server) FetchMode() (crt bool, gen uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.crtLocked(), s.winGen
+}
+
 // ResetWindows forgets every post window (CRT was toggled: the windows hold
-// the wrong kind of posts). Channels are refetched by the worker.
+// the wrong kind of posts). Channels are refetched by the worker; pages
+// already in flight are dropped (FetchMode).
 func (s *Server) ResetWindows() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.winGen++
 	for id, ch := range s.chans {
 		ch.Win = Window{}
 		s.dirty.posts[id] = true
@@ -577,6 +597,11 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 	// MergeSince) — only this function records ids in seen. So a post
 	// already displayed via a REST page but not yet seen here is still
 	// new: its counters and reply-count bump have not happened yet.
+	if s.gone.has(p.ID) {
+		// Deleted already (our DeletePost, post_deleted): a late REST
+		// response or echo must not bring it or its count back.
+		return false, false
+	}
 	isNew = !s.seen.has(p.ID)
 	s.seen.add(p.ID)
 	s.dropPendingLocked(ch.Info.ID, p.PendingPostID)
@@ -587,8 +612,8 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 			s.upsertLocked(ch, p)
 		}
 	}
-	if !root {
-		s.eachRootLocked(ch, p.RootID, func(r *model.Post) bool { return replyPosted(r, p, isNew) })
+	if !root && isNew {
+		s.eachRootLocked(ch, p.RootID, func(r *model.Post) bool { return replyPosted(r, p) })
 	}
 	if !isNew {
 		return false, false
@@ -642,7 +667,7 @@ func (s *Server) updatePostLocked(p model.Post) bool {
 	}
 	if ch.Info.ID == s.active {
 		if i := indexOf(s.older, p.ID); i >= 0 && p.UpdateAt >= s.older[i].UpdateAt {
-			keepRepliesOnUpdate(&p, s.older[i])
+			keepNewerReplies(&p, s.older[i])
 			s.older[i] = p
 			changed = true
 		}
@@ -660,7 +685,7 @@ func (s *Server) RemovePost(postID string) Change {
 	if !ok {
 		return Change{}
 	}
-	if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, model.Post{ID: p.ID, ChannelID: p.ChannelID, RootID: p.RootID}) {
+	if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p) {
 		return Change{Channels: []string{p.ChannelID}}
 	}
 	return Change{}

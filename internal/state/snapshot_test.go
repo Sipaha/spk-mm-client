@@ -21,7 +21,7 @@ func keysOf(put []store.CacheEntry) []string {
 
 func TestSnapshotRoundTrip(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 100), mkPost("b", "off", "u2", 200)}, false, 5)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 100), mkPost("b", "off", "u2", 200)}, false, 5, 0)
 	s.SetDraft("off", "half-written")
 	s.SetActive("off")
 	s.SetLiveAt(900)
@@ -51,7 +51,7 @@ func TestTakeSnapshotOnlyWritesWhatChanged(t *testing.T) {
 	assert.Empty(t, put)
 	assert.Empty(t, del)
 	s.ClearGuard()
-	s.SetWindow("off", nil, true, 5)
+	s.SetWindow("off", nil, true, 5, 0)
 	s.TakeSnapshot()
 	s.ApplyEvent(postedEv(mkPost("p", "off", "u2", 5000)))
 	put, _ = s.TakeSnapshot()
@@ -80,7 +80,7 @@ func TestRestoreRejectsMissingOrForeignVersion(t *testing.T) {
 
 func TestResetWindowsDropsWindowsFromSnapshot(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 100)}, false, 5)
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 100)}, false, 5, 0)
 	s.TakeSnapshot()
 	s.ResetWindows()
 	it, ok := s.SyncItemFor("off")

@@ -31,7 +31,7 @@ func reactions(s *Server, postID string) []ReactionView {
 
 func withPost(s *Server) {
 	s.ClearGuard()
-	s.SetWindow("off", []model.Post{mkPost("p", "off", "u2", 1000)}, true, 5)
+	s.SetWindow("off", []model.Post{mkPost("p", "off", "u2", 1000)}, true, 5, 0)
 }
 
 func TestReactLocalAppliesAtOnceAndUndoRestores(t *testing.T) {

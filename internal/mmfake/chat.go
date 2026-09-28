@@ -553,6 +553,11 @@ func (s *Server) deletePostLocked(userID, postID string) *apiErr {
 	if userID != "" && p.UserID != userID {
 		return &apiErr{403, "api.context.permissions.app_error"}
 	}
+	// post_deleted carries the post as read before the deletion
+	// (app/post.go DeletePost: GetSingle, then Store.Delete, then
+	// CleanUpAfterPostDeletion marshals that copy): delete_at 0, update_at
+	// its own last update — never the deletion time.
+	b, _ := json.Marshal(p.Post)
 	now := s.nowLocked()
 	if p.RootID == "" {
 		// Deleting a root: one event for the root only, replies are marked
@@ -564,9 +569,8 @@ func (s *Server) deletePostLocked(userID, postID string) *apiErr {
 		}
 	} else {
 		p.DeleteAt, p.UpdateAt = now, now
-		s.deleteReplyEffectsLocked(p)
+		s.deleteReplyEffectsLocked(p, now)
 	}
-	b, _ := json.Marshal(p.Post)
 	s.publishLocked("post_deleted", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
 	return nil
 }

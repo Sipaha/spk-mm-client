@@ -74,8 +74,10 @@ func TestChannelPostsQueryParams(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "p1", l.Order[0])
 	assert.Equal(t, []string{
-		"collapsedThreads=true&collapsedThreadsExtended=false&page=0&per_page=60",
-		"before=p9&collapsedThreads=false&collapsedThreadsExtended=false&page=0&per_page=60",
+		// skipFetchThreads in page mode too: reply_count filled in, no
+		// extra thread posts (the server's COUNT subquery needs it).
+		"collapsedThreads=true&collapsedThreadsExtended=false&page=0&per_page=60&skipFetchThreads=true",
+		"before=p9&collapsedThreads=false&collapsedThreadsExtended=false&page=0&per_page=60&skipFetchThreads=true",
 		"collapsedThreads=true&collapsedThreadsExtended=false&since=1234&skipFetchThreads=true",
 	}, q)
 }

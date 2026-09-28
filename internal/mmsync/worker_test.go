@@ -320,3 +320,66 @@ func TestBootstrapWithOtherCRTResetsWindows(t *testing.T) {
 		h.eventually(func() bool { return caughtUp(h, true)() && !hasReply(h) }, "the snapshot's windows were not dropped")
 	})
 }
+
+// Review, critical 1, end to end through the fake, which now sends
+// post_deleted like MM 10.11 (the pre-deletion copy, delete_at 0): our own
+// DeletePost and another user's deletion each lower the root's count once.
+func TestReplyDeleteLowersTheRootOnce(t *testing.T) {
+	for _, crt := range []bool{true, false} {
+		t.Run(fmt.Sprint("crt=", crt), func(t *testing.T) {
+			h := newHarness(t, mmfake.Options{CRT: crt, SeedPosts: -1})
+			root := h.fake.SeedThread("c-town", "alice", 2)
+			mine := h.fake.ReplyAs("c-town", root, "alice", "mine")
+			h.start()
+			h.live()
+			h.eventually(h.allLoaded, "prefetch")
+			count := func() int64 {
+				for _, p := range h.view("c-town").Posts {
+					if p.ID == root {
+						return p.ReplyCount
+					}
+				}
+				return -1
+			}
+			require.Equal(t, int64(3), count())
+
+			require.NoError(t, h.w.Delete(context.Background(), mine.ID))
+			h.eventually(func() bool { return count() == 2 }, "our own deletion did not lower the count")
+			h.fake.DeleteAs(h.fake.FindPost("c-town", "Reply 1"))
+			h.eventually(func() bool { return count() == 1 }, "another user's deletion did not lower the count")
+			require.Never(t, func() bool { return count() != 1 }, 300*time.Millisecond, 20*time.Millisecond, "lowered twice")
+		})
+	}
+}
+
+// Review, minor 7: CRT switched and noticed by a background metadata
+// refresh (no reconnect, so no session bootstrap): the windows are reset
+// and refetched there too.
+func TestMetadataRefreshWithOtherCRTResetsWindows(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	h.fake.SeedThread("c-town", "alice", 3)
+	h.start()
+	h.live()
+	hasReply := func() bool {
+		for _, p := range h.view("c-town").Posts {
+			if p.RootID != "" {
+				return true
+			}
+		}
+		return false
+	}
+	h.eventually(func() bool { return h.allLoaded() && hasReply() }, "prefetch")
+	h.mu.Lock()
+	sessions := len(h.statuses)
+	h.mu.Unlock()
+
+	h.fake.SetCollapsedThreads("always_on")
+	h.fake.AddChannel("c-new", "Brand New", "alice", "bob") // user_added → metadata refresh
+	h.eventually(func() bool {
+		v := h.view("c-town")
+		return v.CRT && v.Loaded && !v.Syncing && h.allLoaded() && !hasReply()
+	}, "the refresh under CRT did not drop and refetch the windows")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.Len(t, h.statuses, sessions, "no reconnect: it was the refresh")
+}

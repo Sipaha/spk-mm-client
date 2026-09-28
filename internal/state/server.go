@@ -97,6 +97,7 @@ type Server struct {
 	guard         map[string]int64
 	seen          seenSet
 	gone          seenSet           // deleted replies already taken off their root's count
+	winGen        uint64            // bumped by ResetWindows, see FetchMode
 	orphans       []orphan          // posted events for channels not known yet
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 

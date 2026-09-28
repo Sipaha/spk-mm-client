@@ -99,13 +99,18 @@ type PostsQuery struct {
 }
 
 func (c *Client) ChannelPosts(ctx context.Context, channelID string, q PostsQuery) (model.PostList, error) {
+	// skipFetchThreads=true in both modes: without it the server adds every
+	// thread touched by the page to the response (unused — only Order is
+	// read) and, without CRT, leaves reply_count at 0 (post_store.go
+	// getRootPosts/getParentsPosts, GetPostsSince: the COUNT subquery only
+	// comes with skipFetchThreads).
 	v := url.Values{
 		"collapsedThreads":         {strconv.FormatBool(q.CollapsedThreads)},
 		"collapsedThreadsExtended": {"false"},
+		"skipFetchThreads":         {"true"},
 	}
 	if q.Since > 0 {
 		v.Set("since", strconv.FormatInt(q.Since, 10))
-		v.Set("skipFetchThreads", "true")
 	} else {
 		per := q.PerPage
 		if per <= 0 {

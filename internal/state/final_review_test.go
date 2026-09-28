@@ -72,13 +72,13 @@ func TestSetWindowOnActiveChannelDropsLoadedHistory(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
 	s.SetActive("town")
-	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000)}, false, 5)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000)}, false, 5, 0)
+	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
 	v, _ := s.ChannelView("town")
 	require.Len(t, v.Posts, 2)
 	assert.False(t, v.HasMore)
 
-	s.SetWindow("town", []model.Post{mkPost("w9", "town", "u2", 9000)}, false, 9)
+	s.SetWindow("town", []model.Post{mkPost("w9", "town", "u2", 9000)}, false, 9, 0)
 	v, _ = s.ChannelView("town")
 	require.Len(t, v.Posts, 1, "older history is not shown across the hole")
 	assert.Equal(t, "w9", v.Posts[0].ID)
@@ -115,10 +115,10 @@ func TestSetWindowOverlappingPageKeepsLoadedHistory(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
 	s.SetActive("town")
-	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000)}, false, 5)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000)}, false, 5, 0)
+	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
 
-	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000), mkPost("w3", "town", "u2", 3000)}, false, 9)
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000), mkPost("w3", "town", "u2", 3000)}, false, 9, 0)
 	v, _ := s.ChannelView("town")
 	var got []string
 	for _, p := range v.Posts {

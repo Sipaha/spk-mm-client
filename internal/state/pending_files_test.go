@@ -20,7 +20,7 @@ func stagedFiles(ids ...string) []FileView {
 
 func TestPendingPostShowsItsLocalFiles(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", nil, true, 5)
+	s.SetWindow("off", nil, true, 5, 0)
 	pd := s.AddPending("off", "", "", stagedFiles("a1", "a2")...)
 	assert.Equal(t, stagedFiles("a1", "a2"), pd.Files)
 	v, _ := s.ChannelView("off")
@@ -40,8 +40,8 @@ func TestPendingPostShowsItsLocalFiles(t *testing.T) {
 func TestDroppedPendingPostsReleaseTheirFiles(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
-	s.SetWindow("off", nil, true, 5)
-	s.SetWindow("town", nil, true, 5)
+	s.SetWindow("off", nil, true, 5, 0)
+	s.SetWindow("town", nil, true, 5, 0)
 	assert.Empty(t, s.TakeReleased())
 
 	plain := s.AddPending("off", "", "no files")
@@ -79,7 +79,7 @@ func TestDroppedPendingPostsReleaseTheirFiles(t *testing.T) {
 
 func TestRefreshPendingProgressUpdatesStagedFilesInPlace(t *testing.T) {
 	s := newFixture()
-	s.SetWindow("off", nil, true, 5)
+	s.SetWindow("off", nil, true, 5, 0)
 	s.AddPending("off", "", "", stagedFiles("a1", "a2")...)
 
 	changed := s.RefreshPendingProgress("off", func(id string) (FileProgress, bool) {
