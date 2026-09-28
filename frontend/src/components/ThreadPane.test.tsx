@@ -180,3 +180,56 @@ test('dropping a file uploads it to the thread (rootId set)', async () => {
   fireEvent.drop(target, { dataTransfer: { types: ['Files'], files: [file] } })
   await waitFor(() => expect(uploadAttachments).toHaveBeenCalledWith(5, 'c-town', [file], 'root'))
 })
+
+// Fix round 1 (review, Minor 1): the drop target must cover the whole panel
+// (feed + composer), like ChannelPane's covers its whole feed+composer
+// section, not just the composer strip — a drop anywhere over the replies
+// should attach too.
+test('the drop target covers the whole panel (feed and composer both inside it), not just the composer strip', () => {
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const target = container.querySelector('[data-file-drop-target]')!
+  expect(target).toBe(container.querySelector('[role="complementary"]'))
+  expect(target.querySelector('[role="log"]')).not.toBeNull()
+  expect(target.querySelector('textarea')).not.toBeNull()
+})
+
+test('dragging files anywhere over the panel shows the overlay class; leaving it removes it', () => {
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const target = container.querySelector('[data-file-drop-target]')!
+  const file = new File(['x'], 'x.png', { type: 'image/png' })
+  fireEvent.dragEnter(target, { dataTransfer: { types: ['Files'], files: [file] } })
+  expect(target).toHaveClass('file-drop-target-active')
+  fireEvent.dragLeave(target, { dataTransfer: { types: ['Files'], files: [file] } })
+  expect(target).not.toHaveClass('file-drop-target-active')
+})
+
+// Fix round 1 (review, Minor 2): onClose must be stable across re-renders —
+// App.tsx passes a fresh closure on every render (no selector), so the Esc
+// listener effect must not tear down/re-add the global keydown listener
+// each time.
+test('the Esc listener is not rebound when onClose changes identity across re-renders', () => {
+  const addSpy = vi.spyOn(window, 'addEventListener')
+  const removeSpy = vi.spyOn(window, 'removeEventListener')
+  const { rerender } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const keydownAddsAfterMount = addSpy.mock.calls.filter((c) => c[0] === 'keydown').length
+  expect(keydownAddsAfterMount).toBe(1)
+  addSpy.mockClear()
+  removeSpy.mockClear()
+  for (let i = 0; i < 3; i++) rerender(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  expect(addSpy.mock.calls.filter((c) => c[0] === 'keydown')).toHaveLength(0)
+  expect(removeSpy.mock.calls.filter((c) => c[0] === 'keydown')).toHaveLength(0)
+  addSpy.mockRestore()
+  removeSpy.mockRestore()
+})
+
+test('Esc still calls the latest onClose even though the listener was bound to an earlier one', async () => {
+  const first = vi.fn()
+  const second = vi.fn()
+  const { rerender } = render(<ThreadPane server={server()} thread={thread()} onClose={first} />)
+  rerender(<ThreadPane server={server()} thread={thread()} onClose={second} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  box.focus()
+  await userEvent.keyboard('{Escape}')
+  expect(second).toHaveBeenCalledTimes(1)
+  expect(first).not.toHaveBeenCalled()
+})

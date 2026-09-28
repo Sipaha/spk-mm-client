@@ -47,12 +47,21 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const narrow = useNarrow()
   const paneRef = useRef<HTMLElement>(null)
   const [viewer, setViewer] = useState<{ rootId: string; files: FileView[]; index: number } | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+
+  // onClose churns every render (App.tsx has no selector, so any store
+  // change re-renders it with a fresh closure) — keep the latest one in a
+  // ref so the Esc effect below can bind its window listener exactly once
+  // (fix round 1, Minor 2) instead of tearing it down and re-adding it on
+  // every render.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   // close: shared by "×", "← back to channel" and Esc — returns focus to
   // the channel's own feed (Feed.tsx tags it data-feed="channel"), since
   // this panel is about to unmount entirely.
   const close = () => {
-    onClose()
+    onCloseRef.current()
     document.querySelector<HTMLElement>('[data-feed="channel"]')?.focus()
   }
 
@@ -60,7 +69,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   // no popover/picker (portalled to document.body, so DOM-outside the
   // panel) has taken it; e.defaultPrevented also skips a post's own
   // Escape handler (e.g. cancelling an inline edit) so the two don't fire
-  // together.
+  // together. Bound once (mount/unmount only, via onCloseRef above).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
@@ -69,7 +78,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [])
 
   const actions = useMemo<PostActions>(
     () => ({
@@ -114,12 +123,53 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const permalink = `${server.url}/${thread.team_name}/pl/${thread.root_id}`
   const retryLoad = () => void openThread(server.id, thread.channel_id, thread.root_id)
 
+  // Drag-and-drop (browser mode; desktop drops never reach the page — see
+  // ChannelPane.tsx, whose pattern this mirrors): the whole panel is the
+  // drop target (fix round 1, Minor 1 — was just the composer strip).
+  // dragDepth survives dragleave firing for every child element the
+  // pointer crosses on its way around the drop zone — only 0 means
+  // "actually left it".
+  const dragDepth = useRef(0)
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    dragDepth.current++
+    setDragActive(true)
+  }
+  const onDragOver = (e: React.DragEvent) => {
+    if (hasFiles(e)) e.preventDefault() // required for the drop event to fire at all
+  }
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    dragDepth.current = 0
+    setDragActive(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    e.preventDefault()
+    uploadAttachments(server.id, thread.channel_id, files, thread.root_id).catch((err) =>
+      useStore.getState().setThreadAttachError(errorMessage(err)),
+    )
+  }
+
   return (
     <aside
       ref={paneRef}
       role="complementary"
       aria-label={t('thread.title')}
-      className={narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-app'}
+      data-file-drop-target
+      data-srv={server.id}
+      data-channel={thread.channel_id}
+      data-root={thread.root_id}
+      data-drop-label={t('composer.dropHint')}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
     >
       <header className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         {narrow && (
@@ -178,38 +228,19 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           {t('thread.rootDeleted')}
         </div>
       )}
-      <div
-        data-file-drop-target
-        data-srv={server.id}
-        data-channel={thread.channel_id}
-        data-root={thread.root_id}
-        data-drop-label={t('composer.dropHint')}
-        onDragOver={(e) => {
-          if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
-        }}
-        onDrop={(e) => {
-          const files = Array.from(e.dataTransfer.files)
-          if (files.length === 0) return
-          e.preventDefault()
-          uploadAttachments(server.id, thread.channel_id, files, thread.root_id).catch((err) =>
-            useStore.getState().setThreadAttachError(errorMessage(err)),
-          )
-        }}
-      >
-        <Composer
-          key={`composer-${thread.channel_id}-${thread.root_id}`}
-          channelId={thread.channel_id}
-          channelName={thread.channel_name}
-          draft={thread.draft}
-          rootId={thread.root_id}
-          disabled={thread.root_deleted}
-          serverId={server.id}
-          attachments={threadAttachments}
-          onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
-          onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
-          onEditLast={() => editLastOwn(thread)}
-        />
-      </div>
+      <Composer
+        key={`composer-${thread.channel_id}-${thread.root_id}`}
+        channelId={thread.channel_id}
+        channelName={thread.channel_name}
+        draft={thread.draft}
+        rootId={thread.root_id}
+        disabled={thread.root_deleted}
+        serverId={server.id}
+        attachments={threadAttachments}
+        onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
+        onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
+        onEditLast={() => editLastOwn(thread)}
+      />
       {viewer && viewer.rootId === thread.root_id && (
         <Viewer
           serverId={server.id}
