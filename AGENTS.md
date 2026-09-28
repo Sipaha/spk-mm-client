@@ -128,7 +128,9 @@
   `TestPostIconExternalRasterOnlySizeCapAndNegativeCache`, `TestPostIconThroughTheImageProxy`,
   `TestPostIconFetchesOnlyWhileLive`, `TestPostIconAcceptsAVersion`,
   `TestPostIconCamoRedirectIsFetchedWithoutTheSession`, `TestPostIconCamoRedirectToARefusedAddressIsRefused`,
-  `TestPostIconStalledCamoDoesNotBlockOtherPictures`,
+  `TestPostIconStalledCamoDoesNotBlockOtherPictures`, `TestPostIconRedirectWithoutLocationIsRefused` (3xx без
+  `Location` с любого пути — 403, без повторного запроса без сессии),
+  `TestPostIconCamoToAPrivateAddressOnlyForAnIntranetServer`,
   `TestPostViewWebhookOverridesFollowTheServerConfig`, `TestPostViewWebhookOverridesOffInConfig`,
   `TestPostViewIconVersionFollowsTheIconURL`, `TestNotifySenderFollowsTheUsernameOverride`,
   `TestMediaPostIconThroughTheService`, `TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway`,

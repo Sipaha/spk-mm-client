@@ -246,9 +246,19 @@ func (c *Cache) openIcon(ctx context.Context, q request, sl *slot) (*http.Respon
 	// The image endpoint's proxy handing over (iconRedirect): its target is
 	// fetched without the session, by the external client with its guards,
 	// its slots, its timeout, its redirect limit and its negative cache.
-	loc, err := resp.Request.URL.Parse(resp.Header.Get("Location"))
+	// Only then: a Location (Go hands back a redirect without one as is,
+	// from any path — it would "resolve" to the server's own URL), the hop
+	// being the image endpoint, and the target off the server's origin.
 	_ = resp.Body.Close()
-	if err != nil || (loc.Scheme != "http" && loc.Scheme != "https") || loc.Host == "" || loc.User != nil || len(loc.String()) > maxIconURL {
+	raw := resp.Header.Get("Location")
+	base, err := url.Parse(q.icon.base)
+	if raw == "" || err != nil {
+		return nil, errBlocked
+	}
+	hop, ok := iconPath(resp.Request.URL, base)
+	loc, err := resp.Request.URL.Parse(raw)
+	if !ok || strings.SplitN(hop, "?", 2)[0] != "/api/v4/image" || err != nil || sameOrigin(loc, base) ||
+		(loc.Scheme != "http" && loc.Scheme != "https") || loc.Host == "" || loc.User != nil || len(loc.String()) > maxIconURL {
 		return nil, errBlocked
 	}
 	loc.Fragment, loc.RawFragment = "", ""

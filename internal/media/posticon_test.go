@@ -660,8 +660,10 @@ func TestPostIconCamoRedirectIsFetchedWithoutTheSession(t *testing.T) {
 		}
 	})
 	e.withIcons(testIcons{
-		"proxied":  {URL: "https://gitlab.example/fox.png", Base: e.origin.url, ImageProxy: true, Live: true},
-		"relative": {URL: "/api/v4/image?url=" + url.QueryEscape("https://gitlab.example/fox.png"), Base: e.origin.url, Live: true},
+		"proxied": {URL: "https://gitlab.example/fox.png", Base: e.origin.url, ImageProxy: true, Live: true},
+		// A distinct url= (its own route and cache entry): the camo host is
+		// really asked a second time, so the no-credentials check covers it.
+		"relative": {URL: "/api/v4/image?url=" + url.QueryEscape("https://gitlab.example/other.png"), Base: e.origin.url, Live: true},
 		"static":   {URL: "/static/to-camo", Base: e.origin.url, Live: true},
 	}, allowAll)
 	resp, body := e.get("/media/1/posticon/proxied")
@@ -669,6 +671,7 @@ func TestPostIconCamoRedirectIsFetchedWithoutTheSession(t *testing.T) {
 	assert.Equal(t, img, body)
 	resp, _ = e.get("/media/1/posticon/relative")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 2, camo.count("/camo/abc"), "both icons went to the camo host")
 	camo.mu.Lock()
 	assert.Empty(t, camo.creds, "no token, cookie or API marker on the camo host")
 	camo.mu.Unlock()
@@ -750,4 +753,54 @@ func TestPostIconStalledCamoDoesNotBlockOtherPictures(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("an avatar waited for stalled camo fetches")
 	}
+}
+
+// N1: a redirect status without a Location is no handover, from any path:
+// 403, and nothing is fetched again without the session.
+func TestPostIconRedirectWithoutLocationIsRefused(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusFound) })
+	e.withIcons(testIcons{
+		"image":  {URL: "https://gitlab.example/fox.png", Base: e.origin.url, ImageProxy: true, Live: true},
+		"static": {URL: "/static/x.png", Base: e.origin.url, Live: true},
+	}, allowAll)
+	for _, p := range []string{"image", "static", "image", "static"} {
+		resp, _ := e.get("/media/1/posticon/" + p)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, p)
+	}
+	assert.Equal(t, 1, e.origin.count("/api/v4/image"), "asked once, with the session, never again without it")
+	assert.Equal(t, 1, e.origin.count("/static/x.png"))
+}
+
+// N4: a camo target on a private address — refused for a server on the
+// internet, allowed for one that is itself on a private address. Both
+// clients use the real allowedAddr; the loopback test host stands for
+// 10.0.0.9.
+func TestPostIconCamoToAPrivateAddressOnlyForAnIntranetServer(t *testing.T) {
+	img := pngOf(3, 3)
+	camo := newExt(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(img) })
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, camo.URL+"/camo/"+r.URL.Query().Get("url"), http.StatusFound)
+	})
+	e.withIcons(testIcons{
+		"public": {URL: "https://gitlab.example/public.png", Base: "https://mm.example", ImageProxy: true, Live: true},
+		"corp":   {URL: "https://gitlab.example/corp.png", Base: "https://mm.corp", ImageProxy: true, Live: true},
+	}, nil)
+	lan := netip.MustParseAddr("10.0.0.9")
+	e.cache.ext = newExternalClient(func(netip.AddrPort) bool { return allowedAddr(lan, false) })
+	e.cache.extIntranet = newExternalClient(func(netip.AddrPort) bool { return allowedAddr(lan, true) })
+	e.cache.lookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		if host == "mm.corp" {
+			return []netip.Addr{netip.MustParseAddr("10.0.0.5")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}
+	resp, _ := e.get("/media/1/posticon/public")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a public server's camo target on the LAN")
+	resp, body := e.get("/media/1/posticon/corp")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "an intranet server's camo target on the LAN")
+	assert.Equal(t, img, body)
+	assert.Equal(t, 1, camo.total(), "only the intranet fetch reached it")
+	camo.mu.Lock()
+	assert.Empty(t, camo.creds)
+	camo.mu.Unlock()
 }
