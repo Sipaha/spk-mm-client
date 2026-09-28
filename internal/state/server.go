@@ -101,6 +101,15 @@ type Server struct {
 	orphans       []orphan          // posted events for channels not known yet
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
+	// Threads (see threads.go): the cache by root id, its LRU (most recent
+	// last), the thread open in the panel, the epoch pages are applied with
+	// (ResetThreads/MarkStale move it) and thread drafts (Task 4).
+	threads      map[string]*thread
+	threadLRU    []string
+	openThread   string
+	threadEpoch  uint64
+	threadDrafts map[string]string
+
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8
 }
@@ -113,7 +122,7 @@ func New(now func() time.Time) *Server {
 		now: now, prefs: map[prefKey]string{}, chans: map[string]*Chan{}, cats: map[string]model.OrderedCategories{},
 		users: map[string]model.User{}, emoji: map[string]string{}, presence: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
 		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), gone: newSeenSet(2000), dirty: newDirtySet(),
-		intents: map[string]intent{},
+		intents: map[string]intent{}, threads: map[string]*thread{}, threadDrafts: map[string]string{},
 	}
 }
 
@@ -197,6 +206,7 @@ func (s *Server) forgetChannelLocked(id string) {
 		s.releaseLocked(p)
 	}
 	delete(s.pending, id)
+	s.forgetThreadsLocked(id)
 	s.dirty.dropChan(id)
 }
 
@@ -427,6 +437,12 @@ func (s *Server) MissingUserIDs() []string {
 	}
 	for _, p := range s.older {
 		need[p.UserID] = true
+	}
+	for _, t := range s.threads {
+		need[t.root.UserID] = true
+		for _, p := range t.replies {
+			need[p.UserID] = true
+		}
 	}
 	var out []string
 	for id := range need {

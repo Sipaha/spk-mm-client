@@ -74,6 +74,10 @@ test('http client chat methods post snake_case bodies', async () => {
   await httpClient.retryAttachment(3, 'a1')
   await httpClient.attachFromClipboard(3, 'c1')
   await httpClient.pickAttachments(3, 'c1')
+  await httpClient.openThread(3, 'c1', 'r1')
+  await httpClient.getThread(3, 'r1')
+  await httpClient.closeThread(3)
+  await httpClient.loadOlderReplies(3, 'r1')
   expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
     ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi', attachment_ids: [] }],
     ['/api/SendPost', { id: 3, channel_id: 'c1', message: '', attachment_ids: ['a1', 'a2'] }],
@@ -93,6 +97,10 @@ test('http client chat methods post snake_case bodies', async () => {
     ['/api/RetryAttachment', { id: 3, attachment_id: 'a1' }],
     ['/api/AttachFromClipboard', { id: 3, channel_id: 'c1' }],
     ['/api/PickAttachments', { id: 3, channel_id: 'c1' }],
+    ['/api/OpenThread', { id: 3, channel_id: 'c1', root_id: 'r1' }],
+    ['/api/GetThread', { id: 3, root_id: 'r1' }],
+    ['/api/CloseThread', { id: 3 }],
+    ['/api/LoadOlderReplies', { id: 3, root_id: 'r1' }],
   ])
 })
 

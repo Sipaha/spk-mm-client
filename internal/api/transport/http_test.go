@@ -27,6 +27,7 @@ type fakeAPI struct {
 	reacted []string
 	dl      []string
 	saved   []string
+	threads []string
 }
 
 func (f *fakeAPI) Downloads(context.Context) ([]api.DownloadView, error) {
@@ -363,4 +364,55 @@ func TestAttachmentSourceRoutes(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, "unsupported", body["code"])
 	assert.Equal(t, []string{"paste 3/c1", "pick 3/c1"}, f.dl)
+}
+
+func (f *fakeAPI) OpenThread(_ context.Context, id int64, channelID, rootID string) (api.ThreadDTO, error) {
+	f.threads = append(f.threads, fmt.Sprintf("open %d/%s/%s", id, channelID, rootID))
+	return api.ThreadDTO{RootID: rootID, ChannelID: channelID, Posts: []state.PostView{}}, nil
+}
+
+func (f *fakeAPI) GetThread(_ context.Context, id int64, rootID string) (api.ThreadDTO, error) {
+	f.threads = append(f.threads, fmt.Sprintf("get %d/%s", id, rootID))
+	if rootID == "nope" {
+		return api.ThreadDTO{}, &api.CodedError{Code: api.CodeNoPost}
+	}
+	return api.ThreadDTO{RootID: rootID, Posts: []state.PostView{}}, nil
+}
+
+func (f *fakeAPI) CloseThread(_ context.Context, id int64) error {
+	f.threads = append(f.threads, fmt.Sprintf("close %d", id))
+	return nil
+}
+
+func (f *fakeAPI) LoadOlderReplies(_ context.Context, id int64, rootID string) error {
+	f.threads = append(f.threads, fmt.Sprintf("older %d/%s", id, rootID))
+	return nil
+}
+
+func TestThreadRoutes(t *testing.T) {
+	f := &fakeAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "OpenThread", `{"id":3,"channel_id":"c1","root_id":"r1"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var v map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&v))
+	assert.Equal(t, "r1", v["root_id"])
+	assert.Equal(t, "c1", v["channel_id"])
+	assert.Equal(t, []any{}, v["posts"])
+	for _, k := range []string{"has_more", "capped", "loaded", "syncing", "root_deleted", "error", "draft", "me_id", "crt", "new_since", "gap_after", "channel_name", "team_name"} {
+		assert.Contains(t, v, k)
+	}
+
+	resp = call(t, h, ts.URL, "GetThread", `{"id":3,"root_id":"r1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	resp = call(t, h, ts.URL, "GetThread", `{"id":3,"root_id":"nope"}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	resp = call(t, h, ts.URL, "LoadOlderReplies", `{"id":3,"root_id":"r1"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	resp = call(t, h, ts.URL, "CloseThread", `{"id":3}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"open 3/c1/r1", "get 3/r1", "get 3/nope", "older 3/r1", "close 3"}, f.threads)
 }

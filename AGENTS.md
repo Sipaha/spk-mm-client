@@ -162,6 +162,18 @@
   должен ломать: нет скачка, нет пустоты под последним постом при развороте жеста вниз, новый пост
   внизу подхватывается, история догружается. — `frontend/src/components/scrollShift.test.ts`,
   `tests/e2e/feed-scroll.spec.ts`.
+- Кэш тредов (`internal/state/threads.go`) ограничен: не больше `ThreadCacheSize` = 3 тредов на
+  сервер (открытый в панели + 2 недавних, LRU; вытесненный освобождается целиком), в каждом — корень
+  и не больше `ThreadMaxReplies` = 200 ответов (прокрутка вверх останавливается на потолке — `Capped`;
+  живой ответ на потолке вытесняет самый старый); закрытие панели (или открытие другого треда)
+  обрезает тред до последних `ThreadPage` = 60 в свежем срезе. Кэш только в памяти: не пишется в
+  снимок и не восстанавливается на старте; `ResetThreads` (смена CRT, остановка воркера) его
+  очищает, уход из канала убирает треды канала. Страницы треда применяются с эпохой
+  (`ResetThreads`/`MarkStale` её двигают) — поздняя страница не воскрешает сброшенный или
+  вытесненный тред. `GET /posts/{id}/thread` — всегда с `perPage` (без него сервер отдаёт тред
+  целиком). — `TestThreadCacheStaysBounded`, `TestClosingTrimsTheThread`,
+  `TestLateThreadPageAfterResetIsIgnored`, `TestForgottenChannelDropsItsThreads`,
+  `TestStoppedWorkerLetsTheThreadsGo`, `TestOlderRepliesStopAtTheCap`.
 - Чужие статусы присутствия приходят только опросом (`status_change` рассылается только самому
   пользователю, не наблюдателям) — опрос идёт по участникам DM и авторам открытого канала, а
   не по всем пользователям сразу. — `TestStatusesArePolledOnLiveAndOnOpenChannel`,

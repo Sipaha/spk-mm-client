@@ -44,6 +44,16 @@ func (w *API) GetChannel(id int64, channelID string) (api.ChannelDTO, error) {
 func (w *API) LoadOlder(id int64, channelID string) error {
 	return w.a.LoadOlder(context.Background(), id, channelID)
 }
+func (w *API) OpenThread(id int64, channelID, rootID string) (api.ThreadDTO, error) {
+	return w.a.OpenThread(context.Background(), id, channelID, rootID)
+}
+func (w *API) GetThread(id int64, rootID string) (api.ThreadDTO, error) {
+	return w.a.GetThread(context.Background(), id, rootID)
+}
+func (w *API) CloseThread(id int64) error { return w.a.CloseThread(context.Background(), id) }
+func (w *API) LoadOlderReplies(id int64, rootID string) error {
+	return w.a.LoadOlderReplies(context.Background(), id, rootID)
+}
 func (w *API) SendPost(id int64, channelID, message string, attachmentIDs []string) error {
 	return w.a.SendPost(context.Background(), id, channelID, message, attachmentIDs)
 }

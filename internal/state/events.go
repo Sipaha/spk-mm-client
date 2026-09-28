@@ -7,11 +7,13 @@ import (
 	"github.com/spk/spk-mm-client/internal/mm/ws"
 )
 
-// Change tells the API layer which UI views to refresh.
+// Change tells the API layer which UI views to refresh. Threads: roots of
+// cached threads whose panel view changed.
 type Change struct {
 	Sidebar  bool
 	Badge    bool
 	Channels []string
+	Threads  []string
 }
 
 func (c *Change) Merge(o Change) {
@@ -22,9 +24,16 @@ func (c *Change) Merge(o Change) {
 			c.Channels = append(c.Channels, id)
 		}
 	}
+	for _, id := range o.Threads {
+		if !slices.Contains(c.Threads, id) {
+			c.Threads = append(c.Threads, id)
+		}
+	}
 }
 
-func (c Change) Empty() bool { return !c.Sidebar && !c.Badge && len(c.Channels) == 0 }
+func (c Change) Empty() bool {
+	return !c.Sidebar && !c.Badge && len(c.Channels) == 0 && len(c.Threads) == 0
+}
 
 // NotifyCandidate carries everything notify.Decide needs, copied under lock.
 type NotifyCandidate struct {
@@ -62,19 +71,23 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 	case "posted":
 		s.onPostedLocked(ev, &eff)
 	case "post_edited":
-		if p, err := ws.DecodePost(ev); err == nil && s.updatePostLocked(p) {
-			eff.Channels = []string{p.ChannelID}
+		if p, err := ws.DecodePost(ev); err == nil {
+			eff.Change = s.updatePostLocked(p)
 		}
 	case "post_deleted":
 		if p, err := ws.DecodePost(ev); err == nil {
-			if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p) {
-				eff.Channels = []string{p.ChannelID}
+			if ch := s.chans[p.ChannelID]; ch != nil {
+				eff.Threads = s.threadsOfLocked(p)
+				if s.removeLocked(ch, p) {
+					eff.Channels = []string{p.ChannelID}
+				}
 			}
 		}
 	case "reaction_added", "reaction_removed":
 		add := ev.Type == "reaction_added"
 		if r, err := ws.DecodeReaction(ev); err == nil && !s.staleEchoLocked(r, add) && s.reactLocked(ev.Broadcast.ChannelID, r, add) {
 			eff.Channels = []string{ev.Broadcast.ChannelID}
+			eff.Threads = s.threadsHoldingLocked(r.PostID)
 		}
 	case "multiple_channels_viewed":
 		times, _ := ws.DecodeChannelTimes(ev)
@@ -140,8 +153,8 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 				// reaction does -- every other preference only needs the
 				// Sidebar/Badge refresh below.
 				if p.Category == flaggedPostCategory {
-					if ch, ok := s.channelOfPostLocked(p.Name); ok && !slices.Contains(eff.Channels, ch) {
-						eff.Channels = append(eff.Channels, ch)
+					if ch, ok := s.channelOfPostLocked(p.Name); ok {
+						eff.Merge(Change{Channels: []string{ch}, Threads: s.threadsHoldingLocked(p.Name)})
 					}
 				}
 			}
@@ -203,6 +216,7 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	// the REST read, yet the user has not been told about it.
 	isNew, _ := s.applyNewPostLocked(ch, p, d.Mentions)
 	eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{ch.Info.ID}
+	eff.Threads = s.threadsOfLocked(p)
 	if _, ok := s.users[p.UserID]; !ok && p.UserID != "" {
 		eff.NeedUsers = []string{p.UserID}
 	}

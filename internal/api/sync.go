@@ -192,6 +192,14 @@ func (s *Service) onChanged(id int64, ch state.Change) {
 			s.emit(EventChannelChanged, map[string]any{"server_id": id, "channel_id": c})
 		})
 	}
+	for _, r := range ch.Threads {
+		if r == "" {
+			continue
+		}
+		s.co.Schedule(fmt.Sprintf("thread/%d/%s", id, r), func() {
+			s.emit(EventThreadChanged, map[string]any{"server_id": id, "root_id": r})
+		})
+	}
 }
 
 func (s *Service) onStatus(id int64, st mmsync.Status) {

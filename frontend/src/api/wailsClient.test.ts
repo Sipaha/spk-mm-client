@@ -47,14 +47,14 @@ test('downloads calls are addressed by FQN', async () => {
 })
 
 test('subscribeEvents registers all event types and unwraps both payload shapes', () => {
-  const offs = Array.from({ length: 9 }, () => vi.fn())
+  const offs = Array.from({ length: 10 }, () => vi.fn())
   let call = 0
   vi.mocked(Events.On).mockImplementation(() => offs[call++])
 
   const onEvent = vi.fn()
   const unsubscribe = wailsClient.subscribeEvents(onEvent)
 
-  expect(Events.On).toHaveBeenCalledTimes(9)
+  expect(Events.On).toHaveBeenCalledTimes(10)
   const registeredNames = vi.mocked(Events.On).mock.calls.map((c) => c[0])
   expect(registeredNames).toEqual([
     'servers_changed',
@@ -66,6 +66,7 @@ test('subscribeEvents registers all event types and unwraps both payload shapes'
     'downloads_changed',
     'attachments_changed',
     'attachment_refused',
+    'thread_changed',
   ])
 
   const [serversChangedCb, loginFailedCb, openExternalCb] = vi
@@ -104,4 +105,18 @@ test('attachment calls are addressed by FQN with positional args', async () => {
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'AttachFromClipboard', 1, 'c1')
   await wailsClient.pickAttachments(1, 'c1')
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'PickAttachments', 1, 'c1')
+})
+
+test('thread calls are addressed by FQN with positional args', async () => {
+  vi.mocked(Call.ByName).mockResolvedValue({ root_id: 'r1', posts: [] })
+  await wailsClient.openThread(1, 'c1', 'r1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'OpenThread', 1, 'c1', 'r1')
+  await wailsClient.getThread(1, 'r1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'GetThread', 1, 'r1')
+
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.closeThread(1)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'CloseThread', 1)
+  await wailsClient.loadOlderReplies(1, 'r1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'LoadOlderReplies', 1, 'r1')
 })

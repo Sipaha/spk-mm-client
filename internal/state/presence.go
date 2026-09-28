@@ -31,18 +31,22 @@ func (s *Server) SetPresence(list []model.Status) Change {
 	return s.presenceChangeLocked()
 }
 
-// presenceChangeLocked: statuses show in the sidebar (DMs) and the feed.
+// presenceChangeLocked: statuses show in the sidebar (DMs), the feed and
+// the thread panel.
 func (s *Server) presenceChangeLocked() Change {
 	c := Change{Sidebar: true}
 	if s.active != "" {
 		c.Channels = []string{s.active}
+	}
+	if s.openThread != "" {
+		c.Threads = []string{s.openThread}
 	}
 	return c
 }
 
 // StatusTargets lists the users whose presence is on screen — me first,
 // then the partners of DMs the sidebar shows and the authors of the open
-// channel (bots have none), at most limit. Mattermost sends status_change
+// channel and of the open thread (bots have none), at most limit. Mattermost sends status_change
 // only to the user it is about, so these are polled (the webapp does the same).
 func (s *Server) StatusTargets(limit int) []string {
 	s.mu.Lock()
@@ -72,6 +76,14 @@ func (s *Server) StatusTargets(limit int) []string {
 			}
 		}
 		for _, p := range s.older {
+			if !p.IsSystem() {
+				add(p.UserID)
+			}
+		}
+	}
+	if t := s.threads[s.openThread]; t != nil {
+		add(t.root.UserID)
+		for _, p := range t.replies {
 			if !p.IsSystem() {
 				add(p.UserID)
 			}

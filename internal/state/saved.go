@@ -22,7 +22,7 @@ func (s *Server) SetPostSaved(postID string, saved bool) Change {
 	if !ok {
 		return Change{}
 	}
-	return Change{Channels: []string{ch}}
+	return Change{Channels: []string{ch}, Threads: s.threadsHoldingLocked(postID)}
 }
 
 func (s *Server) setSavedLocked(postID string, saved bool) {

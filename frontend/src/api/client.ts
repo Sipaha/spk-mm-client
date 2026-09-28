@@ -1,5 +1,17 @@
 import { Call, Events } from '@wailsio/runtime'
-import type { ApiEvent, AppInfo, AttachmentView, ChannelDTO, DownloadView, EmojiDTO, EventType, SavedFile, ServerDTO, SidebarDTO } from './types'
+import type {
+  ApiEvent,
+  AppInfo,
+  AttachmentView,
+  ChannelDTO,
+  DownloadView,
+  EmojiDTO,
+  EventType,
+  SavedFile,
+  ServerDTO,
+  SidebarDTO,
+  ThreadDTO,
+} from './types'
 
 export class ApiError extends Error {
   constructor(public code: string, public detail: string) {
@@ -23,6 +35,14 @@ export interface Client {
   openChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
   loadOlder(id: number, channelId: string): Promise<void>
+  /** Opens a thread in the panel (replacing the open one); may still be loading — thread_changed follows. Retry = open again. */
+  openThread(id: number, channelId: string, rootId: string): Promise<ThreadDTO>
+  /** A cached thread's current view (no_post: not cached). */
+  getThread(id: number, rootId: string): Promise<ThreadDTO>
+  /** Closes the panel; the thread stays cached, trimmed. */
+  closeThread(id: number): Promise<void>
+  /** Loads older replies, up to the cap of 200 (ThreadDTO.capped). */
+  loadOlderReplies(id: number, rootId: string): Promise<void>
   // attachmentIds: the channel's composer attachments sent with the message
   // (none: text only; the text may be empty when there are some).
   sendPost(id: number, channelId: string, message: string, attachmentIds?: string[]): Promise<void>
@@ -106,6 +126,10 @@ export const httpClient: Client = {
   openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
+  openThread: (id, channel_id, root_id) => post('OpenThread', { id, channel_id, root_id }),
+  getThread: (id, root_id) => post('GetThread', { id, root_id }),
+  closeThread: (id) => done(post('CloseThread', { id })),
+  loadOlderReplies: (id, root_id) => done(post('LoadOlderReplies', { id, root_id })),
   sendPost: (id, channel_id, message, attachmentIds = []) =>
     done(post('SendPost', { id, channel_id, message, attachment_ids: attachmentIds })),
   retryPost: (id, channel_id, pending_id) => done(post('RetryPost', { id, channel_id, pending_id })),
@@ -188,6 +212,7 @@ const EVENT_TYPES: EventType[] = [
   'downloads_changed',
   'attachments_changed',
   'attachment_refused',
+  'thread_changed',
 ]
 
 export const wailsClient: Client = {
@@ -206,6 +231,10 @@ export const wailsClient: Client = {
   openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
+  openThread: (id, channelId, rootId) => wcall('OpenThread', id, channelId, rootId),
+  getThread: (id, rootId) => wcall('GetThread', id, rootId),
+  closeThread: (id) => wcall('CloseThread', id),
+  loadOlderReplies: (id, rootId) => wcall('LoadOlderReplies', id, rootId),
   sendPost: (id, channelId, message, attachmentIds = []) => wcall('SendPost', id, channelId, message, attachmentIds),
   retryPost: (id, channelId, pendingId) => wcall('RetryPost', id, channelId, pendingId),
   discardPost: (id, channelId, pendingId) => wcall('DiscardPost', id, channelId, pendingId),

@@ -100,11 +100,13 @@ func (w *Worker) fetchLoop(ctx context.Context) {
 }
 
 func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
+	// The generation first: a ResetWindows after it drops the page, even
+	// if the item below was read before the reset.
+	crt, gen := w.st.FetchMode()
 	it, need := w.st.SyncItemFor(queued.ChannelID) // the queued copy may be outdated
 	if !need {
 		return
 	}
-	crt, gen := w.st.FetchMode()
 	started := w.cfg.Now().UnixMilli()
 	var err error
 	if it.Loaded {

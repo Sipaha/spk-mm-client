@@ -127,6 +127,8 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		}
 		if i, ok := roots[pv.RootID]; ok {
 			pv.RootAuthor, pv.RootSnippet = s.authorLocked(posts[i]), rootSnippet(posts[i])
+		} else if t := s.threads[pv.RootID]; t != nil && t.root.ID == pv.RootID {
+			pv.RootAuthor, pv.RootSnippet = s.authorLocked(t.root), rootSnippet(t.root)
 		}
 	}
 	for _, p := range posts {
@@ -140,16 +142,21 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		if v.CRT && p.RootID != "" {
 			continue // a reply being sent shows in its thread only
 		}
-		pv := PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
-			Avatar: s.avatarLocked(s.me.ID), Status: s.presenceLocked(s.me.ID),
-			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
-			// Keys the feed row across confirmation: the eventual real post
-			// echoes this same id back as its own PendingPostID.
-			PendingPostID: p.ID, Files: p.Files}
+		pv := s.pendingViewLocked(p)
 		rootContext(&pv)
 		v.Posts = append(v.Posts, pv)
 	}
 	return v, true
+}
+
+// pendingViewLocked shows a post being sent (the feed and the thread panel).
+func (s *Server) pendingViewLocked(p Pending) PostView {
+	return PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
+		Avatar: s.avatarLocked(s.me.ID), Status: s.presenceLocked(s.me.ID),
+		RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
+		// Keys the feed row across confirmation: the eventual real post
+		// echoes this same id back as its own PendingPostID.
+		PendingPostID: p.ID, Files: p.Files}
 }
 
 // rootSnippetRunes bounds PostView.RootSnippet.

@@ -30,6 +30,9 @@ type (
 	ChannelDTO = state.ChannelView
 	// Badge is the unread/mention summary of a server or of all servers.
 	Badge = state.Badge
+	// ThreadDTO is a thread in the side panel: root, replies, our replies
+	// being sent (the Go thread cache — see AGENTS.md).
+	ThreadDTO = state.ThreadView
 )
 
 type AppInfo struct {
@@ -54,6 +57,18 @@ type API interface {
 	OpenChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error
+	// OpenThread opens a thread in the panel (replacing the open one): the
+	// cached view at once — Loaded=false while the first page is read —
+	// then thread_changed as it loads and changes. Retrying a failed load
+	// is opening it again.
+	OpenThread(ctx context.Context, id int64, channelID, rootID string) (ThreadDTO, error)
+	// GetThread is a cached thread's current view (no_post: not cached).
+	GetThread(ctx context.Context, id int64, rootID string) (ThreadDTO, error)
+	// CloseThread closes the panel; the thread stays cached, trimmed.
+	CloseThread(ctx context.Context, id int64) error
+	// LoadOlderReplies reads older replies of a thread, up to the cap of
+	// 200 (ThreadDTO.Capped).
+	LoadOlderReplies(ctx context.Context, id int64, rootID string) error
 	// SendPost sends a message with the channel's attachments attachmentIDs
 	// (none: text only; the text may be empty when there are some).
 	SendPost(ctx context.Context, id int64, channelID, message string, attachmentIDs []string) error
@@ -115,6 +130,10 @@ const (
 	EventSidebarChanged = "sidebar_changed" // payload: server_id
 	EventChannelChanged = "channel_changed" // payload: server_id, channel_id
 	EventOpenChannel    = "open_channel"    // payload: server_id, channel_id — a notification was clicked
+	// EventThreadChanged: a cached thread's view changed (loaded, a reply,
+	// an edit, a reaction…). Payload: server_id, root_id; coalesced per
+	// thread.
+	EventThreadChanged = "thread_changed"
 	// EventDownloadsChanged: the downloads list changed. Payload: id of the
 	// entry (none: many changed); with "received" — progress of a download
 	// (at most ~4 a second each; not final — the last bytes may arrive

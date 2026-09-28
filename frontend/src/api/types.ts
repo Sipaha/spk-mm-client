@@ -183,6 +183,30 @@ export interface ChannelDTO {
   muted: boolean
 }
 
+// ThreadDTO is a thread in the side panel (Go's bounded thread cache): the
+// root first (absent while loading, and once deleted), the replies oldest
+// first, then our replies being sent. has_more: older replies can be
+// loaded; capped: the 200-reply cap is reached (nothing older is loaded).
+// new_since/gap_after are always empty (ChannelDTO's shape).
+export interface ThreadDTO {
+  root_id: string
+  channel_id: string
+  channel_name: string
+  team_name: string
+  posts: PostView[]
+  has_more: boolean
+  capped: boolean
+  loaded: boolean
+  syncing: boolean
+  root_deleted: boolean
+  error: string // code of a failed load ('' none); retry = openThread again
+  draft: string
+  me_id: string
+  crt: boolean
+  new_since: number
+  gap_after: string
+}
+
 export type EventType =
   | 'servers_changed'
   | 'login_failed'
@@ -193,6 +217,7 @@ export type EventType =
   | 'downloads_changed'
   | 'attachments_changed'
   | 'attachment_refused'
+  | 'thread_changed' // payload: server_id, root_id
 
 export interface ApiEvent {
   type: EventType

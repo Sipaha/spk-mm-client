@@ -66,11 +66,11 @@ func (w *Worker) view(channelID string) {
 }
 
 func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
+	crt, gen := w.st.FetchMode() // before the cursor: see fetch
 	before := w.st.OldestPostID(channelID)
 	if before == "" {
 		return nil
 	}
-	crt, gen := w.st.FetchMode()
 	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: before, CollapsedThreads: crt})
 	if err != nil {
 		return w.actionErr(err)

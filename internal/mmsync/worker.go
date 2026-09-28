@@ -171,28 +171,29 @@ type Worker struct {
 	// worker's lifetime ctx: created by NewWorker, cancelled when Run's ctx
 	// is. Once Run is stopping, goBG refuses new work (stopping, under bgMu)
 	// so bg.Add never races Run's final bg.Wait.
-	life       context.Context
-	cancelLife context.CancelFunc
-	bgMu       sync.Mutex
-	stopping   bool
-	status     atomic.Value // Status
-	nudge      chan struct{}
-	authFail   chan struct{}
-	metaReq    chan struct{}
-	metaDue    chan struct{} // debounced metaReq, served by the session's event loop
-	statusDue  chan struct{} // a presence poll is wanted soon
-	queue      *fetchQueue
-	viewing    sync.Map // channel id → in-flight view
-	reactMu    sync.Mutex
-	reactPairs map[string]*reactPair // post/emoji → our reaction being sent or waiting for a retry
-	reactPoke  chan struct{}         // a pair started waiting: reactLoop re-arms its timer
-	reactNow   chan struct{}         // live again: reactLoop retries every waiting pair
-	emojiLoad  atomic.Bool           // custom emoji list read (or being read) by this worker
-	missMu     sync.Mutex
-	emojiMiss  map[string]time.Time // custom emoji names the server does not have
-	usersMu    sync.Mutex
-	bg         sync.WaitGroup
-	live       liveMark
+	life        context.Context
+	cancelLife  context.CancelFunc
+	bgMu        sync.Mutex
+	stopping    bool
+	status      atomic.Value // Status
+	nudge       chan struct{}
+	authFail    chan struct{}
+	metaReq     chan struct{}
+	metaDue     chan struct{} // debounced metaReq, served by the session's event loop
+	statusDue   chan struct{} // a presence poll is wanted soon
+	queue       *fetchQueue
+	viewing     sync.Map // channel id → in-flight view
+	threadLoads sync.Map // root id → in-flight thread load (loadThread)
+	reactMu     sync.Mutex
+	reactPairs  map[string]*reactPair // post/emoji → our reaction being sent or waiting for a retry
+	reactPoke   chan struct{}         // a pair started waiting: reactLoop re-arms its timer
+	reactNow    chan struct{}         // live again: reactLoop retries every waiting pair
+	emojiLoad   atomic.Bool           // custom emoji list read (or being read) by this worker
+	missMu      sync.Mutex
+	emojiMiss   map[string]time.Time // custom emoji names the server does not have
+	usersMu     sync.Mutex
+	bg          sync.WaitGroup
+	live        liveMark
 
 	// only touched by the Run goroutine
 	resume ws.Resume
@@ -348,6 +349,9 @@ func (w *Worker) Run(ctx context.Context) {
 	w.bgMu.Unlock()
 	w.cancelLife()
 	w.bg.Wait()
+	// The thread cache is memory only: nothing of it outlives the worker.
+	w.st.CloseThread()
+	w.st.ResetThreads()
 	// Pending posts live only in this worker's memory: their attachments
 	// go with them.
 	w.releaseFiles()
@@ -626,15 +630,18 @@ func (w *Worker) finishRefresh(r metaResult) error {
 	crtChanged := w.st.Bootstrap(r.b)
 	if crtChanged {
 		w.st.ResetWindows()
+		w.st.ResetThreads()
 	}
 	w.metaSettled(r.settled)
 	w.replayOrphans()
 	w.goBG(w.loadUsers)
 	w.enqueueAll()
+	w.reloadOpenThread()
 	w.startEmojiLoad()
 	c := state.Change{Sidebar: true, Badge: true}
 	if crtChanged {
 		c.Channels = []string{w.st.Active()}
+		c.Threads = w.openThreads()
 	}
 	w.changed(c)
 	return nil
@@ -695,8 +702,10 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	if w.st.Bootstrap(b) {
 		// CRT switched without a preferences_changed (admin config, or a
 		// snapshot saved in the other mode): the windows hold the wrong
-		// kind of posts — refetched below by enqueueAll.
+		// kind of posts — refetched below by enqueueAll (and the open
+		// thread by reloadOpenThread).
 		w.st.ResetWindows()
+		w.st.ResetThreads()
 	}
 	w.metaSettled(settled)
 	if lost {
@@ -707,8 +716,9 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	w.loadUsers(ctx)
 	w.goBG(func(ctx context.Context) { w.refreshUsers(ctx, known, since) })
 	w.enqueueAll()
+	w.reloadOpenThread() // stale since the gap, or reset
 	w.startEmojiLoad()
-	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}})
+	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 	return nil
 }
 
@@ -837,8 +847,10 @@ func (w *Worker) apply(ev ws.Event) {
 	}
 	if eff.Resync {
 		w.st.ResetWindows()
+		w.st.ResetThreads()
 		w.enqueueAll()
-		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}})
+		w.reloadOpenThread()
+		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 	}
 }
 
@@ -892,7 +904,7 @@ func (w *Worker) loadUsers(ctx context.Context) {
 		return
 	}
 	w.st.SetUsers(users)
-	w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}})
+	w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 }
 
 // refreshUsers re-reads users held before a bootstrap, once per bootstrap
@@ -920,7 +932,7 @@ func (w *Worker) refreshUsers(ctx context.Context, ids []string, since int64) {
 		return
 	}
 	if w.st.RefreshUsers(users) {
-		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}})
+		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 	}
 }
 

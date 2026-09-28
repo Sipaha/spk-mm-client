@@ -37,6 +37,9 @@ func (s *Server) channelOfPostLocked(postID string) (string, bool) {
 	if s.active != "" && indexOf(s.older, postID) >= 0 {
 		return s.active, true
 	}
+	if _, t, ok := s.threadPostLocked(postID); ok {
+		return t.channelID, true
+	}
 	return "", false
 }
 
@@ -66,7 +69,7 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 	changed := s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add)
 	// The post is in memory, so an add that changed nothing found ours
 	// there and a remove that changed something removed it.
-	return Change{Channels: []string{id}}, changed != add, true
+	return Change{Channels: []string{id}, Threads: s.threadsHoldingLocked(postID)}, changed != add, true
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the
@@ -81,7 +84,7 @@ func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 		return Change{}
 	}
 	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: s.now().UnixMilli()}, mine)
-	return Change{Channels: []string{ch}}
+	return Change{Channels: []string{ch}, Threads: s.threadsHoldingLocked(postID)}
 }
 
 // ForgetReactIntent drops the intent of a click that was never sent (a

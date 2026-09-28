@@ -129,12 +129,15 @@ func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
 	if changed {
 		s.dirty.posts[ch.Info.ID] = true
 	}
+	s.threadRemovedLocked(d)
 	return s.replyGoneLocked(ch, d) || changed
 }
 
 // replyGoneLocked lowers the root's reply count for the deleted reply d,
 // once per id however many paths report it (REST DeletePost, post_deleted,
-// a since= row) — the gone ring — and never below 0.
+// a since= row) — the gone ring — and never below 0. A deleted root goes
+// into the ring too, so its late echo or a page read before the deletion
+// does not bring it back (applyNewPostLocked, SetWindow, the thread cache).
 //
 // Only a since= row carries the deletion time (d.DeleteAt): the server
 // moves the root's update_at to it, so a root read at or after it already
@@ -144,10 +147,13 @@ func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
 // deletion (delete_at 0, app/post.go DeletePost), and our own DeletePost
 // knows no time: those always lower the count, once.
 func (s *Server) replyGoneLocked(ch *Chan, d model.Post) bool {
-	if d.RootID == "" || s.gone.has(d.ID) {
+	if s.gone.has(d.ID) {
 		return false
 	}
 	s.gone.add(d.ID)
+	if d.RootID == "" {
+		return false
+	}
 	return s.eachRootLocked(ch, d.RootID, func(r *model.Post) bool {
 		if r.ReplyCount == 0 || (d.DeleteAt != 0 && r.UpdateAt >= d.DeleteAt) {
 			return false
@@ -159,8 +165,8 @@ func (s *Server) replyGoneLocked(ch *Chan, d model.Post) bool {
 }
 
 // eachRootLocked applies f to every copy of the post rootID held for ch —
-// the window and, for the open channel, the loaded history — and reports
-// whether f changed any.
+// the window, for the open channel the loaded history, and the thread
+// cache — and reports whether f changed any.
 func (s *Server) eachRootLocked(ch *Chan, rootID string, f func(*model.Post) bool) bool {
 	changed := false
 	if i := indexOf(ch.Win.Posts, rootID); i >= 0 && f(&ch.Win.Posts[i]) {
@@ -171,6 +177,9 @@ func (s *Server) eachRootLocked(ch *Chan, rootID string, f func(*model.Post) boo
 		if i := indexOf(s.older, rootID); i >= 0 && f(&s.older[i]) {
 			changed = true
 		}
+	}
+	if t := s.threads[rootID]; t != nil && t.root.ID == rootID && f(&t.root) {
+		changed = true
 	}
 	return changed
 }
@@ -215,7 +224,7 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	var merged []model.Post
 	var newest int64
 	for _, p := range page {
-		if keep(p, crt) {
+		if keep(p, crt) && !s.gone.has(p.ID) {
 			if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
 				keepNewerReplies(&p, ch.Win.Posts[i])
 			} else if i := indexOf(s.older, p.ID); channelID == s.active && i >= 0 {
@@ -252,7 +261,9 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
-	if ch == nil || gen != s.winGen {
+	// Only a loaded window is caught up: since= rows alone would pass for
+	// the channel's latest page.
+	if ch == nil || gen != s.winGen || !ch.Win.Loaded {
 		return
 	}
 	crt := s.crtLocked()
@@ -266,7 +277,7 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 			continue // edit-history row
 		case p.DeleteAt > 0:
 			s.removeLocked(ch, p)
-		case !keep(p, crt):
+		case !keep(p, crt) || s.gone.has(p.ID):
 			continue
 		case indexOf(ch.Win.Posts, p.ID) >= 0 || p.CreateAt >= oldest:
 			s.upsertLocked(ch, p)
@@ -290,7 +301,7 @@ func (s *Server) AppendOlder(channelID string, posts []model.Post, complete bool
 	crt := s.crtLocked()
 	var add []model.Post
 	for _, p := range posts {
-		if keep(p, crt) && indexOf(s.older, p.ID) < 0 && indexOf(ch.Win.Posts, p.ID) < 0 {
+		if keep(p, crt) && !s.gone.has(p.ID) && indexOf(s.older, p.ID) < 0 && indexOf(ch.Win.Posts, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
@@ -359,6 +370,7 @@ func (w *Window) markStale(liveUntil int64) {
 func (s *Server) MarkStale(liveUntil int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.markThreadsStaleLocked()
 	for id, ch := range s.chans {
 		if !ch.Win.Loaded || ch.Win.Stale {
 			continue
@@ -456,7 +468,7 @@ func (s *Server) FailPending(channelID, id string) Change {
 	if i := s.pendingIndexLocked(channelID, id); i >= 0 {
 		s.pending[channelID][i].Failed = true
 	}
-	return Change{Channels: []string{channelID}}
+	return Change{Channels: []string{channelID}, Threads: s.pendingThreadsLocked(channelID, id)}
 }
 
 // RetryPending takes a failed post back to sending; one still being sent
@@ -475,8 +487,9 @@ func (s *Server) RetryPending(channelID, id string) (Pending, bool) {
 func (s *Server) DropPending(channelID, id string) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	threads := s.pendingThreadsLocked(channelID, id)
 	s.dropPendingLocked(channelID, id)
-	return Change{Channels: []string{channelID}}
+	return Change{Channels: []string{channelID}, Threads: threads}
 }
 
 func (s *Server) dropPendingLocked(channelID, id string) {
@@ -584,7 +597,7 @@ func (s *Server) PostCreated(p model.Post) Change {
 		return Change{}
 	}
 	s.applyNewPostLocked(ch, p, nil)
-	return Change{Sidebar: true, Badge: true, Channels: []string{p.ChannelID}}
+	return Change{Sidebar: true, Badge: true, Channels: []string{p.ChannelID}, Threads: s.threadsOfLocked(p)}
 }
 
 // applyNewPostLocked is the single path for a created post (WS posted or
@@ -612,6 +625,7 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 			s.upsertLocked(ch, p)
 		}
 	}
+	s.threadPostedLocked(p)
 	if !root && isNew {
 		s.eachRootLocked(ch, p.RootID, func(r *model.Post) bool { return replyPosted(r, p) })
 	}
@@ -649,16 +663,19 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 func (s *Server) ApplyPostUpdate(p model.Post) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.updatePostLocked(p) {
-		return Change{Channels: []string{p.ChannelID}}
-	}
-	return Change{}
+	return s.updatePostLocked(p)
 }
 
-func (s *Server) updatePostLocked(p model.Post) bool {
+// updatePostLocked applies an edit to every copy held: the window, the
+// open channel's history, the thread cache.
+func (s *Server) updatePostLocked(p model.Post) Change {
 	ch := s.chans[p.ChannelID]
 	if ch == nil {
-		return false
+		return Change{}
+	}
+	var c Change
+	if s.threadUpdatedLocked(p) {
+		c.Threads = s.threadsOfLocked(p)
 	}
 	changed := false
 	if indexOf(ch.Win.Posts, p.ID) >= 0 {
@@ -672,12 +689,15 @@ func (s *Server) updatePostLocked(p model.Post) bool {
 			changed = true
 		}
 	}
-	return changed
+	if changed {
+		c.Channels = []string{p.ChannelID}
+	}
+	return c
 }
 
 // RemovePost applies our own DeletePost. The post is looked up first for
-// its channel and root; one not held (a reply under CRT) is left to the
-// post_deleted event, which carries both.
+// its channel and root (the feed or the thread cache); one not held is left
+// to the post_deleted event, which carries both.
 func (s *Server) RemovePost(postID string) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -685,10 +705,15 @@ func (s *Server) RemovePost(postID string) Change {
 	if !ok {
 		return Change{}
 	}
-	if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p) {
-		return Change{Channels: []string{p.ChannelID}}
+	ch := s.chans[p.ChannelID]
+	if ch == nil {
+		return Change{}
 	}
-	return Change{}
+	c := Change{Threads: s.threadsOfLocked(p)}
+	if s.removeLocked(ch, p) {
+		c.Channels = []string{p.ChannelID}
+	}
+	return c
 }
 
 func (s *Server) FindPost(postID string) (model.Post, bool) {
@@ -705,6 +730,9 @@ func (s *Server) findPostLocked(postID string) (model.Post, bool) {
 	}
 	if i := indexOf(s.older, postID); i >= 0 {
 		return s.older[i], true
+	}
+	if p, _, ok := s.threadPostLocked(postID); ok {
+		return p, true
 	}
 	return model.Post{}, false
 }
@@ -739,20 +767,18 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add bool) bool 
 		p.Metadata = &model.PostMetadata{Files: files, Reactions: reacts}
 		return true
 	}
-	for i := range ch.Win.Posts {
-		if apply(&ch.Win.Posts[i]) {
-			s.dirty.posts[channelID] = true
+	// Every copy: the feed (window or history) and the thread cache.
+	changed := s.reactThreadsLocked(channelID, r.PostID, apply)
+	if i := indexOf(ch.Win.Posts, r.PostID); i >= 0 && apply(&ch.Win.Posts[i]) {
+		s.dirty.posts[channelID] = true
+		return true
+	}
+	if channelID == s.active {
+		if i := indexOf(s.older, r.PostID); i >= 0 && apply(&s.older[i]) {
 			return true
 		}
 	}
-	if channelID == s.active {
-		for i := range s.older {
-			if apply(&s.older[i]) {
-				return true
-			}
-		}
-	}
-	return false
+	return changed
 }
 
 // ---- drafts, active channel, read state ----

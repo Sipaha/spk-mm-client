@@ -156,6 +156,23 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/LoadOlder", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return nil, h.api.LoadOlder(ctx, r.ID, r.ChannelID)
 	}))
+	type threadReq struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		RootID    string `json:"root_id"`
+	}
+	h.mux.HandleFunc("POST /api/OpenThread", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return h.api.OpenThread(ctx, r.ID, r.ChannelID, r.RootID)
+	}))
+	h.mux.HandleFunc("POST /api/GetThread", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return h.api.GetThread(ctx, r.ID, r.RootID)
+	}))
+	h.mux.HandleFunc("POST /api/CloseThread", handle(func(ctx context.Context, r *idReq) (any, error) {
+		return nil, h.api.CloseThread(ctx, r.ID)
+	}))
+	h.mux.HandleFunc("POST /api/LoadOlderReplies", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return nil, h.api.LoadOlderReplies(ctx, r.ID, r.RootID)
+	}))
 	h.mux.HandleFunc("POST /api/SendPost", handle(func(ctx context.Context, r *struct {
 		ID            int64    `json:"id"`
 		ChannelID     string   `json:"channel_id"`
