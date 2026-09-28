@@ -57,6 +57,11 @@ type Files interface {
 	// Release lets the attachments go — their post was confirmed,
 	// discarded or lost: uploads are cancelled, spools deleted.
 	Release(ids []string)
+	// ReleaseComposer lets go of everything still staged in a (channel,
+	// root) composer that no longer exists (its channel was left, taking
+	// its held threads with it) — an upload already running is left to
+	// finish or fail on its own.
+	ReleaseComposer(srv int64, ch, root string)
 }
 
 type Config struct {

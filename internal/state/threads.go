@@ -16,9 +16,9 @@ const (
 	ThreadCacheSize  = 3
 	ThreadMaxReplies = 200
 	ThreadPage       = 60
-	// ThreadDraftCap bounds s.threadDrafts (SetThreadDraft): the oldest
-	// (by insertion order) is dropped past it. In memory only, never in
-	// the snapshot — see AGENTS.md.
+	// ThreadDraftCap bounds s.threadDrafts (SetThreadDraft): the
+	// least-recently-updated one is dropped past it. In memory only,
+	// never in the snapshot — see AGENTS.md.
 	ThreadDraftCap = 50
 	// ThreadNotFound is FailThread's code for a root the server does not
 	// have (404: deleted): the thread shows as RootDeleted.
@@ -368,6 +368,26 @@ func (s *Server) rootGoneLocked(t *thread) {
 	t.complete, t.capped = true, false
 }
 
+// MarkThreadStale marks rootID's cached thread stale, so the next check of
+// needsFetch (loadThread) re-reads it — without bumping the whole cache's
+// epoch (markThreadsStaleLocked, a connection gap). Used when a write
+// hints the root might be gone without saying so for certain (CreatePost's
+// api.post.create_post.root_id.app_error also covers an unrelated store
+// error and, defensively, "root is itself a reply" — mm-10.11
+// server/channels/app/post.go:296,305): the reread's own 404 (→
+// FailThread(ThreadNotFound)) or success is the actual verdict, never
+// this call by itself. ok=false: rootID is not held (nothing to recheck).
+func (s *Server) MarkThreadStale(rootID string) (ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[rootID]
+	if t == nil {
+		return false
+	}
+	t.stale = true
+	return true
+}
+
 // OldestReply is the cursor for the next older page: the oldest reply held.
 func (s *Server) OldestReply(rootID string) (id string, createAt int64) {
 	s.mu.Lock()
@@ -413,6 +433,11 @@ func (s *Server) forgetThreadsLocked(channelID string) {
 	for id, t := range s.threads {
 		if t.channelID == channelID {
 			s.dropThreadDraftLocked(id)
+			// The thread's reply composer: leaving the channel is the one
+			// case (of "a thread's composer becomes unreachable") this
+			// cache release covers — a thread merely evicted from the LRU
+			// while the channel stays open does not (docs/backlog.md).
+			s.forgotten = append(s.forgotten, ComposerKey{Channel: channelID, Root: id})
 			s.dropThreadLocked(id)
 		}
 	}

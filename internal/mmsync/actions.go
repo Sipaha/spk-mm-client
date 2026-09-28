@@ -159,14 +159,17 @@ func (w *Worker) create(ctx context.Context, p state.Pending) {
 		slog.Warn("send failed", "srv", w.srv.ID, "channel", p.ChannelID, "err", err)
 		w.changed(w.st.FailPending(p.ChannelID, p.ID))
 		if p.RootID != "" && isRootDeletedErr(err) {
-			// The root was deleted between the panel opening it and this
-			// reply reaching the server (server/channels/app/post.go
-			// createPost, api.post.create_post.root_id.app_error). The
-			// thread is not stuck "loading": FailThread's ThreadNotFound
-			// path marks it RootDeleted, same as a 404 on GET .../thread.
-			_, epoch, _ := w.st.ThreadFetch(p.RootID)
-			w.st.FailThread(p.RootID, epoch, state.ThreadNotFound)
-			w.changed(state.Change{Threads: []string{p.RootID}})
+			// The same app_error covers the root being deleted, an
+			// unrelated store hiccup fetching it, and (defensively) "root
+			// is itself a reply" (mm-10.11 post.go:296,305) — this alone
+			// never proves deletion. Mark the thread stale so the next
+			// load re-reads it; that reread's own 404 (fetchThread →
+			// FailThread(ThreadNotFound) → rootGoneLocked) or success is
+			// the real verdict.
+			if w.st.MarkThreadStale(p.RootID) {
+				w.changed(state.Change{Threads: []string{p.RootID}})
+				w.loadThread(p.RootID)
+			}
 		}
 		return
 	}
@@ -176,7 +179,9 @@ func (w *Worker) create(ctx context.Context, p state.Pending) {
 // isRootDeletedErr reports CreatePost's 400 for a reply whose root no
 // longer exists — checked against mm-10.11
 // server/channels/app/post.go:296,305 (also raised when the "root" is
-// itself a reply: the server refuses reply-to-reply the same way).
+// itself a reply: the server refuses reply-to-reply the same way; and for
+// an unrelated store error fetching the root — see MarkThreadStale's
+// caller above, which treats this as a hint, not a verdict).
 func isRootDeletedErr(err error) bool {
 	var re *rest.Error
 	return errors.As(err, &re) && re.ID == "api.post.create_post.root_id.app_error"
@@ -186,11 +191,11 @@ func isRootDeletedErr(err error) bool {
 // attempt did reach the server, it returns the existing post (no duplicate).
 // Its failed uploads are sent again; uploaded files keep their ids.
 func (w *Worker) Retry(channelID, pendingID string) {
-	p, ok := w.st.RetryPending(channelID, pendingID)
+	p, ch, ok := w.st.RetryPending(channelID, pendingID)
 	if !ok {
 		return
 	}
-	w.changed(state.Change{Channels: []string{channelID}})
+	w.changed(ch)
 	if len(p.Files) > 0 {
 		w.cfg.Files.Retry(attachmentIDs(p))
 	}
@@ -223,6 +228,19 @@ func (w *Worker) releaseFiles() {
 	}
 	if ids := w.st.TakeReleased(); len(ids) > 0 {
 		w.cfg.Files.Release(ids)
+	}
+	w.releaseForgottenComposers()
+}
+
+// releaseForgottenComposers lets go of attachments still staged in a
+// composer whose channel (or one of its threads) we no longer track —
+// state.Server.TakeForgottenComposers, channel-leave only (see its doc).
+func (w *Worker) releaseForgottenComposers() {
+	if w.cfg.Files == nil {
+		return
+	}
+	for _, k := range w.st.TakeForgottenComposers() {
+		w.cfg.Files.ReleaseComposer(w.srv.ID, k.Channel, k.Root)
 	}
 }
 

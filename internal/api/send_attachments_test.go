@@ -186,6 +186,58 @@ func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
 	assert.False(t, got.Files[0].Staged, "the confirmed post shows the server's file, not the staged one")
 }
 
+// Fix round 1 (review item 3): onAttachments used to emit only
+// thread_changed for a reply's composer (root != ""), but without CRT a
+// pending reply is also shown inline in the channel feed (T7) — so a
+// reply's upload progress must reach the channel view too, not just the
+// thread panel's. onAttachments now always emits both when the pending
+// post's progress actually changed.
+func TestSendReplyUploadProgressTellsBothChannelAndThread(t *testing.T) {
+	f := newChatFixture(t)
+	f.withAttachments()
+	fake := startFake(t)
+	id := f.live(fake)
+	ctx := context.Background()
+	f.eventually(func() bool { _, err := f.svc.GetChannel(ctx, id, "c-town"); return err == nil }, "c-town never loaded")
+	root := fake.SeedThread("c-town", "alice", 1)
+	_, err := f.svc.OpenThread(ctx, id, "c-town", root)
+	require.NoError(t, err)
+	f.eventually(func() bool { v, err := f.svc.GetThread(ctx, id, root); return err == nil && v.Loaded }, "thread never loaded")
+
+	fake.SetUploadThrottle(2000) // ~1s for 2000 bytes of body
+	t.Cleanup(func() { fake.SetUploadThrottle(0) })
+	data := bytes.Repeat([]byte{1}, 2000)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-town", root, "big.bin", "application/octet-stream", bytes.NewReader(data), 0)
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.SendReply(ctx, id, "c-town", root, "", []string{a.ID}))
+
+	sawBoth := make(chan bool, 1)
+	go func() {
+		var sawChannel, sawThread bool
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case ev := <-f.evs:
+				if ev.Type == EventChannelChanged && ev.Payload["server_id"] == id && ev.Payload["channel_id"] == "c-town" {
+					sawChannel = true
+				}
+				if ev.Type == EventThreadChanged && ev.Payload["server_id"] == id && ev.Payload["root_id"] == root {
+					sawThread = true
+				}
+				if sawChannel && sawThread {
+					sawBoth <- true
+					return
+				}
+			case <-timeout:
+				sawBoth <- false
+				return
+			}
+		}
+	}()
+	assert.True(t, <-sawBoth, "onAttachments must tell both the channel and the thread while a reply's upload runs")
+}
+
 func TestSendPostWithOnlyAttachments(t *testing.T) {
 	f := newChatFixture(t)
 	f.withAttachments()

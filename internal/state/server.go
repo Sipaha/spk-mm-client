@@ -86,7 +86,8 @@ type Server struct {
 
 	// Task 7: posts, pending, active channel.
 	pending       map[string][]Pending
-	released      []string // attachments of pending posts dropped since the last TakeReleased
+	released      []string      // attachments of pending posts dropped since the last TakeReleased
+	forgotten     []ComposerKey // composers (channel/thread) left since the last TakeForgottenComposers
 	drafts        map[string]string
 	active        string
 	focused       bool
@@ -109,7 +110,7 @@ type Server struct {
 	openThread   string
 	threadEpoch  uint64
 	threadDrafts map[string]string
-	// threadDraftOrder: insertion order of threadDrafts (oldest first),
+	// threadDraftOrder: threadDrafts by last update, least recent first —
 	// for ThreadDraftCap eviction — see SetThreadDraft.
 	threadDraftOrder []string
 	// threadRedirect: the last thread opened by a reply's id → its root's
@@ -212,6 +213,10 @@ func (s *Server) forgetChannelLocked(id string) {
 		s.releaseLocked(p)
 	}
 	delete(s.pending, id)
+	// The channel's own composer (root ""): its still-staged attachments
+	// (never Taken into a pending post) have nowhere left to be shown or
+	// sent from — see TakeForgottenComposers.
+	s.forgotten = append(s.forgotten, ComposerKey{Channel: id})
 	s.forgetThreadsLocked(id)
 	s.dirty.dropChan(id)
 }

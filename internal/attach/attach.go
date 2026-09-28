@@ -433,6 +433,37 @@ func (s *Store) Remove(id string) error {
 	return nil
 }
 
+// ReleaseComposer drops every attachment of (srv, ch, root)'s composer
+// that is not currently uploading (StateStaged/StateUploaded/StateFailed):
+// its composer itself is gone (the channel was left, taking its held
+// threads with it — state.Server.TakeForgottenComposers), so nothing can
+// ever send them. An upload already running is left alone — it either
+// finishes into an orphaned server file (harmless, same as Remove leaves
+// one) or fails on its own; nothing new is queued behind it (the composer
+// is gone, so Retry/further uploads never come).
+func (s *Store) ReleaseComposer(srv int64, ch, root string) {
+	s.mu.Lock()
+	var gone []*item
+	for _, it := range s.lists[key{srv, ch, root}] {
+		if it.State != StateUploading {
+			gone = append(gone, it)
+		}
+	}
+	for _, it := range gone {
+		s.unlistLocked(it)
+	}
+	if len(gone) > 0 {
+		s.broadcastLocked()
+	}
+	s.mu.Unlock()
+	for _, it := range gone {
+		s.removeSpool(it.spool)
+	}
+	if len(gone) > 0 {
+		s.notify(srv, ch, root)
+	}
+}
+
 // unlistLocked forgets an attachment and abandons its upload; the caller
 // deletes the spool after unlocking.
 func (s *Store) unlistLocked(it *item) {

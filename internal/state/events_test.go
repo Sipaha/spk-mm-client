@@ -124,7 +124,7 @@ func TestFailRetryDropPending(t *testing.T) {
 	s.FailPending("off", pd.ID)
 	v, _ := s.ChannelView("off")
 	assert.True(t, v.Posts[0].Failed)
-	again, ok := s.RetryPending("off", pd.ID)
+	again, _, ok := s.RetryPending("off", pd.ID)
 	require.True(t, ok)
 	assert.Equal(t, pd.ID, again.ID, "same pending id → the server dedupes")
 	v, _ = s.ChannelView("off")

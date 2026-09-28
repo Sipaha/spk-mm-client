@@ -125,10 +125,10 @@ func TestRefreshPendingProgressUpdatesStagedFilesInPlace(t *testing.T) {
 func TestOnlyAFailedPendingPostIsRetried(t *testing.T) {
 	s := newFixture()
 	pd := s.AddPending("off", "", "", stagedFiles("a1")...)
-	_, ok := s.RetryPending("off", pd.ID)
+	_, _, ok := s.RetryPending("off", pd.ID)
 	assert.False(t, ok, "still being sent: a second send would race the first")
 	s.FailPending("off", pd.ID)
-	again, ok := s.RetryPending("off", pd.ID)
+	again, _, ok := s.RetryPending("off", pd.ID)
 	require.True(t, ok)
 	assert.Equal(t, stagedFiles("a1"), again.Files)
 }

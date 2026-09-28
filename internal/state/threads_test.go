@@ -386,6 +386,37 @@ func TestForgottenChannelDropsItsThreads(t *testing.T) {
 	assert.Empty(t, s.threadLRU)
 }
 
+// Fix round 1 (review item 5): TakeForgottenComposers is how
+// api.Service/mmsync learn a (channel, root) composer became unreachable
+// so any attachment still staged there can be released too — channel
+// leave (this test's two ApplyEvent calls mirror
+// TestForgottenChannelDropsItsThreads exactly) reports the channel's own
+// composer (Root "") and every thread of that channel it was holding.
+func TestTakeForgottenComposersOnChannelLeave(t *testing.T) {
+	s := crtFixture(true)
+	offRoot := mkPost("O", "off", "u2", 1000)
+	e, _, ok := s.OpenThread("off", "O")
+	require.True(t, ok)
+	s.SetThreadPage("O", e, threadPage(offRoot, nil, false))
+	s.CloseThread()
+	root, replies := seededThread("R", 2)
+	openLoaded(t, s, root, replies)
+
+	assert.Empty(t, s.TakeForgottenComposers(), "nothing forgotten before any leave")
+
+	d, _ := json.Marshal(map[string]any{"channel_id": "off"})
+	s.ApplyEvent(ws.Event{Type: "user_removed", Data: d, Broadcast: ws.Broadcast{UserID: "u1"}})
+	got := s.TakeForgottenComposers()
+	assert.ElementsMatch(t, []ComposerKey{{Channel: "off"}, {Channel: "off", Root: "O"}}, got,
+		"the channel's own composer and its held thread's, not town's (still open)")
+	assert.Empty(t, s.TakeForgottenComposers(), "drained by the call above")
+
+	d, _ = json.Marshal(map[string]any{"channel_id": "town"})
+	s.ApplyEvent(ws.Event{Type: "user_removed", Data: d, Broadcast: ws.Broadcast{UserID: "u1"}})
+	got = s.TakeForgottenComposers()
+	assert.ElementsMatch(t, []ComposerKey{{Channel: "town"}, {Channel: "town", Root: "R"}}, got)
+}
+
 // Task 4: SetThreadDraft is bounded (ThreadDraftCap), like the other
 // bounds in this cache; a channel we leave takes its held threads' drafts
 // with it, an evicted (LRU, not a leave) root's draft is left alone.
@@ -436,6 +467,36 @@ func TestThreadDraftsAreBounded(t *testing.T) {
 	_, afterLeave := s.threadDrafts["D"]
 	s.mu.Unlock()
 	assert.False(t, afterLeave, "the left channel's thread draft is dropped with it")
+}
+
+// Fix round 1 (review): eviction must be by last update, not first
+// insertion — otherwise a draft the user is actively typing into gets
+// evicted out from under them just because it happens to be the oldest
+// one ever created, while a draft nobody has touched in a long time
+// survives only because it was created more recently.
+func TestThreadDraftEvictionIsByLastUpdate(t *testing.T) {
+	s := crtFixture(true)
+	for i := 0; i < ThreadDraftCap; i++ {
+		s.SetThreadDraft(fmt.Sprintf("r%03d", i), "v1")
+	}
+	// r000 is the oldest by insertion, but touch it again now (a real
+	// edit, not a no-op: different text) — it becomes the most recently
+	// updated.
+	s.SetThreadDraft("r000", "still typing")
+	// One more new draft pushes the cap. The least-recently-updated one —
+	// r001, never touched again — should go, not r000.
+	s.SetThreadDraft("new", "v1")
+
+	s.mu.Lock()
+	_, hasR000 := s.threadDrafts["r000"]
+	_, hasR001 := s.threadDrafts["r001"]
+	_, hasNew := s.threadDrafts["new"]
+	n := len(s.threadDrafts)
+	s.mu.Unlock()
+	assert.True(t, hasR000, "a draft edited most recently is not evicted by insertion order")
+	assert.False(t, hasR001, "the least-recently-updated draft is evicted instead")
+	assert.True(t, hasNew)
+	assert.Equal(t, ThreadDraftCap, n)
 }
 
 func TestThreadHeldChecksChannelAndCache(t *testing.T) {

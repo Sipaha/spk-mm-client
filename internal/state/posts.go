@@ -487,16 +487,20 @@ func (s *Server) FailPending(channelID, id string) Change {
 }
 
 // RetryPending takes a failed post back to sending; one still being sent
-// is left alone (a second send would race the first).
-func (s *Server) RetryPending(channelID, id string) (Pending, bool) {
+// is left alone (a second send would race the first). The Change carries
+// Threads the same way FailPending/DropPending do — only when the root is
+// still held by the thread cache — so a retried reply refreshes the panel
+// too, not just the channel feed.
+func (s *Server) RetryPending(channelID, id string) (Pending, Change, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.pendingIndexLocked(channelID, id)
 	if i < 0 || !s.pending[channelID][i].Failed {
-		return Pending{}, false
+		return Pending{}, Change{}, false
 	}
 	s.pending[channelID][i].Failed = false
-	return s.pending[channelID][i], true
+	ch := Change{Channels: []string{channelID}, Threads: s.pendingThreadsLocked(channelID, id)}
+	return s.pending[channelID][i], ch, true
 }
 
 func (s *Server) DropPending(channelID, id string) Change {
@@ -535,6 +539,29 @@ func (s *Server) TakeReleased() []string {
 	defer s.mu.Unlock()
 	out := s.released
 	s.released = nil
+	return out
+}
+
+// ComposerKey names a message composer: a channel's own (Root "") or one
+// of its threads' reply composer (attach.Store's key, minus the server id
+// — the caller already knows that).
+type ComposerKey struct {
+	Channel string
+	Root    string
+}
+
+// TakeForgottenComposers gives the composers (channel or thread) left
+// since the last call — the channel was left, taking its held threads
+// with it (forgetChannelLocked/forgetThreadsLocked) — so any attachment
+// still staged there (never sent, so never part of a Pending's Files —
+// those are covered by TakeReleased instead) can be let go of too. A
+// thread merely evicted from the LRU cache while its channel stays open
+// is not covered (docs/backlog.md).
+func (s *Server) TakeForgottenComposers() []ComposerKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.forgotten
+	s.forgotten = nil
 	return out
 }
 
@@ -823,8 +850,8 @@ func (s *Server) SetDraft(channelID, text string) {
 }
 
 // SetThreadDraft is SetDraft for a reply: keyed by root id instead of
-// channel, bounded to ThreadDraftCap entries (the oldest inserted is
-// dropped), never in the snapshot. The caller (api.Service) checks
+// channel, bounded to ThreadDraftCap entries (the least-recently-updated
+// one is dropped), never in the snapshot. The caller (api.Service) checks
 // ThreadHeld before calling — a draft for a root that is not held is
 // simply not reachable through ThreadView, so this itself does not check.
 func (s *Server) SetThreadDraft(rootID, text string) {
@@ -837,9 +864,14 @@ func (s *Server) SetThreadDraft(rootID, text string) {
 		s.dropThreadDraftLocked(rootID)
 		return
 	}
-	if _, exists := s.threadDrafts[rootID]; !exists {
-		s.threadDraftOrder = append(s.threadDraftOrder, rootID)
-	}
+	// threadDraftOrder is least-recently-updated first: every write (new
+	// or an edit of an existing draft) moves rootID to the most-recent
+	// end, so eviction below drops the draft nobody has touched in the
+	// longest time — not simply the first one ever created, which would
+	// otherwise evict an actively-typed-in draft out from under the user
+	// once 50 other threads got one.
+	s.threadDraftOrder = slices.DeleteFunc(s.threadDraftOrder, func(id string) bool { return id == rootID })
+	s.threadDraftOrder = append(s.threadDraftOrder, rootID)
 	s.threadDrafts[rootID] = text
 	for len(s.threadDraftOrder) > ThreadDraftCap {
 		oldest := s.threadDraftOrder[0]

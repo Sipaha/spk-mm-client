@@ -673,6 +673,47 @@ func TestPauseReturnsRunningUploadsToTheQueue(t *testing.T) {
 	e.waitState(a.ID, StateUploaded)
 }
 
+// Fix round 1 (review item 5): a thread's reply composer left behind
+// (channel left, taking its held threads with it — internal/state
+// TakeForgottenComposers) can still be sitting on staged attachments and
+// their spools; ReleaseComposer drops those, but never something already
+// mid-upload (left to finish or fail on its own — a channel-leave race is
+// rare and the alternative, cancelling an in-flight PUT, is worse).
+func TestReleaseComposerDropsStagedNotUploading(t *testing.T) {
+	e := newEnv(t, func(o *Options) { o.Parallel = 1 })
+	started := make(chan struct{}, 1)
+	e.up.setSend(blockUntilCancelled(started))
+	up, err := e.s.AddPath(1, "c1", "r1", e.file("up.bin", "abc"))
+	require.NoError(t, err)
+	<-started
+	e.waitState(up.ID, StateUploading)
+
+	// Parallel=1: this one stays queued (StateStaged), not started.
+	staged, err := e.s.AddBytes(1, "c1", "r1", "staged.bin", "", strings.NewReader("xyz"), 0)
+	require.NoError(t, err)
+	other, err := e.s.AddPath(1, "c1", "", e.file("other.bin", "qqq")) // the channel's own composer
+	require.NoError(t, err)
+	require.Contains(t, spools(t, e.dir), spoolPrefix+staged.ID)
+
+	before := e.chg.count()
+	e.s.ReleaseComposer(1, "c1", "r1")
+
+	_, stillStaged := e.state(staged.ID)
+	assert.False(t, stillStaged, "the staged attachment is gone")
+	assert.NotContains(t, spools(t, e.dir), spoolPrefix+staged.ID, "its spool is deleted too")
+	stillUp, ok := e.state(up.ID)
+	require.True(t, ok, "the uploading one is left alone")
+	assert.Equal(t, StateUploading, stillUp.State)
+	_, otherOK := e.state(other.ID)
+	assert.True(t, otherOK, "a different composer (the channel's own) is untouched")
+	assert.Greater(t, e.chg.count(), before, "the composer's OnChange fires")
+
+	// Nothing left to release, and an unknown composer: both no-ops, not
+	// a panic.
+	e.s.ReleaseComposer(1, "c1", "r1")
+	e.s.ReleaseComposer(9, "nope", "nope")
+}
+
 func TestDropServerForgetsItsAttachments(t *testing.T) {
 	e := newEnv(t)
 	e.b.setLive(1, false)

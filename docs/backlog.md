@@ -344,3 +344,18 @@
   (`getOneClickReactionEmojis`, пусто — если `recent_emojis` пуст); в
   веб-клиенте это можно отключить в настройках. У нас настройки такого
   уровня ещё нет — не сделано.
+- **Вложения треда, вытесненного из LRU без ухода из канала, не
+  освобождаются** (Task 4, ревью). `state.Server.TakeForgottenComposers`
+  (`internal/state/{server,threads}.go`) освобождает композер треда только
+  при уходе из канала (`forgetChannelLocked` → `forgetThreadsLocked`) —
+  ровно то место, где `forgetThreadsLocked` сейчас и вызывается. Тред,
+  вытесненный из кэша `ThreadCacheSize=3` (`touchThreadLocked`) или
+  сброшенный `ResetThreads`/`RedirectThread`, при этом канал остаётся
+  открытым, — не идёт через `forgetThreadsLocked`, и его ещё не отправленные
+  вложения (`attach.Store`, не тронутые `Take`) остаются в памяти и на диске
+  (спул) до конца сессии воркера, пока их не уберёт ручной `RemoveAttachment`
+  или это не сделает будущая доработка. Не течёт бесконтрольно (кэш —
+  максимум 3 треда, вложений — максимум 10 на композер), но и не освобождает
+  спул раньше выхода из приложения. Решение и его тесты —
+  `TestReleaseComposerOnChannelLeave`/аналоги в `internal/state/threads_test.go`,
+  `internal/mmsync/actions_test.go`.

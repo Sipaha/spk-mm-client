@@ -99,15 +99,19 @@ func (s *Service) onAttachments(srv int64, ch, root string) {
 	if !changed {
 		return
 	}
+	// Always both: a reply's progress belongs to its thread's panel, but
+	// without CRT the same reply is also inline in the channel feed (T7) —
+	// channel_changed is a no-op for the UI when there is nothing of this
+	// channel's own on screen to refresh, same as any other coalesced
+	// channel_changed.
+	s.co.Schedule(fmt.Sprintf("channel/%d/%s", srv, ch), func() {
+		s.emit(EventChannelChanged, map[string]any{"server_id": srv, "channel_id": ch})
+	})
 	if root != "" {
 		s.co.Schedule(fmt.Sprintf("thread/%d/%s", srv, root), func() {
 			s.emit(EventThreadChanged, map[string]any{"server_id": srv, "root_id": root})
 		})
-		return
 	}
-	s.co.Schedule(fmt.Sprintf("channel/%d/%s", srv, ch), func() {
-		s.emit(EventChannelChanged, map[string]any{"server_id": srv, "channel_id": ch})
-	})
 }
 
 func attachError(err error) error {
@@ -228,6 +232,13 @@ func (p postFiles) Release(ids []string) {
 	for _, id := range ids {
 		_ = p.s.att.Remove(id) // gone already: nothing to let go of
 	}
+}
+
+func (p postFiles) ReleaseComposer(srv int64, ch, root string) {
+	if p.s.att == nil {
+		return
+	}
+	p.s.att.ReleaseComposer(srv, ch, root)
 }
 
 // stagedFile shows an attachment of a post being sent like a server file:

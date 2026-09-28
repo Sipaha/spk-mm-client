@@ -3,6 +3,7 @@ package mmsync
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -33,6 +34,7 @@ type harness struct {
 	mu       sync.Mutex
 	statuses []Status
 	notes    []state.NotifyCandidate
+	changes  []state.Change // every non-empty Hooks.Changed call, in order
 }
 
 func newHarness(t *testing.T, o mmfake.Options) *harness {
@@ -60,7 +62,11 @@ func (h *harness) config() Config {
 		Store: h.store,
 		Now:   now,
 		Hooks: Hooks{
-			Changed: func(int64, state.Change) {},
+			Changed: func(_ int64, c state.Change) {
+				h.mu.Lock()
+				h.changes = append(h.changes, c)
+				h.mu.Unlock()
+			},
 			Status: func(_ int64, s Status) {
 				h.mu.Lock()
 				h.statuses = append(h.statuses, s)
@@ -182,6 +188,27 @@ func (h *harness) notified(msg string) bool {
 	defer h.mu.Unlock()
 	for _, n := range h.notes {
 		if n.Post.Message == msg {
+			return true
+		}
+	}
+	return false
+}
+
+// resetChanges clears the recorded Hooks.Changed calls, so a later check
+// (e.g. threadChanged) only sees what happens from here on.
+func (h *harness) resetChanges() {
+	h.mu.Lock()
+	h.changes = nil
+	h.mu.Unlock()
+}
+
+// threadChanged reports whether any recorded Hooks.Changed call so far
+// carried root in its Change.Threads.
+func (h *harness) threadChanged(root string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.changes {
+		if slices.Contains(c.Threads, root) {
 			return true
 		}
 	}

@@ -21,14 +21,15 @@ var errUploadFailed = errors.New("upload failed")
 // fakeFiles stands in for the attachment store: Wait blocks until the test
 // opens the gate (or fails the uploads); a released id is gone.
 type fakeFiles struct {
-	mu       sync.Mutex
-	fileIDs  map[string]string // attachment id → server file id
-	open     bool
-	fail     error
-	released []string
-	waits    int
-	retried  [][]string
-	changed  chan struct{}
+	mu                sync.Mutex
+	fileIDs           map[string]string // attachment id → server file id
+	open              bool
+	fail              error
+	released          []string
+	releasedComposers []string // "ch/root" — ReleaseComposer calls, in order
+	waits             int
+	retried           [][]string
+	changed           chan struct{}
 }
 
 func newFakeFiles() *fakeFiles {
@@ -87,6 +88,13 @@ func (f *fakeFiles) Release(ids []string) {
 	f.broadcastLocked()
 }
 
+func (f *fakeFiles) ReleaseComposer(_ int64, ch, root string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releasedComposers = append(f.releasedComposers, ch+"/"+root)
+	f.broadcastLocked()
+}
+
 func (f *fakeFiles) set(fn func(*fakeFiles)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -98,6 +106,12 @@ func (f *fakeFiles) get() (released []string, retried [][]string, waits int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.released), slices.Clone(f.retried), f.waits
+}
+
+func (f *fakeFiles) composersReleased() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.releasedComposers)
 }
 
 func filesHarness(t *testing.T) (*harness, *fakeFiles) {

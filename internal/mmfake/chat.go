@@ -545,7 +545,7 @@ func (s *Server) editPostLocked(userID, postID, msg string) (model.Post, *apiErr
 	return p.Post, nil
 }
 
-func (s *Server) deletePostLocked(userID, postID string) *apiErr {
+func (s *Server) deletePostLocked(userID, postID string, broadcast bool) *apiErr {
 	p := s.chat.byID[postID]
 	if p == nil || p.DeleteAt != 0 || p.OriginalID != "" {
 		return &apiErr{404, "app.post.get.app_error"}
@@ -571,7 +571,9 @@ func (s *Server) deletePostLocked(userID, postID string) *apiErr {
 		p.DeleteAt, p.UpdateAt = now, now
 		s.deleteReplyEffectsLocked(p, now)
 	}
-	s.publishLocked("post_deleted", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
+	if broadcast {
+		s.publishLocked("post_deleted", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
+	}
 	return nil
 }
 
@@ -616,7 +618,7 @@ func (s *Server) patchPost(w http.ResponseWriter, r *http.Request, u User) {
 
 func (s *Server) deletePost(w http.ResponseWriter, r *http.Request, u User) {
 	s.mu.Lock()
-	e := s.deletePostLocked(u.ID, r.PathValue("pid"))
+	e := s.deletePostLocked(u.ID, r.PathValue("pid"), true)
 	s.mu.Unlock()
 	if e != nil {
 		writeAPIErr(w, e)
@@ -740,8 +742,25 @@ func (s *Server) EditAs(postID, message string) {
 func (s *Server) DeleteAs(postID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e := s.deletePostLocked("", postID); e != nil {
+	if e := s.deletePostLocked("", postID, true); e != nil {
 		panic("mmfake: DeleteAs: " + e.id)
+	}
+}
+
+// DeleteAsQuiet deletes postID in the store like DeleteAs, but without a
+// post_deleted broadcast: while the client's WS connection stays up, the
+// deletion is invisible to it — no live update — until the client itself
+// asks (CreatePost's root_id.app_error, or a thread reload's 404/GET).
+// (A since= resync would still see the store's own UpdateAt change; this
+// only suppresses the event, not the store mutation — don't combine it
+// with DropConnections in the same test.) Test-only: exercises a client
+// code path that must discover a deletion on its own, not one a WS event
+// already told it about.
+func (s *Server) DeleteAsQuiet(postID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.deletePostLocked("", postID, false); e != nil {
+		panic("mmfake: DeleteAsQuiet: " + e.id)
 	}
 }
 

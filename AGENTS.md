@@ -386,17 +386,40 @@
   all-or-nothing по тому же ключу: вложение из ответа не уйдёт в пост канала, и наоборот. Загрузка файла
   на сервер всё равно идёт с `channel_id` канала (сервер Mattermost не знает про "композер ответа") —
   корень влияет только на локальный список и `Take`. Лимит 10 вложений — на ключ, а не на канал целиком:
-  у канала и у каждого его треда — свои десять. `api.Service.onAttachments(srv, ch, root)` шлёт
-  `thread_changed` для `root != ""`, иначе `channel_changed`; события `attachments_changed`/
-  `attachment_refused` несут `root_id`. Desktop drop: цель несёт `data-root` (нет атрибута — `""`),
-  `internal/desktop/drop.go` читает его как и `data-srv`/`data-channel`. Черновики треда — `state.Server.
-  SetThreadDraft`, отдельная от `s.drafts` карта `s.threadDrafts` (+ `s.threadDraftOrder` для вытеснения),
+  у канала и у каждого его треда — свои десять. `api.Service.onAttachments(srv, ch, root)`, когда
+  прогресс ожидающего поста реально изменился, шлёт **и** `channel_changed`, **и** (при `root != ""`)
+  `thread_changed` — без CRT ответ виден и в ленте, и в панели, обоим нужно обновление (ревью Task 4,
+  раньше слался только один); события `attachments_changed`/`attachment_refused` несут `root_id`.
+  Desktop drop: цель несёт `data-root` (нет атрибута — `""`), `internal/desktop/drop.go` читает его как и
+  `data-srv`/`data-channel`. Черновики треда — `state.Server.
+  SetThreadDraft`, отдельная от `s.drafts` карта `s.threadDrafts` (+ `s.threadDraftOrder` для вытеснения —
+  порядок по времени последнего обновления, не вставки: вытесняется тот, кого дольше всего не трогали),
   ограничена `ThreadDraftCap` = 50, только в памяти (не в снимке), удаляется с уходом из канала (вместе
-  с его тредами), пустой текст — как обычный `SetDraft`. — `TestThreadAttachmentsAreNotSentToTheChannel`,
-  `TestAttachToUnknownRootIsRefused`, `TestThreadDraftsAreBounded`, `TestReplyIsCreatedWithRootID`,
-  `TestRootDeletedBeforeSendFailsThePending` (400 `api.post.create_post.root_id.app_error` между
-  открытием треда и отправкой ответа → pending «не отправлен» + тред помечается `RootDeleted`, как 404 на
-  `GET .../thread`), `TestNativeDropOnAThreadPanelAttachesItsPaths`.
+  с его тредами), пустой текст — как обычный `SetDraft`. `Worker.Retry`/`Discard` пересылают `Change` от
+  `state.RetryPending`/`DropPending`, которая несёт `Threads` так же, как `FailPending` — иначе повтор
+  или отмена ответа обновляли бы только (скрытую под CRT) ленту канала, не панель. — `TestThreadAttachmentsAreNotSentToTheChannel`,
+  `TestAttachToUnknownRootIsRefused`, `TestThreadDraftsAreBounded`, `TestThreadDraftEvictionIsByLastUpdate`,
+  `TestReplyIsCreatedWithRootID`, `TestRetryOfAReplyRefreshesTheThreadToo`, `TestDiscardOfAReplyRefreshesTheThreadToo`.
+- 400 `api.post.create_post.root_id.app_error` на `SendReply` — неоднозначный: сервер отдаёт его и когда
+  корень удалён, и на непричастную ошибку стора, и (в защитных целях) когда «корень» сам оказался
+  ответом (mm-10.11 `post.go:296,305` — одна и та же строка id на все три случая). Поэтому сам этот код
+  не помечает тред `RootDeleted` — только помечает `state.Server.MarkThreadStale` (без сдвига общей эпохи
+  кэша) и просит перечитать тред (`Worker.loadThread`); удалённым тред становится лишь по-настоящему,
+  если перечитывание само вернёт 404 (`FailThread` → `rootGoneLocked`, тот же путь, что и обычный опрос
+  панели) — успешный ответ вместо этого либо ничего не делает, либо (если «корень» и правда был ответом)
+  включает redirect на настоящий корень (Task 3). — `TestRootDeletedBeforeSendFailsThePending` (тред
+  «молчит» — `mmfake.Server.DeleteAsQuiet`, без `post_deleted` в WS; так проверяется именно этот путь, а
+  не обычный live-апдейт: ревью нашло, что со старым тестом `DeleteAs`'а хватало одного WS-события, и код
+  подтверждения можно было выключить без сбоя теста), `TestAmbiguousRootErrorConfirmsInsteadOfAssumingDeleted`.
+- Вложения композера треда, оставшегося без композера (уход из канала уносит с собой и его открытые/
+  недавние треды — `forgetChannelLocked`/`forgetThreadsLocked`), освобождаются: `state.Server.
+  TakeForgottenComposers` копит покинутые ключи (канал `Root:""` и каждый его тред), `Worker.
+  releaseForgottenComposers` разбирает их так же лениво, как `releaseFiles` — `TakeReleased` (при
+  следующем вызове `changed()`, не обязательно сразу), вызывая `attach.Store.ReleaseComposer` (снимает
+  всё, кроме `StateUploading` — та загрузка донашивается или падает сама). Тред, просто вытесненный из
+  LRU без ухода из канала, этим не покрыт (`docs/backlog.md`). — `TestTakeForgottenComposersOnChannelLeave`,
+  `TestReleaseComposerDropsStagedNotUploading`, `TestChannelLeaveReleasesForgottenComposers`.
+  Drop: `TestNativeDropOnAThreadPanelAttachesItsPaths`.
 - UI (Task 5): staged (pending, не отправленные) картинки превьюются с `/media/<srv>/staged/<id>`
   (`mediaURL(serverId, 'staged', id)`), **не** `feed`/`thumb` — те требуют настоящий id файла поста,
   которого у вложения ещё нет; `ImageTile` (`Attachments.tsx`) различает по `FileView.staged` и рендерит
