@@ -67,8 +67,10 @@ func TestDialHelloAndPosted(t *testing.T) {
 	hello := next(t, c)
 	assert.Equal(t, "hello", hello.Type)
 	assert.False(t, hello.Reset)
+	// The resume point advances only after the event is placed in Events()
+	// (so a resume never skips one we have not taken): wait for it.
+	require.Eventually(t, func() bool { return c.Resume().NextSeq == 1 }, 2*time.Second, time.Millisecond, "NextSeq after hello")
 	assert.NotEmpty(t, c.Resume().ConnectionID)
-	assert.Equal(t, int64(1), c.Resume().NextSeq)
 
 	f.PostAs("c-offtopic", "bob", "hi @alice")
 	ev := next(t, c)
@@ -78,7 +80,7 @@ func TestDialHelloAndPosted(t *testing.T) {
 	assert.Equal(t, "hi @alice", p.Post.Message)
 	assert.Equal(t, []string{"u-alice"}, p.Mentions)
 	assert.Equal(t, "c-offtopic", ev.Broadcast.ChannelID)
-	assert.Equal(t, int64(2), c.Resume().NextSeq)
+	require.Eventually(t, func() bool { return c.Resume().NextSeq == 2 }, 2*time.Second, time.Millisecond, "NextSeq after posted")
 }
 
 func TestDialUnauthorizedIsAuthError(t *testing.T) {
