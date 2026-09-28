@@ -631,6 +631,33 @@
   `internal/mmsync/saved_test.go`, `internal/api/saved_test.go`
   (`TestSetPostSavedSessionExpired`), `frontend/src/components/PostItem.test.tsx` («save button:
   not-saved and saved states, and the click it sends»).
+- Тема (theme brief 2026-09-28) — одна, Catppuccin Macchiato, без переключателя и без
+  `prefers-color-scheme`: 22 токена в `frontend/src/index.css` (`@theme`), плюс 4 сайдбар-токена
+  (`--color-sidebar-fg[-unread]`, `--color-sidebar-active-bg/-border`) и `--color-danger-fg`
+  (используется и для бейджа упоминаний — отдельный `mention-badge`-токен не понадобился).
+  Компонент никогда не хардкодит hex — единственное исключение технически неизбежно:
+  `frontend/index.html`'ный предзагрузочный `<style>` красит `html,body` до того, как загрузится
+  Tailwind-стиль (нет белой вспышки на старте), и должен вручную повторять `--color-app` — при
+  смене темы его тоже надо поправить, иначе стартовая заливка на миг не совпадает с настоящей
+  (так и было упущено при переходе на Macchiato, нашли скриншотом, не грепом). Свитчер тем или
+  синхронизация с темой сервера Mattermost — на будущее (`docs/backlog.md`).
+- Ширина сайдбара и панели треда — сплиттеры (`frontend/src/components/Splitter.tsx`, `role=
+  separator`, стрелки на 16 px, Home/End, двойной клик — сброс), сохраняются один раз на всё
+  приложение (не на сервер): `internal/store`'ная таблица `ui_prefs` (плоский key-value,
+  `Get/SetUIPref`) и биндинги `API.GetLayout/SetSidebarWidth/SetThreadWidth`. Во время
+  перетаскивания в React-состояние ничего не пишется — только CSS-переменная
+  (`--spk-sidebar-width`/`--spk-thread-width` на `document.documentElement`) через
+  `requestAnimationFrame`; коммит (в состояние и в БД) — один раз на `pointerup`/шаг
+  клавиатурой/двойной клик, не на каждый кадр. Границы (сайдбар 180–480 px, панель
+  320–min(800, 50vw), лента не уже 360 px) пересчитываются при ресайзе окна, но сам пересчёт не
+  сохраняется — тем самым виджет никогда не проваливается ниже своего минимума, но после
+  перезапуска на более широком окне вернётся к сохранённому (не урезанному) значению
+  (`docs/backlog.md`). Лишнего кода на анти-скачок ленты при ресайзе не потребовалось: у строк
+  ленты уже есть свой `ResizeObserver` (`v.measureElement`, `@tanstack/react-virtual`), а
+  перетаскивание сплиттера — не колёсный/тач-жест, так что `ScrollShift` не откладывает
+  компенсацию (см. «Компенсация ленты» выше) — компенсация уходит сразу в `scrollTop`, как и
+  без него. — `frontend/src/components/splitter.test.ts`, `Splitter.test.tsx`,
+  `internal/store/uiprefs_test.go`, `internal/api/layout_test.go`, `tests/e2e/layout.spec.ts`.
 
 ## Things that bite
 
