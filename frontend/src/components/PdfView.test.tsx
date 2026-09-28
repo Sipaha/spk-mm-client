@@ -41,27 +41,47 @@ const { default: PdfView } = await import('./PdfView')
 
 const file: FileView = { id: 'f-doc', name: 'doc.pdf', ext: 'pdf', size: 4096, mime: 'application/pdf' }
 
+// The ResizeObserver constructor's callback is captured so a test can fire
+// it manually (fix round 2's "resize re-fits" test) — jsdom never actually
+// observes real layout changes.
+let roCallback: (() => void) | null = null
 class ResizeObserverStub {
+  constructor(cb: () => void) {
+    roCallback = cb
+  }
   observe() {}
   disconnect() {}
 }
 
 // jsdom never computes real layout (clientWidth is 0 by default — the same
-// gotcha as Feed.test.tsx's offsetHeight/offsetWidth). Fixed at 148 so
-// fit-to-width lands on a round scale (page 1 is 100 CSS px wide at scale 1
-// in the mock below: (148 - 48) / 100 = 1.0 = "100%").
+// gotcha as Feed.test.tsx's offsetHeight/offsetWidth). Mutable (not a fixed
+// 148) so the resize test can change it and re-trigger the ResizeObserver
+// callback. Default 148 so fit-to-width lands on a round scale (page 1 is
+// 100 CSS px wide at scale 1 in the mock below: (148 - 48) / 100 = 1.0 =
+// "100%").
+let stubClientWidth = 148
 const savedClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+// jsdom doesn't implement Element.scrollTo (same gotcha as Feed.test.tsx's
+// scrollTo stub) — PdfView's scroll-anchor effect (fix round 2) calls it
+// whenever the on-screen scale changes, to stay on the same page.
+const scrollToSpy = vi.fn()
+const savedScrollTo = HTMLElement.prototype.scrollTo
 beforeAll(() => {
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub
-  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 148 })
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => stubClientWidth })
+  HTMLElement.prototype.scrollTo = scrollToSpy as unknown as typeof HTMLElement.prototype.scrollTo
 })
 afterAll(() => {
   if (savedClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', savedClientWidth)
+  HTMLElement.prototype.scrollTo = savedScrollTo
 })
 beforeEach(() => {
   setLocale('en')
   numPages = 5
   sizeForPage = () => ({ w: 100, h: 100 })
+  stubClientWidth = 148
+  roCallback = null
+  scrollToSpy.mockClear()
   getPage.mockClear()
   destroy.mockClear()
   vi.stubGlobal(
@@ -160,19 +180,20 @@ test('scrolling out of a page returns its canvas to the pool instead of allocati
   expect(laterCanvas).toBe(firstCanvas) // same DOM node, reused — not a fresh one
 })
 
-test("a page with a different aspect ratio than page 1 gets its own box and canvas size (fix round 1: real PDFs mix portrait/landscape)", async () => {
+test("fit mode: a landscape page fits its own width too, same as every other page — no page ever needs horizontal scroll (fix round 2, review of round 1's 11bc003)", async () => {
   numPages = 4
   sizeForPage = (i) => (i === 3 ? { w: 200, h: 50 } : { w: 100, h: 100 })
   const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
   await screen.findByText('1 / 4')
 
-  // Not yet measured pages (and page 1 itself) use page 1's square box.
+  // Not yet measured pages (and page 1 itself) use page 1's square box, fit
+  // to the container width (148 - 48 = 100).
   const page1Box = container.querySelector('[data-page="1"]') as HTMLElement
   expect(page1Box.style.width).toBe('100px')
   expect(page1Box.style.height).toBe('100px')
 
-  // Scroll far enough that page 3 (landscape, 200x50) enters the visible
-  // window and gets measured.
+  // Scroll far enough that page 3 (landscape, 200x50 natively) enters the
+  // visible window and gets measured.
   const scroller = container.querySelector('.overflow-auto') as HTMLElement
   Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 230 })
   await act(async () => {
@@ -180,18 +201,20 @@ test("a page with a different aspect ratio than page 1 gets its own box and canv
   })
   await waitFor(() => expect(getPage).toHaveBeenCalledWith(3))
 
-  // Its placeholder box is corrected to its own size, not page 1's — and the
-  // rendered canvas's own backing store matches that aspect ratio too (it
-  // always did; the bug was the CSS box around it stretching a 200x50
-  // bitmap to a 100x100 square via width:100%;height:100%).
+  // Fix round 1 fixed the box's *aspect ratio* (no longer stretched into
+  // page 1's box) but round 1's global scale still sized it at its own
+  // native dimensions (200x50) — 2x wider than the 100px container, forcing
+  // a horizontal scrollbar onto the whole scroller (review's regression).
+  // Fix round 2: fit to *its own* width (200 native -> scale 0.5), same as
+  // every other page, so its box width also matches the container exactly.
   await waitFor(() => {
     const box3 = container.querySelector('[data-page="3"]') as HTMLElement
-    expect(box3.style.width).toBe('200px')
-    expect(box3.style.height).toBe('50px')
+    expect(box3.style.width).toBe('100px')
+    expect(box3.style.height).toBe('25px') // 50 * 0.5, its own aspect preserved
   })
   const canvas3 = container.querySelector('[data-page="3"] canvas') as HTMLCanvasElement
-  expect(canvas3.width).toBe(200)
-  expect(canvas3.height).toBe(50)
+  expect(canvas3.width).toBe(100)
+  expect(canvas3.height).toBe(25)
 
   // The current-page counter is still correct with mixed sizes.
   expect(await screen.findByText('3 / 4')).toBeInTheDocument()
@@ -199,4 +222,76 @@ test("a page with a different aspect ratio than page 1 gets its own box and canv
   // Page 1's own box is untouched by another page's size.
   expect(page1Box.style.width).toBe('100px')
   expect(page1Box.style.height).toBe('100px')
+})
+
+test('manual zoom applies one uniform scale to every page, unlike fit mode (fix round 2)', async () => {
+  numPages = 4
+  sizeForPage = (i) => (i === 3 ? { w: 200, h: 50 } : { w: 100, h: 100 })
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 4')
+
+  // Measure page 3 (landscape) while still in fit mode.
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 230 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await waitFor(() => expect(getPage).toHaveBeenCalledWith(3))
+  await waitFor(() => expect((container.querySelector('[data-page="3"]') as HTMLElement).style.width).toBe('100px'))
+
+  // Back to page 1 (a known 100% fit scale) before switching to manual zoom.
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 0 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await screen.findByText('1 / 4')
+
+  fireEvent.keyDown(window, { code: 'Equal', ctrlKey: true })
+  await screen.findByText('125%')
+
+  // Manual zoom: the SAME 1.25 multiplier applies to each page's own native
+  // size — page 3 (native 200 wide) is now twice as wide as page 1 (native
+  // 100), not re-fit to match the container the way fit mode did.
+  const page1Box = container.querySelector('[data-page="1"]') as HTMLElement
+  const page3Box = container.querySelector('[data-page="3"]') as HTMLElement
+  expect(page1Box.style.width).toBe('125px') // 100 * 1.25
+  expect(page3Box.style.width).toBe('250px') // 200 * 1.25
+})
+
+test('resizing the pane re-fits every page and keeps the same current page (fix round 2)', async () => {
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  const page1Box = container.querySelector('[data-page="1"]') as HTMLElement
+  expect(page1Box.style.width).toBe('100px') // (148 - 48) / 100
+
+  stubClientWidth = 248 // the pane grew
+  await act(async () => {
+    roCallback?.()
+  })
+
+  await waitFor(() => expect(page1Box.style.width).toBe('200px')) // (248 - 48) / 100
+  expect(screen.getByText('1 / 5')).toBeInTheDocument() // stayed on the same page
+})
+
+test('switching between fit and manual zoom keeps the scroll anchored to the same page (fix round 2)', async () => {
+  numPages = 6
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 6')
+
+  // Scroll to page 4 (uniform 100px pages + 12px gap => offset[4] = 3*112 = 336).
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 336 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await screen.findByText('4 / 6')
+
+  scrollToSpy.mockClear() // ignore the mount-time/width-hydration call(s)
+  fireEvent.keyDown(window, { code: 'Equal', ctrlKey: true }) // switch to manual zoom (125%)
+  await screen.findByText('125%')
+
+  // Page 4's own offset at the new uniform 125% scale: 3 pages of
+  // (100*1.25 + 12) = 137 each = 411 — the anchor snaps there, not leaving
+  // scrollTop at its old (336) pixel value, which would now land elsewhere.
+  expect(scrollToSpy).toHaveBeenCalledWith({ top: 411 })
 })

@@ -75,11 +75,24 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   const onFailRef = useRef(onFail)
   onFailRef.current = onFail
 
-  const scale = base && fit && width ? clampScale((width - 48) / base.w) : zoom
+  // scaleFor: fix round 2 — in fit mode each page is fit to *its own*
+  // width, not a single scale derived from page 1 and applied to every
+  // page's box; a landscape page at page 1's scale would be ~41% wider
+  // than the pane, forcing a horizontal scrollbar onto the whole scroller
+  // (a CSS overflow container's scrollbar is governed by its widest
+  // child), even while looking at a page that itself fits fine. In manual
+  // zoom, one uniform scale applies to every page, unchanged.
+  function scaleFor(i: number): number {
+    const sz = naturalSizes[i] ?? base
+    if (fit && sz && width) return clampScale((width - 48) / sz.w)
+    return zoom
+  }
+  // The zoom % shown in fit mode is the *current* page's own scale.
+  const displayScale = scaleFor(current)
   // Kept in a ref so the mount-once keyboard/wheel handlers below can read
   // the scale actually on screen (fit or manual) without resubscribing.
-  const scaleRef = useRef(scale)
-  scaleRef.current = scale
+  const scaleRef = useRef(displayScale)
+  scaleRef.current = displayScale
 
   function takeCanvas(): HTMLCanvasElement {
     return pool.current.pop() ?? document.createElement('canvas')
@@ -147,21 +160,25 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
 
   const n = doc?.numPages ?? 0
 
-  // boxOf: a page's own CSS box at the current scale — its measured size
-  // once known (renderPage below records it the moment the page is
-  // fetched, before it's actually rendered), or page 1's as a placeholder
-  // until then. Never a single shared size for every page: a landscape
-  // page stretched into a portrait page's box would distort its bitmap and
-  // misalign the text layer over it (fix round 1).
+  // boxOf: a page's own CSS box — its measured size once known (renderPage
+  // below records it the moment the page is fetched, before it's actually
+  // rendered), or page 1's as a placeholder until then, at *that page's
+  // own* scale (scaleFor(i), fix round 2) — never a single shared size or
+  // a single shared scale for every page: either would distort a page's
+  // bitmap/text layer (fix round 1) or force it to overflow horizontally
+  // in fit mode (fix round 2).
   function boxOf(i: number): { w: number; h: number } {
     const sz = naturalSizes[i] ?? base
-    return sz ? { w: Math.round(sz.w * scale), h: Math.round(sz.h * scale) } : { w: 0, h: 0 }
+    if (!sz) return { w: 0, h: 0 }
+    const sc = scaleFor(i)
+    return { w: Math.round(sz.w * sc), h: Math.round(sz.h * sc) }
   }
 
   // layout: cumulative top offset and box height of every page, from
-  // boxOf — recomputed whenever a page's real size becomes known, the zoom
-  // changes, or the document (page count) changes. O(n) per change, which
-  // is cheap next to the cost of actually rendering a page.
+  // boxOf — recomputed whenever a page's real size becomes known, the fit
+  // pane width changes, the zoom changes, fit is toggled, or the document
+  // (page count) changes. O(n) per change, which is cheap next to the cost
+  // of actually rendering a page.
   const layout = useMemo(() => {
     const offsets: number[] = new Array(n + 1).fill(0) // 1-indexed
     const heights: number[] = new Array(n + 1).fill(0)
@@ -173,7 +190,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       y += h + GAP
     }
     return { offsets, heights }
-  }, [naturalSizes, base, scale, n])
+  }, [naturalSizes, base, fit, width, zoom, n])
 
   // Which pages are on screen: from scrollTop and each page's own real (or
   // placeholder) height — no longer a uniform-page-size assumption (fix
@@ -215,10 +232,27 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     for (const i of visible) {
       const s = map.get(i) ?? {}
       map.set(i, s)
-      if (s.scale === scale && s.canvas) continue
-      void renderPage(doc, i, s, scale)
+      const sc = scaleFor(i)
+      if (s.scale === sc && s.canvas) continue
+      void renderPage(doc, i, s, sc)
     }
-  }, [doc, visible, scale])
+  }, [doc, visible, fit, width, zoom, naturalSizes, base])
+
+  // Scroll anchor (fix round 2): whenever the scale actually on screen
+  // changes — fit toggled, manual zoom changed, or the pane resized (which
+  // re-fits every page) — keep the same page under the top of the
+  // scroller, rather than leaving scrollTop at its old pixel value (which
+  // would land on a different page once every page's height has changed).
+  // Skipped on mount (prevAnchorKey starts null): nothing to anchor to yet.
+  const prevAnchorKey = useRef<string | null>(null)
+  useEffect(() => {
+    const key = `${fit}|${zoom}|${width}`
+    const el = scroller.current
+    if (el && n && prevAnchorKey.current !== null && prevAnchorKey.current !== key) {
+      el.scrollTo({ top: layout.offsets[current] ?? 0 })
+    }
+    prevAnchorKey.current = key
+  }, [fit, zoom, width])
 
   function zoomBy(factor: number): void {
     setFit(false)
@@ -276,7 +310,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
         <button type="button" aria-label={t('pdf.zoomOut')} className={btn} onClick={() => zoomBy(1 / ZOOM_STEP)}>
           −
         </button>
-        <span>{t('pdf.zoomPercent', { p: String(Math.round(scale * 100)) })}</span>
+        <span>{t('pdf.zoomPercent', { p: String(Math.round(displayScale * 100)) })}</span>
         <button type="button" aria-label={t('pdf.zoomIn')} className={btn} onClick={() => zoomBy(ZOOM_STEP)}>
           +
         </button>
