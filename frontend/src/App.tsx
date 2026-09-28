@@ -219,7 +219,7 @@ export function App() {
           <Splitter
             value={sidebarWidth}
             {...sidebarBounds(windowWidth, threadOpen ? threadWidth : 0)}
-            defaultValue={sidebarWidth}
+            defaultValue={SIDEBAR_DEFAULT}
             sign={1}
             cssVar="--spk-sidebar-width"
             label={t('layout.resizeSidebar')}

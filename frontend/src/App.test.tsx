@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 import type { ApiEvent, ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
 import { setLocale } from './i18n'
@@ -27,6 +27,9 @@ vi.mock('./api/client', async (orig) => {
     client: {
       ...real.httpClient,
       appInfo: vi.fn().mockResolvedValue({ format_locale: '' }),
+      getLayout: vi.fn().mockResolvedValue({ sidebar_width: 0, thread_width: 0 }),
+      setSidebarWidth: vi.fn().mockResolvedValue(undefined),
+      setThreadWidth: vi.fn().mockResolvedValue(undefined),
       listServers: vi.fn(async () => h.list),
       selectServer: vi.fn().mockResolvedValue(undefined),
       setFocused: vi.fn().mockResolvedValue(undefined),
@@ -86,6 +89,28 @@ test('a signed-in server shows its sidebar and the selected channel', async () =
   render(<App />)
   expect(await screen.findByRole('heading', { name: /Town Square/ })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Town Square/ })).toHaveAttribute('aria-current', 'true')
+})
+
+// Fix round 1 (coordinator review, theme-report.md): double-clicking the
+// sidebar splitter must reset it to the built-in constant (256px), not to
+// whatever width it currently has — a previous version passed the current
+// width itself as the "default", making the reset a no-op.
+test('double-clicking the sidebar splitter resets it to the built-in default, not its current width', async () => {
+  const { client } = await import('./api/client')
+  // 300: inside the sidebar's bounds on jsdom's default window width (768px)
+  // with no thread panel open, so it lands unclamped — the point is that
+  // it's not 256, not the exact number.
+  vi.mocked(client.getLayout).mockResolvedValueOnce({ sidebar_width: 300, thread_width: 0 })
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  const sep = await screen.findByRole('separator', { name: 'Resize sidebar' })
+  await waitFor(() => expect(sep).toHaveAttribute('aria-valuenow', '300'))
+
+  fireEvent.dblClick(sep)
+
+  expect(sep).toHaveAttribute('aria-valuenow', '256')
+  expect(client.setSidebarWidth).toHaveBeenCalledWith(256)
 })
 
 test('needs_reauth keeps the chat and offers the sign-in form', async () => {

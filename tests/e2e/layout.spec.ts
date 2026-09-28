@@ -36,8 +36,11 @@ test('keyboard steps and double-click reset the sidebar splitter', async ({ page
   await page.keyboard.press('ArrowLeft')
   await expect(sep).toHaveAttribute('aria-valuenow', String(initial))
 
+  // The built-in default (256px), not whatever the sidebar currently is —
+  // fix round 3 (coordinator review): a previous version passed the current
+  // width itself as the "default", making this a no-op.
   await sep.dblclick()
-  await expect(sep).toHaveAttribute('aria-valuenow', String(initial)) // sidebar's "default" is its current width
+  await expect(sep).toHaveAttribute('aria-valuenow', '256')
 
   await page.keyboard.press('Home')
   await expect(sep).toHaveAttribute('aria-valuenow', await sep.getAttribute('aria-valuemin'))
