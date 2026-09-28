@@ -256,13 +256,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   }
 
   // Fetches another page when the current one still doesn't fill the
-  // viewport (e.g. a short first page). Runs after every rows change, not
-  // just the first mount, so the feed can't get stuck under-filled with
-  // has_more still true after one page wasn't enough.
+  // viewport (e.g. a short first page), or when the feed is still within
+  // NEAR_TOP of the top — onScroll's own rule. Runs after every rows change,
+  // not just the first mount, so the feed can't get stuck with has_more
+  // still true: under-filled after one page wasn't enough, or left at
+  // scrollTop 0 by a page whose anchor restore could not move it (e2e caught
+  // it; at the top neither scrollTo(0) nor the wheel fires another scroll
+  // event, so onScroll would never ask again). A restore that worked puts
+  // the feed a whole page below the top, so this doesn't cascade.
   const fillViewportIfShort = () => {
     frame('fill', () => {
       const el = scroller.current
-      if (el && data.has_more && el.scrollHeight <= el.clientHeight) void loadOlder()
+      if (el && data.has_more && (el.scrollHeight <= el.clientHeight || el.scrollTop < NEAR_TOP)) void loadOlder()
     })
   }
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
@@ -104,6 +104,46 @@ test('pickAnchor: the topmost post row still (partly) visible below the viewport
   expect(pickAnchor(boxes, viewTop)).toEqual({ key: 'b', offset: -16 })
   expect(pickAnchor([{ key: 'a', top: 20, bottom: 60 }], viewTop)).toBeNull() // nothing on screen
   expect(pickAnchor([], viewTop)).toBeNull()
+})
+
+// A history page that lands while the feed is still at the very top (its
+// anchor restore could not move it — e2e "history loads up to the first
+// message" caught it stuck at scrollTop 0 with has_more) must not wait for a
+// scroll event: at scrollTop 0 another scrollTo(0) or wheel-up fires none,
+// so the next page would never load. The rule is onScroll's own (within
+// NEAR_TOP of the top with more history → load), applied after the rows
+// change too.
+test('a page that lands with the feed still at the top loads the next one without a scroll event', async () => {
+  const onLoadOlder = vi.fn().mockResolvedValue(true)
+  const p = props({ has_more: true }, onLoadOlder)
+  // jsdom has no layout: the scroller's geometry is set by hand, as it is
+  // after the first rows in a browser — taller than the viewport (not the
+  // "page does not fill the viewport" case) and scrolled to its end.
+  let top = 4400
+  const geometry = {
+    scrollHeight: { configurable: true, get: () => 5000 },
+    clientHeight: { configurable: true, get: () => 600 },
+    scrollTop: { configurable: true, get: () => top, set: (v: number) => void (top = v) },
+  }
+  const { rerender } = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  Object.defineProperties(log, geometry) // scrollTo is a no-op here: the restore cannot move the feed
+  await new Promise((r) => setTimeout(r, 50)) // the mount's frames
+  onLoadOlder.mockClear()
+
+  top = 0 // the user reaches the top
+  fireEvent.scroll(log)
+  await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(1))
+
+  // The page lands; the feed is still at scrollTop 0 and no scroll event follows.
+  rerender(<Feed {...p} data={{ ...p.data, posts: [P('o1', 'bob', 90), P('o2', 'carol', 80), ...p.data.posts] }} />)
+  await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2))
+
+  // Away from the top (a restore that worked), a new page asks for nothing more.
+  top = 2000
+  rerender(<Feed {...p} data={{ ...p.data, posts: [P('o0', 'bob', 95), P('o1', 'bob', 90), P('o2', 'carol', 80), ...p.data.posts] }} />)
+  await new Promise((r) => setTimeout(r, 50))
+  expect(onLoadOlder).toHaveBeenCalledTimes(2)
 })
 
 test('the history row keeps its box while loading: the label is only hidden, never removed', async () => {
