@@ -5,7 +5,7 @@ import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { mediaURL, useLoadFailure } from '../media'
-import { IconFile } from './icons'
+import { IconClose, IconFile } from './icons'
 
 // isImage: whether a staged attachment's own mime is worth trying as a
 // picture — /media/<srv>/staged/<id> only ever serves raster types
@@ -85,9 +85,9 @@ function Chip({
         aria-label={t('attach.remove', { name: a.name })}
         title={t('attach.remove', { name: a.name })}
         onClick={onRemove}
-        className="shrink-0 rounded px-1 text-fg-muted hover:bg-hover hover:text-fg"
+        className="flex shrink-0 items-center justify-center rounded px-1 text-fg-muted hover:bg-hover hover:text-fg"
       >
-        ×
+        <IconClose />
       </button>
     </div>
   )

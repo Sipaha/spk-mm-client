@@ -94,7 +94,7 @@ export function Sidebar(p: Props) {
           <div className="truncate font-semibold text-fg">{p.server.name}</div>
           <div className="truncate text-xs text-fg-subtle">@{p.server.username}</div>
         </div>
-        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="flex items-center justify-center rounded px-2 hover:bg-hover" onClick={() => setMenu(!menu)}>
+        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="flex h-8 w-8 shrink-0 items-center justify-center rounded hover:bg-hover" onClick={() => setMenu(!menu)}>
           <IconMore />
         </button>
         {menu && (

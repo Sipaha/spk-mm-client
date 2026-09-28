@@ -4,6 +4,7 @@ import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
+import { IconChevronLeft, IconChevronRight } from './icons'
 import { useTextFile } from './textFile'
 
 const SEARCH_DEBOUNCE = 150
@@ -210,9 +211,9 @@ export function TextView({
               title={t('viewer.search.prev')}
               disabled={matches.length === 0}
               onClick={goPrev}
-              className="rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
+              className="flex items-center justify-center rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
             >
-              ‹
+              <IconChevronLeft />
             </button>
             <button
               type="button"
@@ -220,9 +221,9 @@ export function TextView({
               title={t('viewer.search.next')}
               disabled={matches.length === 0}
               onClick={goNext}
-              className="rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
+              className="flex items-center justify-center rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
             >
-              ›
+              <IconChevronRight />
             </button>
           </>
         )}

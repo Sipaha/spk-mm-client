@@ -56,7 +56,7 @@ test('a failed upload shows a localized error and Retry, which calls onRetry wit
   expect(onRetry).toHaveBeenCalledWith('a9')
 })
 
-test('the × button calls onRemove with its id; it has an accessible name', async () => {
+test('the remove button calls onRemove with its id; it has an accessible name', async () => {
   const user = userEvent.setup()
   const onRemove = vi.fn()
   render(<AttachmentsTray serverId={1} items={[av({ id: 'a2' })]} onRemove={onRemove} onRetry={() => {}} />)

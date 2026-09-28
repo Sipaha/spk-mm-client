@@ -6,7 +6,7 @@ import { isShortcut } from '../keyboard'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
-import { IconClose } from './icons'
+import { IconChevronLeft, IconChevronRight, IconClose } from './icons'
 import { MarkdownView } from './MarkdownView'
 import { MediaPlayer } from './MediaPlayer'
 import { TextView } from './TextView'
@@ -123,7 +123,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       onClose()
     }
   }
-  const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
+  const nav = 'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded-full bg-black/50 px-3 py-1 text-white hover:bg-black/70'
   const kind = fileKind(file)
   const showImage = kind === 'image' && src && !failedIds.has(file.id)
   const isMarkdown = kind === 'markdown'
@@ -191,7 +191,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4" onClick={closeOnBackdrop}>
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.prev')} className={`${nav} left-3`} onClick={() => onIndex((index - 1 + files.length) % files.length)}>
-            ‹
+            <IconChevronLeft size={24} />
           </button>
         )}
         {kind === 'image' ? (
@@ -235,7 +235,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
         )}
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.next')} className={`${nav} right-3`} onClick={() => onIndex((index + 1) % files.length)}>
-            ›
+            <IconChevronRight size={24} />
           </button>
         )}
       </div>
