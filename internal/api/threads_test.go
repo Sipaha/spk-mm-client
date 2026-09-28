@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/spk/spk-mm-client/internal/mmfake"
 )
 
 func TestThreadThroughService(t *testing.T) {
@@ -146,4 +148,41 @@ func TestSendReplySessionExpired(t *testing.T) {
 	require.NoError(t, f.svc.SendReply(ctx, id, "c-town", root, "after revoke", nil), "the pending send itself never fails synchronously")
 	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "the reply's 401 did not end the session")
 	assert.Equal(t, CodeSessionExpired, codeOf(f.svc.SendReply(ctx, id, "c-town", root, "again", nil)), "fails fast, no network")
+}
+
+// Review focus 4: the server in the background (not on screen) never marks
+// its open thread read, even while the app window is focused; switching to
+// it does.
+func TestThreadReadGoesOnlyToTheActiveServer(t *testing.T) {
+	f := newChatFixture(t)
+	fakeA, fakeB := mmfake.Start(mmfake.Options{CRT: true}), mmfake.Start(mmfake.Options{CRT: true})
+	t.Cleanup(fakeA.Close)
+	t.Cleanup(fakeB.Close)
+	a, b := f.signIn(fakeA, "alice"), f.signIn(fakeB, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.loaded(a, "c-town") && f.loaded(b, "c-town") }, "prefetch")
+	root := fakeB.SeedThread("c-town", "alice", 2)
+
+	_, err := f.svc.OpenChannel(ctx, b, "c-town")
+	require.NoError(t, err)
+	_, err = f.svc.OpenChannel(ctx, a, "c-town") // A is on screen
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetFocused(ctx, true))
+	_, err = f.svc.OpenThread(ctx, b, "c-town", root)
+	require.NoError(t, err)
+	f.eventually(func() bool {
+		v, err := f.svc.GetThread(ctx, b, root)
+		return err == nil && v.Loaded && len(v.Posts) == 3
+	}, "B's thread loaded")
+	fakeB.ReplyAs("c-town", root, "bob", "on the background server")
+	f.eventually(func() bool {
+		v, _ := f.svc.GetThread(ctx, b, root)
+		return len(v.Posts) == 4
+	}, "the reply")
+	require.Never(t, func() bool { return fakeB.ThreadReadTries() > 0 }, 400*time.Millisecond, 20*time.Millisecond,
+		"B is not on screen: its thread is not read")
+
+	require.NoError(t, f.svc.SelectServer(ctx, b))
+	f.eventually(func() bool { return len(fakeB.ThreadReads()) >= 1 }, "switching to B reads its open thread")
+	assert.Zero(t, fakeA.ThreadReadTries())
 }

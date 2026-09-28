@@ -104,8 +104,9 @@ func TestFakeChurnPostsAndSwitchesChannels(t *testing.T) {
 		defer close(done)
 		runFakeChurn(ctx, fakeChurn{
 			every: time.Millisecond, fakes: []*mmfake.Server{fake}, serverIDs: []int64{7}, channels: 3,
-			open: func(id int64, ch string) {
+			open: func(id int64, ch, root string) {
 				assert.Equal(t, int64(7), id)
+				assert.Empty(t, root, "the churn opens channels, not threads")
 				mu.Lock()
 				opened = append(opened, ch)
 				mu.Unlock()

@@ -178,6 +178,35 @@
   `TestLateThreadPageAfterResetIsIgnored`, `TestForgottenChannelDropsItsThreads`,
   `TestStoppedWorkerLetsTheThreadsGo`, `TestOlderRepliesStopAtTheCap`,
   `TestThreadClosedWhilePageInFlightIsTrimmed`, `TestOlderPageAppliesOnlyToItsCursor`.
+- Тред при CRT помечается прочитанным на сервере (`PUT …/threads/{root}/read/{ts}`) только пока
+  его панель открыта над его каналом, окно в фокусе (фокус есть только у активного сервера) и мы на
+  него подписаны: `state.Server.ThreadReadTarget` — единственная проверка, `Worker.readThread` —
+  один запрос на тред за раз с перепроверкой, без автоматических повторов. Поводы — открытие,
+  фокус, чужой ответ, `thread_updated` открытого треда, пришедшая страница (часы сервера могут
+  быть впереди: `ts = max(сейчас, новейший ответ)`); повтор без нового чужого ответа не шлётся.
+  404 (не подписан) — больше не слать в этом открытии, пока не придёт свой ответ или
+  `thread_updated` по треду; иначе запрос на каждый ответ. Без CRT треды отдельно не читаются. —
+  `TestThreadReadOnlyWhileOpenAndFocused`, `TestThreadReadGoesOnlyToTheActiveServer`,
+  `TestThreadIsNotReadWithoutCRT`, `TestThreadReadNotFollowingIsNotRepeated`, `TestThreadReadTarget`.
+- Упоминания в тредах (CRT, `internal/state/threadcounts.go`) — итоги по командам (`""` — DM/GM)
+  читаются в `fetchMeta` и двигаются дельтами `unread_mentions − previous_unread_mentions`; ключ —
+  команда канала события, не `broadcast.team_id` (у `thread_read_changed` это команда, через
+  которую читали, — у DM-треда не `""`). Событие с дельтой, пришедшее под guard обновления
+  (`Bootstrap` → `ClearGuard`), может уже быть в итогах: не прибавляется, а вызывает
+  перечитывание итогов (`Effects.RereadThreadCounts`), которое заменяет их целиком, только если за
+  время запроса их не сдвинуло другое событие (`ThreadCountsToken`; третья попытка — как есть,
+  но не поверх более свежего `Bootstrap`). Так же — `thread_read_changed` без `thread_id` и
+  включение CRT; выключение CRT итоги очищает. Ответ `PUT read` счётчики не трогает (иначе
+  двойной учёт с событием). Поднимают бейдж сервера и строку команды, не строку канала;
+  непрочитанные треды без упоминаний ничего не поднимают. Итоги только в памяти, одно число на
+  команду. — `TestThreadMentionsSurviveRefreshWithoutDoubleCount`, `TestAllThreadsReadRereadsTotals`,
+  `TestThreadMentionsVanishWhenCRTTurnsOff`, `TestDMThreadMentionsCountOnce`,
+  `TestThreadMentionsUnderGuardAreRereadNotCounted`, `TestThreadCountsRereadInstallsOnlyWhenSettled`.
+- Уведомление об ответе (оба режима) несёт `root_id`, его ID — `mm-<srv>-<канал>-<корень>`
+  (серия ответов треда склеивается отдельно от канала); клик шлёт `open_channel {server_id,
+  channel_id, root_id}`; CRT-ответ в треде, открытом в панели, при фокусе не уведомляет
+  (`thread_is_open`). — `TestNotificationText`, `TestNotificationClickOpensChannel`, `TestClickTarget`,
+  `TestDecide`.
 - Чужие статусы присутствия приходят только опросом (`status_change` рассылается только самому
   пользователю, не наблюдателям) — опрос идёт по участникам DM и авторам открытого канала, а
   не по всем пользователям сразу. — `TestStatusesArePolledOnLiveAndOnOpenChannel`,

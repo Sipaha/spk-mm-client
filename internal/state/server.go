@@ -39,6 +39,12 @@ type Bootstrap struct {
 	// CategoriesFailed: teams whose categories could not be read; they keep
 	// the categories held so far instead of being blanked.
 	CategoriesFailed []string
+	// ThreadMentions: unread mentions in followed threads by team ("": the
+	// DM/GM threads) — CRT only, nil without it (threadcounts.go).
+	// ThreadMentionsFailed: CRT is on but they could not be read; the ones
+	// held so far are kept (like CategoriesFailed).
+	ThreadMentions       map[string]int64
+	ThreadMentionsFailed bool
 }
 
 type Window struct {
@@ -116,6 +122,15 @@ type Server struct {
 	// threadRedirect: the last thread opened by a reply's id → its root's
 	// (RedirectThread); ThreadView resolves the former to the latter.
 	threadRedirect [2]string
+	// openRead: the server read state of the open thread (ThreadReadTarget).
+	openRead threadRead
+
+	// Thread mention totals (threadcounts.go): by team, "" for DM/GM; CRT
+	// only, never in the snapshot.
+	threadMentions map[string]int64
+	threadGuard    bool   // set by Bootstrap until ClearGuard: events may be in the totals
+	threadCountsN  uint64 // bumped by every thread count event (a reread in flight is unsettled)
+	threadCountsAt uint64 // bumped by Bootstrap and CRT switches (a reread in flight is outdated)
 
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8
@@ -202,6 +217,7 @@ func (s *Server) Bootstrap(b Bootstrap) (crtChanged bool) {
 		s.nav.TeamID = s.teams[0].ID
 	}
 	s.dirty.meta = true
+	s.bootstrapThreadCountsLocked(b)
 	return held && wasCRT != s.crtLocked()
 }
 
@@ -281,17 +297,40 @@ func (s *Server) prefLocked(cat, name, def string) string {
 
 // crtLocked mirrors the webapp's isCollapsedThreadsEnabled.
 func (s *Server) crtLocked() bool {
-	switch s.cfg.CollapsedThreads {
+	return crtOf(s.cfg.CollapsedThreads, func() (string, bool) {
+		v, ok := s.prefs[prefKey{"display_settings", "collapsed_reply_threads"}]
+		return v, ok
+	})
+}
+
+// CRTEnabled is crtLocked for a metadata read not applied yet (the worker
+// decides whether to read the thread totals with it).
+func CRTEnabled(cfg Config, prefs []model.Preference) bool {
+	return crtOf(cfg.CollapsedThreads, func() (string, bool) {
+		for _, p := range prefs {
+			if p.Category == "display_settings" && p.Name == "collapsed_reply_threads" {
+				return p.Value, true
+			}
+		}
+		return "", false
+	})
+}
+
+func crtOf(mode string, pref func() (string, bool)) bool {
+	switch mode {
 	case "", "disabled":
 		return false
 	case "always_on":
 		return true
 	}
-	def := "off"
-	if s.cfg.CollapsedThreads == "default_on" {
-		def = "on"
+	v, ok := pref()
+	if !ok {
+		v = "off"
+		if mode == "default_on" {
+			v = "on"
+		}
 	}
-	return s.prefLocked("display_settings", "collapsed_reply_threads", def) == "on"
+	return v == "on"
 }
 
 func (s *Server) nameFormatLocked() string {
@@ -370,7 +409,9 @@ func (s *Server) excludedFromSumsLocked(c *Chan) bool {
 }
 
 // Badge sums mentions across the server, skipping muted and archived
-// channels and DMs with a deactivated partner (the webapp's getUnreadStatus).
+// channels and DMs with a deactivated partner (the webapp's getUnreadStatus),
+// plus — under CRT — the mentions in followed threads of every team and of
+// the DM/GMs (threadcounts.go). Unread threads without a mention add nothing.
 func (s *Server) Badge() Badge {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -382,6 +423,14 @@ func (s *Server) Badge() Badge {
 		u, m := s.unreadLocked(c)
 		b.Unread = b.Unread || u
 		b.Mentions += m
+	}
+	if n := s.threadMentionsLocked(""); n > 0 {
+		b.Unread, b.Mentions = true, b.Mentions+n
+	}
+	for _, t := range s.teams {
+		if n := s.threadMentionsLocked(t.ID); n > 0 {
+			b.Unread, b.Mentions = true, b.Mentions+n
+		}
 	}
 	return b
 }

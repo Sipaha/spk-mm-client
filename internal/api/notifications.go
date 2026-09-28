@@ -21,6 +21,8 @@ type Notification struct {
 	Body      string `json:"body"`
 	ServerID  int64  `json:"server_id"`
 	ChannelID string `json:"channel_id"`
+	// RootID: a reply's thread — the click opens it after the channel.
+	RootID string `json:"root_id,omitempty"`
 }
 
 // Notifier shows a notification; it may block (D-Bus), the service calls it
@@ -54,10 +56,16 @@ func notificationFor(serverID int64, c state.NotifyCandidate) Notification {
 	if c.Channel.Type != model.ChannelDirect {
 		body = sender + ": " + body
 	}
-	return Notification{
+	n := Notification{
 		ID: fmt.Sprintf("mm-%d-%s", serverID, c.Post.ChannelID), Title: c.ChannelName,
 		Body: truncateRunes(body, notifyBodyRunes), ServerID: serverID, ChannelID: c.Post.ChannelID,
 	}
+	if r := c.Post.RootID; r != "" {
+		// A reply (either mode) opens its thread; a thread's series folds
+		// apart from its channel's (notifyQueue keys by ID).
+		n.ID, n.RootID = n.ID+"-"+r, r
+	}
+	return n
 }
 
 func postText(p model.Post) string {

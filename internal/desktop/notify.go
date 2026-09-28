@@ -121,8 +121,9 @@ func (n *notifier) test() {
 	})
 }
 
-// Notify implements api.Notifier: chat notifications carry the channel to
-// open on click; the same ID replaces the channel's previous notification.
+// Notify implements api.Notifier: chat notifications carry the channel (and
+// a reply's thread) to open on click; the same ID replaces the channel's —
+// or the thread's — previous notification.
 // It never blocks: the D-Bus call runs on the notifier's sender goroutine.
 func (n *notifier) Notify(m api.Notification) {
 	if !n.available.Load() {
@@ -131,7 +132,7 @@ func (n *notifier) Notify(m api.Notification) {
 	}
 	n.send(notifications.NotificationOptions{
 		ID: m.ID, Title: m.Title, Body: m.Body,
-		Data: map[string]any{"server_id": m.ServerID, "channel_id": m.ChannelID},
+		Data: map[string]any{"server_id": m.ServerID, "channel_id": m.ChannelID, "root_id": m.RootID},
 	})
 }
 

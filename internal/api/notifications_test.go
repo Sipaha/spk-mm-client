@@ -25,6 +25,13 @@ func TestNotificationText(t *testing.T) {
 	n := notificationFor(7, candidate(model.ChannelOpen, "Off-Topic", "bob", "hi  @alice\n\nsecond line"))
 	assert.Equal(t, Notification{ID: "mm-7-c1", Title: "Off-Topic", Body: "bob: hi @alice second line", ServerID: 7, ChannelID: "c1"}, n)
 
+	// A reply (with or without CRT) opens its thread; a thread's series is
+	// folded apart from its channel's.
+	r := candidate(model.ChannelOpen, "Off-Topic", "bob", "in the thread")
+	r.Post.RootID = "root1"
+	assert.Equal(t, Notification{ID: "mm-7-c1-root1", Title: "Off-Topic", Body: "bob: in the thread", ServerID: 7, ChannelID: "c1", RootID: "root1"},
+		notificationFor(7, r))
+
 	dm := notificationFor(7, candidate(model.ChannelDirect, "bob", "bob", "ping"))
 	assert.Equal(t, "bob", dm.Title)
 	assert.Equal(t, "ping", dm.Body, "a DM body has no sender prefix")

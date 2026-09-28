@@ -253,7 +253,7 @@ func (s *Service) onNotify(id int64, c state.NotifyCandidate) {
 		UserNotify: c.Me.NotifyProps, MemberNotify: c.Member.NotifyProps,
 		Status: c.Status.Status, DNDEndSec: c.Status.DNDEndTime, NowMs: time.Now().UnixMilli(),
 		Post: c.Post, ChannelType: c.Channel.Type, Mentions: c.Mentions, Followers: c.Followers,
-		CRT: c.CRT, Focused: c.Focused, ActiveChannelID: c.Active,
+		CRT: c.CRT, Focused: c.Focused, ActiveChannelID: c.Active, ActiveThreadID: c.ActiveThread,
 	})
 	if !ok {
 		slog.Debug("notification skipped", "srv", id, "channel", c.Post.ChannelID, "reason", why)
@@ -272,7 +272,8 @@ func (s *Service) deliver(n Notification) {
 }
 
 // NotificationClicked asks the UI to open the channel of a clicked
-// notification (the desktop layer also raises the window).
-func (s *Service) NotificationClicked(serverID int64, channelID string) {
-	s.emit(EventOpenChannel, map[string]any{"server_id": serverID, "channel_id": channelID})
+// notification and, for a reply (rootID != ""), its thread after it (the
+// desktop layer also raises the window).
+func (s *Service) NotificationClicked(serverID int64, channelID, rootID string) {
+	s.emit(EventOpenChannel, map[string]any{"server_id": serverID, "channel_id": channelID, "root_id": rootID})
 }

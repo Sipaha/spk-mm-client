@@ -227,12 +227,10 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			var in struct {
 				ServerID  int64  `json:"server_id"`
 				ChannelID string `json:"channel_id"`
-				// RootID: thread-open binding lands in Task 5; accepted (and
-				// ignored) here now so e2e callers can send it early.
-				RootID string `json:"root_id"`
+				RootID    string `json:"root_id"` // a reply's notification: its thread
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			svc.NotificationClicked(in.ServerID, in.ChannelID)
+			svc.NotificationClicked(in.ServerID, in.ChannelID, in.RootID)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		})
 		tm.HandleFunc("POST /api/_test/fake/post", withFake(func(w http.ResponseWriter, r *http.Request) {

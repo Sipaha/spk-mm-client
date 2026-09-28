@@ -144,7 +144,7 @@ const (
 	EventOpenExternal   = "open_external"   // payload: url — browser mode opens it in a new tab
 	EventSidebarChanged = "sidebar_changed" // payload: server_id
 	EventChannelChanged = "channel_changed" // payload: server_id, channel_id
-	EventOpenChannel    = "open_channel"    // payload: server_id, channel_id — a notification was clicked
+	EventOpenChannel    = "open_channel"    // payload: server_id, channel_id, root_id ("" or the reply's thread to open after the channel) — a notification was clicked
 	// EventThreadChanged: a cached thread's view changed (loaded, a reply,
 	// an edit, a reaction…). Payload: server_id, root_id; coalesced per
 	// thread.

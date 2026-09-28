@@ -89,6 +89,26 @@ func TestDecide(t *testing.T) {
 			in.Followers = []string{"me"}
 		}, true, ""},
 		{"focused on this channel", func(in *Input) { in.ChannelType = "D"; in.Focused = true; in.ActiveChannelID = "c" }, false, "channel_is_open"},
+		{"CRT reply in the thread open in the panel", func(in *Input) {
+			in.ChannelType, in.CRT, in.Post.RootID = "D", true, "r"
+			in.Focused, in.ActiveChannelID, in.ActiveThreadID = true, "c", "r"
+		}, false, "thread_is_open"},
+		{"CRT reply in another thread than the open one", func(in *Input) {
+			in.ChannelType, in.CRT, in.Post.RootID = "D", true, "r"
+			in.Focused, in.ActiveChannelID, in.ActiveThreadID = true, "c", "other"
+		}, true, ""},
+		{"CRT reply, its channel open but no thread", func(in *Input) {
+			in.ChannelType, in.CRT, in.Post.RootID = "D", true, "r"
+			in.Focused, in.ActiveChannelID = true, "c"
+		}, true, ""},
+		{"CRT reply in the open thread, window not focused", func(in *Input) {
+			in.ChannelType, in.CRT, in.Post.RootID = "D", true, "r"
+			in.ActiveChannelID, in.ActiveThreadID = "c", "r"
+		}, true, ""},
+		{"reply without CRT, its channel open", func(in *Input) {
+			in.ChannelType, in.Post.RootID = "D", "r"
+			in.Focused, in.ActiveChannelID = true, "c"
+		}, false, "channel_is_open"},
 		{"not focused on this channel", func(in *Input) { in.ChannelType = "D"; in.ActiveChannelID = "c" }, true, ""},
 		{"focused elsewhere", func(in *Input) { in.ChannelType = "D"; in.Focused = true; in.ActiveChannelID = "other" }, true, ""},
 		{"no user props → level all", func(in *Input) { in.UserNotify = nil }, true, ""},

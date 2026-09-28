@@ -187,9 +187,12 @@ type Worker struct {
 	metaDue     chan struct{} // debounced metaReq, served by the session's event loop
 	statusDue   chan struct{} // a presence poll is wanted soon
 	queue       *fetchQueue
-	viewing     sync.Map // channel id → in-flight view
-	threadLoads sync.Map // root id → in-flight thread load (loadThread)
-	threadAgain sync.Map // root id → a load was asked for while one ran
+	viewing     sync.Map    // channel id → in-flight view
+	threadLoads sync.Map    // root id → in-flight thread load (loadThread)
+	threadAgain sync.Map    // root id → a load was asked for while one ran
+	threadReads sync.Map    // root id → in-flight server read (readThread)
+	countsBusy  atomic.Bool // a reread of the thread mention totals runs
+	countsAgain atomic.Bool // one was asked for while it ran
 	reactMu     sync.Mutex
 	reactPairs  map[string]*reactPair // post/emoji → our reaction being sent or waiting for a retry
 	reactPoke   chan struct{}         // a pair started waiting: reactLoop re-arms its timer
@@ -767,6 +770,21 @@ func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool
 	if b.Teams, err = w.rc.MyTeams(ctx); err != nil {
 		return b, false, err
 	}
+	if state.CRTEnabled(b.Config, b.Prefs) {
+		// Events held meanwhile are not counted on top of these (the
+		// guard, state/threadcounts.go). A failure keeps the totals held so
+		// far — except a dead session or our own deadline, as for categories.
+		if b.ThreadMentions, err = w.fetchThreadCounts(ctx, threadTotalsTeam(b.Teams, w.st.NavTeam())); err != nil {
+			if sessionExpired(err) {
+				return b, false, err
+			}
+			if ctx.Err() != nil {
+				return b, false, ctx.Err()
+			}
+			slog.Warn("thread mentions unavailable, keeping the previous ones", "srv", w.srv.ID, "err", err)
+			b.ThreadMentions, b.ThreadMentionsFailed = nil, true
+		}
+	}
 	if b.Status, err = w.rc.MyStatus(ctx); err != nil {
 		slog.Debug("status unavailable", "srv", w.srv.ID, "err", err)
 		b.Status.Status = "online"
@@ -847,6 +865,12 @@ func (w *Worker) apply(ev ws.Event) {
 	}
 	if eff.View != "" {
 		w.view(eff.View)
+	}
+	if eff.ReadThread != "" {
+		w.readThread(eff.ReadThread)
+	}
+	if eff.RereadThreadCounts {
+		w.rereadThreadCounts()
 	}
 	if eff.Notify != nil && w.cfg.Hooks.Notify != nil {
 		w.cfg.Hooks.Notify(w.srv.ID, *eff.Notify)

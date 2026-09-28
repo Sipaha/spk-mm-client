@@ -354,6 +354,35 @@ func TestMarkThreadReadPublishesThreadReadChangedAnd404sWithoutSubscription(t *t
 	carol := loginAs(t, s, "carol") // never subscribed to this thread
 	status = carol.call("PUT", "/api/v4/users/me/teams/t-fake/threads/"+root.ID+"/read/1", nil, nil)
 	assert.Equal(t, 404, status)
+	assert.Len(t, s.ThreadReads(), 1, "a 404 is not a read")
+	assert.Equal(t, 2, s.ThreadReadTries(), "but it was tried")
+}
+
+// MarkAllThreadsReadAs mirrors PUT …/teams/{tid}/threads/read
+// (app/user.go UpdateThreadsReadForUser, thread_store.go MarkAllAsReadByTeam):
+// every followed thread of the team and every DM/GM thread is read, and one
+// thread_read_changed without thread_id goes to the user.
+func TestMarkAllThreadsReadAs(t *testing.T) {
+	s := Start(Options{SeedPosts: -1})
+	defer s.Close()
+	s.SetCollapsedThreads("always_on")
+	root := s.PostAs("c-town", "alice", "root")
+	s.ReplyAs("c-town", root.ID, "bob", "hey @alice")
+	dmRoot := s.PostAs("c-dm-bob", "bob", "dm root")
+	s.ReplyAs("c-dm-bob", dmRoot.ID, "bob", "dm reply")
+	a := loginAs(t, s, "alice")
+	var withDM model.ThreadTotals
+	require.Equal(t, 200, a.call("GET", "/api/v4/users/me/teams/t-fake/threads?totalsOnly=true", nil, &withDM))
+	require.Equal(t, int64(2), withDM.TotalUnreadMentions)
+
+	s.MarkAllThreadsReadAs("alice", "t-fake")
+	require.Equal(t, 200, a.call("GET", "/api/v4/users/me/teams/t-fake/threads?totalsOnly=true", nil, &withDM))
+	assert.Zero(t, withDM.TotalUnreadMentions)
+	assert.Zero(t, withDM.TotalUnreadThreads)
+	evs := s.Events()
+	last := evs[len(evs)-1]
+	assert.Equal(t, "thread_read_changed", last.Name)
+	assert.Equal(t, []string{"u-alice"}, last.To)
 }
 
 func TestTeamsUnreadIncludesThreadFieldsWithoutDMThreads(t *testing.T) {

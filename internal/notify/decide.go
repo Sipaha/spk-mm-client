@@ -27,6 +27,7 @@ type Input struct {
 	CRT                           bool
 	Focused                       bool
 	ActiveChannelID               string
+	ActiveThreadID                string // the thread open in the panel ("" none)
 }
 
 func Decide(in Input) (bool, string) {
@@ -75,8 +76,11 @@ func Decide(in Input) (bool, string) {
 	case crtReply && level == "all" && !slices.Contains(in.Followers, in.MeID):
 		return false, "not_following_thread"
 	}
-	// Thread panels arrive in stage 3; until then a CRT reply is never
-	// "open", a root post is when its channel is on screen.
+	// On screen: a CRT reply when its thread is open in the panel, any
+	// other post when its channel is (without CRT replies show in the feed).
+	if in.Focused && crtReply && in.ActiveThreadID == p.RootID {
+		return false, "thread_is_open"
+	}
 	if in.Focused && !crtReply && in.ActiveChannelID == p.ChannelID {
 		return false, "channel_is_open"
 	}

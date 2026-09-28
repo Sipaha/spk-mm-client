@@ -46,6 +46,7 @@ type chatData struct {
 	threads       map[string]*fthread                     // root id → thread (exists once it has a reply)
 	threadMembers map[string]map[string]*threadMembership // root id → user → membership
 	threadReads   []ThreadRead                            // every PUT .../threads/{id}/read/{ts} call
+	threadTries   int                                     // those calls, 404s included
 }
 
 type RecordedEvent struct {

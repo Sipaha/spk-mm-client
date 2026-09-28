@@ -483,6 +483,7 @@ func (s *Server) markThreadRead(w http.ResponseWriter, r *http.Request, u User) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.chat.threadTries++
 	m := s.chat.threadMembers[rid][u.ID]
 	if m == nil || !m.following {
 		appError(w, 404, "app.user.get_thread_membership_for_user.not_found", "not subscribed")
@@ -533,6 +534,36 @@ func (s *Server) ThreadReads() []ThreadRead {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]ThreadRead(nil), s.chat.threadReads...)
+}
+
+// ThreadReadTries counts every PUT .../threads/{id}/read/{ts} call,
+// including those answered 404 (not subscribed); ThreadReads lists only
+// the ones that read.
+func (s *Server) ThreadReadTries() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chat.threadTries
+}
+
+// MarkAllThreadsReadAs is PUT .../teams/{teamID}/threads/read by username
+// on another device (app/user.go UpdateThreadsReadForUser,
+// thread_store.go MarkAllAsReadByTeam): every thread of the team and every
+// DM/GM thread is read, and one thread_read_changed without thread_id
+// (broadcast team teamID) goes to the user.
+func (s *Server) MarkAllThreadsReadAs(username, teamID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uid := s.userIDByName(username)
+	now := s.nowLocked()
+	for rootID, th := range s.chat.threads {
+		if th.teamID != teamID && th.teamID != "" {
+			continue
+		}
+		if m := s.chat.threadMembers[rootID][uid]; m != nil {
+			m.lastViewed, m.unreadMentions = now, 0
+		}
+	}
+	s.publishLocked("thread_read_changed", map[string]any{}, wsBroadcast{UserID: uid, TeamID: teamID}, []string{uid}, nil, nil)
 }
 
 // Following reports whether username is subscribed to rootID's thread.

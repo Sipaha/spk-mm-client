@@ -296,9 +296,13 @@ func TestOpenURLAllowsOnlyWebAndMail(t *testing.T) {
 
 func TestNotificationClickOpensChannel(t *testing.T) {
 	f := newFixture(t)
-	f.svc.NotificationClicked(3, "c-town")
+	f.svc.NotificationClicked(3, "c-town", "")
 	ev := f.nextEvent(t, EventOpenChannel)
-	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town"}, ev.Payload)
+	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town", "root_id": ""}, ev.Payload)
+	f.svc.NotificationClicked(3, "c-town", "root1")
+	ev = f.nextEvent(t, EventOpenChannel)
+	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town", "root_id": "root1"}, ev.Payload,
+		"a reply's notification opens the channel, then its thread")
 }
 
 // Switching servers by opening a channel must view that channel only — not

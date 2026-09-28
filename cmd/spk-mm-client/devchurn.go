@@ -27,7 +27,7 @@ type fakeChurn struct {
 	fakes     []*mmfake.Server
 	serverIDs []int64 // server id of fakes[i] in the service
 	channels  int     // extra "c-load-NNN" channels per fake
-	open      func(serverID int64, channelID string)
+	open      func(serverID int64, channelID, rootID string)
 }
 
 const churnSwitchEvery = 5 // ticks between channel switches
@@ -71,7 +71,7 @@ func runFakeChurn(ctx context.Context, c fakeChurn) {
 		c.fakes[i].PostAs(channel(), "bob", strings.Join(words, " ")) // bob is a member of every seeded channel
 		if tick%churnSwitchEvery == 0 {
 			j := rand.IntN(len(c.serverIDs))
-			c.open(c.serverIDs[j], channel())
+			c.open(c.serverIDs[j], channel(), "")
 		}
 	}
 }

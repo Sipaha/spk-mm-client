@@ -985,4 +985,5 @@ func (s *Server) ClearGuard() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.guard = map[string]int64{}
+	s.threadGuard = false
 }

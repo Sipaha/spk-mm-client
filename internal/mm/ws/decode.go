@@ -139,12 +139,16 @@ func DecodeThreadUpdated(e Event) (ThreadUpdated, error) {
 // ThreadReadChanged is thread_read_changed. ThreadID is "" when every
 // thread of a channel or team was marked read at once (no per-thread id).
 type ThreadReadChanged struct {
-	ThreadID       string
-	Timestamp      int64
-	UnreadMentions int64
-	UnreadReplies  int64
-	ChannelID      string
-	TeamID         string
+	ThreadID               string
+	Timestamp              int64
+	UnreadMentions         int64
+	UnreadReplies          int64
+	PreviousUnreadMentions int64
+	PreviousUnreadReplies  int64
+	ChannelID              string
+	// TeamID is the team the read was addressed to (the PUT's), not the
+	// thread's: a DM thread read through a team carries that team.
+	TeamID string
 }
 
 func DecodeThreadReadChanged(e Event) (ThreadReadChanged, error) {
@@ -153,11 +157,14 @@ func DecodeThreadReadChanged(e Event) (ThreadReadChanged, error) {
 		Timestamp      int64  `json:"timestamp"`
 		UnreadMentions int64  `json:"unread_mentions"`
 		UnreadReplies  int64  `json:"unread_replies"`
+		PrevMentions   int64  `json:"previous_unread_mentions"`
+		PrevReplies    int64  `json:"previous_unread_replies"`
 		ChannelID      string `json:"channel_id"`
 	}
 	err := json.Unmarshal(e.Data, &d)
 	return ThreadReadChanged{
 		ThreadID: d.ThreadID, Timestamp: d.Timestamp, UnreadMentions: d.UnreadMentions,
-		UnreadReplies: d.UnreadReplies, ChannelID: d.ChannelID, TeamID: e.Broadcast.TeamID,
+		UnreadReplies: d.UnreadReplies, PreviousUnreadMentions: d.PrevMentions, PreviousUnreadReplies: d.PrevReplies,
+		ChannelID: d.ChannelID, TeamID: e.Broadcast.TeamID,
 	}, err
 }

@@ -485,3 +485,37 @@ func TestBrowserModeSweepsOldSpoolsAndServesStaged(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "a known kind: no such attachment (not 400)")
 }
+
+// The test API's notification-click passes a reply's root_id on to the UI
+// (open_channel), like a click on a desktop notification.
+func TestTestAPINotificationClickCarriesTheRoot(t *testing.T) {
+	ts, token, _ := setup(t, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events?token="+token, nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, ": ok\n", line)
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/_test/notification-click", strings.NewReader(`{"server_id":1,"channel_id":"c-town","root_id":"root1"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Origin", ts.URL)
+	click, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = click.Body.Close()
+	require.Equal(t, 200, click.StatusCode)
+	for {
+		line, err := r.ReadString('\n')
+		require.NoError(t, err, "no open_channel event")
+		if strings.Contains(line, `"open_channel"`) || strings.Contains(line, "channel_id") {
+			if strings.Contains(line, `"c-town"`) {
+				assert.Contains(t, line, `"root_id":"root1"`)
+				return
+			}
+		}
+	}
+}

@@ -36,6 +36,9 @@ func (w *Worker) SetFocused(f bool) {
 	if a := w.st.Active(); f && a != "" {
 		w.view(a)
 	}
+	if f {
+		w.readThread(w.st.OpenThreadID()) // the open thread (CRT) is on screen now
+	}
 }
 
 // view marks a channel read on the server, at most one request per channel

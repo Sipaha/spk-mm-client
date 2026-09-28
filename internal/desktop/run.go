@@ -106,8 +106,8 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	n := newNotifier(ctx, func(data map[string]any) {
-		if id, ch, ok := clickTarget(data); ok {
-			o.Service.NotificationClicked(id, ch)
+		if id, ch, root, ok := clickTarget(data); ok {
+			o.Service.NotificationClicked(id, ch, root)
 		}
 		show()
 	})

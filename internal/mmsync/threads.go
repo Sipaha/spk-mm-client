@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/state"
 )
@@ -28,7 +29,8 @@ func (w *Worker) OpenThread(channelID, rootID string) (state.ThreadView, bool) {
 	if need {
 		w.loadThread(rootID)
 	}
-	w.requestStatuses() // the thread's authors
+	w.readThread(rootID) // CRT, focused: it is on screen
+	w.requestStatuses()  // the thread's authors
 	return w.st.ThreadView(rootID)
 }
 
@@ -131,6 +133,9 @@ func (w *Worker) fetchThread(ctx context.Context, rootID string, crt bool, epoch
 		w.requestStatuses()
 	}
 	w.changed(state.Change{Threads: []string{rootID}})
+	// A read sent at opening (ts = our clock) may not cover replies the
+	// page brought if the server's clock is ahead: they are newer than it.
+	w.readThread(rootID)
 	return true
 }
 
@@ -179,4 +184,179 @@ func (w *Worker) LoadOlderReplies(ctx context.Context, rootID string) error {
 	}
 	w.changed(state.Change{Threads: []string{rootID}})
 	return nil
+}
+
+// threadReadTries bounds the reads of one thread in a row (new replies
+// keep coming while each is sent), like view.
+const threadReadTries = 3
+
+// readThread marks the open thread read on the server if it should be now
+// (state.ThreadReadTarget: CRT, the panel open over its channel, focused,
+// followed, something new) — in the background, one request per thread at
+// a time, checking again after each. Never retried on its own: a 404 (we
+// do not follow it) stops the reads of this opening, any other failure is
+// logged and waits for the next occasion.
+func (w *Worker) readThread(rootID string) {
+	if _, _, ok := w.st.ThreadReadTarget(rootID); !ok {
+		return
+	}
+	if _, busy := w.threadReads.LoadOrStore(rootID, true); busy {
+		return // the running loop checks again after its request
+	}
+	if !w.goBG(func(ctx context.Context) { w.readThreadLoop(ctx, rootID) }) {
+		w.threadReads.Delete(rootID) // stopping: the read state is not sent
+	}
+}
+
+func (w *Worker) readThreadLoop(ctx context.Context, rootID string) {
+	for tries := 0; ; {
+		for ; tries < threadReadTries && ctx.Err() == nil; tries++ {
+			team, ts, ok := w.st.ThreadReadTarget(rootID)
+			if !ok {
+				break
+			}
+			if !w.markThreadRead(ctx, team, rootID, ts) {
+				tries = threadReadTries
+			}
+		}
+		w.threadReads.Delete(rootID)
+		// An occasion that found us busy after our last check is served
+		// here (within the tries left).
+		if ctx.Err() != nil || tries >= threadReadTries {
+			return
+		}
+		if _, _, ok := w.st.ThreadReadTarget(rootID); !ok {
+			return
+		}
+		if _, busy := w.threadReads.LoadOrStore(rootID, true); busy {
+			return
+		}
+	}
+}
+
+// markThreadRead sends one read; false: it failed (not retried). Its
+// answer does not touch the mention counts: the thread_read_changed it
+// causes does (counting both would count twice).
+func (w *Worker) markThreadRead(ctx context.Context, team, rootID string, ts int64) bool {
+	err := w.rc.MarkThreadRead(ctx, team, rootID, ts)
+	var re *rest.Error
+	switch {
+	case err == nil:
+		w.st.ThreadReadDone(rootID, ts)
+		return true
+	case ctx.Err() != nil:
+	case errors.As(err, &re) && re.Status == http.StatusNotFound:
+		slog.Debug("thread not followed, not marking it read", "srv", w.srv.ID, "root", rootID)
+		w.st.ThreadNotFollowing(rootID)
+	default:
+		if sessionExpired(err) {
+			w.signalAuth()
+		}
+		slog.Warn("thread mark read failed", "srv", w.srv.ID, "root", rootID, "err", err)
+	}
+	return false
+}
+
+// threadTotalsTeam is the team the DM/GM part of the thread totals is
+// read through: the current one if still ours, else the first (DM/GM
+// threads are in every team's totals); "" without teams.
+func threadTotalsTeam(teams []model.Team, nav string) string {
+	first := ""
+	for _, t := range teams {
+		if t.DeleteAt != 0 {
+			continue
+		}
+		if t.ID == nav {
+			return nav
+		}
+		if first == "" {
+			first = t.ID
+		}
+	}
+	return first
+}
+
+// fetchThreadCounts reads the mentions in followed threads: per team from
+// teams/unread (which leaves DM/GM threads out), the DM/GM part ("") as
+// team's totals with them minus without them, never below 0.
+func (w *Worker) fetchThreadCounts(ctx context.Context, team string) (map[string]int64, error) {
+	unread, err := w.rc.TeamsUnread(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]int64, len(unread)+1)
+	for _, u := range unread {
+		m[u.TeamID] = u.ThreadMentionCount
+	}
+	if team == "" {
+		return m, nil
+	}
+	all, err := w.rc.ThreadTotals(ctx, team, false)
+	if err != nil {
+		return nil, err
+	}
+	teamOnly, err := w.rc.ThreadTotals(ctx, team, true)
+	if err != nil {
+		return nil, err
+	}
+	m[""] = max(0, all.TotalUnreadMentions-teamOnly.TotalUnreadMentions)
+	return m, nil
+}
+
+// rereadThreadCounts reads the thread mention totals again in the
+// background (not under the refresh guard) and installs them whole — one
+// reread at a time; one asked for meanwhile runs after it.
+func (w *Worker) rereadThreadCounts() {
+	w.countsAgain.Store(true)
+	if !w.countsBusy.CompareAndSwap(false, true) {
+		return
+	}
+	if !w.goBG(w.rereadThreadCountsLoop) {
+		w.countsBusy.Store(false)
+	}
+}
+
+func (w *Worker) rereadThreadCountsLoop(ctx context.Context) {
+	for {
+		w.countsAgain.Store(false)
+		w.rereadThreadCountsOnce(ctx)
+		w.countsBusy.Store(false)
+		if ctx.Err() != nil || !w.countsAgain.Load() || !w.countsBusy.CompareAndSwap(false, true) {
+			return
+		}
+	}
+}
+
+// threadCountsTries bounds the reads of the thread totals in a row while
+// thread events keep overlapping them.
+const threadCountsTries = 3
+
+// rereadThreadCountsOnce: a read that a thread event overlapped may or may
+// not include it — read again, up to threadCountsTries; the last one is
+// installed anyway (never over a fresher metadata read).
+func (w *Worker) rereadThreadCountsOnce(ctx context.Context) {
+	for try := 1; try <= threadCountsTries && ctx.Err() == nil; try++ {
+		crt, team, tok := w.st.ThreadCountsFetch()
+		if !crt {
+			return
+		}
+		m, err := w.fetchThreadCounts(ctx, team)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if sessionExpired(err) {
+				w.signalAuth()
+			}
+			slog.Warn("thread mentions not reread", "srv", w.srv.ID, "err", err)
+			return
+		}
+		installed, retry := w.st.SetThreadMentions(m, tok, try == threadCountsTries)
+		if installed {
+			w.changed(state.Change{Sidebar: true, Badge: true})
+		}
+		if !retry {
+			return
+		}
+	}
 }

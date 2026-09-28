@@ -84,6 +84,9 @@ func (s *Server) openThreadLocked(channelID, rootID string) (epoch uint64, needF
 	if s.openThread != "" && s.openThread != rootID {
 		s.trimThreadLocked(s.threads[s.openThread])
 	}
+	if s.openThread != rootID {
+		s.openRead = threadRead{} // a new opening
+	}
 	if t == nil {
 		t = &thread{channelID: channelID}
 		if p, ok := s.findPostLocked(rootID); ok && p.RootID == "" && p.ChannelID == channelID {
@@ -113,7 +116,7 @@ func (s *Server) dropThreadLocked(id string) {
 	delete(s.threads, id)
 	s.threadLRU = slices.DeleteFunc(s.threadLRU, func(x string) bool { return x == id })
 	if s.openThread == id {
-		s.openThread = ""
+		s.openThread, s.openRead = "", threadRead{}
 	}
 }
 
@@ -149,7 +152,7 @@ func (s *Server) CloseThread() {
 		return
 	}
 	s.trimThreadLocked(s.threads[s.openThread])
-	s.openThread = ""
+	s.openThread, s.openRead = "", threadRead{}
 }
 
 // ThreadRootOf maps a held reply's id to its root's (a reply has no thread
@@ -409,7 +412,7 @@ func (s *Server) ResetThreads() {
 	clear(s.threads)
 	s.threadLRU = nil
 	if open == nil {
-		s.openThread = ""
+		s.openThread, s.openRead = "", threadRead{}
 		return
 	}
 	s.threads[s.openThread] = &thread{channelID: open.channelID, root: open.root}
@@ -440,6 +443,75 @@ func (s *Server) forgetThreadsLocked(channelID string) {
 			s.forgotten = append(s.forgotten, ComposerKey{Channel: channelID, Root: id})
 			s.dropThreadLocked(id)
 		}
+	}
+}
+
+// ---- server read state (CRT) ----
+
+// threadRead is the server read state of the open thread, for this
+// opening only (a new opening starts over).
+type threadRead struct {
+	ts       int64 // ts of the last read sent: replies up to it are read (0: none yet)
+	pending  int64 // the newest reply thread_updated reported unread
+	noFollow bool  // the read answered 404: we do not follow the thread
+}
+
+// ThreadReadTarget is what marking rootID read on the server takes, if it
+// should be now (PUT …/teams/{team}/threads/{root}/read/{ts}): CRT is on
+// (without it the channel view reads threads), rootID is open in the panel
+// over its channel, the window is focused (the api layer focuses only the
+// server on screen), we follow the thread (no 404 this opening) and a
+// reply by someone else is newer than the last read — or none was sent
+// yet this opening. team: the channel's, a DM/GM's the current one. ts:
+// now, or the newest reply held if later (server clock ahead of ours).
+func (s *Server) ThreadReadTarget(rootID string) (team string, ts int64, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rootID == "" || rootID != s.openThread || !s.focused || s.openRead.noFollow || !s.crtLocked() {
+		return "", 0, false
+	}
+	t := s.threads[rootID]
+	if t == nil || t.rootDeleted || t.channelID != s.active {
+		return "", 0, false
+	}
+	ch := s.chans[t.channelID]
+	if ch == nil {
+		return "", 0, false
+	}
+	team = ch.Info.TeamID
+	if isDirect(ch) || team == "" {
+		team = s.navTeamLocked()
+	}
+	newest, others := s.openRead.pending, s.openRead.pending
+	for _, p := range t.replies {
+		newest = max(newest, p.CreateAt)
+		if p.UserID != s.me.ID {
+			others = max(others, p.CreateAt)
+		}
+	}
+	if team == "" || (s.openRead.ts > 0 && others <= s.openRead.ts) {
+		return "", 0, false
+	}
+	return team, max(s.now().UnixMilli(), newest), true
+}
+
+// ThreadReadDone records a read of rootID sent with ts.
+func (s *Server) ThreadReadDone(rootID string, ts int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rootID != "" && rootID == s.openThread {
+		s.openRead.ts = max(s.openRead.ts, ts)
+	}
+}
+
+// ThreadNotFollowing records a read answered 404 (no thread membership):
+// no more reads this opening until our own reply in the thread or a
+// thread_updated about it (both mean we follow it).
+func (s *Server) ThreadNotFollowing(rootID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rootID != "" && rootID == s.openThread {
+		s.openRead.noFollow = true
 	}
 }
 

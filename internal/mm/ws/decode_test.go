@@ -97,6 +97,8 @@ func TestDecodeThreadReadChanged(t *testing.T) {
 	assert.Equal(t, int64(100), rc.Timestamp)
 	assert.Equal(t, "c1", rc.ChannelID)
 	assert.Equal(t, "t1", rc.TeamID)
+	assert.Equal(t, int64(2), rc.PreviousUnreadMentions)
+	assert.Equal(t, int64(3), rc.PreviousUnreadReplies)
 
 	// "all threads read" — no thread_id.
 	all, err := DecodeThreadReadChanged(ev("thread_read_changed", `{"timestamp":5}`, Broadcast{TeamID: "t1"}))

@@ -46,9 +46,12 @@ type NotifyCandidate struct {
 	CRT         bool
 	Focused     bool
 	Active      string
-	Mentions    []string
-	Followers   []string
-	SenderName  string
+	// ActiveThread: the thread open in the panel ("" none) — a reply in
+	// it, while focused, is on screen (notify: thread_is_open).
+	ActiveThread string
+	Mentions     []string
+	Followers    []string
+	SenderName   string
 }
 
 // Effects is what the worker must do after an event, besides refreshing
@@ -61,6 +64,13 @@ type Effects struct {
 	View      string            // open + focused channel got a post: mark it viewed
 	Notify    *NotifyCandidate
 	Resync    bool // CRT toggled: every window holds the wrong kind of posts
+	// ReadThread: the open thread (CRT, focused) got something new — mark it
+	// read on the server (the worker checks ThreadReadTarget first).
+	ReadThread string
+	// RereadThreadCounts: the thread mention totals must be read again
+	// (all threads read at once, an event that may be in the last read, CRT
+	// turned on) — see threadcounts.go.
+	RereadThreadCounts bool
 }
 
 func (s *Server) ApplyEvent(ev ws.Event) Effects {
@@ -161,7 +171,17 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 			s.dirty.meta = true
 			eff.Sidebar, eff.Badge = true, true
 			eff.Resync = wasCRT != s.crtLocked()
+			if eff.Resync {
+				s.crtSwitchedLocked(&eff)
+			}
 		}
+	case "thread_updated":
+		s.onThreadUpdatedLocked(ev, &eff)
+	case "thread_read_changed":
+		s.onThreadReadChangedLocked(ev, &eff)
+	case "thread_follow_changed":
+		// No Follow button yet: nothing shows it. The counts follow from
+		// thread_updated/thread_read_changed.
 	case "user_updated":
 		if u, err := ws.DecodeUser(ev); err == nil && u.ID != "" {
 			if u.ID == s.me.ID {
@@ -217,6 +237,13 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	isNew, _ := s.applyNewPostLocked(ch, p, d.Mentions)
 	eff.Sidebar, eff.Badge, eff.Channels = true, true, []string{ch.Info.ID}
 	eff.Threads = s.threadsOfLocked(p)
+	if p.RootID != "" && p.RootID == s.openThread {
+		if p.UserID == s.me.ID {
+			s.openRead.noFollow = false // replying subscribes us (app/post.go)
+		} else if isNew && s.focused && !s.openRead.noFollow && s.crtLocked() {
+			eff.ReadThread = p.RootID
+		}
+	}
 	if _, ok := s.users[p.UserID]; !ok && p.UserID != "" {
 		eff.NeedUsers = []string{p.UserID}
 	}
@@ -243,7 +270,7 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	}
 	eff.Notify = &NotifyCandidate{
 		Post: p, Channel: ch.Info, ChannelName: s.channelNameLocked(ch), Member: ch.Member, Me: s.me,
-		Status: s.status, CRT: crt, Focused: s.focused, Active: s.active,
+		Status: s.status, CRT: crt, Focused: s.focused, Active: s.active, ActiveThread: s.openThread,
 		Mentions: d.Mentions, Followers: d.Followers, SenderName: s.displayNameLocked(p.UserID),
 	}
 	if eff.Notify.SenderName == "" {

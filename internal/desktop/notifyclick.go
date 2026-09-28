@@ -5,11 +5,13 @@ import (
 	"strconv"
 )
 
-// clickTarget reads the channel a clicked chat notification points to. On
-// Linux the Data map comes back as the Go values we sent; other platforms
-// round-trip it through JSON (float64) — so ids are parsed leniently.
-func clickTarget(data map[string]any) (serverID int64, channelID string, ok bool) {
+// clickTarget reads the channel (and, for a reply, the thread) a clicked
+// chat notification points to. On Linux the Data map comes back as the Go
+// values we sent; other platforms round-trip it through JSON (float64) —
+// so ids are parsed leniently.
+func clickTarget(data map[string]any) (serverID int64, channelID, rootID string, ok bool) {
 	channelID, _ = data["channel_id"].(string)
+	rootID, _ = data["root_id"].(string)
 	switch v := data["server_id"].(type) {
 	case int64:
 		serverID = v
@@ -22,5 +24,5 @@ func clickTarget(data map[string]any) (serverID int64, channelID string, ok bool
 	case string:
 		serverID, _ = strconv.ParseInt(v, 10, 64)
 	}
-	return serverID, channelID, serverID > 0 && channelID != ""
+	return serverID, channelID, rootID, serverID > 0 && channelID != ""
 }

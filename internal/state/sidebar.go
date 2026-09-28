@@ -76,6 +76,11 @@ func (s *Server) teamItemsLocked() []TeamItem {
 			it.Unread = it.Unread || u
 			it.Mentions += m
 		}
+		// Its followed threads' mentions (CRT; threadcounts.go) — on the
+		// team, never on a channel row.
+		if n := s.threadMentionsLocked(t.ID); n > 0 {
+			it.Unread, it.Mentions = true, it.Mentions+n
+		}
 		out = append(out, it)
 	}
 	return out
