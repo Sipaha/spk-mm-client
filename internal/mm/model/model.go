@@ -182,6 +182,9 @@ type PostList struct {
 	Posts      map[string]Post `json:"posts"`
 	NextPostID string          `json:"next_post_id"`
 	PrevPostID string          `json:"prev_post_id"`
+	// HasNext is set by GET .../thread (perPage paging, direction up/down):
+	// true when older/newer replies exist beyond this page.
+	HasNext *bool `json:"has_next,omitempty"`
 }
 
 // Ascending returns the posts listed in Order, oldest first. Posts only in
@@ -214,4 +217,45 @@ type Status struct {
 	UserID     string `json:"user_id"`
 	Status     string `json:"status"` // online | away | dnd | offline | ooo
 	DNDEndTime int64  `json:"dnd_end_time,omitempty"`
+}
+
+// TeamUnread is one element of GET /users/me/teams/unread. The Thread*
+// fields are only populated when include_collapsed_threads=true and cover
+// subscribed threads of that team only — DM/GM threads (team_id "") are
+// never counted here (see ThreadTotals for those).
+type TeamUnread struct {
+	TeamID                   string `json:"team_id"`
+	MsgCount                 int64  `json:"msg_count"`
+	MentionCount             int64  `json:"mention_count"`
+	MentionCountRoot         int64  `json:"mention_count_root"`
+	MsgCountRoot             int64  `json:"msg_count_root"`
+	ThreadCount              int64  `json:"thread_count"`
+	ThreadMentionCount       int64  `json:"thread_mention_count"`
+	ThreadUrgentMentionCount int64  `json:"thread_urgent_mention_count"`
+}
+
+// ThreadResponse is a thread as seen by one user: GET/PUT .../threads/{id}
+// (read), an element of Threads.Threads, and the JSON string carried by the
+// thread_updated event's data.thread.
+type ThreadResponse struct {
+	PostID         string `json:"id"`
+	ReplyCount     int64  `json:"reply_count"`
+	LastReplyAt    int64  `json:"last_reply_at"`
+	LastViewedAt   int64  `json:"last_viewed_at"`
+	Participants   []User `json:"participants"`
+	Post           *Post  `json:"post"`
+	UnreadReplies  int64  `json:"unread_replies"`
+	UnreadMentions int64  `json:"unread_mentions"`
+	IsUrgent       bool   `json:"is_urgent,omitempty"`
+	DeleteAt       int64  `json:"delete_at,omitempty"`
+}
+
+// ThreadTotals is GET .../threads?totalsOnly=true (Threads is empty in that
+// mode; populated when the caller asks for the full list instead).
+type ThreadTotals struct {
+	Total                     int64            `json:"total"`
+	TotalUnreadThreads        int64            `json:"total_unread_threads"`
+	TotalUnreadMentions       int64            `json:"total_unread_mentions"`
+	TotalUnreadUrgentMentions int64            `json:"total_unread_urgent_mentions"`
+	Threads                   []ThreadResponse `json:"threads,omitempty"`
 }

@@ -388,3 +388,185 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
 (`internal/mmfake`) использует эти же id для правдоподобия, но клиент не
 завязывается на точный `id`, только на код ответа (400/413) и заголовок
 `Retry-After` там, где он есть.
+
+## 8. Треды (Task 1 плана `docs/plans/2026-09-28-threads.md`)
+
+Проверено 2026-09-28 по исходникам `release-10.11` (тот же клон-коммит, что
+в строке 3), пути ниже — от корня клона Mattermost.
+
+### 8.1 `GET /api/v4/posts/{id}/thread`
+
+`server/channels/api4/post.go:760–880` (`getPostThread`), store —
+`server/channels/store/sqlstore/post_store.go:575–712` (CRT,
+`getPostWithCollapsedThreads`) и `:714–897` (без CRT, `Get`).
+
+- `perPage` — **без него сервер возвращает тред целиком** (комментарий в
+  коде: "return all items unless it's set", `post.go:766–769`); `≤200`
+  (`web.PerPageMaximum`), иначе 400. Наш REST-клиент (`rest.PostThread`)
+  никогда не зовёт без `perPage` по конструкции: 0 → `ThreadPageDefault`
+  (60), `>200` → `ThreadPageMax` (200).
+- `direction=up|down` — `up`=DESC (новейшие первыми), `down`=ASC; пустой —
+  без `ORDER BY` в коде сервера (де-факто неопределённый порядок). Клиент
+  всегда шлёт `up`. **Фейк отклоняется от этого намеренно**: пустой/
+  отсутствующий `direction` он тоже трактует как `up` (детерминированный
+  порядок вместо неопределённого) — упрощение, безопасное потому что
+  реальный клиент никогда не оставляет `direction` пустым.
+- `fromCreateAt`/`fromPost` — курсор постранично; `fromPost` без
+  `fromCreateAt` → 400 (`post.go:789–793`). `fromUpdateAt` несовместим с
+  `fromCreateAt` (400) и с `direction=up` при `updatesOnly` (400);
+  `updatesOnly` требует `fromUpdateAt`. Наш клиент использует только
+  `fromCreateAt`/`fromPost`, никогда `fromUpdateAt`/`updatesOnly` —
+  **`updatesOnly` не увидел бы удалений ответов** (сервер фильтрует
+  `DeleteAt=0` до сравнения `UpdateAt`, `post_store.go:611`, `724`).
+- Ответ `PostList{order, posts, has_next}`; **`order[0]` — всегда сам
+  запрошенный пост** (`pl.AddPost(&post); pl.AddOrder(id)` до цикла по
+  ответам, `post_store.go:733–734` (CRT) и «add post/order for the found
+  root» в `Get` без CRT). `has_next` — `LIMIT perPage+1`, сервер отбрасывает
+  последний элемент и выставляет `true` (`post_store.go:686–692`, `879–887`);
+  без `perPage` (`opts.PerPage == 0`) `has_next` не выставляется вовсе
+  (Go-указатель `nil`, не `false`) — модель `PostList.HasNext *bool
+  json:"has_next,omitempty"`.
+- `collapsedThreads=true` требует, чтобы `id` был корнем
+  (`WHERE RootId = id` в CRT-запросе, `post_store.go:611–619`): у сервера
+  нет явной 400-проверки на это в прочитанном коде — с id ответа CRT-запрос
+  просто вернёт 0 ответов (никто не ссылается на чужой id как на `root_id`
+  ответа этого же ответа) без ошибки. **Наш фейк намеренно строже**
+  (контроллер, для раннего отлова клиентских ошибок): `collapsedThreads=true`
+  с id, у которого `root_id != ""`, — 400
+  `api.context.invalid_param.app_error`. Это отклонение от дословного
+  поведения реального сервера, зафиксировано здесь и в
+  `internal/mmfake/threads.go`.
+- Удалённые ответы и строки истории правок (`original_id != ""`) не
+  отдаются (`DeleteAt=0` в WHERE).
+- Права — как у чтения поста (`GetPostIfAuthorized`, членство в канале);
+  неизвестный/удалённый корень → 404; не член канала → 403.
+
+### 8.2 `reply_count`, `last_reply_at`, счётчик ответов
+
+- **Новый ответ несёт `reply_count` треда в себе**, не только на корне:
+  `populateReplyCount` (`post_store.go:276–292`) присваивает создаваемому
+  ответу текущее число (неудалённых) ответов треда, **включая этот**; веб-
+  клиент просто копирует это число на корень
+  (`mattermost-redux/…/reducers/entities/posts.ts:418–431`, `99–112`) вместо
+  инкремента — так избегается двойной счёт REST+WS-эха своего ответа.
+  Фейк (`createPostLocked`) делает то же: `root.ReplyCount++`, затем
+  `p.ReplyCount = root.ReplyCount`.
+- Корень получает свежий `UpdateAt` на каждый ответ
+  (`post_store.go:270–274`, `UPDATE Posts SET UpdateAt=?`) — поэтому
+  страница ленты, полученная после живого ответа, несёт «старый» (по
+  времени относительно ответа) `UpdateAt` корня, что важно для правила
+  «не затирать более новый локальный счётчик» (Task 2/3).
+- Удаление одного ответа уменьшает `reply_count` треда и корня на сервере
+  (`updateThreadAfterReplyDeletion`) без отдельного события про корень —
+  тот же `post_deleted` покрывает это. Фейк: `deleteReplyEffectsLocked`.
+- Удаление корня — **одно** `post_deleted` только для корня; ответы
+  помечаются удалёнными молча (`post_store.go:972–1007`,
+  `WHERE Id=? OR RootId=?`) — клиент каскадирует сам.
+- Ответ на ответ запрещён: `root_id`, указывающий на пост с непустым своим
+  `root_id`, — 400 `api.post.create_post.root_id.app_error`
+  (`app/post.go:299–306`); корень должен быть в том же канале, не удалён.
+
+### 8.3 `teams/unread` и `threads?totalsOnly`
+
+- `GET /api/v4/users/{uid}/teams/unread?include_collapsed_threads=true`
+  (`api4/team.go:587`, `app/team.go:1669–1725`) → `[]TeamUnread{team_id,
+  msg_count, mention_count, msg_count_root, mention_count_root, thread_count,
+  thread_mention_count, thread_urgent_mention_count}`. Тредовые поля
+  считаются только когда `CollapsedThreads != disabled`, и только по
+  **подписанным** тредам той команды: `Threads.ThreadTeamId IN teamIDs`
+  (`thread_store.go:414–460`, `GetTeamsUnreadForUser`) — список команд не
+  включает `""`, так что **DM/GM-треды никогда не попадают сюда**.
+- `GET /api/v4/users/{uid}/teams/{tid}/threads?totalsOnly=true[&excludeDirect=true]`
+  (`api4/user.go:3488–3567`, `app/user.go:2710–2775`) →
+  `Threads{total, total_unread_threads, total_unread_mentions,
+  total_unread_urgent_mentions, threads}` — с `totalsOnly` `threads` не
+  заполняется (наш фейк отдаёт `[]`, не `null`, чтобы декод в
+  `model.ThreadTotals` был единообразным). `totalsOnly` вместе с
+  `threadsOnly` → 400 (`user.go:3536–3539`,
+  `api.getThreadsForUser.bad_only_params`). Без `excludeDirect` DM/GM-треды
+  (`ThreadTeamId=""`) включаются в счёт команды (`WHERE ThreadTeamId=tid OR
+  ThreadTeamId=''`, иначе только `=tid`) — клиент считает вклад DM/GM
+  вычитанием: `TeamsUnread` (без DM/GM) — это `teams/unread`, а разница
+  `ThreadTotals(excludeDirect=false).Total − ThreadTotals(excludeDirect=true).Total`
+  для команды по умолчанию (`""`/nav team) даёт DM/GM-часть.
+- Только **подписанные** треды (`ThreadMemberships.Following=true`) видны в
+  обоих эндпоинтах — не всякий тред, где пользователь когда-либо отвечал.
+
+### 8.4 `PUT .../threads/{id}/read/{ts}`
+
+`api4/user.go:3569–3606`, `app/user.go:2947–3003`
+(`UpdateThreadReadForUser`).
+
+- Требует существующее членство в треде: `GetThreadMembershipForUser` не
+  находит запись → 404 `app.user.get_thread_membership_for_user.not_found`
+  (`app/user.go:2795–2807`) — «нет подписки, значит нечего помечать».
+  Права на сам тред отдельно не проверяются за пределами этого (обычное
+  чтение поста).
+- Пересчитывает `unread_mentions` (упоминания в ответах с `create_at > ts`),
+  ставит `last_viewed=ts`; публикует `thread_read_changed`
+  `{thread_id, timestamp, unread_mentions, unread_replies,
+  previous_unread_mentions, previous_unread_replies, channel_id}` с
+  broadcast `{user_id, team_id}` (`ts` — переданный `team_id` из URL, не
+  обязательно команда канала треда — берётся только для адресации события).
+  Ответ вызывающему — `ThreadResponse` (не «просто OK»).
+- Нет `PUT .../threads/read` (без id, «все треды команды прочитаны») в
+  Task 1 — фейк/клиент его не реализуют; событие `thread_read_changed` без
+  `thread_id` (broadcast есть только `team_id`/`channel_id`) описано у
+  сервера (`app/user.go:2826–2834`, `app/channel.go:3269–3276`) и
+  декодируется (`ws.DecodeThreadReadChanged`), но кто его шлёт — задача
+  позже этого плана (пока фейк отправляет `thread_read_changed` только с
+  `thread_id`, для одного PUT-вызова).
+
+### 8.5 Формы событий
+
+- `thread_updated` (`app/notification.go:660–850`) — адресно **каждому
+  подписчику с включённым CRT**, на каждый ответ, включая автора самого
+  ответа (у него `last_viewed`/`unread_*` уже обнулены до сериализации,
+  `notification.go:801–823`). `data.thread` — JSON-строка `ThreadResponse`
+  (`id, reply_count, last_reply_at, last_viewed_at, participants, post,
+  unread_replies, unread_mentions, is_urgent, delete_at`), плюс
+  `previous_unread_mentions`/`previous_unread_replies` — снимок **до**
+  эффекта этого ответа (для брандового подписчика — `0`/`0`).
+  `broadcast.team_id` — команда канала, `""` у DM/GM.
+- `posted` для ответа несёт `followers` (JSON-строка-массив) наравне с
+  `mentions` — **по получателю**: массив содержит id получателя, только
+  если он в списке подписчиков (`CRTNotifiers`, а не «весь список
+  подписчиков всем»), и никогда не содержит самого автора ответа
+  (`app/notification.go:355`, `useAddFollowersHook`). Наш фейк
+  (`deliverLocked`) повторяет этот же per-recipient паттерн, уже
+  используемый для `mentions`.
+- `thread_read_changed` без `thread_id` — «прочитаны все треды канала»
+  (есть `broadcast.channel_id`, `app/channel.go:3269–3276`, только когда
+  `updateThreads` — CRT и `collapsed_threads_supported`) или «все треды
+  команды» (ни `thread_id`, ни специфики — `app/user.go:2826–2834`).
+  `ws.DecodeThreadReadChanged` в обоих случаях даёт `ThreadID == ""` —
+  вызывающий код различает эти два случая по остальным полям
+  (`ChannelID` есть/нет).
+- `thread_follow_changed` (`{thread_id, state, reply_count}`,
+  `app/user.go:2856–2859`) — не реализовано в Task 1 (нет
+  `PUT/DELETE .../following` ни в фейке, ни в REST-клиенте); в бэклог.
+
+### 8.6 Тест-API фейка (Task 1)
+
+`cmd/spk-mm-client/browser.go`, за `--test-api`:
+
+- `POST /api/_test/fake/post` — `root_id` теперь необязателен (было:
+  всегда корень); с ним постит ответ (`fake.ReplyAs`).
+- `POST /api/_test/fake/thread {channel_id, username, replies}` →
+  `{root_id}` — создаёт корень от `username`, затем `replies` ответов
+  поочерёдно от bob/carol (`fake.SeedThread`); оба должны быть членами
+  `channel_id`, иначе фейк паникует (как остальные `...As`-хелперы) — во
+  всех сидах c обоими подходит `c-town`/`c-gm`.
+- `POST /api/_test/fake/edit {post_id, message}`, `POST
+  /api/_test/fake/delete {post_id}` — тонкие обёртки над
+  `fake.EditAs`/`fake.DeleteAs` (существовали как Go-методы, теперь и как
+  HTTP-тест-маршруты).
+- `POST /api/_test/fake/crt {mode}` — `always_on|default_on|default_off|
+  disabled`, runtime-переключатель (`fake.SetCollapsedThreads`); как и
+  другие runtime-переключатели фейка (`max-file-size`,
+  `file-attachments-enabled`), клиент видит новое значение только после
+  следующего bootstrap.
+- `GET /api/_test/fake/thread-reads` → `[]ThreadRead{root_id, team_id, ts}`
+  — журнал вызовов `PUT .../threads/{id}/read/{ts}`.
+- `POST /api/_test/notification-click` принимает (и пока игнорирует)
+  необязательный `root_id` — привязка «открыть тред» приходит в Task 5.

@@ -110,3 +110,54 @@ func DecodeEmoji(e Event) (model.Emoji, error) {
 	var out model.Emoji
 	return out, embedded(e, "emoji", &out)
 }
+
+// ThreadUpdated is thread_updated: sent to one subscriber at a time
+// (broadcast.user_id), TeamID is the channel's team ("" for DM/GM).
+type ThreadUpdated struct {
+	Thread                 model.ThreadResponse
+	PreviousUnreadMentions int64
+	PreviousUnreadReplies  int64
+	TeamID                 string
+}
+
+// DecodeThreadUpdated decodes thread_updated (data.thread is a JSON string).
+func DecodeThreadUpdated(e Event) (ThreadUpdated, error) {
+	var out ThreadUpdated
+	if err := embedded(e, "thread", &out.Thread); err != nil {
+		return ThreadUpdated{}, err
+	}
+	var d struct {
+		PreviousUnreadMentions int64 `json:"previous_unread_mentions"`
+		PreviousUnreadReplies  int64 `json:"previous_unread_replies"`
+	}
+	_ = json.Unmarshal(e.Data, &d)
+	out.PreviousUnreadMentions, out.PreviousUnreadReplies = d.PreviousUnreadMentions, d.PreviousUnreadReplies
+	out.TeamID = e.Broadcast.TeamID
+	return out, nil
+}
+
+// ThreadReadChanged is thread_read_changed. ThreadID is "" when every
+// thread of a channel or team was marked read at once (no per-thread id).
+type ThreadReadChanged struct {
+	ThreadID       string
+	Timestamp      int64
+	UnreadMentions int64
+	UnreadReplies  int64
+	ChannelID      string
+	TeamID         string
+}
+
+func DecodeThreadReadChanged(e Event) (ThreadReadChanged, error) {
+	var d struct {
+		ThreadID       string `json:"thread_id"`
+		Timestamp      int64  `json:"timestamp"`
+		UnreadMentions int64  `json:"unread_mentions"`
+		UnreadReplies  int64  `json:"unread_replies"`
+		ChannelID      string `json:"channel_id"`
+	}
+	err := json.Unmarshal(e.Data, &d)
+	return ThreadReadChanged{
+		ThreadID: d.ThreadID, Timestamp: d.Timestamp, UnreadMentions: d.UnreadMentions,
+		UnreadReplies: d.UnreadReplies, ChannelID: d.ChannelID, TeamID: e.Broadcast.TeamID,
+	}, err
+}

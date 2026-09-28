@@ -335,6 +335,58 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 	assert.Equal(t, []string{}, files)
 }
 
+func TestTestAPIThreadControls(t *testing.T) {
+	ts, token, fake := setup(t, true)
+	post := func(path, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Origin", ts.URL)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+	get := func(path string) *http.Response {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	resp := post("/api/_test/fake/thread", `{"channel_id":"c-town","username":"alice","replies":3}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var out struct {
+		RootID string `json:"root_id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.NotEmpty(t, out.RootID)
+	assert.Len(t, fake.VisiblePosts("c-town"), 150+1+3, "seeded town-square posts + thread root + 3 replies")
+
+	// fake/post with an explicit root_id posts a reply, not a new root.
+	resp = post("/api/_test/fake/post", `{"channel_id":"c-town","username":"carol","message":"another reply","root_id":"`+out.RootID+`"}`)
+	require.Equal(t, 200, resp.StatusCode)
+
+	resp = post("/api/_test/fake/edit", `{"post_id":"`+out.RootID+`","message":"edited root"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	assert.Equal(t, 200, post("/api/_test/fake/crt", `{"mode":"always_on"}`).StatusCode)
+	cfgResp, err := http.Get(fake.URL() + "/api/v4/config/client?format=old")
+	require.NoError(t, err)
+	defer cfgResp.Body.Close()
+	var cfg map[string]string
+	require.NoError(t, json.NewDecoder(cfgResp.Body).Decode(&cfg))
+	assert.Equal(t, "always_on", cfg["CollapsedThreads"])
+
+	resp = post("/api/_test/fake/delete", `{"post_id":"`+out.RootID+`"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	reads := get("/api/_test/fake/thread-reads")
+	require.Equal(t, 200, reads.StatusCode)
+	var readList []map[string]any
+	require.NoError(t, json.NewDecoder(reads.Body).Decode(&readList))
+	assert.Empty(t, readList, "no PUT read calls were made in this test")
+}
+
 // "Show in folder" has no file manager in browser mode: e2e reads the
 // requests from the test-API.
 func TestTestAPIRevealedFiles(t *testing.T) {

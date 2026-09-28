@@ -140,17 +140,20 @@ func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
 // (parked ones included) and pushes it to live sockets. A full socket queue
 // drops that session entirely — the next resume then gets a new hello, the
 // same as the real server's send-queue overflow.
-func (s *Server) deliverLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions []string) {
+func (s *Server) deliverLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions, followers []string) {
 	for _, sess := range s.hub.sessions {
 		if !slices.Contains(to, sess.userID) {
 			continue
 		}
-		d := make(map[string]any, len(data)+1)
+		d := make(map[string]any, len(data)+2)
 		for k, v := range data {
 			d[k] = v
 		}
 		if slices.Contains(mentions, sess.userID) {
 			d["mentions"] = `["` + sess.userID + `"]`
+		}
+		if slices.Contains(followers, sess.userID) {
+			d["followers"] = `["` + sess.userID + `"]`
 		}
 		ev := s.hub.stamp(sess, wsEvent{Event: name, Data: d, Broadcast: b})
 		if sess.out != nil {

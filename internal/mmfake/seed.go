@@ -13,19 +13,26 @@ func defaultNotify() map[string]string {
 
 func (s *Server) seed() {
 	o := s.opts
+	crtMode := "disabled"
+	if o.CRT {
+		crtMode = "always_on"
+	}
 	s.chat = chatData{
-		teams:      []model.Team{{ID: "t-fake", Name: "fake", DisplayName: "Fake Team"}},
-		channels:   map[string]*model.Channel{},
-		members:    map[string]map[string]*model.ChannelMember{},
-		posts:      map[string][]*fpost{},
-		byID:       map[string]*fpost{},
-		pending:    map[string]string{},
-		prefs:      map[string][]model.Preference{},
-		status:     map[string]string{},
-		sinceLimit: o.SinceLimit,
-		files:      map[string]*ffile{},
-		emoji:      map[string]*femoji{},
-		pictures:   map[string]*picture{},
+		teams:         []model.Team{{ID: "t-fake", Name: "fake", DisplayName: "Fake Team"}},
+		channels:      map[string]*model.Channel{},
+		members:       map[string]map[string]*model.ChannelMember{},
+		posts:         map[string][]*fpost{},
+		byID:          map[string]*fpost{},
+		pending:       map[string]string{},
+		prefs:         map[string][]model.Preference{},
+		status:        map[string]string{},
+		sinceLimit:    o.SinceLimit,
+		files:         map[string]*ffile{},
+		emoji:         map[string]*femoji{},
+		pictures:      map[string]*picture{},
+		crtMode:       crtMode,
+		threads:       map[string]*fthread{},
+		threadMembers: map[string]map[string]*threadMembership{},
 	}
 	if s.chat.sinceLimit <= 0 {
 		s.chat.sinceLimit = 1000

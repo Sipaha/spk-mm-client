@@ -69,3 +69,37 @@ func TestDecodeEmoji(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.Emoji{ID: "e1", Name: "parrot", CreatorID: "u1"}, e)
 }
+
+func TestDecodeThreadUpdated(t *testing.T) {
+	tu, err := DecodeThreadUpdated(ev("thread_updated",
+		`{"thread":"{\"id\":\"r1\",\"reply_count\":3,\"unread_mentions\":1,\"unread_replies\":2}","previous_unread_mentions":0,"previous_unread_replies":1}`,
+		Broadcast{TeamID: "t1", UserID: "u1"}))
+	require.NoError(t, err)
+	assert.Equal(t, "r1", tu.Thread.PostID)
+	assert.Equal(t, int64(3), tu.Thread.ReplyCount)
+	assert.Equal(t, int64(1), tu.Thread.UnreadMentions)
+	assert.Equal(t, int64(0), tu.PreviousUnreadMentions)
+	assert.Equal(t, int64(1), tu.PreviousUnreadReplies)
+	assert.Equal(t, "t1", tu.TeamID)
+}
+
+func TestDecodeThreadUpdatedRejectsGarbage(t *testing.T) {
+	_, err := DecodeThreadUpdated(ev("thread_updated", `{"thread":"not json"}`, Broadcast{}))
+	assert.Error(t, err)
+}
+
+func TestDecodeThreadReadChanged(t *testing.T) {
+	rc, err := DecodeThreadReadChanged(ev("thread_read_changed",
+		`{"thread_id":"r1","timestamp":100,"unread_mentions":0,"unread_replies":0,"previous_unread_mentions":2,"previous_unread_replies":3,"channel_id":"c1"}`,
+		Broadcast{TeamID: "t1"}))
+	require.NoError(t, err)
+	assert.Equal(t, "r1", rc.ThreadID)
+	assert.Equal(t, int64(100), rc.Timestamp)
+	assert.Equal(t, "c1", rc.ChannelID)
+	assert.Equal(t, "t1", rc.TeamID)
+
+	// "all threads read" — no thread_id.
+	all, err := DecodeThreadReadChanged(ev("thread_read_changed", `{"timestamp":5}`, Broadcast{TeamID: "t1"}))
+	require.NoError(t, err)
+	assert.Equal(t, "", all.ThreadID)
+}

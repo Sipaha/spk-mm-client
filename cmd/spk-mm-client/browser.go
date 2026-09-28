@@ -223,6 +223,9 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			var in struct {
 				ServerID  int64  `json:"server_id"`
 				ChannelID string `json:"channel_id"`
+				// RootID: thread-open binding lands in Task 5; accepted (and
+				// ignored) here now so e2e callers can send it early.
+				RootID string `json:"root_id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			svc.NotificationClicked(in.ServerID, in.ChannelID)
@@ -233,10 +236,49 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 				ChannelID string `json:"channel_id"`
 				Username  string `json:"username"`
 				Message   string `json:"message"`
+				RootID    string `json:"root_id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			p := fake.PostAs(in.ChannelID, in.Username, in.Message)
+			p := fake.ReplyAs(in.ChannelID, in.RootID, in.Username, in.Message)
 			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/thread", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ChannelID string `json:"channel_id"`
+				Username  string `json:"username"`
+				Replies   int    `json:"replies"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			rootID := fake.SeedThread(in.ChannelID, in.Username, in.Replies)
+			writeJSON(w, http.StatusOK, map[string]string{"root_id": rootID})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/edit", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				PostID  string `json:"post_id"`
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.EditAs(in.PostID, in.Message)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/delete", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				PostID string `json:"post_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.DeleteAs(in.PostID)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/crt", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Mode string `json:"mode"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			fake.SetCollapsedThreads(in.Mode)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("GET /api/_test/fake/thread-reads", withFake(func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, fake.ThreadReads())
 		}))
 		tm.HandleFunc("POST /api/_test/fake/drop", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {

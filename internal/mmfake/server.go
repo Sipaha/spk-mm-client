@@ -126,6 +126,7 @@ func Start(o Options) *Server {
 	s.chatRoutes(mux)
 	s.mediaRoutes(mux)
 	s.reactionRoutes(mux)
+	s.threadRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }
@@ -218,12 +219,8 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 	// SetMaxFileSize/SetFileAttachmentsEnabled) — read every field under the
 	// same lock those setters use.
 	s.mu.Lock()
-	fileAttachments, maxFileSize := !s.opts.DisableFileAttachments, s.opts.MaxFileSize
+	fileAttachments, maxFileSize, crt := !s.opts.DisableFileAttachments, s.opts.MaxFileSize, s.chat.crtMode
 	s.mu.Unlock()
-	crt := "disabled"
-	if s.opts.CRT {
-		crt = "always_on"
-	}
 	writeJSON(w, 200, map[string]string{
 		"SiteName":               s.opts.SiteName,
 		"SiteURL":                s.ts.URL,

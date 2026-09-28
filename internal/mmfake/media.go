@@ -677,7 +677,7 @@ func (s *Server) SetPicture(username string) int64 {
 	s.chat.pictures[id] = &picture{at: at, png: seedImages()[fmt.Sprintf("avatar%d", (s.chat.pictureSeq+2)%len(palette))]}
 	u, _ := s.userByID(id)
 	out := s.userWithPictureLocked(u)
-	s.publishLocked("user_updated", map[string]any{"user": out}, wsBroadcast{}, s.allUserIDs(), nil)
+	s.publishLocked("user_updated", map[string]any{"user": out}, wsBroadcast{}, s.allUserIDs(), nil, nil)
 	return at
 }
 
@@ -703,6 +703,6 @@ func (s *Server) AddEmoji(name string) model.Emoji {
 	e := model.Emoji{ID: "e-" + newID()[:12], Name: name, CreatorID: "u-bob"}
 	s.chat.emoji[e.ID] = &femoji{e: e, png: seedImages()["emoji"]}
 	b, _ := json.Marshal(e)
-	s.publishLocked("emoji_added", map[string]any{"emoji": string(b)}, wsBroadcast{}, s.allUserIDs(), nil)
+	s.publishLocked("emoji_added", map[string]any{"emoji": string(b)}, wsBroadcast{}, s.allUserIDs(), nil, nil)
 	return e
 }

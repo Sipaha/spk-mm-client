@@ -38,6 +38,14 @@ type chatData struct {
 	pictures   map[string]*picture
 	pictureSeq int
 	usersSince []int64 // since= of every POST /users/ids that had one
+
+	// Threads (Task 1 threads plan). crtMode is the fake's CollapsedThreads
+	// config, mutable at runtime via SetCollapsedThreads (Options.CRT only
+	// seeds its initial value): "disabled"|"default_on"|"default_off"|"always_on".
+	crtMode       string
+	threads       map[string]*fthread                     // root id → thread (exists once it has a reply)
+	threadMembers map[string]map[string]*threadMembership // root id → user → membership
+	threadReads   []ThreadRead                            // every PUT .../threads/{id}/read/{ts} call
 }
 
 type RecordedEvent struct {
@@ -183,7 +191,7 @@ func (s *Server) putPrefs(w http.ResponseWriter, r *http.Request, u User) {
 		s.upsertPrefLocked(p)
 	}
 	b, _ := json.Marshal(in)
-	s.publishLocked("preferences_changed", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil)
+	s.publishLocked("preferences_changed", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil, nil)
 	writeJSON(w, 200, map[string]string{"status": "OK"})
 }
 
@@ -199,7 +207,7 @@ func (s *Server) deletePrefs(w http.ResponseWriter, r *http.Request, u User) {
 		s.deletePrefLocked(u.ID, p.Category, p.Name)
 	}
 	b, _ := json.Marshal(in)
-	s.publishLocked("preferences_deleted", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil)
+	s.publishLocked("preferences_deleted", map[string]any{"preferences": string(b)}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil, nil)
 	writeJSON(w, 200, map[string]string{"status": "OK"})
 }
 
@@ -440,6 +448,16 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 			return s.chat.byID[id].Post, nil
 		}
 	}
+	// Mirrors app/post.go:299-306: the root must exist, be undeleted, be in
+	// the same channel, and not itself be a reply — a reply to a reply is
+	// rejected outright.
+	var root *fpost
+	if in.RootID != "" {
+		root = s.chat.byID[in.RootID]
+		if root == nil || root.DeleteAt != 0 || root.ChannelID != c.ID || root.RootID != "" {
+			return model.Post{}, &apiErr{400, "api.post.create_post.root_id.app_error"}
+		}
+	}
 	now := s.nowLocked()
 	p := &fpost{Post: model.Post{ID: newID(), ChannelID: c.ID, UserID: userID, RootID: in.RootID,
 		Message: in.Message, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
@@ -451,16 +469,19 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 			p.Metadata = &model.PostMetadata{Files: files}
 		}
 	}
-	root := in.RootID == ""
+	isRoot := root == nil
 	c.LastPostAt = now
 	c.TotalMsgCount++
-	if root {
+	if isRoot {
 		c.TotalMsgCountRoot++
 		c.LastRootPostAt = now
-	} else if r := s.chat.byID[in.RootID]; r != nil {
-		r.ReplyCount++
-		r.LastReplyAt = now
-		r.UpdateAt = now
+	} else {
+		root.ReplyCount++
+		root.LastReplyAt = now
+		root.UpdateAt = now
+		// post_store.go:276-292 (populateReplyCount): the reply itself
+		// carries the thread's current reply_count, not just the root.
+		p.ReplyCount = root.ReplyCount
 	}
 	p.mentions = s.mentionsLocked(c, userID, in.Message)
 	for uid, m := range s.chat.members[c.ID] {
@@ -470,7 +491,7 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 		}
 		if slices.Contains(p.mentions, uid) {
 			m.MentionCount++
-			if root {
+			if isRoot {
 				m.MentionCountRoot++
 			}
 		}
@@ -480,12 +501,20 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	if in.PendingPostID != "" {
 		s.chat.pending[in.PendingPostID] = p.ID
 	}
+	var followers []string
+	var notifyThread func()
+	if !isRoot {
+		followers, notifyThread = s.subscribeReplyLocked(c, root, p, now)
+	}
 	b, _ := json.Marshal(p.Post)
 	sender, _ := s.userByID(userID)
 	s.publishLocked("posted", map[string]any{
 		"post": string(b), "channel_type": c.Type, "channel_display_name": c.DisplayName,
 		"channel_name": c.Name, "sender_name": "@" + sender.Username, "team_id": c.TeamID, "set_online": true,
-	}, wsBroadcast{ChannelID: c.ID}, s.memberIDsLocked(c.ID), p.mentions)
+	}, wsBroadcast{ChannelID: c.ID}, s.memberIDsLocked(c.ID), p.mentions, followers)
+	if notifyThread != nil {
+		notifyThread()
+	}
 	return p.Post, nil
 }
 
@@ -504,7 +533,7 @@ func (s *Server) editPostLocked(userID, postID, msg string) (model.Post, *apiErr
 	p.Message, p.EditAt, p.UpdateAt = msg, now, now
 	s.chat.channels[p.ChannelID].LastPostAt = now
 	b, _ := json.Marshal(p.Post)
-	s.publishLocked("post_edited", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil)
+	s.publishLocked("post_edited", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
 	return p.Post, nil
 }
 
@@ -517,13 +546,20 @@ func (s *Server) deletePostLocked(userID, postID string) *apiErr {
 		return &apiErr{403, "api.context.permissions.app_error"}
 	}
 	now := s.nowLocked()
-	for _, q := range s.chat.posts[p.ChannelID] {
-		if q.ID == p.ID || q.RootID == p.ID {
-			q.DeleteAt, q.UpdateAt = now, now
+	if p.RootID == "" {
+		// Deleting a root: one event for the root only, replies are marked
+		// deleted silently (post_store.go:972-1007) — the client cascades.
+		for _, q := range s.chat.posts[p.ChannelID] {
+			if q.ID == p.ID || q.RootID == p.ID {
+				q.DeleteAt, q.UpdateAt = now, now
+			}
 		}
+	} else {
+		p.DeleteAt, p.UpdateAt = now, now
+		s.deleteReplyEffectsLocked(p)
 	}
 	b, _ := json.Marshal(p.Post)
-	s.publishLocked("post_deleted", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil)
+	s.publishLocked("post_deleted", map[string]any{"post": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
 	return nil
 }
 
@@ -596,7 +632,7 @@ func (s *Server) viewChannel(w http.ResponseWriter, r *http.Request, u User) {
 		c.TotalMsgCount, c.TotalMsgCountRoot, 0, 0, 0, now
 	if hadUnread {
 		s.publishLocked("multiple_channels_viewed", map[string]any{"channel_times": map[string]int64{c.ID: now}},
-			wsBroadcast{UserID: u.ID}, []string{u.ID}, nil)
+			wsBroadcast{UserID: u.ID}, []string{u.ID}, nil, nil)
 	}
 	writeJSON(w, 200, map[string]any{"status": "OK", "last_viewed_at_times": map[string]int64{c.ID: now}})
 }
@@ -638,16 +674,18 @@ func (s *Server) setUnread(w http.ResponseWriter, r *http.Request, u User) {
 	s.publishLocked("post_unread", map[string]any{
 		"msg_count": msgs, "msg_count_root": roots, "mention_count": ment, "mention_count_root": mentRoot,
 		"urgent_mention_count": 0, "last_viewed_at": m.LastViewedAt, "post_id": p.ID,
-	}, wsBroadcast{UserID: u.ID, ChannelID: c.ID, TeamID: c.TeamID}, []string{u.ID}, nil)
+	}, wsBroadcast{UserID: u.ID, ChannelID: c.ID, TeamID: c.TeamID}, []string{u.ID}, nil, nil)
 	writeJSON(w, 200, out)
 }
 
 // publishLocked records the event and delivers it over WebSocket (ws.go).
-func (s *Server) publishLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions []string) {
+// mentions/followers are per-recipient: a connection only sees itself in
+// them (deliverLocked), never the whole list — mirrors the real server.
+func (s *Server) publishLocked(name string, data map[string]any, b wsBroadcast, to []string, mentions, followers []string) {
 	if s.opts.KeepPosts <= 0 { // a capped (soak) fake keeps no event log
 		s.chat.events = append(s.chat.events, RecordedEvent{Name: name, To: to})
 	}
-	s.deliverLocked(name, data, b, to, mentions)
+	s.deliverLocked(name, data, b, to, mentions, followers)
 }
 
 // ---- test controls ----
@@ -737,7 +775,7 @@ func (s *Server) SetStatus(username, status string) {
 	defer s.mu.Unlock()
 	id := s.userIDByName(username)
 	s.chat.status[id] = status
-	s.publishLocked("status_change", map[string]any{"status": status, "user_id": id}, wsBroadcast{UserID: id}, []string{id}, nil)
+	s.publishLocked("status_change", map[string]any{"status": status, "user_id": id}, wsBroadcast{UserID: id}, []string{id}, nil, nil)
 }
 
 // AddChannel creates an open team channel with the given members and tells
@@ -754,7 +792,7 @@ func (s *Server) AddChannel(id, display string, usernames ...string) {
 		s.chat.members[id][uid] = &model.ChannelMember{ChannelID: id, UserID: uid, LastViewedAt: now,
 			NotifyProps: map[string]string{"desktop": "default", "mark_unread": "all"}}
 		s.publishLocked("user_added", map[string]any{"user_id": uid, "team_id": s.chat.teams[0].ID},
-			wsBroadcast{UserID: uid, ChannelID: id}, []string{uid}, nil)
+			wsBroadcast{UserID: uid, ChannelID: id}, []string{uid}, nil, nil)
 	}
 }
 

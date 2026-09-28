@@ -67,7 +67,7 @@ func (s *Server) reactLocked(userID, postID, name string, add bool) (model.React
 	if !add {
 		ev = "reaction_removed"
 	}
-	s.publishLocked(ev, map[string]any{"reaction": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil)
+	s.publishLocked(ev, map[string]any{"reaction": string(b)}, wsBroadcast{ChannelID: p.ChannelID}, s.memberIDsLocked(p.ChannelID), nil, nil)
 	return r, nil
 }
 
