@@ -125,7 +125,7 @@ test('12 reactors: the tooltip truncates to 10 shown plus an "and N others" butt
   await act(async () => vi.advanceTimersByTime(300))
   const tip = await screen.findByRole('tooltip')
   const more = await waitFor(() => {
-    const btn = screen.getByRole('button', { name: '2 others' })
+    const btn = screen.getByRole('button', { name: '2 other users' })
     expect(tip).toContainElement(btn)
     return btn
   })
@@ -261,7 +261,7 @@ test('the "and N others" button opens the modal with the full list, "You" first'
   render(<Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 12, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />)
   await user.hover(screen.getByRole('button'))
   await act(async () => vi.advanceTimersByTime(300))
-  const more = await screen.findByRole('button', { name: '2 others' })
+  const more = await screen.findByRole('button', { name: '2 other users' })
   await user.click(more)
 
   const dialog = await screen.findByRole('dialog')
@@ -280,7 +280,7 @@ test('Esc and the backdrop close the modal; focus returns to the chip', async ()
   const chip = screen.getByRole('button')
   await user.hover(chip)
   await act(async () => vi.advanceTimersByTime(300))
-  await user.click(await screen.findByRole('button', { name: '2 others' }))
+  await user.click(await screen.findByRole('button', { name: '2 other users' }))
   await screen.findByRole('dialog')
 
   await user.keyboard('{Escape}')
@@ -290,7 +290,7 @@ test('Esc and the backdrop close the modal; focus returns to the chip', async ()
   // Backdrop click closes it too.
   await user.hover(chip)
   await act(async () => vi.advanceTimersByTime(300))
-  await user.click(await screen.findByRole('button', { name: '2 others' }))
+  await user.click(await screen.findByRole('button', { name: '2 other users' }))
   const dialog = await screen.findByRole('dialog')
   await user.click(dialog.parentElement!) // the backdrop, not the panel itself
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -305,7 +305,40 @@ test('keyboard: Tab from a focused chip with a showing tooltip reaches the "and 
   const chip = screen.getByRole('button')
   act(() => chip.focus())
   await act(async () => vi.advanceTimersByTime(300))
-  const more = await screen.findByRole('button', { name: '2 others' })
+  const more = await screen.findByRole('button', { name: '2 other users' })
   fireEvent.keyDown(chip, { key: 'Tab' })
   expect(more).toHaveFocus()
+})
+
+test('keyboard: Shift+Tab from the overflow button returns to the chip (symmetric hand-off)', async () => {
+  const users = Array.from({ length: 11 }, (_, i) => ({ id: `u${i}`, name: `user${i}`, avatar: '' }))
+  const loadReactors = vi.fn().mockResolvedValue(dto(users))
+  vi.useFakeTimers()
+  render(<Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 12, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />)
+  const chip = screen.getByRole('button', { name: '👍 12, you reacted' })
+  act(() => chip.focus())
+  await act(async () => vi.advanceTimersByTime(300))
+  const more = await screen.findByRole('button', { name: '2 other users' })
+  act(() => more.focus())
+  fireEvent.keyDown(more, { key: 'Tab', shiftKey: true })
+  expect(chip).toHaveFocus()
+})
+
+test('keyboard: Tab from the overflow button moves to whatever is next after the chip, not the end of the document', async () => {
+  const users = Array.from({ length: 11 }, (_, i) => ({ id: `u${i}`, name: `user${i}`, avatar: '' }))
+  const loadReactors = vi.fn().mockResolvedValue(dto(users))
+  vi.useFakeTimers()
+  render(
+    <div>
+      <Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 12, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />
+      <button>after the reactions row</button>
+    </div>,
+  )
+  const chip = screen.getByRole('button', { name: '👍 12, you reacted' })
+  act(() => chip.focus())
+  await act(async () => vi.advanceTimersByTime(300))
+  const more = await screen.findByRole('button', { name: '2 other users' })
+  act(() => more.focus())
+  fireEvent.keyDown(more, { key: 'Tab' })
+  expect(screen.getByRole('button', { name: 'after the reactions row' })).toHaveFocus()
 })

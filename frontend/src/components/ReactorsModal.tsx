@@ -22,7 +22,11 @@ interface Props {
 // ReactorsModal is the full "who reacted" list behind a tooltip's "and N
 // others" button (UI ruling, 2026-09-28): a portal into document.body, Esc
 // or the backdrop closes it, focus is trapped inside while open and
-// returns to anchorEl on close — dark theme like Viewer/Downloads.
+// returns to anchorEl on close — dark theme like Viewer/Downloads. Its
+// list is uncapped (a busy post can have hundreds of reactors) and always
+// scrolled into view the moment it opens, unlike the feed/sidebar's
+// Avatars — so every row's Avatar loads lazily (fix round 2: AGENTS.md's
+// "necessarily visible" exception, the same one the emoji picker uses).
 export function ReactorsModal({ serverId, emoji, count, mine, meId, meAvatar, users, anchorEl, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null)
 
@@ -86,13 +90,13 @@ export function ReactorsModal({ serverId, emoji, count, mine, meId, meAvatar, us
         <div role="list" aria-label={t('reaction.whoList')} className="min-h-0 flex-1 overflow-y-auto p-2">
           {mine && (
             <div role="listitem" className="flex items-center gap-2 rounded px-1 py-1.5 text-sm">
-              <Avatar serverId={serverId} userId={meId} version={meAvatar || undefined} name={t('reaction.you')} size={24} surface="app" />
+              <Avatar serverId={serverId} userId={meId} version={meAvatar || undefined} name={t('reaction.you')} size={24} surface="app" loading="lazy" />
               <span className="truncate">{t('reaction.you')}</span>
             </div>
           )}
           {users.map((u) => (
             <div key={u.id} role="listitem" className="flex items-center gap-2 rounded px-1 py-1.5 text-sm">
-              <Avatar serverId={serverId} userId={u.id} version={u.avatar || undefined} name={u.name || t('reaction.unknownUser')} size={24} surface="app" />
+              <Avatar serverId={serverId} userId={u.id} version={u.avatar || undefined} name={u.name || t('reaction.unknownUser')} size={24} surface="app" loading="lazy" />
               <span className={`truncate ${u.name ? '' : 'text-fg-muted italic'}`}>{u.name || t('reaction.unknownUser')}</span>
             </div>
           ))}

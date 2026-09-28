@@ -59,6 +59,39 @@ test('the "You" row shows my real avatar when a picture version is known', () =>
   a.remove()
 })
 
+test('every row\'s avatar loads lazily (the list is uncapped and always visible when open)', () => {
+  const a = anchor()
+  render(
+    <ReactorsModal
+      serverId={1}
+      emoji="+1"
+      count={3}
+      mine={true}
+      meId="u-alice"
+      meAvatar="7"
+      users={[{ id: 'u-bob', name: 'bob', avatar: '3' }, { id: 'u-carol', name: 'carol', avatar: '5' }]}
+      anchorEl={a}
+      onClose={() => {}}
+    />,
+  )
+  const imgs = [...screen.getByRole('dialog').querySelectorAll('img')]
+  expect(imgs.length).toBeGreaterThan(0)
+  for (const img of imgs) expect(img).toHaveAttribute('loading', 'lazy')
+  a.remove()
+})
+
+test('300 rows render, each with a lazy avatar', () => {
+  const a = anchor()
+  const users = Array.from({ length: 300 }, (_, i) => ({ id: `u-${i}`, name: `user${i}`, avatar: String(i) }))
+  render(<ReactorsModal serverId={1} emoji="+1" count={300} mine={false} meId="u-alice" meAvatar="" users={users} anchorEl={a} onClose={() => {}} />)
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getAllByRole('listitem')).toHaveLength(300)
+  const imgs = [...dialog.querySelectorAll('img')]
+  expect(imgs).toHaveLength(300)
+  expect(imgs.every((img) => img.getAttribute('loading') === 'lazy')).toBe(true)
+  a.remove()
+})
+
 test('Tab past the last focusable element wraps to the first (focus trap)', async () => {
   const user = userEvent.setup()
   const a = anchor()

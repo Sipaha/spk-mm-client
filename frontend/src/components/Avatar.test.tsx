@@ -23,6 +23,14 @@ test('a loaded profile: picture with its version, fixed size, presence dot', () 
   expect(dot).toHaveAttribute('aria-hidden', 'true')
 })
 
+// fix round 2: the loading prop exists solely for ReactorsModal's
+// necessarily-visible, uncapped reactor list — every other caller (feed
+// rows, sidebar, Downloads) omits it and stays eager, per the test above.
+test('the loading prop is opt-in: passing "lazy" sets it, same component otherwise', () => {
+  const { container } = render(<Avatar serverId={3} userId="u-bob" version="42" name="bob" size={36} surface="app" loading="lazy" />)
+  expect(container.querySelector('img')).toHaveAttribute('loading', 'lazy')
+})
+
 test('no profile yet or a failed load: initials; a new version tries again', () => {
   const { container, rerender } = render(<Avatar serverId={3} userId="u-x" name="" size={36} surface="app" />)
   expect(container.querySelector('img')).toBeNull()

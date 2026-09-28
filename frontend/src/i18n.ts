@@ -135,8 +135,18 @@ const ru = {
   'reaction.you': 'Вы',
   'reaction.and': 'и',
   'reaction.reacted': 'отреагировал с',
-  'reaction.othersOne': 'ещё {n}',
-  'reaction.othersMany': 'ещё {n}',
+  // The overflow tail's noun, split by CLDR plural category (Intl.PluralRules
+  // selects the suffix — reactorText.ts): "otherUser*" follows a shown name
+  // list ("bob, carol и {N} других пользователя"), "users*" stands alone
+  // (no one is named: "{N} пользователей"). Wording taken verbatim from the
+  // webapp (fix round 2): en.json/ru.json "reaction.usersAndOthersReacted"/
+  // "reaction.othersReacted".
+  'reaction.otherUserOne': '{n} другой пользователь',
+  'reaction.otherUserFew': '{n} других пользователя',
+  'reaction.otherUserMany': '{n} других пользователей',
+  'reaction.usersOne': '{n} пользователь',
+  'reaction.usersFew': '{n} пользователя',
+  'reaction.usersMany': '{n} пользователей',
   'reaction.loading': '…',
   'reaction.unknownUser': 'Неизвестный пользователь',
   'reaction.whoTitle': '{emoji} {n}',
@@ -315,8 +325,15 @@ const en: Record<Key, string> = {
   'reaction.you': 'You',
   'reaction.and': 'and',
   'reaction.reacted': 'reacted with',
-  'reaction.othersOne': '{n} other',
-  'reaction.othersMany': '{n} others',
+  // See the ru dict for the CLDR-category rationale. English only ever
+  // selects One/Other (Intl.PluralRules('en')); Few/Many exist for key
+  // parity and mirror Other's wording.
+  'reaction.otherUserOne': '{n} other user',
+  'reaction.otherUserFew': '{n} other users',
+  'reaction.otherUserMany': '{n} other users',
+  'reaction.usersOne': '{n} user',
+  'reaction.usersFew': '{n} users',
+  'reaction.usersMany': '{n} users',
   'reaction.loading': '…',
   'reaction.unknownUser': 'Unknown user',
   'reaction.whoTitle': '{emoji} {n}',
@@ -364,6 +381,12 @@ let locale: Locale = navigator.language?.toLowerCase().startsWith('ru') ? 'ru' :
 
 export function setLocale(l: Locale) {
   locale = l
+}
+
+// getLocale: for the rare spot that needs CLDR plural rules beyond t()'s
+// plain string interpolation (Intl.PluralRules — see reactorText.ts).
+export function getLocale(): Locale {
+  return locale
 }
 
 export function t(key: I18nKey, vars?: Record<string, string>): string {

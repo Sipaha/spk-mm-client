@@ -24,6 +24,11 @@ const HOVER_DELAY = 300 // ms before a hover/focus fetches and shows the tooltip
 const LEAVE_GRACE = 150 // ms grace before hiding, so the pointer can cross into the tooltip
 const TOOLTIP_W = 280
 
+// FOCUSABLE_SELECTOR: for finding "the next focusable element after the
+// chip" (onOverflowKeyDown below) — a standard, good-enough tab-order
+// approximation (no positive tabindex anywhere in this app).
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 // Reactions: a chip per emoji; clicking toggles our own reaction with the
 // chip's own name (aliases stay separate, as on the server). Hovering or
 // focusing a chip shows a "who reacted" tooltip (one instance for the
@@ -136,6 +141,36 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
     }
   }
 
+  // onOverflowKeyDown: symmetric to onChipKeyDown, and completing the same
+  // "portal breaks the document's tab order" fix (fix round 2, UI ruling):
+  // Shift+Tab from the overflow button goes straight back to the chip
+  // (mirroring the chip's own forward hand-off), and a plain Tab moves to
+  // whatever real tab order says is next *after the chip* — never off to
+  // the end of the document, where the portal's button would otherwise
+  // physically sit in document order.
+  const onOverflowKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== 'Tab' || !hover) return
+    e.preventDefault()
+    if (e.shiftKey) {
+      hover.anchor.focus()
+      return
+    }
+    const chain = [...document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter((el) => !tooltipRoot.current?.contains(el))
+    const i = chain.indexOf(hover.anchor)
+    if (i >= 0) chain[i + 1]?.focus()
+  }
+
+  // onTooltipBlur: now that focus can leave the tooltip programmatically
+  // (Tab past the overflow button, above) rather than only by the pointer
+  // leaving, the tooltip needs the same "hidden on blur" rule the chip
+  // already has — closing once focus lands outside both the tooltip and
+  // its chip.
+  const onTooltipBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null
+    if (next && (tooltipRoot.current?.contains(next) || hover?.anchor.contains(next))) return
+    hide()
+  }
+
   const openModal = () => {
     if (!hover || !result || result === 'loading') return
     setModal({ r: hover.r, anchor: hover.anchor, dto: result })
@@ -191,13 +226,21 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
             role="tooltip"
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
+            onBlur={onTooltipBlur}
             className="fixed z-50 max-w-xs rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs text-fg shadow-xl"
             style={{ left: tooltipPos.left, top: tooltipPos.top, width: TOOLTIP_W }}
           >
             {result === 'loading' ? (
               t('reaction.loading')
             ) : (
-              <TooltipBody dto={result} mine={hover.r.mine} emoji={hover.r.emoji} onShowMore={openModal} buttonRef={overflowBtn} />
+              <TooltipBody
+                dto={result}
+                mine={hover.r.mine}
+                emoji={hover.r.emoji}
+                onShowMore={openModal}
+                onButtonKeyDown={onOverflowKeyDown}
+                buttonRef={overflowBtn}
+              />
             )}
           </div>,
           document.body,
@@ -229,12 +272,14 @@ function TooltipBody({
   mine,
   emoji,
   onShowMore,
+  onButtonKeyDown,
   buttonRef,
 }: {
   dto: ReactionUsersDTO
   mine: boolean
   emoji: string
   onShowMore(): void
+  onButtonKeyDown(e: React.KeyboardEvent<HTMLButtonElement>): void
   buttonRef: React.RefObject<HTMLButtonElement | null>
 }) {
   // Only resolvable names are shown by name in the tooltip text; every
@@ -251,7 +296,7 @@ function TooltipBody({
         <span key={i}>
           {i > 0 && (i === items.length - 1 ? ` ${t('reaction.and')} ` : ', ')}
           {it.button ? (
-            <button type="button" ref={buttonRef} className="underline hover:no-underline" onClick={onShowMore}>
+            <button type="button" ref={buttonRef} className="underline hover:no-underline" onClick={onShowMore} onKeyDown={onButtonKeyDown}>
               {it.text}
             </button>
           ) : (

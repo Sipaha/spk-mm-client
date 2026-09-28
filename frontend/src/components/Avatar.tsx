@@ -47,6 +47,11 @@ interface Props {
   status?: string
   size: number
   surface: 'app' | 'sidebar'
+  // loading: default (omitted) is eager — see the note below. Pass "lazy"
+  // only where the UI is necessarily visible already (AGENTS.md's rule,
+  // "Things that bite" — the emoji picker is the other example): right
+  // now only ReactorsModal's potentially long, uncapped reactor list.
+  loading?: 'eager' | 'lazy'
 }
 
 // Avatar is decorative (alt=""): the name is always shown next to it. Its box
@@ -56,7 +61,7 @@ interface Props {
 // tray) WebKit never runs its lazy-load check, so each removed, not yet
 // loaded lazy image stays referenced — with its whole detached feed — until
 // the next paint (AGENTS.md, "Things that bite").
-export const Avatar = memo(function Avatar({ serverId, userId, version, name, status, size, surface }: Props) {
+export const Avatar = memo(function Avatar({ serverId, userId, version, name, status, size, surface, loading }: Props) {
   // A failed load shows initials until the picture version changes or the
   // server goes live again.
   const [failed, fail] = useLoadFailure(serverId, version ?? '')
@@ -71,6 +76,7 @@ export const Avatar = memo(function Avatar({ serverId, userId, version, name, st
           height={size}
           decoding="async"
           draggable={false}
+          loading={loading}
           onError={fail}
           className="block h-full w-full rounded-full bg-hover object-cover"
         />
