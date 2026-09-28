@@ -549,7 +549,21 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	case q.kind == KindPDF:
 		sem = c.pdfSem
 	}
-	sem <- struct{}{}
+	if cl.cancel == nil {
+		sem <- struct{}{}
+	} else {
+		select {
+		case sem <- struct{}{}:
+		case <-parent.Done(): // abandoned while queued: leave now, not when a slot frees
+			abandonHook()
+			c.mu.Lock()
+			c.doneLocked(key, cl)
+			cl.status = http.StatusServiceUnavailable
+			c.mu.Unlock()
+			close(cl.done)
+			return
+		}
+	}
 	c.mu.Lock()
 	if cl.waiters == 0 {
 		c.doneLocked(key, cl)

@@ -172,7 +172,7 @@
   таймаут загрузки — 5× обычного (файл вдвое больше картинки), поэтому у PDF **свои 2 слота**
   (`pdfSem`, не 6 общих `c.sem` — зависшие PDF не держат аватары и миниатюры), а загрузка, которую
   больше никто не ждёт (просмотрщик закрыт; у PDF один читатель), **отменяется** и не попадает в
-  негативный кэш (`call.cancel`; следующий запрос начинает свою загрузку, не присоединяясь к
+  негативный кэш (`call.cancel`; ждущая слот — уходит из очереди сразу; следующий запрос начинает свою загрузку, не присоединяясь к
   отменённой). Проверка `%PDF-` — это сниффинг, **не** валидация: HTML с `%PDF-` в комментарии её
   проходит; настоящая защита — заголовки ответа и то, что pdf.js получает байты, а не URL. Любой ответ
   на pdf-URL (успех, HEAD, Range и ошибки, включая 416, где `ServeContent` снимает `Cache-Control`) —
@@ -185,7 +185,8 @@
   только «живой» воркер, как остальные виды. — `internal/media/pdf_test.go`
   (`TestPDFServedAsSandboxedAttachment`, `TestPDFOverCapIs413`, `TestNotAPDFIs415`,
   `TestPDFHeaderWithinTheFirstKilobyte`, `TestPDFFetchHasALongerTimeout`, `TestPDFErrorsCarryTheGuardHeaders`,
-  `TestPDFNeedsTheWholeFile`, `TestStalledPDFsDoNotBlockOtherPictures`, `TestAbandonedPDFFetchIsCancelled`), `TestPDFIsNotReadWhole`
+  `TestPDFNeedsTheWholeFile`, `TestStalledPDFsDoNotBlockOtherPictures`, `TestAbandonedPDFFetchIsCancelled`,
+  `TestAbandonedQueuedPDFLeavesAtOnce`, `TestRequestAfterACancelStartsAFreshPDFFetch`), `TestPDFIsNotReadWhole`
   (`memory_test.go`), `TestBadRequests`, `internal/api/media_test.go` (`TestPDFOnlyWhileLive`).
 - Картинка, которая не загрузилась (`/media/` ответил 404/413/415), в ленте/миниатюрах/просмотрщике
   откатывается на карточку файла, а не остаётся сломанной. —

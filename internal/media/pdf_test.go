@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -327,4 +328,111 @@ func TestPDFFetchHasALongerTimeout(t *testing.T) {
 	assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode, "a picture: the plain timeout")
 	resp, _ = e.get("/media/1/pdf/f1")
 	assert.Equal(t, 200, resp.StatusCode, "a PDF: pdfTimeoutFactor × the timeout")
+}
+
+// queuedPDFEnv fills both PDF slots with downloads stalled until release,
+// then abandons p2 while it waits for a slot. It returns the p2 call that
+// was abandoned, and release (also run on cleanup, so a failing test does
+// not wait for the stalled downloads).
+func queuedPDFEnv(t *testing.T) (e *env, release func(), abandoned *call) {
+	t.Helper()
+	stalled := make(chan struct{})
+	release = sync.OnceFunc(func() { close(stalled) })
+	e = newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("%PDF-1.7\n"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-stalled:
+			_, _ = w.Write(pdfOf(2048))
+		case <-r.Context().Done():
+		}
+	})
+	t.Cleanup(release)
+	for i := range pdfFetches {
+		go func() {
+			if resp, err := http.Get(e.srv.URL + "/media/1/pdf/p" + strconv.Itoa(i)); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	require.Eventually(t, func() bool {
+		return e.origin.count("/api/v4/files/p0")+e.origin.count("/api/v4/files/p1") == pdfFetches
+	}, 5*time.Second, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/media/1/pdf/p2", nil)
+	require.NoError(t, err)
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	require.Eventually(t, func() bool {
+		e.cache.mu.Lock()
+		defer e.cache.mu.Unlock()
+		abandoned = e.cache.inflight[pdfKey]
+		return abandoned != nil && abandoned.waiters == 1
+	}, 5*time.Second, 10*time.Millisecond)
+	cancel() // the viewer closed while p2 was queued
+	<-gone
+	return e, release, abandoned
+}
+
+const pdfKey = "1/pdf/p2/"
+
+// R2: an abandoned PDF waiting for a slot leaves the queue at once, not
+// when a slot frees up (minutes, with stalled downloads ahead of it).
+func TestAbandonedQueuedPDFLeavesAtOnce(t *testing.T) {
+	e, release, abandoned := queuedPDFEnv(t)
+	select {
+	case <-abandoned.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the abandoned PDF still waits for a slot")
+	}
+	e.cache.mu.Lock()
+	assert.Nil(t, e.cache.inflight[pdfKey], "off the in-flight list")
+	e.cache.mu.Unlock()
+	release()
+	time.Sleep(100 * time.Millisecond)
+	assert.Zero(t, e.origin.count("/api/v4/files/p2"), "never fetched")
+}
+
+// R1: a request that comes after the cancel does not join the abandoned
+// call (it would get its 503): it starts a fetch of its own, and the
+// abandoned call, finishing later, leaves the new one registered.
+func TestRequestAfterACancelStartsAFreshPDFFetch(t *testing.T) {
+	entered, hold := make(chan struct{}), make(chan struct{})
+	unhold := sync.OnceFunc(func() { close(hold) })
+	abandonHook = func() {
+		close(entered)
+		<-hold
+	}
+	t.Cleanup(func() { abandonHook = func() {} })
+	e, release, abandoned := queuedPDFEnv(t)
+	t.Cleanup(unhold)
+	select {
+	case <-entered: // the abandoned call is on its way out, still registered
+	case <-time.After(3 * time.Second):
+		t.Fatal("the abandoned PDF still waits for a slot")
+	}
+	again := make(chan int, 1)
+	go func() {
+		resp, _ := e.get("/media/1/pdf/p2")
+		again <- resp.StatusCode
+	}()
+	require.Eventually(t, func() bool {
+		e.cache.mu.Lock()
+		defer e.cache.mu.Unlock()
+		cl := e.cache.inflight[pdfKey]
+		return cl != nil && cl != abandoned && cl.waiters == 1
+	}, 3*time.Second, 10*time.Millisecond, "the new request joined the cancelled call")
+	unhold()
+	<-abandoned.done
+	e.cache.mu.Lock()
+	assert.NotNil(t, e.cache.inflight[pdfKey], "the abandoned call left the new one registered")
+	e.cache.mu.Unlock()
+	release()
+	assert.Equal(t, 200, <-again)
+	assert.Equal(t, 1, e.origin.count("/api/v4/files/p2"))
 }

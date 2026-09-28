@@ -86,3 +86,7 @@ func (w pdfWriter) ReadFrom(r io.Reader) (int64, error) {
 	w.guard()
 	return io.Copy(w.ResponseWriter, r)
 }
+
+// abandonHook runs when an abandoned PDF leaves the slot queue, before it
+// is taken off the in-flight list (tests hold it there).
+var abandonHook = func() {}
