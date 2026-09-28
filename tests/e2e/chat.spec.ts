@@ -93,20 +93,23 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
   await removeServerFromMenu(page)
 })
 
+// The Save button keeps one fixed label ("Save") whether saved or not —
+// toggle state is aria-pressed only, no label swap (final-review RULING
+// #4, UI pass 2026-09-28).
 test('save a post for later: hover, Save, reload keeps it, then unsave', async ({ page }) => {
   await signInAlice(page)
   const post = feed(page).locator('article', { hasText: 'Message #140' })
   await post.hover()
   await post.getByRole('button', { name: 'Save' }).click()
-  await expect(post.getByRole('button', { name: 'Remove from saved' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(post.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
 
   await page.reload()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   const postAfterReload = feed(page).locator('article', { hasText: 'Message #140' })
   await postAfterReload.hover()
-  await expect(postAfterReload.getByRole('button', { name: 'Remove from saved' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
 
-  await postAfterReload.getByRole('button', { name: 'Remove from saved' }).click()
+  await postAfterReload.getByRole('button', { name: 'Save' }).click()
   await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'false')
   await removeServerFromMenu(page)
 })

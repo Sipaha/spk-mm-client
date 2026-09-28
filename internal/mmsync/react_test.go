@@ -56,6 +56,35 @@ func TestReactionRoundTrip(t *testing.T) {
 	assert.False(t, serverHas(h, id, "u-alice", "+1"))
 }
 
+// TestReactionBumpsRecentEmojiWhenIssued: the local recent-emoji list (what
+// the UI's quick reactions read — EmojiInfo/RecentEmojis) moves the moment
+// an add is *issued*, before the SaveReaction round trip returns — not only
+// once it lands. The final-review finding on e63449f..e9dbc29: a fetch of
+// the panel right after this click used to still see the *previous* list,
+// because the local bump only happened once SaveReaction had already
+// returned. Saving the preference to the server stays gated on the reaction
+// actually landing, unchanged — checked here too.
+func TestReactionBumpsRecentEmojiWhenIssued(t *testing.T) {
+	h, id := welcomeHarness(t)
+	ctx := context.Background()
+	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- h.w.React(ctx, id, "tada", true) }()
+
+	h.eventually(func() bool { return slices.Contains(h.w.State().RecentEmojis(), "tada") }, "not bumped at issue time")
+	select {
+	case <-done:
+		t.Fatal("React already returned — this does not prove the bump happened before the network call did")
+	default: // good: SaveReaction is still in flight (300ms latency), the local bump already landed
+	}
+	assert.NotContains(t, h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"tada"`, "the server-side preference save must still wait for the add to land")
+
+	require.NoError(t, <-done)
+	h.eventually(func() bool {
+		return strings.Contains(h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"tada"`)
+	}, "recent emoji not saved once the add landed")
+}
+
 func TestReactionRefusedIsRolledBack(t *testing.T) {
 	h, id := welcomeHarness(t)
 	ctx := context.Background()

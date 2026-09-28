@@ -123,7 +123,10 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       onClose()
     }
   }
-  const nav = 'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded-full bg-black/50 px-3 py-1 text-white hover:bg-black/70'
+  // py-2 (+ the 24px chevron) makes a ~40px hit area — the WCAG/Fitts-law
+  // touch-target minimum (final-review RULING #3, UI pass 2026-09-28: this
+  // was ~32px, a Task 1 review's already-flagged-but-deferred finding).
+  const nav = 'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded-full bg-black/50 px-3 py-2 text-white hover:bg-black/70'
   const kind = fileKind(file)
   const showImage = kind === 'image' && src && !failedIds.has(file.id)
   const isMarkdown = kind === 'markdown'

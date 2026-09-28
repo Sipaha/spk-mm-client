@@ -24,6 +24,8 @@ vi.mock('./api/client', () => ({
     pickAttachments: vi.fn(),
     attachFromClipboard: vi.fn(),
     setPostSaved: vi.fn(),
+    addReaction: vi.fn().mockResolvedValue(undefined),
+    removeReaction: vi.fn().mockResolvedValue(undefined),
   },
   uploadAttachmentBrowser: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -38,7 +40,7 @@ const {
   attachFromClipboard, clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost,
   loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
   openDownloadsPanel, openFile, pickAttachments, refreshChannel, refreshDownloads,
-  removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, setPostSaved, uploadAttachments,
+  react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, setPostSaved, uploadAttachments,
 } = await import('./chat')
 
 const post = (over: Partial<PostView> = {}): PostView => ({
@@ -400,6 +402,23 @@ test('setPostSaved calls the API and reports a failure globally, like markUnread
   vi.mocked(client.setPostSaved).mockRejectedValueOnce(new Error('boom'))
   setPostSaved(1, post({ id: 'p1' }), false)
   expect(client.setPostSaved).toHaveBeenCalledWith(1, 'p1', false)
+  await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
+})
+
+// react's returned promise always resolves — never rejects — once the call
+// has settled either way: PostItem's quick-reactions cache invalidation
+// (emoji/recent.ts) waits for it to settle before marking the cache stale,
+// so it must never be left hanging by a rejection (final-review finding,
+// UI pass 2026-09-28).
+test('react calls addReaction/removeReaction, reports a failure globally, and its promise always resolves', async () => {
+  await react(1, 'p1', 'tada', true)
+  expect(client.addReaction).toHaveBeenCalledWith(1, 'p1', 'tada')
+  await react(1, 'p1', 'tada', false)
+  expect(client.removeReaction).toHaveBeenCalledWith(1, 'p1', 'tada')
+  expect(useStore.getState().lastError).toBeNull()
+
+  vi.mocked(client.addReaction).mockRejectedValueOnce(new Error('boom'))
+  await expect(react(1, 'p1', 'fire', true)).resolves.toBeUndefined() // settles, does not reject
   await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
 })
 

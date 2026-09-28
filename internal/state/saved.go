@@ -8,10 +8,12 @@ const flaggedPostCategory = "flagged_post"
 // SetPostSaved records a save/unsave the server already confirmed (unlike
 // ReactLocalWas/SetMyReaction, there is no optimistic guess to roll back
 // here — the worker calls this only after SavePreferences/DeletePreferences
-// succeeds, or when a preferences_changed/preferences_deleted WS event
-// echoes it). Marks the post's channel changed so the feed repaints, like a
-// reaction does — a post not currently held in memory changes nothing to
-// repaint.
+// succeeds). A save/unsave that arrives as a preferences_changed/
+// preferences_deleted WS event instead (echoing this or another device's
+// change) does not come through here — ApplyEvent applies it inline,
+// alongside every other preference (events.go). Marks the post's channel
+// changed so the feed repaints, like a reaction does — a post not
+// currently held in memory changes nothing to repaint.
 func (s *Server) SetPostSaved(postID string, saved bool) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()

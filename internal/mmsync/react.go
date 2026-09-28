@@ -68,6 +68,17 @@ func (w *Worker) React(ctx context.Context, postID, emoji string, add bool) erro
 		w.reactMu.Unlock()
 		return ErrNoPost
 	}
+	if add {
+		// Bumped the moment the add is issued — like the webapp's
+		// addRecentEmoji on click — so the quick-reactions panel picks it
+		// up at its very next show, not only after the network round trip
+		// (fix: final-review finding, UI pass 2026-09-28 — a fetch right
+		// after this click used to still cache the *previous* list, since
+		// the local list only moved once SaveReaction had already
+		// returned). Saving the preference to the server stays gated on
+		// SaveReaction succeeding, unchanged — see sendPair.
+		w.st.BumpRecentEmoji(emoji)
+	}
 	var mine *reactPair // set when this call sends
 	switch p := w.reactPairs[key]; {
 	case p != nil && p.running: // its sender picks the new want up
@@ -124,7 +135,10 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 		err := w.sendReaction(ctx, p.postID, p.emoji, want)
 		if err == nil {
 			if want {
-				w.bumpRecent(p.emoji)
+				// The local recent-emoji list already moved (React, above,
+				// at issue time) — only the server-side preference save
+				// waits for the add to actually land.
+				w.saveRecentPreference()
 			}
 			w.reactMu.Lock()
 			p.server, p.attempts, p.unsure = want, 0, false
@@ -266,8 +280,13 @@ func (w *Worker) sendReaction(ctx context.Context, postID, emoji string, add boo
 	return err
 }
 
-func (w *Worker) bumpRecent(emoji string) {
-	pref := w.st.BumpRecentEmoji(emoji)
+// saveRecentPreference persists the current recent_emojis preference (the
+// list already moved locally when the add was issued — see React) once its
+// reaction has actually landed on the server. Reads the live value rather
+// than one captured at issue time, so it never overwrites a concurrent bump
+// of a different emoji with a stale snapshot.
+func (w *Worker) saveRecentPreference() {
+	pref := w.st.RecentPreference()
 	w.goBG(func(ctx context.Context) {
 		if err := w.rc.SavePreferences(ctx, []model.Preference{pref}); err != nil {
 			slog.Warn("could not save recent emoji", "srv", w.srv.ID, "err", err)

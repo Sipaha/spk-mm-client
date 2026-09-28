@@ -157,7 +157,10 @@ func (s *Server) RecentEmojis() []string {
 
 // BumpRecentEmoji records a use like the webapp's addRecentEmojis: the name
 // moves to the end with usageCount+1, only the last 27 stay, the list is
-// sorted by usageCount ascending. Returns the preference to save.
+// sorted by usageCount ascending. Applies at once, in memory — the caller
+// (Worker.React) calls this the moment an add is issued, before any
+// network round trip, so RecentEmojis/EmojiInfo reflect it immediately;
+// see RecentPreference for saving it to the server afterwards.
 func (s *Server) BumpRecentEmoji(name string) model.Preference {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,6 +175,26 @@ func (s *Server) BumpRecentEmoji(name string) model.Preference {
 		list = list[len(list)-maxRecentEmoji:]
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].UsageCount < list[j].UsageCount })
+	return s.setRecentLocked(list)
+}
+
+// RecentPreference returns the recent_emojis preference reflecting the
+// *current* in-memory list, without changing anything — Worker.React bumps
+// the list at issue time (BumpRecentEmoji) and, once the reaction it
+// belongs to is confirmed by the server, saves whatever this returns at
+// that later point: always the live value, never a snapshot from issue
+// time, so it can't clobber a different emoji's concurrent bump with stale
+// data.
+func (s *Server) RecentPreference() model.Preference {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, _ := json.Marshal(s.recentLocked())
+	return model.Preference{UserID: s.me.ID, Category: "recent_emojis", Name: s.me.ID, Value: string(b)}
+}
+
+// setRecentLocked serializes list as the recent_emojis preference, records
+// it in prefs (marking metadata dirty) and returns it to save.
+func (s *Server) setRecentLocked(list []recentEmoji) model.Preference {
 	b, _ := json.Marshal(list)
 	p := model.Preference{UserID: s.me.ID, Category: "recent_emojis", Name: s.me.ID, Value: string(b)}
 	s.prefs[prefKey{p.Category, p.Name}] = p.Value

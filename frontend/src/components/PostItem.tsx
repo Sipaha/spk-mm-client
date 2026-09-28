@@ -29,7 +29,7 @@ export interface PostActions {
   view(post: PostView, fileId: string): void
   download(file: FileView): void
   open(file: FileView): void
-  react(post: PostView, emoji: string, add: boolean): void
+  react(post: PostView, emoji: string, add: boolean): Promise<void>
   emojiInfo(): Promise<EmojiDTO>
 }
 
@@ -134,16 +134,26 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
 }
 
 function ToolButton({
-  label, onClick, children, pressed, className = 'text-fg-muted',
+  label, onClick, children, pressed, haspopup, expanded, className = 'text-fg-muted',
 }: {
   label: string
   onClick(e: React.MouseEvent<HTMLButtonElement>): void
   children: React.ReactNode
   pressed?: boolean
+  haspopup?: 'menu' // the "…" button opens PostMenu
+  expanded?: boolean
   className?: string
 }) {
   return (
-    <button aria-label={label} title={label} aria-pressed={pressed} onClick={onClick} className={`flex h-8 w-8 items-center justify-center rounded hover:bg-hover ${className}`}>
+    <button
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      aria-haspopup={haspopup}
+      aria-expanded={haspopup ? expanded : undefined}
+      onClick={onClick}
+      className={`flex h-8 w-8 items-center justify-center rounded hover:bg-hover ${className}`}
+    >
       {children}
     </button>
   )
@@ -161,7 +171,7 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
       {quick.map((name) => {
         const mine = post.reactions?.some((r) => r.emoji === name && r.mine) ?? false
         return (
-          <ToolButton key={name} label={t('reaction.quick', { emoji: `:${name}:` })} onClick={() => react(name, !mine)}>
+          <ToolButton key={name} label={t('reaction.quick', { emoji: `:${name}:` })} pressed={mine} onClick={() => react(name, !mine)}>
             <EmojiGlyph serverId={serverId} name={name} size={20} />
           </ToolButton>
         )
@@ -188,11 +198,19 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     trigger.current?.focus()
   }
   // react wraps actions.react: adding one of our reactions bumps the
-  // emoji's recency on the server, so the quick-reactions cache is marked
-  // stale and re-read at the toolbar's next show (emoji/recent.ts).
+  // emoji's recency, so the quick-reactions cache is marked stale and
+  // re-read at the toolbar's next show (emoji/recent.ts). Invalidating
+  // only after actions.react's promise settles (not synchronously) matters
+  // — final-review finding: invalidating right away could refetch before
+  // the backend had even started handling this very call, caching the
+  // list from *before* this reaction. actions.react's promise always
+  // resolves (chat.ts) once the call has settled, success or failure —
+  // Go bumps its local list at issue time regardless of outcome, so by
+  // the time it settles the bump has already happened either way.
   const react = (emoji: string, add: boolean) => {
-    actions.react(post, emoji, add)
-    if (add) invalidateRecent(serverId)
+    void actions.react(post, emoji, add).then(() => {
+      if (add) invalidateRecent(serverId)
+    })
   }
   const pick = (name: string) => {
     closePicker()
@@ -299,7 +317,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           )}
           {canReact && (
             <ToolButton
-              label={post.saved ? t('post.unsave') : t('post.saveForLater')}
+              label={t('post.saveForLater')}
               pressed={!!post.saved}
               className={post.saved ? 'text-accent' : 'text-fg-muted'}
               onClick={() => actions.save(post, !post.saved)}
@@ -308,7 +326,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             </ToolButton>
           )}
           {replyButton}
-          <ToolButton label={t('post.more')} onClick={(e) => openMenu(e.currentTarget)}>
+          <ToolButton label={t('post.more')} haspopup="menu" expanded={menuOpen} onClick={(e) => openMenu(e.currentTarget)}>
             <IconMore size={20} />
           </ToolButton>
         </div>

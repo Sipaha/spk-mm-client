@@ -360,8 +360,18 @@ export function downloadPrimaryAction(d: DownloadView): (() => void) | null {
   return () => revealDownload(d.id)
 }
 
-export const react = (serverId: number, postId: string, emoji: string, add: boolean) => {
-  ;(add ? client.addReaction(serverId, postId, emoji) : client.removeReaction(serverId, postId, emoji)).catch(report)
+// react: the promise always resolves (never rejects) once the call has
+// settled either way, reporting a failure the same as before — PostItem's
+// quick-reactions cache invalidation (emoji/recent.ts) waits for it to
+// settle before marking the cache stale, so the re-fetch it triggers
+// cannot outrace Go's own handling of this very call (final-review
+// finding, UI pass 2026-09-28: invalidating synchronously could refetch
+// before the backend had bumped its recent list at all).
+export function react(serverId: number, postId: string, emoji: string, add: boolean): Promise<void> {
+  return (add ? client.addReaction(serverId, postId, emoji) : client.removeReaction(serverId, postId, emoji)).then(
+    () => {},
+    (e) => report(e),
+  )
 }
 
 export const emojiInfo = (serverId: number) => client.emojiInfo(serverId)

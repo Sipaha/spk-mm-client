@@ -98,6 +98,26 @@ func TestRecentEmojisFollowTheWebapp(t *testing.T) {
 	assert.Equal(t, "smile", s.RecentEmojis()[0], "the most used stays")
 }
 
+// TestRecentPreferenceReadsWithoutBumping: RecentPreference (used by
+// Worker.saveRecentPreference once a reaction has landed) must read the
+// live list without incrementing anything — BumpRecentEmoji is the only
+// thing that bumps, called once at issue time (Worker.React).
+func TestRecentPreferenceReadsWithoutBumping(t *testing.T) {
+	s := newFixture()
+	s.BumpRecentEmoji("tada")
+	before := s.RecentPreference()
+	assert.Equal(t, model.Preference{UserID: "u1", Category: "recent_emojis", Name: "u1",
+		Value: `[{"name":"tada","usageCount":1}]`}, before)
+	// Reading it again changes nothing: usageCount stays 1, not 2.
+	assert.Equal(t, before, s.RecentPreference())
+	assert.Equal(t, []string{"tada"}, s.RecentEmojis())
+
+	// It reflects a bump made after the first read, live — not a snapshot.
+	s.BumpRecentEmoji("fire")
+	assert.Equal(t, model.Preference{UserID: "u1", Category: "recent_emojis", Name: "u1",
+		Value: `[{"name":"tada","usageCount":1},{"name":"fire","usageCount":1}]`}, s.RecentPreference())
+}
+
 func TestRecentEmojisSurviveABadPreference(t *testing.T) {
 	s := newFixture()
 	d, _ := json.Marshal(map[string]any{"preferences": `[{"user_id":"u1","category":"recent_emojis","name":"u1","value":"not json"}]`})

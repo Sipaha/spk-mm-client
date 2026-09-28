@@ -73,6 +73,29 @@ test('invalidating a server that was never shown is a no-op (the next show alrea
   expect(() => invalidateRecent(99)).not.toThrow()
 })
 
+// Final-review finding (UI pass 2026-09-28): a fetch that was already in
+// flight when invalidateRecent fires must not be cached as fresh with an
+// older list than the invalidate meant to force a re-read of — the panel
+// would otherwise show last add's list, one behind. The still-mounted
+// toolbar must refetch on its own once that stale result lands, without
+// needing another hover/show.
+test('a fetch already in flight when invalidateRecent fires is not cached as fresh: the toolbar refetches on its own', async () => {
+  let resolveFirst: ((d: EmojiDTO) => void) | undefined
+  const first = new Promise<EmojiDTO>((resolve) => { resolveFirst = resolve })
+  const load = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce(dto({ recent: ['fire'] }))
+  const { result, unmount } = renderHook(() => useQuickReactions(1, load))
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(1)) // the first fetch started, still pending
+
+  act(() => invalidateRecent(1)) // one of our reactions landed while it was in flight
+  await act(async () => resolveFirst?.(dto({ recent: ['tada'] }))) // …and only now does the *old* list arrive
+
+  // The stale result must not be the end of it: a second fetch fires on
+  // its own, and its (fresher) list is what the panel actually ends up on.
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current).toEqual(['fire']))
+  unmount()
+})
+
 test('forgetRecent drops a removed server: the next show fetches again from scratch', async () => {
   const load = vi.fn().mockResolvedValue(dto({ recent: ['tada'] }))
   const first = renderHook(() => useQuickReactions(1, load))

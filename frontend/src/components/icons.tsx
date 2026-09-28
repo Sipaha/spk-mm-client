@@ -29,10 +29,12 @@ function Icon({ size = 18, className, children }: IconProps & { children: React.
   )
 }
 
-// SYMBOL wraps a Material *Symbols* path (authored on a 960-unit grid,
-// viewBox "0 -960 960 960") in a transform that maps it onto our shared
-// 24x24 box: scale(24/960) then shift the origin from (0,-960) to (0,0).
-function Symbol({ size, className, children }: IconProps & { children: React.ReactNode }) {
+// MaterialSymbol wraps a Material *Symbols* path (authored on a 960-unit
+// grid, viewBox "0 -960 960 960") in a transform that maps it onto our
+// shared 24x24 box: scale(24/960) then shift the origin from (0,-960) to
+// (0,0). Named MaterialSymbol, not the shorter Symbol — that shadows the
+// global built-in (final-review RULING #5, UI pass 2026-09-28).
+function MaterialSymbol({ size, className, children }: IconProps & { children: React.ReactNode }) {
   return (
     <Icon size={size} className={className}>
       <g transform="translate(0 24) scale(0.025)">{children}</g>
@@ -66,9 +68,9 @@ export function IconAttach(p: IconProps) {
 
 export function IconExpand(p: IconProps) {
   return (
-    <Symbol {...p}>
+    <MaterialSymbol {...p}>
       <path d="M120-120v-320h80v184l504-504H520v-80h320v320h-80v-184L256-200h184v80H120Z" />
-    </Symbol>
+    </MaterialSymbol>
   )
 }
 
@@ -130,9 +132,9 @@ export function IconClose(p: IconProps) {
 
 export function IconAddReaction(p: IconProps) {
   return (
-    <Symbol {...p}>
+    <MaterialSymbol {...p}>
       <path d="M480-480Zm0 400q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q43 0 83 8.5t77 24.5v90q-35-20-75.5-31.5T480-800q-133 0-226.5 93.5T160-480q0 133 93.5 226.5T480-160q133 0 226.5-93.5T800-480q0-32-6.5-62T776-600h86q9 29 13.5 58.5T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm320-600v-80h-80v-80h80v-80h80v80h80v80h-80v80h-80ZM620-520q25 0 42.5-17.5T680-580q0-25-17.5-42.5T620-640q-25 0-42.5 17.5T560-580q0 25 17.5 42.5T620-520Zm-280 0q25 0 42.5-17.5T400-580q0-25-17.5-42.5T340-640q-25 0-42.5 17.5T280-580q0 25 17.5 42.5T340-520Zm140 260q68 0 123.5-38.5T684-400H276q25 63 80.5 101.5T480-260Z" />
-    </Symbol>
+    </MaterialSymbol>
   )
 }
 
@@ -146,9 +148,9 @@ export function IconEdit(p: IconProps) {
 
 export function IconMarkUnread(p: IconProps) {
   return (
-    <Symbol {...p}>
+    <MaterialSymbol {...p}>
       <path d="M80-80v-720q0-33 23.5-56.5T160-880h404q-4 20-4 40t4 40H160v525l46-45h594v-324q23-5 43-13.5t37-22.5v360q0 33-23.5 56.5T800-240H240L80-80Zm80-720v480-480Zm600 80q-50 0-85-35t-35-85q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35Z" />
-    </Symbol>
+    </MaterialSymbol>
   )
 }
 
@@ -250,9 +252,9 @@ export function IconGroup(p: IconProps) {
 
 export function IconHash(p: IconProps) {
   return (
-    <Symbol {...p}>
+    <MaterialSymbol {...p}>
       <path d="m240-160 40-160H120l20-80h160l40-160H180l20-80h160l40-160h80l-40 160h160l40-160h80l-40 160h160l-20 80H660l-40 160h160l-20 80H600l-40 160h-80l40-160H360l-40 160h-80Zm140-240h160l40-160H420l-40 160Z" />
-    </Symbol>
+    </MaterialSymbol>
   )
 }
 

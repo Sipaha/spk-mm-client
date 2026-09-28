@@ -13,7 +13,7 @@ const post = (o: Partial<PostView> = {}): PostView => ({
 const actions = (): PostActions => ({
   link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
   cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), save: vi.fn(), copyLink: vi.fn(),
-  view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
+  view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn().mockResolvedValue(undefined),
   emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
 })
 const me = { id: 'u-alice', username: 'alice' }
@@ -294,6 +294,48 @@ test('hovering several posts on the same server calls emojiInfo only once', asyn
   expect(a.emojiInfo).toHaveBeenCalledTimes(1)
 })
 
+// Final-review finding (UI pass 2026-09-28), the exact repro: hover, add an
+// emoji via the picker, hover another post — the panel used to show 0 (or
+// the *previous* add's) quick reactions, because invalidateRecent fired
+// synchronously, racing ahead of the backend actually handling the click.
+// react() now waits for actions.react's promise to settle first.
+test('after adding a reaction via the picker, an already-shown toolbar picks it up once actions.react settles — not before, not stuck on the old list', async () => {
+  const a = actions()
+  let resolveReact: () => void = () => {}
+  a.react = vi.fn(() => new Promise<void>((resolve) => { resolveReact = resolve }))
+  a.emojiInfo = vi.fn()
+    .mockResolvedValueOnce(dto({ recent: [] })) // post1's quick reactions, first show
+    .mockResolvedValueOnce(dto({ recent: [] })) // the picker's own (separate) fetch
+    .mockResolvedValueOnce(dto({ recent: ['avocado'] })) // post2's refetch once the add lands
+  const { container } = render(
+    <>
+      <PostItem serverId={1} post={post({ id: 'p1' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+      <PostItem serverId={1} post={post({ id: 'p2' })} head={false} me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </>,
+  )
+  const articles = container.querySelectorAll('[data-post-id]')
+  await hover(articles[0])
+  await screen.findByTestId('post-toolbar')
+  await waitFor(() => expect(a.emojiInfo).toHaveBeenCalledTimes(1)) // empty recent: no quick reactions yet
+
+  await userEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Emoji picker' })
+  await waitFor(() => expect(a.emojiInfo).toHaveBeenCalledTimes(2)) // +1: the picker's own (separate) info fetch
+  await userEvent.type(within(dialog).getByRole('textbox', { name: 'Search emoji' }), 'avocado')
+  await userEvent.keyboard('{Enter}')
+  expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'avocado', true)
+
+  await userEvent.unhover(articles[0])
+  await hover(articles[1])
+  const toolbar2 = await screen.findByTestId('post-toolbar')
+  await within(toolbar2).findByRole('button', { name: 'Add reaction' })
+  expect(a.emojiInfo).toHaveBeenCalledTimes(2) // actions.react has not settled yet: the cache is still fresh, no refetch
+
+  resolveReact()
+  await waitFor(() => expect(a.emojiInfo).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(within(toolbar2).getByRole('button', { name: 'React with :avocado:' })).toBeInTheDocument())
+})
+
 test('inline edit: Enter saves, Escape cancels, errors stay visible', async () => {
   const a = actions()
   const own = post({ user_id: 'u-alice', message: 'v1' })
@@ -391,7 +433,7 @@ test('replyButton renders in the toolbar between "add reaction" and "…"; absen
 // reply slot; aria-pressed/aria-label track post.saved (state comes only
 // from the prop — no optimistic local flip), and the icon swaps
 // IconBookmark/IconBookmarkFilled with a text-accent class once saved.
-test('save button: not-saved and saved states, and the click it sends', async () => {
+test('save button: one fixed label, aria-pressed tracks post.saved, and the click it sends', async () => {
   const a = actions()
   const { container, rerender } = render(<PostItem serverId={1} post={post({ saved: false })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   await hover(container.querySelector('[data-post-id]')!)
@@ -403,7 +445,8 @@ test('save button: not-saved and saved states, and the click it sends', async ()
   expect(a.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), true)
 
   rerender(<PostItem serverId={1} post={post({ saved: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
-  const savedBtn = within(toolbar).getByRole('button', { name: 'Remove from saved' })
+  const savedBtn = within(toolbar).getByRole('button', { name: 'Save' }) // same label — no swap to "Remove from saved" (final-review RULING #4)
+  expect(savedBtn).toBe(btn) // literally the same element: no label swap remounted it
   expect(savedBtn).toHaveAttribute('aria-pressed', 'true')
   expect(savedBtn.className).toContain('text-accent')
   await userEvent.click(savedBtn)
@@ -417,7 +460,6 @@ test('pending, failed and system posts offer no save button', async () => {
   await hover(container.querySelector('[data-post-id]')!)
   await screen.findByTestId('post-toolbar')
   expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Remove from saved' })).toBeNull()
 
   rerender(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
   expect(screen.queryByTestId('post-toolbar')).toBeNull()

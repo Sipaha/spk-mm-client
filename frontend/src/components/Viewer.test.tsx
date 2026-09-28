@@ -42,6 +42,17 @@ test('full image, keyboard navigation around the post, Escape closes', async () 
   expect(onClose).toHaveBeenCalled()
 })
 
+// Final-review RULING #3 (UI pass 2026-09-28, a Task 1 review's
+// already-flagged-but-deferred finding): the prev/next buttons' hit area
+// must be at least ~40px, not ~32px — jsdom does not compute real layout,
+// so this pins the class that actually determines it (py-2 + the 24px
+// chevron icon = 40px) rather than a pixel measurement.
+test('prev/next buttons have a touch-sized hit area (py-2, not the old py-1)', () => {
+  render(<Viewer serverId={1} files={[img, log]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  expect(screen.getByRole('button', { name: 'Previous file' }).className).toContain('py-2')
+  expect(screen.getByRole('button', { name: 'Next file' }).className).toContain('py-2')
+})
+
 test('download and open act on the shown file; focus returns to the opener', async () => {
   const onDownload = vi.fn()
   function Host({ open }: { open: boolean }) {
