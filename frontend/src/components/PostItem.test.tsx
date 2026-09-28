@@ -166,6 +166,84 @@ test('the toolbar is not rendered before hover/focus; it stays visible while the
   expect(screen.queryByRole('menu')).toBeNull()
 })
 
+// fix round 1 (controller review of e63449f): closing the "…" menu after
+// the pointer already left the post used to lose focus entirely — the
+// toolbar (and its "…" button) unmounted in the same render that closed
+// the menu, before an unmount-time cleanup could ever focus it.
+test('Esc after the pointer left while the "…" menu was open restores focus to "…", and the toolbar stays', async () => {
+  const a = actions()
+  const { container } = render(<PostItem serverId={1} post={post({ user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const article = container.querySelector('[data-post-id]')!
+  await hover(article)
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  await userEvent.unhover(article)
+  expect(screen.getByTestId('post-toolbar')).toBeInTheDocument() // menu still open keeps it visible
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(screen.getByRole('button', { name: 'More actions' })).toHaveFocus()
+  expect(screen.getByTestId('post-toolbar')).toBeInTheDocument() // stays: focus is inside it now
+})
+
+// Same finding, the item-click path: picking a menu item after the
+// pointer left must also land focus back on "…", not nowhere.
+test('picking a menu item after the pointer left restores focus to "…"', async () => {
+  const a = actions()
+  const other = post()
+  const { container } = render(<PostItem serverId={1} post={other} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const article = container.querySelector('[data-post-id]')!
+  await hover(article)
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  await userEvent.unhover(article)
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }))
+  expect(a.copyLink).toHaveBeenCalledWith(other)
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(screen.getByRole('button', { name: 'More actions' })).toHaveFocus()
+})
+
+// A click outside while the pointer had already left must NOT steal focus
+// back — it's an "external" close (the user's own click already moved
+// their attention), unlike Esc/an item pick above.
+test('a click outside while the pointer had already left closes the menu without stealing focus, and the toolbar disappears', async () => {
+  const a = actions()
+  render(
+    <>
+      <button>elsewhere</button>
+      <PostItem serverId={1} post={post({ user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </>,
+  )
+  const article = screen.getByText('hello').closest('[data-post-id]')!
+  await hover(article)
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  await userEvent.unhover(article)
+  const outside = screen.getByRole('button', { name: 'elsewhere' })
+  await userEvent.click(outside)
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(screen.queryByTestId('post-toolbar')).toBeNull() // nothing keeps it hot any more
+  expect(document.activeElement).toBe(outside) // the user's own click, not stolen back
+})
+
+// The same fix applies to the emoji picker's own trigger (openPicker/
+// closePicker), the reviewer's suspicion that "the same focus issue
+// probably applies" — verified here rather than assumed.
+test('closing the emoji picker after the pointer left restores focus to "Add reaction", and the toolbar stays', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto())
+  const { container } = render(<PostItem serverId={1} post={post({ user_id: 'u-bob' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const article = container.querySelector('[data-post-id]')!
+  await hover(article)
+  await userEvent.click(await screen.findByRole('button', { name: 'Add reaction' }))
+  await screen.findByRole('dialog', { name: 'Emoji picker' })
+  await userEvent.unhover(article)
+  expect(screen.getByTestId('post-toolbar')).toBeInTheDocument() // picker still open keeps it visible
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Add reaction' })).toHaveFocus()
+  expect(screen.getByTestId('post-toolbar')).toBeInTheDocument()
+})
+
 test('focusing an element inside the post (not just hovering it) also shows the toolbar', async () => {
   const a = actions()
   render(<PostItem serverId={1} post={post({ reactions: [{ emoji: '+1', count: 1, mine: false }] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
@@ -291,4 +369,20 @@ test('head shows the author picture with presence; an unknown author gets initia
   rerender(<PostItem serverId={2} post={post({ author: '' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
   expect(container.querySelector('img')).toBeNull()
   expect(container).toHaveTextContent('?')
+})
+
+// fix round 1 (RULING #3): the reply slot is a real prop the threads task
+// will consume, not just an inline `null` placeholder.
+test('replyButton renders in the toolbar between "add reaction" and "…"; absent by default', async () => {
+  const a = actions()
+  const { container, rerender } = render(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  const toolbar = await screen.findByTestId('post-toolbar')
+  expect(within(toolbar).queryByRole('button', { name: 'Reply' })).toBeNull()
+
+  rerender(
+    <PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyButton={<button aria-label="Reply">Reply</button>} />,
+  )
+  const names = within(toolbar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))
+  expect(names).toEqual(['Add reaction', 'Reply', 'More actions'])
 })

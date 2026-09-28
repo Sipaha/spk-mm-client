@@ -41,6 +41,11 @@ interface Props {
   crt: boolean
   actions: PostActions
   editing: boolean
+  // replyButton: the toolbar's reply slot, between "add reaction" and
+  // "…" — undefined/null until the threads task supplies an IconReply
+  // button; kept out of PostActions since it needs no post-specific data
+  // PostItem doesn't already have (the caller closes over the post itself).
+  replyButton?: React.ReactNode
 }
 
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
@@ -156,7 +161,7 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
   )
 }
 
-export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, crt, actions, editing }: Props) {
+export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, crt, actions, editing, replyButton }: Props) {
   const time = formatTime(post.create_at, locale)
   const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
@@ -283,8 +288,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
               <IconAddReaction size={20} />
             </ToolButton>
           )}
-          {/* reply — added by a later, threads task (IconReply) */}
-          {null}
+          {replyButton}
           <ToolButton label={t('post.more')} onClick={(e) => openMenu(e.currentTarget)}>
             <IconMore size={20} />
           </ToolButton>
