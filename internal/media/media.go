@@ -130,6 +130,13 @@ type call struct {
 	done    chan struct{}
 	waiters int
 	status  int
+	// ctx/cancel: a PDF's download, cancelled once nobody waits for it (a
+	// PDF has one reader, the viewer); cancelled: a new request starts a
+	// fetch of its own rather than joining this one. Nil for other kinds:
+	// the next viewer of a picture may need the fetch the first gave up.
+	ctx       context.Context
+	cancel    context.CancelFunc
+	cancelled bool
 }
 
 type Cache struct {
@@ -147,6 +154,7 @@ type Cache struct {
 	// resolves a server's host (tests stub it).
 	ext, extIntranet *http.Client
 	extSem           chan struct{}
+	pdfSem           chan struct{} // PDF downloads: slots of their own (pdf.go)
 	intranets        map[string]intranetEntry
 	lookup           func(ctx context.Context, host string) ([]netip.Addr, error)
 }
@@ -180,7 +188,7 @@ func New(o Options) (*Cache, error) {
 	c := &Cache{o: o, sem: make(chan struct{}, o.Fetches), index: map[string]*entry{},
 		neg: map[string]negEntry{}, inflight: map[string]*call{}, stream: NewStreamer(o.Origin),
 		ext: newExternalClient(strictDial), extIntranet: newExternalClient(intranetDial),
-		extSem: make(chan struct{}, extFetches), intranets: map[string]intranetEntry{},
+		extSem: make(chan struct{}, extFetches), pdfSem: make(chan struct{}, pdfFetches), intranets: map[string]intranetEntry{},
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		}}
@@ -337,6 +345,9 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad media path", http.StatusBadRequest)
 		return
 	}
+	if q.kind == KindPDF {
+		w = pdfWriter{w}
+	}
 	if q.kind == KindStream {
 		c.stream.Serve(w, r, q.server, q.key)
 		return
@@ -415,8 +426,7 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 			http.Error(w, "cache read failed", http.StatusInternalServerError)
 			return
 		}
-		h.Set("Content-Type", "application/pdf")
-		h.Set("Content-Disposition", "attachment") // never shown by the webview itself (pdf.go)
+		h.Set("Content-Type", "application/pdf") // the rest of its headers: pdfWriter
 	default:
 		head := make([]byte, sniffLen)
 		n, _ := io.ReadFull(f, head)
@@ -475,8 +485,11 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 		return "", n.status
 	}
 	cl := c.inflight[key]
-	if cl == nil {
+	if cl == nil || cl.cancelled {
 		cl = &call{done: make(chan struct{})}
+		if q.kind == KindPDF {
+			cl.ctx, cl.cancel = context.WithCancel(context.Background())
+		}
 		c.inflight[key] = cl
 		go c.fill(key, name, q, id, cl)
 	}
@@ -491,6 +504,10 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 	case <-ctx.Done():
 		c.mu.Lock()
 		cl.waiters--
+		if cl.waiters == 0 && cl.cancel != nil {
+			cl.cancelled = true
+			cl.cancel()
+		}
 		c.mu.Unlock()
 		return "", http.StatusServiceUnavailable
 	}
@@ -513,19 +530,29 @@ func (c *Cache) emojiID(ctx context.Context, q request) (string, int) {
 // a requester's context: the first viewer scrolling away must not waste a
 // fetch the next one needs. But a fetch nobody waits for any more when its
 // turn comes is skipped (not remembered as a failure): the server's request
-// budget is shared with synchronisation.
+// budget is shared with synchronisation. A PDF is the exception: its one
+// reader gone, its download is cancelled (call.cancel).
 func (c *Cache) fill(key, name string, q request, id string, cl *call) {
+	parent := context.Background()
+	if cl.cancel != nil {
+		parent = cl.ctx
+		defer cl.cancel()
+	}
 	// An external icon waits for its own slots: a slow host out there must
-	// not hold the ones avatars, previews and emoji use.
+	// not hold the ones avatars, previews and emoji use; nor must PDFs,
+	// downloads of up to PDFMax with a longer timeout.
 	external := q.kind == KindPostIcon && q.icon.ext != ""
 	sem := c.sem
-	if external {
+	switch {
+	case external:
 		sem = c.extSem
+	case q.kind == KindPDF:
+		sem = c.pdfSem
 	}
 	sem <- struct{}{}
 	c.mu.Lock()
 	if cl.waiters == 0 {
-		delete(c.inflight, key)
+		c.doneLocked(key, cl)
 		cl.status = http.StatusServiceUnavailable
 		c.mu.Unlock()
 		<-sem
@@ -534,22 +561,26 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	}
 	c.mu.Unlock()
 	sl := &slot{c: c, sem: sem}
-	err := c.fetch(q, id, name, sl)
+	err := c.fetch(parent, q, id, name, sl)
 	<-sl.sem
 	external = sl.external() // a camo handover moved it out
 	status := 0
-	if err != nil {
+	abandoned := err != nil && parent.Err() != nil
+	switch {
+	case abandoned: // nobody waits; not a verdict on the object
+		status = http.StatusServiceUnavailable
+	case err != nil:
 		status = statusFor(err)
 	}
 	c.mu.Lock()
-	delete(c.inflight, key)
+	c.doneLocked(key, cl)
 	// A server that is not signed in (or not live) yet is not remembered:
 	// its pictures must appear as soon as it is (asking again costs no
 	// network). Nor is a 401: the session died, the worker asks for a new
 	// sign-in, and the picture must load once it is signed in again.
 	// A post icon's 401 is its path's answer, not a dead session (GetIcon
 	// never asks for a sign-in): remembered like a 403.
-	if status != 0 && !errors.Is(err, ErrNoServer) && (!unauthorized(err) || q.kind == KindPostIcon) {
+	if status != 0 && !abandoned && !errors.Is(err, ErrNoServer) && (!unauthorized(err) || q.kind == KindPostIcon) {
 		ttl := negTTLTransient
 		switch status {
 		case http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
@@ -566,6 +597,14 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	cl.status = status
 	c.mu.Unlock()
 	close(cl.done)
+}
+
+// doneLocked takes a finished call off the in-flight list, unless a new
+// one for the key took its place (after an abandoned PDF's cancel).
+func (c *Cache) doneLocked(key string, cl *call) {
+	if c.inflight[key] == cl {
+		delete(c.inflight, key)
+	}
 }
 
 // slot is the fetch slot a fill holds: one of the shared ones, or an
@@ -589,7 +628,7 @@ func (s *slot) toExternal() {
 	s.sem = s.c.extSem
 }
 
-func (c *Cache) fetch(q request, id, name string, sl *slot) error {
+func (c *Cache) fetch(parent context.Context, q request, id, name string, sl *slot) error {
 	sp := q.spec(id)
 	var body io.Reader
 	var contentRange string
@@ -605,7 +644,7 @@ func (c *Cache) fetch(q request, id, name string, sl *slot) error {
 		if sp.pdf {
 			timeout *= pdfTimeoutFactor
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
 		var resp *http.Response
 		var err error

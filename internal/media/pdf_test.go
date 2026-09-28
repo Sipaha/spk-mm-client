@@ -2,12 +2,14 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,13 +50,8 @@ func TestPDFServedAsSandboxedAttachment(t *testing.T) {
 		resp, body := e.get("/media/1/pdf/f1")
 		require.Equal(t, 200, resp.StatusCode)
 		assert.Equal(t, doc, body)
-		h := resp.Header
-		assert.Equal(t, "application/pdf", h.Get("Content-Type"))
-		assert.Equal(t, "nosniff", h.Get("X-Content-Type-Options"))
-		assert.Equal(t, "default-src 'none'; sandbox", h.Get("Content-Security-Policy"),
-			"the sandbox also keeps WebKit's built-in PDF viewer from running on this URL")
-		assert.Equal(t, "attachment", h.Get("Content-Disposition"))
-		assert.Equal(t, "no-store", h.Get("Cache-Control"), "Go keeps the file on disk; the webview keeps no copy")
+		assert.Equal(t, "application/pdf", resp.Header.Get("Content-Type"))
+		assertPDFGuards(t, resp.Header, "GET")
 	}
 	assert.Equal(t, 1, e.origin.count("/api/v4/files/f1"), "fetched once, then served from the cache")
 	assert.Equal(t, int64(len(doc)), e.cache.Size())
@@ -64,6 +61,7 @@ func TestPDFServedAsSandboxedAttachment(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, "application/pdf", resp.Header.Get("Content-Type"))
+	assertPDFGuards(t, resp.Header, "HEAD")
 
 	req, err := http.NewRequest(http.MethodGet, e.srv.URL+"/media/1/pdf/f1", nil)
 	require.NoError(t, err)
@@ -74,7 +72,156 @@ func TestPDFServedAsSandboxedAttachment(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusPartialContent, resp.StatusCode)
 	assert.Equal(t, "%PDF-", string(part))
-	assert.Equal(t, "attachment", resp.Header.Get("Content-Disposition"))
+	assert.Equal(t, "application/pdf", resp.Header.Get("Content-Type"))
+	assertPDFGuards(t, resp.Header, "Range")
+}
+
+// assertPDFGuards checks the headers every answer on a pdf URL carries —
+// success, HEAD, Range and errors alike.
+func assertPDFGuards(t *testing.T, h http.Header, what string) {
+	t.Helper()
+	assert.Equal(t, "nosniff", h.Get("X-Content-Type-Options"), what)
+	assert.Equal(t, "default-src 'none'; sandbox", h.Get("Content-Security-Policy"),
+		"%s: the sandbox also keeps WebKit's built-in PDF viewer from running on this URL", what)
+	assert.Equal(t, "attachment", h.Get("Content-Disposition"), what)
+	assert.Equal(t, "no-store", h.Get("Cache-Control"), "%s: Go keeps the file on disk; the webview keeps no copy", what)
+}
+
+// Every error on a pdf URL carries the same guards as a success: the
+// webview neither sniffs, runs, shows nor keeps it.
+func TestPDFErrorsCarryTheGuardHeaders(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/files/html":
+			_, _ = w.Write([]byte("<html></html>"))
+		case "/api/v4/files/big":
+			w.Header().Set("Content-Length", strconv.Itoa(PDFMax+1))
+			w.WriteHeader(http.StatusOK)
+		case "/api/v4/files/gone":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			_, _ = w.Write(pdfOf(2048))
+		}
+	})
+	for path, want := range map[string]int{
+		"/media/2/pdf/f1": http.StatusNotFound, "/media/1/pdf/html": http.StatusUnsupportedMediaType,
+		"/media/1/pdf/big": http.StatusRequestEntityTooLarge, "/media/1/pdf/gone": http.StatusBadGateway,
+	} {
+		resp, _ := e.get(path)
+		assert.Equal(t, want, resp.StatusCode, path)
+		assertPDFGuards(t, resp.Header, path)
+	}
+	req, err := http.NewRequest(http.MethodGet, e.srv.URL+"/media/1/pdf/f1", nil)
+	require.NoError(t, err)
+	req.Header.Set("Range", "bytes=999999-")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, resp.StatusCode)
+	assertPDFGuards(t, resp.Header, "416")
+}
+
+// Only the whole file is a document: a partial or empty answer from the
+// server is refused, never cached as the PDF.
+func TestPDFNeedsTheWholeFile(t *testing.T) {
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/files/partial":
+			w.Header().Set("Content-Range", "bytes 0-2047/99999")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(pdfOf(2048))
+		case "/api/v4/files/nocontent":
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	for _, id := range []string{"partial", "nocontent"} {
+		resp, _ := e.get("/media/1/pdf/" + id)
+		assert.Equal(t, http.StatusBadGateway, resp.StatusCode, id)
+	}
+	assert.Zero(t, e.cache.Size())
+}
+
+// PDFs have fetch slots of their own (pdfFetches), apart from the shared
+// ones: a few PDFs stalled on a slow link never hold up the pictures.
+func TestStalledPDFsDoNotBlockOtherPictures(t *testing.T) {
+	release := make(chan struct{})
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/thumbnail") {
+			_, _ = w.Write(pngOf(2, 2))
+			return
+		}
+		_, _ = w.Write([]byte("%PDF-1.7\n"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+			_, _ = w.Write(pdfOf(2048))
+		case <-r.Context().Done():
+		}
+	})
+	started := func() (n int) {
+		for i := range 6 {
+			n += e.origin.count("/api/v4/files/p" + strconv.Itoa(i))
+		}
+		return n
+	}
+	done := make(chan int, 6)
+	for i := range 6 {
+		go func() {
+			resp, _ := e.get("/media/1/pdf/p" + strconv.Itoa(i))
+			done <- resp.StatusCode
+		}()
+	}
+	require.Eventually(t, func() bool { return started() == pdfFetches }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, pdfFetches, started(), "PDFs wait for their own slots")
+	thumb := make(chan int, 1)
+	go func() {
+		resp, _ := e.get("/media/1/thumb/t1")
+		thumb <- resp.StatusCode
+	}()
+	select {
+	case code := <-thumb:
+		assert.Equal(t, 200, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled PDFs blocked a thumbnail")
+	}
+	close(release)
+	for range 6 {
+		assert.Equal(t, 200, <-done)
+	}
+}
+
+// A PDF has one reader, the viewer: once nobody waits for it (the viewer
+// closed), its download is cancelled rather than left holding a slot for
+// minutes, and it is not remembered as a failure.
+func TestAbandonedPDFFetchIsCancelled(t *testing.T) {
+	cancelled := make(chan struct{}, 1)
+	var first atomic.Bool
+	e := newEnv(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if !first.Swap(true) {
+			_, _ = w.Write([]byte("%PDF-1.7\n"))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			cancelled <- struct{}{}
+			return
+		}
+		_, _ = w.Write(pdfOf(2048))
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/media/1/pdf/f1", nil)
+	require.NoError(t, err)
+	_, err = http.DefaultClient.Do(req)
+	require.Error(t, err, "the viewer gave up")
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the abandoned PDF download went on")
+	}
+	resp, body := e.get("/media/1/pdf/f1")
+	require.Equal(t, 200, resp.StatusCode, "a cancelled download is not remembered as a failure")
+	assert.Equal(t, pdfOf(2048), body)
+	assert.Equal(t, 2, e.origin.count("/api/v4/files/f1"))
 }
 
 // Readers accept the header anywhere in the first 1024 bytes (some
@@ -105,7 +252,7 @@ func TestNotAPDFIs415(t *testing.T) {
 			resp, body := e.get("/media/1/pdf/" + id)
 			assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode, id)
 			assert.NotContains(t, string(body), "script", id)
-			assert.Empty(t, resp.Header.Get("Cache-Control"), id)
+			assertPDFGuards(t, resp.Header, id) // no-store: nothing long-lived on an error
 		}
 		assert.Equal(t, 1, e.origin.count("/api/v4/files/"+id), "the refusal is remembered: %s", id)
 	}

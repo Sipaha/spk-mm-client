@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net/http"
 )
 
 // A PDF (KindPDF) is fetched whole for the viewer's pdf.js, which parses it
@@ -22,6 +23,8 @@ const (
 	// pdfTimeoutFactor stretches Options.Timeout for a PDF fetch: up to
 	// PDFMax, twice a picture's cap (60 s → 5 min: ~1.4 Mbit/s for 50 MiB).
 	pdfTimeoutFactor = 5
+	// pdfFetches: PDF downloads at once, in slots of their own (pdfSem).
+	pdfFetches = 2
 )
 
 var pdfMagic = []byte("%PDF-")
@@ -52,4 +55,34 @@ func writePDF(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 		return 0, errTooLarge
 	}
 	return n, nil
+}
+
+// pdfWriter puts the guards on every answer on a pdf URL — success, HEAD,
+// Range, and errors too, including those http.ServeContent writes after
+// stripping Cache-Control (a 416): nosniff, the sandbox CSP, attachment,
+// no-store.
+type pdfWriter struct{ http.ResponseWriter }
+
+func (w pdfWriter) guard() {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Content-Disposition", "attachment")
+	h.Set("Cache-Control", "no-store")
+}
+
+func (w pdfWriter) WriteHeader(code int) {
+	w.guard()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w pdfWriter) Write(p []byte) (int, error) {
+	w.guard() // before an implicit 200; a no-op once the header is out
+	return w.ResponseWriter.Write(p)
+}
+
+// ReadFrom keeps the underlying writer's sendfile path for ServeContent.
+func (w pdfWriter) ReadFrom(r io.Reader) (int64, error) {
+	w.guard()
+	return io.Copy(w.ResponseWriter, r)
 }

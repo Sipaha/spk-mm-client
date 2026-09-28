@@ -168,16 +168,24 @@
   весь файл до `media.PDFMax` = 50 МиБ (= `PDF_MAX` в UI; больше — 413, по `Content-Length` — не
   скачивая), потоком во временный файл кэша (`writePDF`, без `io.ReadAll` — вложения в куче Go не
   держим); `%PDF-` в первых 1024 байтах — и при загрузке, и при отдаче из кэша (иначе 415, испорченный
-  файл кэша удаляется); только ответ `200` апстрима; таймаут загрузки — 5× обычного (файл вдвое больше
-  картинки). Ответ: `Content-Type: application/pdf`, `nosniff`, CSP `default-src 'none'; sandbox`,
-  `Content-Disposition: attachment`, `Cache-Control: no-store`. Причина: разбирает PDF только pdf.js
+  файл кэша удаляется); только ответ `200` апстрима (206/204 — 502, частичный файл не кэшируется);
+  таймаут загрузки — 5× обычного (файл вдвое больше картинки), поэтому у PDF **свои 2 слота**
+  (`pdfSem`, не 6 общих `c.sem` — зависшие PDF не держат аватары и миниатюры), а загрузка, которую
+  больше никто не ждёт (просмотрщик закрыт; у PDF один читатель), **отменяется** и не попадает в
+  негативный кэш (`call.cancel`; следующий запрос начинает свою загрузку, не присоединяясь к
+  отменённой). Проверка `%PDF-` — это сниффинг, **не** валидация: HTML с `%PDF-` в комментарии её
+  проходит; настоящая защита — заголовки ответа и то, что pdf.js получает байты, а не URL. Любой ответ
+  на pdf-URL (успех, HEAD, Range и ошибки, включая 416, где `ServeContent` снимает `Cache-Control`) —
+  через `pdfWriter`: `nosniff`, CSP `default-src 'none'; sandbox`, `Content-Disposition: attachment`,
+  `Cache-Control: no-store`; у успешного ещё `Content-Type: application/pdf`. Причина: разбирает PDF только pdf.js
   в ленивом чанке UI (по байтам из `fetch`); сам WebView его показывать не должен — встроенный в
   WebKitGTK 2.52 просмотрщик (pdf.js 4.1.392, eval и скрипты PDF включены, класс CVE-2024-4367) не
   настраивается, а sandbox-CSP не даёт ему запуститься, даже если фрейм сюда перейдёт; `no-store` —
   копия в кэше WebView стоила бы только памяти web process (файл уже на диске у Go). Ходит к серверу
   только «живой» воркер, как остальные виды. — `internal/media/pdf_test.go`
   (`TestPDFServedAsSandboxedAttachment`, `TestPDFOverCapIs413`, `TestNotAPDFIs415`,
-  `TestPDFHeaderWithinTheFirstKilobyte`, `TestPDFFetchHasALongerTimeout`), `TestPDFIsNotReadWhole`
+  `TestPDFHeaderWithinTheFirstKilobyte`, `TestPDFFetchHasALongerTimeout`, `TestPDFErrorsCarryTheGuardHeaders`,
+  `TestPDFNeedsTheWholeFile`, `TestStalledPDFsDoNotBlockOtherPictures`, `TestAbandonedPDFFetchIsCancelled`), `TestPDFIsNotReadWhole`
   (`memory_test.go`), `TestBadRequests`, `internal/api/media_test.go` (`TestPDFOnlyWhileLive`).
 - Картинка, которая не загрузилась (`/media/` ответил 404/413/415), в ленте/миниатюрах/просмотрщике
   откатывается на карточку файла, а не остаётся сломанной. —
