@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
@@ -21,7 +21,6 @@ interface Props {
 const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
-const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
 const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
 
 // anchorNudge computes how far scrollTop must move to bring the anchor
@@ -110,7 +109,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
     }
   }, [])
   // Mid-scroll compensation for rows measured above the fold goes into a
-  // transform on the rows' container, not into scrollTop (which cancels
+  // negative margin on the rows' container, not into scrollTop (which cancels
   // WebKit's wheel animation) — see ScrollShift.
   const sizer = useRef<HTMLDivElement>(null)
   const [, bump] = useReducer((x: number) => x + 1, 0)
@@ -318,11 +317,6 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
     userScrolling.current = true
     shift.onUserInput()
   }
-  // Keyboard scrolling animates in WebKit too (see ScrollShift); it is not a
-  // gesture for the history anchor, which only yields to wheel/touch.
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (SCROLL_KEYS.has(e.key)) shift.onUserInput()
-  }
 
   return (
     <div
@@ -330,10 +324,9 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       onScroll={onScroll}
       onWheel={onUserGesture}
       onTouchMove={onUserGesture}
-      onKeyDown={onKeyDown}
       role="log"
       aria-label={t('feed.label')}
-      className="relative min-h-0 flex-1 overflow-y-auto pb-2"
+      className="relative min-h-0 flex-1 overflow-y-auto pb-2 [overflow-anchor:none]"
     >
       {!rows.length && (
         <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>

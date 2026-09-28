@@ -16,19 +16,28 @@ export const SCROLL_IDLE_MS = 150
 // written by script, so each such write cut the notch short — uneven, jerky
 // wheel steps exactly in channels with pictures and file cards.
 //
-// While the user scrolls (wheel, touch, scroll keys — until scrolling has
-// been idle for SCROLL_IDLE_MS) the compensation goes into `shift` instead: the rows' container
-// is translated up by it (after the commit that moved the rows — see apply),
-// so nothing moves on screen and scrollTop is left to the animation. The
-// virtualizer works in row (layout) coordinates = scrollTop + shift. Once
-// scrolling has been idle for SCROLL_IDLE_MS, the shift lands in scrollTop in
-// one step together with clearing the transform: no visible move, and no
-// animation left to cancel. Any programmatic scroll (scrollToFn) lands it
-// first, as does coming within `shift` of the top (rows there would be out
-// of reach otherwise). Scrolls not driven by the user (history anchoring,
-// scroll-to-end, script) keep the virtualizer's immediate compensation:
-// nothing animates there, and a shift pending at the top would push a
-// scroll to 0 back down on landing, stalling history loading.
+// While the user scrolls (wheel or touch, until scrolling has been idle for
+// SCROLL_IDLE_MS) the compensation goes into `shift` instead: the rows'
+// container gets `margin-top: -shift` (after the commit that moved the rows —
+// see apply), so nothing moves on screen and scrollTop is left to the
+// animation. A margin, not a transform: it is layout, so the scroll range
+// shrinks by `shift` with it and the last row stays at the very bottom of the
+// range (a transform leaves scrollHeight as it was — blank space past the
+// last row, and the at-bottom check off by `shift`). The virtualizer works in
+// row (layout) coordinates = scrollTop + shift. Once scrolling has been idle
+// for SCROLL_IDLE_MS, the shift lands in scrollTop in one step together with
+// clearing the margin: no visible move, and no animation left to cancel.
+// Coming within `shift` of the top lands it too (rows there would be out of
+// reach otherwise).
+//
+// Any programmatic scroll (scrollToFn: history anchoring, scroll-to-end, a
+// new post followed) lands the shift first and ends the gesture: WebKit has
+// cancelled the wheel animation anyway, and from then on the virtualizer's
+// immediate compensation applies until the next wheel/touch input — a shift
+// pending at the top would otherwise push a scroll to 0 back down on landing
+// and stall history loading. Keyboard scrolling is not covered (the feed is
+// not focusable; keys reach it from wherever focus is) and keeps the
+// immediate compensation.
 export class ScrollShift {
   shift = 0
   private gesture = false // user input since scrolling was last idle
@@ -53,6 +62,7 @@ export class ScrollShift {
   // equal to scrollTop once the shift has landed.
   scrollTo = (offset: number, opts: { adjustments?: number; behavior?: ScrollBehavior }, instance: V) => {
     this.flush()
+    this.gesture = false
     elementScroll(offset, opts, instance)
   }
 
@@ -81,16 +91,17 @@ export class ScrollShift {
   // rows' positions and the shift must reach the screen together.
   apply() {
     const s = this.sizer()
-    if (s) s.style.transform = this.shift ? `translateY(${-this.shift}px)` : ''
+    if (s) s.style.marginTop = this.shift ? `${-this.shift}px` : ''
   }
 
-  // Call on wheel, touchmove and scroll-key input on the feed.
+  // Call on wheel and touchmove input on the feed.
   onUserInput() {
     this.gesture = true
     this.landWhenIdle()
   }
 
-  // Call on every scroll event of the feed.
+  // Call on every scroll event of the feed. Scroll events extend only a
+  // gesture the user started (a programmatic scroll has ended it).
   onScroll() {
     if (!this.shift) {
       if (this.gesture) this.landWhenIdle()

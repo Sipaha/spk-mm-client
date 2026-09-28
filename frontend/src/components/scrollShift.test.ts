@@ -48,7 +48,7 @@ test('mid-scroll, a row measured above the fold is compensated by shifting the r
   expect(writes).toEqual([])
   expect(scroller.scrollTop).toBe(1000)
   shift.apply() // after the commit that moved the rows below it
-  expect(sizer.style.transform).toBe('translateY(-300px)')
+  expect(sizer.style.marginTop).toBe('-300px') // layout, not a transform: the scroll range shrinks with it
 })
 
 test('a scroll not driven by the user (script, history anchoring) is compensated at once, as usual', () => {
@@ -97,7 +97,7 @@ test('the shift lands in scrollTop once scrolling has been idle, in one step wit
   expect(top()).toBe(1000)
   vi.advanceTimersByTime(1)
   expect(top()).toBe(1200)
-  expect(sizer.style.transform).toBe('')
+  expect(sizer.style.marginTop).toBe('')
   expect(shift.shift).toBe(0)
 })
 
@@ -123,9 +123,29 @@ test('a programmatic scroll lands the shift first, then scrolls in row coordinat
   shift.shouldAdjust(item(500, 64), 200, v)
   shift.apply()
   shift.scrollTo(5000, { adjustments: 0 }, v)
-  expect(sizer.style.transform).toBe('')
+  expect(sizer.style.marginTop).toBe('')
   expect(shift.shift).toBe(0)
   expect(writes).toEqual([5000])
+})
+
+test('a programmatic scroll ends the gesture: later measurements are compensated at once', () => {
+  const { shift, v, item } = setup()
+  shift.shouldAdjust(item(500, 64), 200, v)
+  shift.scrollTo(5000, { adjustments: 0 }, v)
+  shift.onScroll() // its own scroll event does not start the gesture again
+  expect(shift.shouldAdjust(item(400, 64, 'k2'), 100, v)).toBe(true)
+  shift.onUserInput() // the next wheel does
+  expect(shift.shouldAdjust(item(300, 64, 'k3'), 100, v)).toBe(false)
+})
+
+test('dispose before idle: the pending landing never runs on the gone feed', () => {
+  vi.useFakeTimers()
+  const { shift, v, item, top, writes } = setup()
+  shift.shouldAdjust(item(500, 64), 200, v)
+  shift.dispose()
+  vi.advanceTimersByTime(SCROLL_IDLE_MS * 2)
+  expect(top()).toBe(1000)
+  expect(writes).toEqual([])
 })
 
 test('a programmatic scroll mid-gesture does not keep the gesture going past idle', () => {
