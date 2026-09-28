@@ -433,22 +433,20 @@ func (s *Store) Remove(id string) error {
 	return nil
 }
 
-// ReleaseComposer drops every attachment of (srv, ch, root)'s composer
-// that is not currently uploading (StateStaged/StateUploaded/StateFailed):
-// its composer itself is gone (the channel was left, taking its held
-// threads with it — state.Server.TakeForgottenComposers), so nothing can
-// ever send them. An upload already running is left alone — it either
-// finishes into an orphaned server file (harmless, same as Remove leaves
-// one) or fails on its own; nothing new is queued behind it (the composer
-// is gone, so Retry/further uploads never come).
+// ReleaseComposer drops every attachment of (srv, ch, root)'s composer,
+// including one still uploading: its composer itself is gone (the channel
+// was left, taking its held threads with it —
+// state.Server.TakeForgottenComposers), so nothing can ever send them, and
+// leaving an uploading one listed would let it reappear (still
+// StateUploading, stuck forever — its own upload is cancelled by
+// unlistLocked, but nothing ever retries a listed item stuck mid-upload) if
+// the user rejoins the channel or reopens the thread before it settles.
+// unlistLocked cancels a running upload the same way Remove does; it
+// either never reaches the server or finishes into an orphaned file there
+// (harmless, same as Remove leaves one).
 func (s *Store) ReleaseComposer(srv int64, ch, root string) {
 	s.mu.Lock()
-	var gone []*item
-	for _, it := range s.lists[key{srv, ch, root}] {
-		if it.State != StateUploading {
-			gone = append(gone, it)
-		}
-	}
+	gone := append([]*item(nil), s.lists[key{srv, ch, root}]...)
 	for _, it := range gone {
 		s.unlistLocked(it)
 	}

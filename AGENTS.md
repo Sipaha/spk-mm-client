@@ -416,9 +416,11 @@
   TakeForgottenComposers` копит покинутые ключи (канал `Root:""` и каждый его тред), `Worker.
   releaseForgottenComposers` разбирает их так же лениво, как `releaseFiles` — `TakeReleased` (при
   следующем вызове `changed()`, не обязательно сразу), вызывая `attach.Store.ReleaseComposer` (снимает
-  всё, кроме `StateUploading` — та загрузка донашивается или падает сама). Тред, просто вытесненный из
+  вообще всё, включая `StateUploading` — та загрузка отменяется так же, как при `Remove`, а не донашивается
+  оставленной в списке: до fix round 2 незавершённая загрузка оставалась в списке и могла «воскреснуть»,
+  если пользователь вернётся в канал/тред раньше, чем она сама себя разрешит). Тред, просто вытесненный из
   LRU без ухода из канала, этим не покрыт (`docs/backlog.md`). — `TestTakeForgottenComposersOnChannelLeave`,
-  `TestReleaseComposerDropsStagedNotUploading`, `TestChannelLeaveReleasesForgottenComposers`.
+  `TestReleaseComposerDropsEverythingIncludingUploading`, `TestChannelLeaveReleasesForgottenComposers`.
   Drop: `TestNativeDropOnAThreadPanelAttachesItsPaths`.
 - UI (Task 5): staged (pending, не отправленные) картинки превьюются с `/media/<srv>/staged/<id>`
   (`mediaURL(serverId, 'staged', id)`), **не** `feed`/`thumb` — те требуют настоящий id файла поста,

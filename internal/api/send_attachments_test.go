@@ -192,6 +192,70 @@ func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
 // reply's upload progress must reach the channel view too, not just the
 // thread panel's. onAttachments now always emits both when the pending
 // post's progress actually changed.
+//
+// Fix round 2 (re-review of 29904b4): SendReply's own pending-add Change
+// always carries both Channels and Threads (internal/mmsync/actions.go
+// send()), independent of onAttachments entirely — so the first version of
+// this test passed even with onAttachments reverted to its old
+// thread-only behavior: it was really observing SendReply's own event,
+// never onAttachments' progress-driven one.
+//
+// Two timing-based fixes (drain-then-wait-for-one-more, then count-over-a-
+// window) both turned out to be flaky or outright broken against the real
+// fake server: a small file's progress callback reports "fully sent"
+// essentially in one shot (the body is read from a spooled file in one or
+// two Read calls well under any buffering threshold, regardless of how
+// slowly mmfake's copyBodyThrottled then drains the *server* side of the
+// connection) — so onAttachments' own progress-driven call and SendReply's
+// own pending-add call land within the same ~100ms coalescing window
+// essentially every time, and a second, later, distinguishable occurrence
+// of either event may simply never happen, at any file size or throttle
+// this test controls from the outside.
+//
+// The reliable fix is to stop relying on that timing at all: take the
+// server offline (f.offline, the same helper
+// TestFailedUploadFailsThePostAndRetryKeepsWhatWasUploaded uses) before
+// attaching anything, so the attachment provably stays staged — nothing
+// can progress it — and SendReply's own pending-add burst is the only
+// thing that can happen. Once that is drained, coming back online is the
+// one and only thing left that can produce a channel_changed/
+// thread_changed pair: onAttachments' progress path, deterministically —
+// not a race against how fast a small file's Read calls happen to land
+// (client-side, a small spooled file is read to completion in one or two
+// Reads regardless of how slowly the *server* then drains the
+// connection, so a real upload's progress callback fires once, not many
+// times), and not contaminated by an unrelated resync: going back online
+// after f.offline also lets the worker reconnect, and a reconnect's own
+// metadata refresh can touch channel_changed for reasons that have
+// nothing to do with this attachment (confirmed: that alone was still
+// enough to pass with onAttachments reverted to thread-only). Staying
+// offline throughout and driving the one call under test directly — the
+// same call attach.Store's own OnChange hook makes on a real progress
+// report — removes every source of that but the fix itself.
+// TestSendReplyUploadProgressTellsBothChannelAndThread proves onAttachments'
+// "always both" behaviour (attachments.go) for a reply's progress with a
+// change RefreshPendingProgress must actually notice on its own — not just
+// piggy-backing on some other, unrelated Change that happens to touch the
+// same (channel, thread) coalescing keys.
+//
+// That's a real trap here, not a hypothetical one: onChanged (sync.go, for
+// a state.Change) and onAttachments schedule the *same* coalescer keys
+// ("channel/%d/%s", "thread/%d/%s" — see attachments.go). SendReply's own
+// queueing of the pending post already schedules those keys once, and a
+// Coalescer.Schedule call before a job fires only replaces its function —
+// so a first attempt at this test (naively sending, uploading, and
+// collecting events soon after) kept "passing" under a thread-only
+// onAttachments too: whatever fired for the channel key traced back to
+// SendReply's own schedule, never disproving anything about onAttachments.
+//
+// This version forces the post's own lifecycle to fully settle (Failed,
+// permanently — no automatic retry) and every one of its Changes to be
+// drained *before* causing a second, isolated attachment-state change:
+// attach.Store.Retry after the file itself also failed. From that point
+// nothing but onAttachments schedules "channel/…"/"thread/…" for this
+// thread — the Worker never touches a settled Failed pending post on its
+// own — so any channel_changed/thread_changed seen afterwards can only come
+// from onAttachments noticing the retried upload's progress.
 func TestSendReplyUploadProgressTellsBothChannelAndThread(t *testing.T) {
 	f := newChatFixture(t)
 	f.withAttachments()
@@ -204,38 +268,69 @@ func TestSendReplyUploadProgressTellsBothChannelAndThread(t *testing.T) {
 	require.NoError(t, err)
 	f.eventually(func() bool { v, err := f.svc.GetThread(ctx, id, root); return err == nil && v.Loaded }, "thread never loaded")
 
-	fake.SetUploadThrottle(2000) // ~1s for 2000 bytes of body
-	t.Cleanup(func() { fake.SetUploadThrottle(0) })
-	data := bytes.Repeat([]byte{1}, 2000)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-town", root, "big.bin", "application/octet-stream", bytes.NewReader(data), 0)
+	fake.FailUploads(1) // exactly one upload attempt fails; the next succeeds
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-town", root, "big.bin", "application/octet-stream", strings.NewReader("abc"), 0)
 	require.NoError(t, err)
 
 	require.NoError(t, f.svc.SendReply(ctx, id, "c-town", root, "", []string{a.ID}))
-
-	sawBoth := make(chan bool, 1)
-	go func() {
-		var sawChannel, sawThread bool
-		timeout := time.After(5 * time.Second)
-		for {
-			select {
-			case ev := <-f.evs:
-				if ev.Type == EventChannelChanged && ev.Payload["server_id"] == id && ev.Payload["channel_id"] == "c-town" {
-					sawChannel = true
-				}
-				if ev.Type == EventThreadChanged && ev.Payload["server_id"] == id && ev.Payload["root_id"] == root {
-					sawThread = true
-				}
-				if sawChannel && sawThread {
-					sawBoth <- true
-					return
-				}
-			case <-timeout:
-				sawBoth <- false
-				return
+	var pendingID string
+	f.eventually(func() bool {
+		v, err := f.svc.GetThread(ctx, id, root)
+		if err != nil {
+			return false
+		}
+		for _, p := range v.Posts {
+			if p.Failed {
+				pendingID = p.ID
+				return true
 			}
 		}
-	}()
-	assert.True(t, <-sawBoth, "onAttachments must tell both the channel and the thread while a reply's upload runs")
+		return false
+	}, "the reply was never marked failed")
+	defer func() { _ = f.svc.DiscardPost(ctx, id, "c-town", pendingID) }()
+	f.eventually(func() bool {
+		got, ok := f.svc.att.Get(a.ID)
+		return ok && got.State == attach.StateFailed
+	}, "the attachment itself never failed")
+
+	// The whole initial send/fail settled — drain every Change it produced
+	// (including onChanged's own channel/thread schedule for this reply)
+	// before the isolated retry below.
+	for drained := true; drained; {
+		select {
+		case <-f.evs:
+		case <-time.After(200 * time.Millisecond):
+			drained = false
+		}
+	}
+
+	// Retry only touches attach.Store — the pending post stays Failed and
+	// settled, so the Worker never schedules these keys again on its own
+	// from here. FailUploads(1) already spent its one failure, so this
+	// attempt succeeds.
+	require.NoError(t, f.svc.att.Retry(a.ID))
+
+	var sawChannel, sawThread bool
+	timeout := time.After(3 * time.Second)
+collect:
+	for {
+		select {
+		case ev := <-f.evs:
+			if ev.Type == EventChannelChanged && ev.Payload["server_id"] == id && ev.Payload["channel_id"] == "c-town" {
+				sawChannel = true
+			}
+			if ev.Type == EventThreadChanged && ev.Payload["server_id"] == id && ev.Payload["root_id"] == root {
+				sawThread = true
+			}
+			if sawChannel && sawThread {
+				break collect
+			}
+		case <-timeout:
+			break collect
+		}
+	}
+	assert.True(t, sawChannel, "onAttachments never told the channel about the reply's progress")
+	assert.True(t, sawThread, "onAttachments never told the thread about the reply's progress")
 }
 
 func TestSendPostWithOnlyAttachments(t *testing.T) {

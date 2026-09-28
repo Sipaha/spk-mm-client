@@ -679,10 +679,21 @@ func TestPauseReturnsRunningUploadsToTheQueue(t *testing.T) {
 // their spools; ReleaseComposer drops those, but never something already
 // mid-upload (left to finish or fail on its own — a channel-leave race is
 // rare and the alternative, cancelling an in-flight PUT, is worse).
-func TestReleaseComposerDropsStagedNotUploading(t *testing.T) {
+// Fix round 2 (review item 2): ReleaseComposer used to leave a
+// StateUploading item listed, so it reappeared (stuck mid-upload forever,
+// nothing left to retry it) if the user rejoined the channel or reopened
+// the thread. It must unlist everything, including one still uploading —
+// and cancel that upload, same as Remove does.
+func TestReleaseComposerDropsEverythingIncludingUploading(t *testing.T) {
 	e := newEnv(t, func(o *Options) { o.Parallel = 1 })
 	started := make(chan struct{}, 1)
-	e.up.setSend(blockUntilCancelled(started))
+	cancelled := make(chan struct{}, 1)
+	e.up.setSend(func(ctx context.Context, _ io.Reader, _ int64, _ func(int64)) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		cancelled <- struct{}{}
+		return &rest.Error{Kind: rest.KindNetwork, Err: ctx.Err()}
+	})
 	up, err := e.s.AddPath(1, "c1", "r1", e.file("up.bin", "abc"))
 	require.NoError(t, err)
 	<-started
@@ -695,17 +706,26 @@ func TestReleaseComposerDropsStagedNotUploading(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, spools(t, e.dir), spoolPrefix+staged.ID)
 
+	// Cancelling up's upload frees Parallel=1's one slot, so other (a
+	// different, untouched composer) starts uploading for real once
+	// ReleaseComposer runs below — give it the default, fast send so it
+	// doesn't hang on the same blocking fake up still holds.
+	e.up.setSend(nil)
+
 	before := e.chg.count()
 	e.s.ReleaseComposer(1, "c1", "r1")
 
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the uploading one's request was never cancelled")
+	}
 	_, stillStaged := e.state(staged.ID)
 	assert.False(t, stillStaged, "the staged attachment is gone")
 	assert.NotContains(t, spools(t, e.dir), spoolPrefix+staged.ID, "its spool is deleted too")
-	stillUp, ok := e.state(up.ID)
-	require.True(t, ok, "the uploading one is left alone")
-	assert.Equal(t, StateUploading, stillUp.State)
-	_, otherOK := e.state(other.ID)
-	assert.True(t, otherOK, "a different composer (the channel's own) is untouched")
+	_, stillUp := e.state(up.ID)
+	assert.False(t, stillUp, "the uploading one is gone too — it must not be left to reappear stuck")
+	e.waitState(other.ID, StateUploaded) // freed by up's cancellation; a different composer, left alone
 	assert.Greater(t, e.chg.count(), before, "the composer's OnChange fires")
 
 	// Nothing left to release, and an unknown composer: both no-ops, not
