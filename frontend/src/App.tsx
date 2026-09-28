@@ -2,21 +2,25 @@ import { useEffect } from 'react'
 import { ApiError, client, isDesktop } from './api/client'
 import type { ServerDTO } from './api/types'
 import {
-  loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openFromNotification,
-  refreshChannel, refreshServers, report, selectServer,
+  closeThread, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel,
+  openFromNotification, refreshChannel, refreshServers, refreshThread, report, selectServer,
 } from './chat'
 import { AddServerForm } from './components/AddServerForm'
 import { ChannelPane } from './components/ChannelPane'
 import { ServerPanel } from './components/ServerPanel'
 import { ServerRail } from './components/ServerRail'
 import { Sidebar } from './components/Sidebar'
+import { ThreadPane } from './components/ThreadPane'
 import { IconClose } from './components/icons'
 import { errorMessage } from './errors'
 import { t } from './i18n'
 import { useStore } from './store'
 
 export function App() {
-  const { servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, notice, noticeSticky, noticeAction, setError, loginFailed, setInfo, showSignIn, setNotice } = useStore()
+  const {
+    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, notice, noticeSticky,
+    noticeAction, setError, loginFailed, setInfo, showSignIn, setNotice,
+  } = useStore()
 
   useEffect(() => {
     client.appInfo().then(setInfo).catch(() => {})
@@ -34,8 +38,11 @@ export function App() {
         case 'channel_changed':
           void refreshChannel(Number(p.server_id), String(p.channel_id))
           break
+        case 'thread_changed':
+          void refreshThread(Number(p.server_id), String(p.root_id))
+          break
         case 'open_channel':
-          openFromNotification(Number(p.server_id), String(p.channel_id))
+          void openFromNotification(Number(p.server_id), String(p.channel_id), p.root_id ? String(p.root_id) : undefined)
           break
         case 'downloads_changed':
           onDownloadsChanged(p)
@@ -136,7 +143,10 @@ export function App() {
           <main className="flex min-w-0 flex-1 flex-col">
             {banner}
             {info}
-            <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />
+            <div className="relative flex min-h-0 flex-1">
+              <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />
+              {thread && <ThreadPane server={selected} thread={thread} onClose={() => closeThread(selected.id)} />}
+            </div>
           </main>
         </>
       ) : (

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
 import { forgetRecent } from './emoji/recent'
 
 export interface NoticeAction {
@@ -38,6 +38,12 @@ interface State {
   // (too_large, too_many, …) or an attachment_refused event (a drop with
   // no caller to report to). Reset with the channel, same as attachments.
   attachError: string | null
+  // thread: the panel's open thread (Task 6) — null when no thread is open.
+  // Reset with the channel or server, like sidebar/channel (chat.ts's
+  // openChannel/selectServer also close the Go-side panel with it).
+  thread: ThreadDTO | null
+  threadAttachments: AttachmentView[]
+  threadAttachError: string | null
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -53,11 +59,17 @@ interface State {
   patchDownloadProgress(id: number, received: number): void
   setAttachments(list: AttachmentView[]): void
   setAttachError(msg: string | null): void
+  setThread(thread: ThreadDTO | null): void
+  setThreadAttachments(list: AttachmentView[]): void
+  setThreadAttachError(msg: string | null): void
 }
 
 const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
 
-const cleared = { sidebar: null, channel: null, editingId: null, attachments: [], attachError: null }
+const cleared = {
+  sidebar: null, channel: null, editingId: null, attachments: [], attachError: null,
+  thread: null, threadAttachments: [], threadAttachError: null,
+}
 
 export const useStore = create<State>((set, get) => ({
   servers: [],
@@ -78,6 +90,9 @@ export const useStore = create<State>((set, get) => ({
   downloadsOpen: false,
   attachments: [],
   attachError: null,
+  thread: null,
+  threadAttachments: [],
+  threadAttachError: null,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -123,7 +138,10 @@ export const useStore = create<State>((set, get) => ({
     // right after). A refresh of the *same* open channel (e.g. a
     // channel_changed event) must not interrupt an edit or a draft tray.
     const switchedChannel = get().channel?.id !== ch.id
-    set({ channel: ch, ...(switchedChannel ? { editingId: null, attachments: [], attachError: null } : {}) })
+    set({
+      channel: ch,
+      ...(switchedChannel ? { editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null } : {}),
+    })
   },
   setEditing: (id) => set({ editingId: id }),
   setNotice: (msg, sticky = false, action = null) =>
@@ -139,6 +157,9 @@ export const useStore = create<State>((set, get) => ({
   },
   setAttachments: (list) => set({ attachments: list }),
   setAttachError: (msg) => set({ attachError: msg }),
+  setThread: (thread) => set({ thread }),
+  setThreadAttachments: (list) => set({ threadAttachments: list }),
+  setThreadAttachError: (msg) => set({ threadAttachError: msg }),
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).

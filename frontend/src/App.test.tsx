@@ -14,6 +14,11 @@ const town: ChannelDTO = {
   id: 'c-town', name: 'Town Square', type: 'O', header: 'Everything', purpose: '', team_id: 't1', team_name: 'one', posts: [],
   new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false,
 }
+const aThread = {
+  root_id: 'r1', channel_id: 'c-town', channel_name: 'Town Square', team_name: 'one', posts: [], has_more: false,
+  capped: false, loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'u-alice', crt: false,
+  new_since: 0, gap_after: '',
+}
 
 vi.mock('./api/client', async (orig) => {
   const real = await orig<typeof import('./api/client')>()
@@ -30,6 +35,10 @@ vi.mock('./api/client', async (orig) => {
       openChannel: vi.fn(async () => town),
       getChannel: vi.fn(async () => town),
       downloads: vi.fn(async () => []),
+      openThread: vi.fn(async () => aThread),
+      getThread: vi.fn(async () => aThread),
+      closeThread: vi.fn().mockResolvedValue(undefined),
+      attachments: vi.fn(async () => []),
       subscribeEvents: (fn: (e: ApiEvent) => void) => {
         h.emit = fn
         return () => {}
@@ -49,7 +58,10 @@ const srv = (o: Partial<ServerDTO> = {}): ServerDTO => ({
 beforeEach(() => {
   setLocale('en')
   resetChat()
-  useStore.setState({ servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null })
+  useStore.setState({
+    servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null,
+    thread: null, threadAttachments: [], threadAttachError: null,
+  })
 })
 
 test('a login error survives status updates and clears when the sign-in state changes', async () => {
@@ -96,6 +108,22 @@ test('window focus and network changes are reported to Go', async () => {
   expect(client.setFocused).toHaveBeenLastCalledWith(true)
   await act(async () => window.dispatchEvent(new Event('online')))
   expect(client.networkChanged).toHaveBeenCalled()
+})
+
+// Task 6: a reply notification's open_channel carries root_id — the channel
+// opens, then its thread panel; thread_changed refreshes the open one.
+test('open_channel with a root_id opens the channel then its thread panel; thread_changed refreshes it', async () => {
+  const { client } = await import('./api/client')
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))
+  expect(client.openThread).toHaveBeenCalledWith(1, 'c-town', 'r1')
+  expect(await screen.findByRole('complementary', { name: 'Thread' })).toBeInTheDocument()
+
+  vi.mocked(client.getThread).mockResolvedValueOnce({ ...aThread, syncing: false, error: 'internal' })
+  await act(async () => h.emit!({ type: 'thread_changed', payload: { server_id: 1, root_id: 'r1' } }))
+  expect(client.getThread).toHaveBeenCalledWith(1, 'r1')
 })
 
 test('a downloads_changed event refreshes the list and the header badge shows the active count', async () => {

@@ -27,6 +27,11 @@ const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false, ...o,
 })
 
+// cf: the Composer props a ChannelDTO now maps to (channelId/channelName/
+// draft — see Composer's Props, generalized in Task 6 to also serve a
+// thread's reply composer).
+const cf = (ch: ChannelDTO) => ({ channelId: ch.id, channelName: ch.name, draft: ch.draft })
+
 const av = (over: Partial<AttachmentView> = {}): AttachmentView => ({
   id: 'a1', name: 'photo.png', size: 3, mime: 'image/png', state: 'staged', sent: 0, error: '', ...over,
 })
@@ -51,13 +56,13 @@ beforeEach(() => {
   vi.mocked(uploadAttachments).mockReset()
   vi.mocked(removeAttachment).mockReset()
   vi.mocked(retryAttachment).mockReset()
-  useStore.setState({ attachError: null })
+  useStore.setState({ attachError: null, threadAttachError: null })
 })
 afterEach(() => vi.useRealTimers())
 
 test('Enter sends and clears, Shift+Enter makes a new line, blank is not sent', async () => {
   const onSend = vi.fn().mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   expect(box).toHaveAttribute('placeholder', 'Write to Off-Topic')
   await userEvent.type(box, '   {Enter}')
@@ -70,7 +75,7 @@ test('Enter sends and clears, Shift+Enter makes a new line, blank is not sent', 
 
 test('Enter with attachments but no text still sends (files only)', async () => {
   const onSend = vi.fn().mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' }), av({ id: 'a2' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[av({ id: 'a1' }), av({ id: 'a2' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, '{Enter}')
   expect(onSend).toHaveBeenCalledWith('', ['a1', 'a2'])
@@ -83,7 +88,7 @@ test('Enter with attachments but no text still sends (files only)', async () => 
 // whole call with not_found if it does, bouncing the new text back too.
 test('Enter twice before the event: a second Enter with new text sends the text only, not the already-sent attachment', async () => {
   const onSend = vi.fn().mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, 'first{Enter}')
   expect(onSend).toHaveBeenNthCalledWith(1, 'first', ['a1'])
@@ -94,7 +99,7 @@ test('Enter twice before the event: a second Enter with new text sends the text 
 
 test('Enter twice before the event: an empty second Enter (nothing but the already-sent attachment) sends nothing', async () => {
   const onSend = vi.fn().mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, '{Enter}')
   expect(onSend).toHaveBeenCalledTimes(1)
@@ -104,7 +109,7 @@ test('Enter twice before the event: an empty second Enter (nothing but the alrea
 
 test('Enter twice before the event: a failed send makes its attachment sendable again on the next Enter', async () => {
   const onSend = vi.fn().mockRejectedValueOnce(new ApiError('not_found', '')).mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, '{Enter}')
   await screen.findByRole('alert')
@@ -115,7 +120,7 @@ test('Enter twice before the event: a failed send makes its attachment sendable 
 
 test('a refused send puts the text back with the error', async () => {
   const onSend = vi.fn().mockRejectedValue(new ApiError('session_expired', ''))
-  render(<Composer channel={channel()} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, 'hello{Enter}')
   expect(await screen.findByRole('alert')).toHaveTextContent('Session expired — sign in again')
@@ -125,7 +130,7 @@ test('a refused send puts the text back with the error', async () => {
 test('a refused send persists the restored text as the draft', async () => {
   const onSend = vi.fn().mockRejectedValue(new ApiError('session_expired', ''))
   const onDraft = vi.fn()
-  render(<Composer channel={channel()} serverId={1} attachments={[]} onSend={onSend} onDraft={onDraft} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={onSend} onDraft={onDraft} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, 'hello{Enter}')
   await screen.findByRole('alert')
@@ -137,7 +142,7 @@ test('a refused send persists the restored text as the draft', async () => {
 
 test('ArrowUp in an empty box edits the last own post', async () => {
   const onEditLast = vi.fn()
-  render(<Composer channel={channel()} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={onEditLast} />)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={onEditLast} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   await userEvent.type(box, 'x{ArrowUp}')
   expect(onEditLast).not.toHaveBeenCalled()
@@ -151,7 +156,7 @@ test('draft: restored, saved 500 ms after typing, flushed when leaving the chann
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
   const onDraft = vi.fn()
   const { unmount } = render(
-    <Composer channel={channel({ draft: 'saved' })} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={onDraft} onEditLast={() => {}} />,
+    <Composer {...cf(channel({ draft: 'saved' }))} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={onDraft} onEditLast={() => {}} />,
   )
   const box = screen.getByRole('textbox', { name: 'Message' })
   expect(box).toHaveValue('saved')
@@ -167,7 +172,7 @@ test('draft: restored, saved 500 ms after typing, flushed when leaving the chann
 test('the tray renders the composer\'s attachments and wires remove/retry to serverId', async () => {
   const user = userEvent.setup()
   render(
-    <Composer channel={channel()} serverId={7} attachments={[av({ id: 'a1', name: 'x.png' })]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />,
+    <Composer {...cf(channel())} serverId={7} attachments={[av({ id: 'a1', name: 'x.png' })]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />,
   )
   expect(screen.getByText('x.png')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Remove x.png' }))
@@ -177,13 +182,13 @@ test('the tray renders the composer\'s attachments and wires remove/retry to ser
 test('📎 in desktop mode calls pickAttachments; in browser mode it opens the hidden file input', async () => {
   const user = userEvent.setup()
   vi.mocked(isDesktop).mockReturnValue(true)
-  const { unmount } = render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  const { unmount } = render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   await user.click(screen.getByRole('button', { name: 'Attach files' }))
   expect(pickAttachments).toHaveBeenCalledWith(3, 'c1', '')
   unmount()
 
   vi.mocked(isDesktop).mockReturnValue(false)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const input = document.querySelector('input[type="file"]') as HTMLInputElement
   const clickSpy = vi.spyOn(input, 'click')
   await user.click(screen.getByRole('button', { name: 'Attach files' }))
@@ -191,7 +196,7 @@ test('📎 in desktop mode calls pickAttachments; in browser mode it opens the h
 })
 
 test('browser mode: choosing files in the hidden input uploads them', () => {
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const input = document.querySelector('input[type="file"]') as HTMLInputElement
   const file = new File(['x'], 'x.png', { type: 'image/png' })
   vi.mocked(uploadAttachments).mockResolvedValue(undefined)
@@ -202,7 +207,7 @@ test('browser mode: choosing files in the hidden input uploads them', () => {
 test('desktop paste: a hidden file list (text/uri-list present but empty) attaches from the clipboard and prevents default', async () => {
   vi.mocked(isDesktop).mockReturnValue(true)
   vi.mocked(attachFromClipboard).mockResolvedValue(1)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   const notPrevented = paste(box, { types: ['text/uri-list'], uriList: '' })
   expect(notPrevented).toBe(false) // preventDefault was called
@@ -212,7 +217,7 @@ test('desktop paste: a hidden file list (text/uri-list present but empty) attach
 test('desktop paste: a bare image (no text/plain) attaches from the clipboard without preventing default', () => {
   vi.mocked(isDesktop).mockReturnValue(true)
   vi.mocked(attachFromClipboard).mockResolvedValue(1)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   const notPrevented = paste(box, { types: ['image/png'] })
   expect(notPrevented).toBe(true) // default paste still allowed to proceed
@@ -221,7 +226,7 @@ test('desktop paste: a bare image (no text/plain) attaches from the clipboard wi
 
 test('desktop paste: normal text/link paste is not intercepted', () => {
   vi.mocked(isDesktop).mockReturnValue(true)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   paste(box, { types: ['text/plain'] })
   expect(attachFromClipboard).not.toHaveBeenCalled()
@@ -230,7 +235,7 @@ test('desktop paste: normal text/link paste is not intercepted', () => {
 test('browser mode: pasted files upload each one and prevent default', () => {
   vi.mocked(isDesktop).mockReturnValue(false)
   vi.mocked(uploadAttachments).mockResolvedValue(undefined)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   const file = new File(['x'], 'x.png', { type: 'image/png' })
   const notPrevented = paste(box, { types: ['Files'], files: [file] })
@@ -242,7 +247,7 @@ test('an attach error is shown like a send error, quietly ignored for no_paste_g
   const user = userEvent.setup()
   vi.mocked(isDesktop).mockReturnValue(true)
   vi.mocked(pickAttachments).mockRejectedValue(new ApiError('too_many', ''))
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   await user.click(screen.getByRole('button', { name: 'Attach files' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Too many attachments (10 at most)')
 
@@ -258,13 +263,13 @@ test('an attach error is shown like a send error, quietly ignored for no_paste_g
 // trusting that WebKitGTK never hands the page real files.
 test('desktop mode never renders the file input, so 📎 cannot reach a File-based upload path', () => {
   vi.mocked(isDesktop).mockReturnValue(true)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   expect(document.querySelector('input[type="file"]')).toBeNull()
 })
 
 test('desktop mode ignores clipboardData.files even if a paste event carried them (only attachFromClipboard is ever called, never a byte-carrying upload)', () => {
   vi.mocked(isDesktop).mockReturnValue(true)
-  render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  render(<Composer {...cf(channel())} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   const box = screen.getByRole('textbox', { name: 'Message' })
   const file = new File(['x'], 'x.png', { type: 'image/png' })
   // A normal text paste that (implausibly) also carries files: desktop's
@@ -272,4 +277,45 @@ test('desktop mode ignores clipboardData.files even if a paste event carried the
   paste(box, { types: ['text/plain'], files: [file] })
   expect(uploadAttachments).not.toHaveBeenCalled()
   expect(attachFromClipboard).not.toHaveBeenCalled()
+})
+
+// Task 6: a reply composer (rootId set) — its own placeholder, forwards
+// rootId to every attachment source, and reads/writes threadAttachError
+// instead of the channel's attachError.
+test('a reply composer (rootId set) uses its own placeholder and forwards rootId to attachment sources', async () => {
+  const user = userEvent.setup()
+  vi.mocked(isDesktop).mockReturnValue(true)
+  render(
+    <Composer {...cf(channel())} rootId="root1" serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />,
+  )
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  expect(box).toHaveAttribute('placeholder', 'Reply')
+  await user.click(screen.getByRole('button', { name: 'Attach files' }))
+  expect(pickAttachments).toHaveBeenCalledWith(3, 'c1', 'root1')
+})
+
+test('a reply composer shows and clears threadAttachError, not the channel attachError', async () => {
+  const user = userEvent.setup()
+  vi.mocked(isDesktop).mockReturnValue(true)
+  vi.mocked(pickAttachments).mockRejectedValue(new ApiError('too_many', ''))
+  render(
+    <Composer {...cf(channel())} rootId="root1" serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />,
+  )
+  await user.click(screen.getByRole('button', { name: 'Attach files' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Too many attachments (10 at most)')
+  expect(useStore.getState().threadAttachError).not.toBeNull()
+  expect(useStore.getState().attachError).toBeNull()
+})
+
+// Task 6: disabled (the thread's root was deleted) — shown, but inert.
+test('disabled: the textarea and attach button are disabled, and Enter sends nothing', () => {
+  const onSend = vi.fn()
+  render(
+    <Composer {...cf(channel())} rootId="root1" disabled serverId={3} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />,
+  )
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  expect(box).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Attach files' })).toBeDisabled()
+  fireEvent.keyDown(box, { key: 'Enter' })
+  expect(onSend).not.toHaveBeenCalled()
 })

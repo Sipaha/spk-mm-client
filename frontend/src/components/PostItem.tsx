@@ -7,7 +7,7 @@ import { formatTime } from '../format'
 import { t } from '../i18n'
 import { Attachments } from './Attachments'
 import { EmojiGlyph } from './EmojiGlyph'
-import { IconAddReaction, IconBookmark, IconBookmarkFilled, IconMore } from './icons'
+import { IconAddReaction, IconBookmark, IconBookmarkFilled, IconMore, IconReply } from './icons'
 import { Markdown } from './Markdown'
 import { PostAvatar } from './PostAvatar'
 import PostMenu from './PostMenu'
@@ -34,6 +34,10 @@ export interface PostActions {
   // reactionUsers: who reacted with emoji on this post — for the reaction
   // chip's hover/focus tooltip and its "and N others" modal.
   reactionUsers(post: PostView, emoji: string): Promise<ReactionUsersDTO>
+  // openThread: opens post's thread — its own if post is a root, else its
+  // root_id's. Used by the "N replies" link, the ↩ reply button and the
+  // reply-context line's click (Task 6).
+  openThread(post: PostView): void
 }
 
 interface Props {
@@ -45,11 +49,15 @@ interface Props {
   crt: boolean
   actions: PostActions
   editing: boolean
-  // replyButton: the toolbar's reply slot, between "add reaction" and
-  // "…" — undefined/null until the threads task supplies an IconReply
-  // button; kept out of PostActions since it needs no post-specific data
-  // PostItem doesn't already have (the caller closes over the post itself).
-  replyButton?: React.ReactNode
+  // variant: 'channel' (the feed — shows the ↩ reply button and, for a
+  // root, the "N replies" link) or 'thread' (the panel — neither; see
+  // AGENTS.md/Task 6 brief). Defaults to 'channel' so existing callers that
+  // never render a thread panel need no change.
+  variant?: 'channel' | 'thread'
+  // replyContext: this reply's context line ("reply to <author>: <snippet>")
+  // for the first reply of a series without CRT — computed by feedRows.
+  // undefined/null: no context line.
+  replyContext?: { author: string; snippet: string } | null
 }
 
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
@@ -183,11 +191,13 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
   )
 }
 
-export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, crt, actions, editing, replyButton }: Props) {
+export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, actions, editing, variant = 'channel', replyContext = null }: Props) {
   const time = formatTime(post.create_at, locale)
   const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
   const canReact = !post.system && !post.pending && !post.failed
+  const canReply = variant === 'channel' && !post.system && !post.pending && !post.failed
+  const openThread = () => actions.openThread(post)
   const openPicker = (el: HTMLElement) => {
     trigger.current = el
     setPicker({ anchor: el.getBoundingClientRect(), info: null })
@@ -263,6 +273,11 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             <time className="text-xs text-fg-muted">{time}</time>
           </header>
         )}
+        {replyContext && (
+          <button type="button" className="mb-0.5 block text-xs text-fg-muted hover:underline" onClick={openThread}>
+            {replyContext.author ? t('thread.replyTo', { author: replyContext.author, snippet: replyContext.snippet }) : t('thread.replyInThread')}
+          </button>
+        )}
         {editing ? (
           <EditBox post={post} actions={actions} />
         ) : (
@@ -294,7 +309,13 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             loadReactors={(_postId, emoji) => actions.reactionUsers(post, emoji)}
           />
         )}
-        {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
+        {variant === 'channel' && !post.root_id && (post.reply_count ?? 0) > 0 && (
+          <button type="button" className="mt-0.5 block text-xs font-medium text-accent hover:underline" onClick={openThread}>
+            {post.last_reply_at
+              ? `${t('thread.replies', { n: String(post.reply_count) })} · ${t('thread.lastReply', { time: formatTime(post.last_reply_at, locale) })}`
+              : t('thread.replies', { n: String(post.reply_count) })}
+          </button>
+        )}
         {post.pending && (
           <div className="flex items-center gap-2 text-xs text-fg-muted">
             {t('post.sending')}
@@ -338,7 +359,11 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
               {post.saved ? <IconBookmarkFilled size={20} /> : <IconBookmark size={20} />}
             </ToolButton>
           )}
-          {replyButton}
+          {canReply && (
+            <ToolButton label={t('post.reply')} onClick={openThread}>
+              <IconReply size={20} />
+            </ToolButton>
+          )}
           <ToolButton label={t('post.more')} haspopup="menu" expanded={menuOpen} onClick={(e) => openMenu(e.currentTarget)}>
             <IconMore size={20} />
           </ToolButton>

@@ -4,13 +4,20 @@ import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
-import { buildRows, type Row } from './feedRows'
+import { buildRows, type FeedVariant, type Row } from './feedRows'
 import { IconArrowDown } from './icons'
 import { PostItem, type PostActions } from './PostItem'
 import { ScrollShift } from './scrollShift'
 
+// FeedData: what Feed needs from a channel or a thread (ChannelDTO and
+// ThreadDTO both have this shape — see AGENTS.md/Task 6 brief). new_since/
+// gap_after are always empty on a ThreadDTO, so the "new messages" line and
+// the gap row never appear there.
+export type FeedData = Pick<ChannelDTO, 'id' | 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'loaded' | 'crt'>
+
 interface Props {
-  channel: ChannelDTO
+  data: FeedData
+  variant: FeedVariant
   serverId: number
   me: { id: string; username: string }
   locale: string
@@ -84,8 +91,8 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ channel, serverId, me, locale, actions, editingId, onLoadOlder }: Props) {
-  const rows = useMemo(() => buildRows(channel), [channel])
+export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder }: Props) {
+  const rows = useMemo(() => buildRows(data, variant), [data, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
   const atBottom = useRef(true)
@@ -236,7 +243,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   }
 
   const loadOlder = async () => {
-    if (loading.current || !channel.has_more) return
+    if (loading.current || !data.has_more) return
     loading.current = true
     setLoadingOlder(true)
     captureAnchor()
@@ -255,7 +262,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   const fillViewportIfShort = () => {
     frame('fill', () => {
       const el = scroller.current
-      if (el && channel.has_more && el.scrollHeight <= el.clientHeight) void loadOlder()
+      if (el && data.has_more && el.scrollHeight <= el.clientHeight) void loadOlder()
     })
   }
 
@@ -411,8 +418,16 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
         )
       case 'gap':
         return <div role="status" className="py-2 text-center text-xs text-fg-muted">{t('feed.gap')}</div>
+      case 'threadReplies':
+        return (
+          <div className="flex items-center px-4 py-2">
+            <div className="h-px flex-1 bg-line" />
+            <span className="px-3 text-xs font-semibold text-fg-muted">{t('thread.replies', { n: String(r.count) })}</span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+        )
       case 'post':
-        return <PostItem serverId={serverId} post={r.post} head={r.head} me={me} locale={locale} crt={channel.crt} actions={actions} editing={r.post.id === editingId} />
+        return <PostItem serverId={serverId} post={r.post} head={r.head} me={me} locale={locale} variant={variant} crt={data.crt} replyContext={r.replyContext} actions={actions} editing={r.post.id === editingId} />
     }
   }
 
@@ -438,10 +453,12 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
         onTouchMove={onUserGesture}
         role="log"
         aria-label={t('feed.label')}
-        className="h-full overflow-y-auto pb-2 [overflow-anchor:none]"
+        data-feed={variant}
+        tabIndex={-1}
+        className="relative h-full overflow-y-auto pb-2 [overflow-anchor:none]"
       >
         {!rows.length && (
-          <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
+          <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(data.loaded ? 'feed.empty' : 'feed.loading')}</div>
         )}
         <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
           {v.getVirtualItems().map((it) => (

@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { AttachmentView, ChannelDTO, DownloadView, PostView, ServerDTO, SidebarDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, DownloadView, PostView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
 import { setLocale } from './i18n'
 import { useStore } from './store'
 
@@ -26,6 +26,12 @@ vi.mock('./api/client', () => ({
     setPostSaved: vi.fn(),
     addReaction: vi.fn().mockResolvedValue(undefined),
     removeReaction: vi.fn().mockResolvedValue(undefined),
+    openThread: vi.fn(),
+    getThread: vi.fn(),
+    closeThread: vi.fn().mockResolvedValue(undefined),
+    loadOlderReplies: vi.fn().mockResolvedValue(undefined),
+    sendReply: vi.fn().mockResolvedValue(undefined),
+    saveThreadDraft: vi.fn().mockResolvedValue(undefined),
   },
   uploadAttachmentBrowser: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -37,10 +43,10 @@ vi.mock('./api/client', () => ({
 
 const { client, uploadAttachmentBrowser } = await import('./api/client')
 const {
-  attachFromClipboard, clearDownloads, closeDownloadsPanel, downloadFile, downloadPrimaryAction, editPost,
-  loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
-  openDownloadsPanel, openFile, pickAttachments, refreshChannel, refreshDownloads,
-  react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, selectServer, setPostSaved, uploadAttachments,
+  attachFromClipboard, clearDownloads, closeDownloadsPanel, closeThread, downloadFile, downloadPrimaryAction, editPost,
+  loadOlderReplies, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
+  openDownloadsPanel, openFile, openFromNotification, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
+  react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
 } = await import('./chat')
 
 const post = (over: Partial<PostView> = {}): PostView => ({
@@ -91,10 +97,22 @@ beforeEach(() => {
   vi.mocked(client.attachFromClipboard).mockReset()
   vi.mocked(client.setPostSaved).mockReset().mockResolvedValue(undefined)
   vi.mocked(uploadAttachmentBrowser).mockReset()
+  vi.mocked(client.openThread).mockReset()
+  vi.mocked(client.getThread).mockReset()
+  vi.mocked(client.closeThread).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.loadOlderReplies).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.sendReply).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.saveThreadDraft).mockReset().mockResolvedValue(undefined)
   useStore.setState({
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
     editingId: null, downloads: [], downloadsOpen: false, attachments: [], attachError: null,
+    thread: null, threadAttachments: [], threadAttachError: null,
   })
+})
+
+const thread = (rootId: string, over: Partial<ThreadDTO> = {}): ThreadDTO => ({
+  root_id: rootId, channel_id: 'a', channel_name: 'A', team_name: 'team', posts: [], has_more: false, capped: false,
+  loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'u-alice', crt: false, new_since: 0, gap_after: '', ...over,
 })
 
 const av = (id: string, over: Partial<AttachmentView> = {}): AttachmentView => ({
@@ -356,10 +374,11 @@ test('onAttachmentsChanged applies only to the channel on screen', async () => {
   expect(useStore.getState().attachments).toEqual([av('mine')])
 })
 
-// Task 4: attachments_changed/attachment_refused carry root_id now; a
-// thread's (root_id set) has no panel to show it in yet (Task 5/6) and is
-// ignored, so it cannot clobber the channel composer's own state.
-test('a thread-scoped attachments_changed/attachment_refused (root_id set) is ignored', async () => {
+// Task 4/6: attachments_changed/attachment_refused carry root_id; a
+// thread's (root_id set) is ignored while no matching thread is open (it
+// cannot clobber the channel composer's own state), and applied to the
+// thread* store fields once that thread is the one in the panel.
+test('a thread-scoped attachments_changed/attachment_refused (root_id set) is ignored without a matching open thread', async () => {
   setLocale('en')
   vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
   vi.mocked(client.attachments).mockResolvedValue([av('x')])
@@ -368,12 +387,139 @@ test('a thread-scoped attachments_changed/attachment_refused (root_id set) is ig
 
   onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: 'r1', items: [av('thread-only')] })
   expect(useStore.getState().attachments).toEqual([av('x')])
+  expect(useStore.getState().threadAttachments).toEqual([])
   onAttachmentRefused({ server_id: 1, channel_id: 'a', root_id: 'r1', code: 'too_many' })
   expect(useStore.getState().attachError).toBeNull()
+  expect(useStore.getState().threadAttachError).toBeNull()
 
   // root_id '' (the channel's own) still applies, as before.
   onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: '', items: [av('channel-only')] })
   expect(useStore.getState().attachments).toEqual([av('channel-only')])
+})
+
+test('a thread-scoped attachments_changed/attachment_refused applies once that thread is open', async () => {
+  setLocale('en')
+  useStore.getState().setChannel(1, chan('a'))
+  useStore.getState().setThread(thread('r1'))
+
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: 'r1', items: [av('thread-item')] })
+  expect(useStore.getState().threadAttachments).toEqual([av('thread-item')])
+  expect(useStore.getState().attachments).toEqual([]) // the channel's own tray is untouched
+
+  onAttachmentRefused({ server_id: 1, channel_id: 'a', root_id: 'r1', code: 'too_many' })
+  expect(useStore.getState().threadAttachError).toBe('Too many attachments (10 at most)')
+  expect(useStore.getState().attachError).toBeNull()
+
+  // A different thread's event (not the one open) is ignored.
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: 'other', items: [av('nope')] })
+  expect(useStore.getState().threadAttachments).toEqual([av('thread-item')])
+})
+
+// --- Thread panel (Task 6) ------------------------------------------------
+
+test('openThread opens a thread in the panel and fetches its tray', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  vi.mocked(client.attachments).mockResolvedValue([av('x')])
+  await openThread(1, 'a', 'r1')
+  expect(client.openThread).toHaveBeenCalledWith(1, 'a', 'r1')
+  expect(useStore.getState().thread).toEqual(thread('r1'))
+  await vi.waitFor(() => expect(useStore.getState().threadAttachments).toEqual([av('x')]))
+  expect(client.attachments).toHaveBeenCalledWith(1, 'a', 'r1')
+})
+
+test('opening a different thread (or navigating away) drops a stale openThread reply', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  const stale = deferred<ThreadDTO>()
+  vi.mocked(client.openThread).mockReturnValueOnce(stale.p).mockResolvedValueOnce(thread('r2'))
+  const first = openThread(1, 'a', 'r1')
+  await openThread(1, 'a', 'r2') // the user opened a different thread before "r1" resolved
+  stale.resolve(thread('r1'))
+  await first
+  expect(useStore.getState().thread).toEqual(thread('r2')) // "r1"'s late reply must not win
+})
+
+test('closeThread closes the panel and clears its store fields, but only for the server it was open on', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  useStore.getState().setThreadAttachments([av('x')])
+  useStore.getState().setThreadAttachError('boom')
+
+  closeThread(2) // a no-op: nothing is open for server 2
+  expect(client.closeThread).not.toHaveBeenCalled()
+  expect(useStore.getState().thread).not.toBeNull()
+
+  closeThread(1)
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  expect(useStore.getState().thread).toBeNull()
+  expect(useStore.getState().threadAttachments).toEqual([])
+  expect(useStore.getState().threadAttachError).toBeNull()
+})
+
+test('refreshThread re-reads the open thread; a reply for a thread no longer open is dropped', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+
+  vi.mocked(client.getThread).mockResolvedValue(thread('r1', { syncing: false, posts: [post({ id: 'p2' })] }))
+  await refreshThread(1, 'r1')
+  expect(useStore.getState().thread?.posts).toEqual([post({ id: 'p2' })])
+
+  const stale = deferred<ThreadDTO>()
+  vi.mocked(client.getThread).mockReturnValueOnce(stale.p)
+  const r = refreshThread(1, 'r1')
+  closeThread(1) // the panel closed before the refresh landed
+  stale.resolve(thread('r1', { posts: [post({ id: 'late' })] }))
+  await r
+  expect(useStore.getState().thread).toBeNull() // must not resurrect the closed panel
+})
+
+test('loadOlderReplies fetches a page then re-reads the thread, like loadOlder', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  vi.mocked(client.getThread).mockResolvedValue(thread('r1', { has_more: false }))
+  const ok = await loadOlderReplies(1, 'r1')
+  expect(client.loadOlderReplies).toHaveBeenCalledWith(1, 'r1')
+  expect(client.getThread).toHaveBeenCalledWith(1, 'r1')
+  expect(ok).toBe(true)
+
+  vi.mocked(client.loadOlderReplies).mockRejectedValueOnce(new Error('boom'))
+  expect(await loadOlderReplies(1, 'r1')).toBe(false)
+})
+
+test('sendReply/saveThreadDraft call the matching API methods', () => {
+  void sendReply(1, 'a', 'r1', 'hello', ['att1'])
+  expect(client.sendReply).toHaveBeenCalledWith(1, 'a', 'r1', 'hello', ['att1'])
+  saveThreadDraft(1, 'r1', 'draft text')
+  expect(client.saveThreadDraft).toHaveBeenCalledWith(1, 'r1', 'draft text')
+})
+
+test('openFromNotification opens the channel, then the thread, when a root_id is given', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openFromNotification(1, 'a', 'r1')
+  expect(useStore.getState().channel?.id).toBe('a')
+  expect(client.openThread).toHaveBeenCalledWith(1, 'a', 'r1')
+  await vi.waitFor(() => expect(useStore.getState().thread).toEqual(thread('r1')))
+})
+
+test('opening a channel closes a thread open for that server; opening a different server closes its thread too', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+
+  vi.mocked(client.openChannel).mockResolvedValue(chan('b'))
+  await openChannel(1, 'b') // navigating to another channel takes the panel down with it
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  expect(useStore.getState().thread).toBeNull()
+
+  vi.mocked(client.closeThread).mockClear()
+  useStore.getState().setChannel(1, chan('a'))
+  await openThread(1, 'a', 'r1')
+  selectServer(2) // switching servers closes server 1's thread too
+  expect(client.closeThread).toHaveBeenCalledWith(1)
 })
 
 test('an attachments_changed event beats a slower refreshAttachments reply requested before it', async () => {

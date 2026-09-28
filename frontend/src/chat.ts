@@ -9,7 +9,12 @@ import { useStore } from './store'
 let sidebarSeq = 0
 let channelSeq = 0
 let attachmentsSeq = 0
+let threadSeq = 0
+let threadAttachmentsSeq = 0
 let wanted: { serverId: number; channelId: string } | null = null
+// threadWanted: the server/root the panel is open for — mirrors `wanted`
+// above, but for the thread panel (Task 6). null: no thread open.
+let threadWanted: { serverId: number; rootId: string } | null = null
 let inFlight = false
 let again = false
 
@@ -19,17 +24,25 @@ export function resetChat() {
   sidebarSeq++
   channelSeq++
   attachmentsSeq++
+  threadSeq++
+  threadAttachmentsSeq++
   wanted = null
+  threadWanted = null
   inFlight = false
   again = false
   downloadsSeq++
 }
 
 export function selectServer(id: number | null) {
+  // A thread open on the server we're switching away from closes with it
+  // (Task 6 brief: "the panel closes on channel or server switch") —
+  // captured before resetChat() clears threadWanted.
+  const closingThread = threadWanted
   resetChat()
   const s = useStore.getState()
   s.select(id)
   client.selectServer(id ?? 0).catch(report)
+  if (closingThread) client.closeThread(closingThread.serverId).catch(() => {})
   const srv = s.servers.find((x) => x.id === id)
   if (srv?.signed_in) void loadSidebar(srv.id)
 }
@@ -71,6 +84,10 @@ export async function loadSidebar(serverId: number, teamId = '', openSelected = 
 }
 
 export async function openChannel(serverId: number, channelId: string) {
+  // Navigating to a channel closes any thread panel open for this server
+  // (Task 6 brief) — even the same channel's, re-clicked: opening always
+  // starts fresh, same as the channel fetch itself below.
+  closeThread(serverId)
   wanted = { serverId, channelId }
   useStore.getState().setEditing(null)
   await fetchChannel(serverId, channelId, true)
@@ -114,9 +131,102 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
   }
 }
 
-export function openFromNotification(serverId: number, channelId: string) {
+// openFromNotification opens a reply notification's channel, then (rootId
+// set) its thread panel — the channel fetch is awaited first so the thread's
+// own channel-membership check (state.Server.ThreadHeld's channel lookup)
+// and the sidebar/team follow-along above have already happened.
+export async function openFromNotification(serverId: number, channelId: string, rootId?: string) {
   if (useStore.getState().selectedId !== serverId) selectServer(serverId)
-  void openChannel(serverId, channelId)
+  await openChannel(serverId, channelId)
+  if (rootId) void openThread(serverId, channelId, rootId)
+}
+
+// --- Thread panel (Task 6) -----------------------------------------------
+
+// openThread opens rootId's thread in serverId's panel (replacing whatever
+// was open there — Go's OpenThread does the LRU swap). A stale reply (the
+// user already opened a different thread, closed the panel, or navigated
+// away) is dropped by threadSeq — chat.ts's own guard, same pattern as
+// channelSeq/attachmentsSeq above, on top of Go's own cache eviction.
+export async function openThread(serverId: number, channelId: string, rootId: string) {
+  threadWanted = { serverId, rootId }
+  const my = ++threadSeq
+  try {
+    const th = await client.openThread(serverId, channelId, rootId)
+    if (my !== threadSeq) return
+    const s = useStore.getState()
+    if (s.selectedId === serverId) s.setThread(th)
+    void refreshThreadAttachments(serverId, channelId, rootId)
+  } catch (e) {
+    if (my === threadSeq) report(e)
+  }
+}
+
+// closeThread closes serverId's panel (Go keeps the thread cached, trimmed
+// to its last page) — the "×", Esc, "back to channel", and any channel/
+// server switch that must take the panel down with it (openChannel/
+// selectServer above). A no-op if nothing is open for that server.
+export function closeThread(serverId: number) {
+  if (threadWanted?.serverId !== serverId) return
+  threadWanted = null
+  threadSeq++
+  threadAttachmentsSeq++
+  client.closeThread(serverId).catch(() => {})
+  const s = useStore.getState()
+  if (s.selectedId === serverId) {
+    s.setThread(null)
+    s.setThreadAttachments([])
+    s.setThreadAttachError(null)
+  }
+}
+
+// refreshThread re-reads serverId's open thread (a thread_changed event, or
+// after loadOlderReplies) — ignored once a different thread (or none) is
+// open by the time it resolves.
+export async function refreshThread(serverId: number, rootId: string) {
+  if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
+  try {
+    const th = await client.getThread(serverId, rootId)
+    if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
+    const s = useStore.getState()
+    if (s.selectedId === serverId) s.setThread(th)
+  } catch (e) {
+    report(e)
+  }
+}
+
+// loadOlderReplies fetches one page of thread history above the window;
+// resolves true when the thread was re-read with it (Feed's onLoadOlder contract).
+export async function loadOlderReplies(serverId: number, rootId: string): Promise<boolean> {
+  try {
+    await client.loadOlderReplies(serverId, rootId)
+    await refreshThread(serverId, rootId)
+    return true
+  } catch (e) {
+    report(e)
+    return false
+  }
+}
+
+export const sendReply = (serverId: number, channelId: string, rootId: string, message: string, attachmentIds: string[] = []) =>
+  client.sendReply(serverId, channelId, rootId, message, attachmentIds)
+
+export const saveThreadDraft = (serverId: number, rootId: string, text: string) => {
+  client.saveThreadDraft(serverId, rootId, text).catch(() => {}) // a lost draft is not worth an error banner
+}
+
+// refreshThreadAttachments: the reply composer's tray, on open and as a
+// fallback for onAttachmentsChanged — mirrors refreshAttachments below.
+export async function refreshThreadAttachments(serverId: number, channelId: string, rootId: string) {
+  const my = ++threadAttachmentsSeq
+  try {
+    const list = await client.attachments(serverId, channelId, rootId)
+    if (my !== threadAttachmentsSeq) return
+    const s = useStore.getState()
+    if (s.selectedId === serverId && s.thread?.root_id === rootId) s.setThreadAttachments(list)
+  } catch {
+    /* best-effort */
+  }
 }
 
 // --- Attachments (the composer's tray) ----------------------------------
@@ -125,8 +235,7 @@ export function openFromNotification(serverId: number, channelId: string) {
 // and as a fallback for onAttachmentsChanged (e.g. the very first load,
 // before any attachments_changed event exists to react to). A failure is
 // silent, like a lost draft: the tray simply stays empty until the next
-// event or open. rootId: '' the channel's own composer (the only one this
-// task wires into the UI — the thread panel is Task 5/6).
+// event or open. rootId: '' the channel's own composer.
 export async function refreshAttachments(serverId: number, channelId: string, rootId: string) {
   const my = ++attachmentsSeq
   try {
@@ -140,35 +249,45 @@ export async function refreshAttachments(serverId: number, channelId: string, ro
 }
 
 // onAttachmentsChanged applies an EventAttachmentsChanged payload (the
-// whole list, coalesced ~4/s during an upload) — only for the channel's own
-// composer (root_id '') on screen; a thread's (root_id set) has no panel
-// yet to show it in (Task 5/6) and is ignored here. Another channel's tray
-// is re-read fresh when it is opened.
+// whole list, coalesced ~4/s during an upload): root_id '' is the channel's
+// own composer, on screen; a non-empty root_id is a thread's — applied only
+// if that thread is the one open in the panel. Another channel's or
+// thread's tray is re-read fresh when it is opened.
 export function onAttachmentsChanged(payload: Record<string, unknown> | undefined) {
   const p = payload ?? {}
-  if ((p.root_id ?? '') !== '') return
+  const rootId = String(p.root_id ?? '')
   const s = useStore.getState()
-  if (Number(p.server_id) === s.selectedId && p.channel_id === s.channel?.id) {
+  if (Number(p.server_id) !== s.selectedId) return
+  const items = (p.items as AttachmentView[] | undefined) ?? []
+  if (rootId === '') {
+    if (p.channel_id !== s.channel?.id) return
     // Bump the sequence: a refreshAttachments request made before this event
     // can still reply after it (it's a separate round trip); without this,
     // that older, now-stale reply would win the race and overwrite the list
     // this event just applied.
     attachmentsSeq++
-    s.setAttachments((p.items as AttachmentView[] | undefined) ?? [])
+    s.setAttachments(items)
+    return
   }
+  if (s.thread?.root_id !== rootId) return
+  threadAttachmentsSeq++
+  s.setThreadAttachments(items)
 }
 
 // onAttachmentRefused applies an EventAttachmentRefused payload: a drop had
 // no caller to report its refusal to (too_many, not_dropped, …) — shown the
-// same way a send error is, in the composer. Only the channel's own
-// composer (root_id '') has anywhere to show it yet (Task 5/6).
+// same way a send error is, in the relevant composer (channel or thread).
 export function onAttachmentRefused(payload: Record<string, unknown> | undefined) {
   const p = payload ?? {}
-  if ((p.root_id ?? '') !== '') return
+  const rootId = String(p.root_id ?? '')
   const s = useStore.getState()
-  if (Number(p.server_id) === s.selectedId && p.channel_id === s.channel?.id) {
-    s.setAttachError(errorMessage(new ApiError(String(p.code ?? 'internal'), '')))
+  if (Number(p.server_id) !== s.selectedId) return
+  const err = errorMessage(new ApiError(String(p.code ?? 'internal'), ''))
+  if (rootId === '') {
+    if (p.channel_id === s.channel?.id) s.setAttachError(err)
+    return
   }
+  if (s.thread?.root_id === rootId) s.setThreadAttachError(err)
 }
 
 // removeAttachment/retryAttachment: one-off actions on an existing chip,
@@ -390,10 +509,12 @@ export const emojiInfo = (serverId: number) => client.emojiInfo(serverId)
 // banner for a hover.
 export const reactionUsers = (serverId: number, postId: string, emoji: string) => client.reactionUsers(serverId, postId, emoji)
 
-export function editLastOwn(ch: ChannelDTO) {
-  for (let i = ch.posts.length - 1; i >= 0; i--) {
-    const p = ch.posts[i]
-    if (p.user_id === ch.me_id && !p.pending && !p.failed && !p.system) {
+// editLastOwn: ArrowUp on an empty composer edits the last own post — of a
+// channel's feed or (thread.posts/thread.me_id) a thread panel's.
+export function editLastOwn(view: Pick<ChannelDTO, 'posts' | 'me_id'>) {
+  for (let i = view.posts.length - 1; i >= 0; i--) {
+    const p = view.posts[i]
+    if (p.user_id === view.me_id && !p.pending && !p.failed && !p.system) {
       useStore.getState().setEditing(p.id)
       return
     }

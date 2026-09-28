@@ -5,8 +5,8 @@ const base = new Date(2026, 8, 24, 10, 0).getTime()
 const P = (id: string, user: string, min: number, o: Partial<PostView> = {}): PostView => ({
   id, user_id: user, author: user, message: id, create_at: base + min * 60_000, ...o,
 })
-const ch = (posts: PostView[], o: Partial<{ new_since: number; gap_after: string; has_more: boolean }> = {}) => ({
-  posts, new_since: 0, me_id: 'me', gap_after: '', has_more: false, ...o,
+const ch = (posts: PostView[], o: Partial<{ new_since: number; gap_after: string; has_more: boolean; crt: boolean }> = {}) => ({
+  posts, new_since: 0, me_id: 'me', gap_after: '', has_more: false, crt: false, ...o,
 })
 const shape = (rows: Row[]) => rows.map((r) => (r.kind === 'post' ? `${r.key}${r.head ? '*' : ''}` : r.kind))
 
@@ -52,4 +52,58 @@ test('a pending post and its confirmed replacement share one row key', () => {
   const confirmedRows = buildRows(ch([P('real-id-from-server', 'me', 0, { pending_post_id: 'u-me:1' })]))
   expect(pendingRows.find((r) => r.kind === 'post')?.key).toBe('u-me:1')
   expect(confirmedRows.find((r) => r.kind === 'post')?.key).toBe('u-me:1')
+})
+
+// Task 6: without CRT, the first reply of a run to the same root gets the
+// "reply to <author>: <snippet>" context line (and is always a head row);
+// a run of replies to the same thread shares just one. A reply directly
+// under its own root is NOT "first of series" (webapp isFirstReply: the
+// previous row must be neither this root nor another reply of the same
+// thread) — the root right above already gives the context.
+test('replyContext: only the first reply of a run to the same root, without CRT', () => {
+  const rows = buildRows(
+    ch([
+      P('root', 'bob', 0),
+      P('r0', 'carol', 1, { root_id: 'root', root_author: 'bob', root_snippet: 'hi there' }), // directly under its root: no context
+      P('mid', 'bob', 2), // an unrelated post breaks the run
+      P('r1', 'carol', 3, { root_id: 'root', root_author: 'bob', root_snippet: 'hi there' }), // first of a new run: context
+      P('r2', 'carol', 4, { root_id: 'root' }), // same run: no context
+      P('other', 'bob', 5),
+      P('r3', 'carol', 6, { root_id: 'root', root_author: 'bob', root_snippet: 'hi there' }), // 'other' broke it: context again
+    ]),
+  )
+  const post = (id: string) => rows.find((r) => r.kind === 'post' && r.post.id === id) as Extract<Row, { kind: 'post' }>
+  expect(post('root').replyContext).toBeUndefined()
+  expect(post('r0').replyContext).toBeUndefined()
+  expect(post('r1').replyContext).toEqual({ author: 'bob', snippet: 'hi there' })
+  expect(post('r1').head).toBe(true)
+  expect(post('r2').replyContext).toBeUndefined()
+  expect(post('other').replyContext).toBeUndefined()
+  expect(post('r3').replyContext).toEqual({ author: 'bob', snippet: 'hi there' })
+})
+
+test('replyContext: a reply whose root is not held shows an empty author (UI renders "reply in a thread")', () => {
+  const rows = buildRows(ch([P('r1', 'carol', 0, { root_id: 'gone' })]))
+  const post = rows.find((r) => r.kind === 'post') as Extract<Row, { kind: 'post' }>
+  expect(post.replyContext).toEqual({ author: '', snippet: '' })
+})
+
+test('replyContext: never set with CRT on, and never in the thread panel', () => {
+  const post = P('r1', 'carol', 0, { root_id: 'root', root_author: 'bob', root_snippet: 'hi' })
+  const withCRT = buildRows(ch([P('root', 'bob', 0), post], { crt: true }))
+  expect((withCRT.find((r) => r.kind === 'post' && r.post.id === 'r1') as Extract<Row, { kind: 'post' }>).replyContext).toBeUndefined()
+  const inThread = buildRows(ch([P('root', 'bob', 0), post]), 'thread')
+  expect((inThread.find((r) => r.kind === 'post' && r.post.id === 'r1') as Extract<Row, { kind: 'post' }>).replyContext).toBeUndefined()
+})
+
+// Task 6: variant 'thread' inserts a "N replies" divider right after the root.
+test('thread variant: a "N replies" divider follows the root, counting the rest', () => {
+  const rows = buildRows(ch([P('root', 'bob', 0), P('r1', 'carol', 1, { root_id: 'root' }), P('r2', 'carol', 2, { root_id: 'root' })]), 'thread')
+  expect(shape(rows)).toEqual(['day', 'root*', 'threadReplies', 'r1*', 'r2'])
+  expect(rows.find((r) => r.kind === 'threadReplies')).toMatchObject({ count: 2 })
+})
+
+test('thread variant: no divider is inserted before the root loads', () => {
+  const rows = buildRows(ch([]), 'thread')
+  expect(rows.some((r) => r.kind === 'threadReplies')).toBe(false)
 })

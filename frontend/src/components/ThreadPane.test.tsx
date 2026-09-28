@@ -1,0 +1,182 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { vi } from 'vitest'
+import type { PostView, ServerDTO, ThreadDTO } from '../api/types'
+import { setLocale } from '../i18n'
+import { useStore } from '../store'
+import { ThreadPane } from './ThreadPane'
+
+// jsdom has no layout: the Feed's virtualizer needs sizes to render at all
+// (same stubs as Feed.test.tsx/ChannelPane.test.tsx).
+const saved = {
+  h: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight'),
+  w: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth'),
+  scrollTo: HTMLElement.prototype.scrollTo,
+}
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).getAttribute('role') === 'log' ? 600 : 40
+    },
+  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  HTMLElement.prototype.scrollTo = vi.fn() as unknown as typeof HTMLElement.prototype.scrollTo
+})
+afterAll(() => {
+  if (saved.h) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', saved.h)
+  if (saved.w) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', saved.w)
+  HTMLElement.prototype.scrollTo = saved.scrollTo
+})
+
+vi.mock('../chat', () => ({
+  copyLink: vi.fn(), deletePost: vi.fn(), discardPost: vi.fn(), downloadFile: vi.fn(), editLastOwn: vi.fn(),
+  editPost: vi.fn(), emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
+  loadOlderReplies: vi.fn().mockResolvedValue(true), markUnread: vi.fn(), openFile: vi.fn(), openLink: vi.fn(),
+  openThread: vi.fn(), react: vi.fn().mockResolvedValue(undefined), reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
+  retryPost: vi.fn(), saveThreadDraft: vi.fn(), sendReply: vi.fn().mockResolvedValue(undefined), setPostSaved: vi.fn(),
+  uploadAttachments: vi.fn().mockResolvedValue(undefined),
+}))
+
+const { loadOlderReplies, openThread } = await import('../chat')
+
+const server = (o: Partial<ServerDTO> = {}): ServerDTO => ({
+  id: 5, name: 'Acme', url: 'https://mm', signed_in: true, username: 'alice', gitlab: false,
+  state: 'live', unread: false, mentions: 0, ...o,
+})
+const post = (o: Partial<PostView> = {}): PostView => ({
+  id: 'root', user_id: 'u-bob', author: 'bob', message: 'root text', create_at: Date.now() - 60_000, ...o,
+})
+const thread = (o: Partial<ThreadDTO> = {}): ThreadDTO => ({
+  root_id: 'root', channel_id: 'c-town', channel_name: 'Town Square', team_name: 'team',
+  posts: [post(), post({ id: 'r1', user_id: 'u-carol', author: 'carol', message: 'a reply', root_id: 'root', create_at: Date.now() - 30_000 })],
+  has_more: false, capped: false, loaded: true, syncing: false, root_deleted: false, error: '', draft: '',
+  me_id: 'u-alice', crt: false, new_since: 0, gap_after: '', ...o,
+})
+
+beforeEach(() => {
+  setLocale('en')
+  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null })
+  vi.mocked(loadOlderReplies).mockReset().mockResolvedValue(true)
+  vi.mocked(openThread).mockReset()
+  // matchMedia stub for useNarrow — wide by default.
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })) as unknown as typeof window.matchMedia
+})
+
+test('the panel shows the root, its replies, the "N replies" divider, and a composer', () => {
+  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  expect(screen.getByRole('complementary', { name: 'Thread' })).toBeInTheDocument()
+  expect(screen.getByText('Thread · Town Square')).toBeInTheDocument()
+  expect(screen.getByText('root text')).toBeInTheDocument()
+  expect(screen.getByText('a reply')).toBeInTheDocument()
+  expect(screen.getByText('Replies: 1')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument()
+})
+
+test('the composer sends a reply via sendReply', async () => {
+  const { sendReply } = await import('../chat')
+  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await userEvent.type(box, 'my reply{Enter}')
+  expect(sendReply).toHaveBeenCalledWith(5, 'c-town', 'root', 'my reply', [])
+})
+
+test('"×" and Esc (focus in the panel) close the panel and return focus to the channel feed', async () => {
+  const onClose = vi.fn()
+  render(
+    <>
+      <div role="log" aria-label="Messages" data-feed="channel" tabIndex={-1} />
+      <ThreadPane server={server()} thread={thread()} onClose={onClose} />
+    </>,
+  )
+  const channelFeed = document.querySelector('[data-feed="channel"]')!
+  await userEvent.click(screen.getByRole('button', { name: 'Close thread' }))
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(channelFeed).toHaveFocus()
+
+  onClose.mockClear()
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  box.focus()
+  await userEvent.keyboard('{Escape}')
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(channelFeed).toHaveFocus()
+})
+
+test('Esc is ignored while focus is outside the panel (e.g. a portalled popover)', async () => {
+  const onClose = vi.fn()
+  render(
+    <>
+      <button>elsewhere</button>
+      <ThreadPane server={server()} thread={thread()} onClose={onClose} />
+    </>,
+  )
+  screen.getByRole('button', { name: 'elsewhere' }).focus()
+  await userEvent.keyboard('{Escape}')
+  expect(onClose).not.toHaveBeenCalled()
+})
+
+test('root_deleted shows a banner and disables the composer', () => {
+  render(<ThreadPane server={server()} thread={thread({ root_deleted: true })} onClose={() => {}} />)
+  expect(screen.getByText('The original message was deleted')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled()
+})
+
+test('capped shows the "showing the last 200 replies" banner with an "open in browser" link', async () => {
+  const { openLink } = await import('../chat')
+  render(<ThreadPane server={server()} thread={thread({ capped: true })} onClose={() => {}} />)
+  expect(screen.getByText('Showing the last 200 replies')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Open in browser' }))
+  expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/root')
+})
+
+test('a load error shows "Retry", which re-opens the thread', async () => {
+  render(<ThreadPane server={server()} thread={thread({ error: 'internal' })} onClose={() => {}} />)
+  expect(screen.getByText("Couldn't load the thread")).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(openThread).toHaveBeenCalledWith(5, 'c-town', 'root')
+})
+
+test('scrolling to the top of the thread calls loadOlderReplies', () => {
+  render(<ThreadPane server={server()} thread={thread({ has_more: true })} onClose={() => {}} />)
+  const log = screen.getByRole('log')
+  log.scrollTop = 0
+  fireEvent.scroll(log)
+  expect(loadOlderReplies).toHaveBeenCalledWith(5, 'root')
+})
+
+test('narrow window: shows the "back to channel" button, which also closes the panel', async () => {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })) as unknown as typeof window.matchMedia
+  const onClose = vi.fn()
+  render(<ThreadPane server={server()} thread={thread()} onClose={onClose} />)
+  await userEvent.click(screen.getByRole('button', { name: 'Back to channel' }))
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('unmounting the panel leaves no dangling Escape listener', async () => {
+  const onClose = vi.fn()
+  const { unmount } = render(<ThreadPane server={server()} thread={thread()} onClose={onClose} />)
+  unmount()
+  await userEvent.keyboard('{Escape}')
+  expect(onClose).not.toHaveBeenCalled()
+})
+
+test('the drop target carries data-srv/data-channel/data-root for the thread', () => {
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const target = container.querySelector('[data-file-drop-target]')!
+  expect(target).toHaveAttribute('data-srv', '5')
+  expect(target).toHaveAttribute('data-channel', 'c-town')
+  expect(target).toHaveAttribute('data-root', 'root')
+})
+
+test('dropping a file uploads it to the thread (rootId set)', async () => {
+  const { uploadAttachments } = await import('../chat')
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const target = container.querySelector('[data-file-drop-target]')!
+  const file = new File(['x'], 'x.png', { type: 'image/png' })
+  fireEvent.drop(target, { dataTransfer: { types: ['Files'], files: [file] } })
+  await waitFor(() => expect(uploadAttachments).toHaveBeenCalledWith(5, 'c-town', [file], 'root'))
+})

@@ -37,11 +37,11 @@ const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   ...o,
 })
 const props = (o: Partial<ChannelDTO> = {}, onLoadOlder = vi.fn().mockResolvedValue(true)) => ({
-  channel: channel(o), serverId: 1, me: { id: 'me', username: 'me' }, locale: 'en-US',
+  data: channel(o), variant: 'channel' as const, serverId: 1, me: { id: 'me', username: 'me' }, locale: 'en-US',
   actions: {
     link: vi.fn(), retry: vi.fn(), discard: vi.fn(), edit: vi.fn(), saveEdit: vi.fn().mockResolvedValue(undefined),
     cancelEdit: vi.fn(), remove: vi.fn(), markUnread: vi.fn(), save: vi.fn(), copyLink: vi.fn(),
-    view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(),
+    view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn(), openThread: vi.fn(),
     emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
     reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
   },
@@ -72,6 +72,14 @@ test('scrolling to the top loads history once at a time', async () => {
 test('empty channel says so', () => {
   render(<Feed {...props({ posts: [] })} />)
   expect(screen.getByText('No messages yet')).toBeInTheDocument()
+})
+
+// Carry from the jump-to-latest review: the empty-state placeholder is
+// `absolute inset-0` and must position against the scroller itself, not
+// whatever the outer (button-hosting) wrapper happens to be.
+test('the scroller is a positioned ancestor for the empty-state placeholder', () => {
+  render(<Feed {...props({ posts: [] })} />)
+  expect(screen.getByRole('log')).toHaveClass('relative')
 })
 
 test('anchorNudge: converged within tolerance returns null, otherwise the delta to add to scrollTop', () => {
@@ -138,10 +146,10 @@ test('a feed that never paints does not pile up frame callbacks as posts arrive'
   try {
     const p = props({ has_more: true })
     const { rerender } = render(<Feed {...p} />)
-    let posts = p.channel.posts
+    let posts = p.data.posts
     for (let i = 0; i < 20; i++) {
       posts = [...posts, P(`n${i}`, 'bob', 0)]
-      rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+      rerender(<Feed {...p} data={{ ...p.data, posts }} />)
     }
     // at most one pending frame per purpose (ours and the virtualizer's), not one per post
     expect(page.pending.size).toBeLessThanOrEqual(3)
@@ -185,8 +193,12 @@ function scrollAway(log: HTMLElement, distanceFromBottom: number, clientHeight =
   fireEvent.scroll(log)
 }
 
-test('jump-to-latest button: hidden at the bottom', () => {
+// Carry from the jump-to-latest review: a scroll event that lands within
+// NEAR_BOTTOM must genuinely decide "hidden", not merely never have fired.
+test('jump-to-latest button: hidden while genuinely at the bottom', () => {
   render(<Feed {...props()} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 10) // within NEAR_BOTTOM (48px)
   expect(screen.queryByRole('button', { name: 'Jump to latest messages' })).not.toBeInTheDocument()
 })
 
@@ -221,13 +233,13 @@ test('jump-to-latest button: loading older history while away does not inflate t
 
   // An older page lands above (smaller minAgo → further in the past, prepended).
   const older = [P('o1', 'bob', 90), P('o2', 'carol', 80), P('o3', 'bob', 70)]
-  const posts = [...older, ...p.channel.posts]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  const posts = [...older, ...p.data.posts]
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
 
   // A genuinely new post at the live end still counts.
   const withNew = [...posts, P('n1', 'bob', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts: withNew }} />)
+  rerender(<Feed {...p} data={{ ...p.data, posts: withNew }} />)
   expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
 })
 
@@ -239,18 +251,18 @@ test('jump-to-latest button: badge counts only others’ posts that arrived whil
   expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
 
   // bob's post arrives while away: counted
-  let posts = [...p.channel.posts, P('n1', 'bob', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  let posts = [...p.data.posts, P('n1', 'bob', 0)]
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
 
   // my own post arrives too: not counted
   posts = [...posts, P('n2', 'me', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
 
   // carol's post: counted again
   posts = [...posts, P('n3', 'carol', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   expect(screen.getByRole('button', { name: 'Jump to latest messages — 2 new' })).toBeInTheDocument()
 
   // reaching the bottom by scrolling (not the button) resets the count and hides the button
@@ -265,9 +277,9 @@ test('jump-to-latest button: badge caps the displayed count at 99+', () => {
   const { rerender } = render(<Feed {...p} />)
   const log = screen.getByRole('log')
   scrollAway(log, 700)
-  let posts = p.channel.posts
+  let posts = p.data.posts
   for (let i = 0; i < 100; i++) posts = [...posts, P(`x${i}`, 'bob', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   const button = screen.getByRole('button', { name: 'Jump to latest messages — 100 new' })
   expect(button).toHaveTextContent('99+')
 })
@@ -280,8 +292,8 @@ test('jump-to-latest button: aria-label and title, with and without a badge', ()
   const plain = screen.getByRole('button', { name: 'Jump to latest messages' })
   expect(plain).toHaveAttribute('title', 'Jump to latest messages')
 
-  const posts = [...p.channel.posts, P('n1', 'bob', 0)]
-  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  const posts = [...p.data.posts, P('n1', 'bob', 0)]
+  rerender(<Feed {...p} data={{ ...p.data, posts }} />)
   const withBadge = screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })
   expect(withBadge).toHaveAttribute('title', 'Jump to latest messages — 1 new')
 })

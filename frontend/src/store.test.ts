@@ -151,3 +151,34 @@ test('patchDownloadProgress for an id not in the store is inert: no crash, no ph
   expect(useStore.getState().downloads).toEqual([dl({ id: 1 })]) // unchanged
   expect(useStore.getState().downloads).toHaveLength(1)
 })
+
+const thread = (rootId: string): import('./api/types').ThreadDTO => ({
+  root_id: rootId, channel_id: 'a', channel_name: 'a', team_name: 'team', posts: [], has_more: false, capped: false,
+  loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'me', crt: false, new_since: 0, gap_after: '',
+})
+
+// Task 6: switching the channel closes the thread panel (chat.ts also
+// closes it on the Go side) — same rule as attachments above.
+test('switching to a different channel drops the open thread and its tray; refreshing the same one keeps it', () => {
+  useStore.getState().setServers([srv()])
+  useStore.getState().setChannel(1, chan('a'))
+  useStore.getState().setThread(thread('r1'))
+  useStore.getState().setThreadAttachments([av('x')])
+  useStore.getState().setThreadAttachError('boom')
+  useStore.getState().setChannel(1, chan('a')) // a content refresh of the still-open channel
+  expect(useStore.getState().thread).toEqual(thread('r1'))
+  expect(useStore.getState().threadAttachments).toEqual([av('x')])
+  expect(useStore.getState().threadAttachError).toBe('boom')
+  useStore.getState().setChannel(1, chan('b')) // the user actually switched channels
+  expect(useStore.getState().thread).toBeNull()
+  expect(useStore.getState().threadAttachments).toEqual([])
+  expect(useStore.getState().threadAttachError).toBeNull()
+})
+
+test('switching servers (select) clears the thread too', () => {
+  useStore.getState().setServers([srv(), srv({ id: 2 })])
+  useStore.getState().setChannel(1, chan('a'))
+  useStore.getState().setThread(thread('r1'))
+  useStore.getState().select(2)
+  expect(useStore.getState().thread).toBeNull()
+})

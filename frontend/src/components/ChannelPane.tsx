@@ -4,7 +4,7 @@ import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
   editLastOwn, editPost, emojiInfo, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  react, reactionUsers, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
+  openThread, react, reactionUsers, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
 } from '../chat'
 import { errorMessage } from '../errors'
 import { formatLocale } from '../format'
@@ -86,6 +86,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       react: (p, emoji, add) => react(server.id, p.id, emoji, add),
       emojiInfo: () => emojiInfo(server.id),
       reactionUsers: (p, emoji) => reactionUsers(server.id, p.id, emoji),
+      openThread: (p) => void openThread(server.id, channelId, p.root_id || p.id),
     }),
     [server.id, server.url, channelId, teamName],
   )
@@ -151,10 +152,12 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           {t('channel.syncing')}
         </div>
       )}
-      <Feed key={`feed-${channel.id}`} serverId={server.id} channel={channel} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} />
+      <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} />
       <Composer
         key={`composer-${channel.id}`}
-        channel={channel}
+        channelId={channel.id}
+        channelName={channel.name}
+        draft={channel.draft}
         serverId={server.id}
         attachments={attachments}
         onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}

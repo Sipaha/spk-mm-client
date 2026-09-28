@@ -16,6 +16,7 @@ const actions = (): PostActions => ({
   view: vi.fn(), download: vi.fn(), open: vi.fn(), react: vi.fn().mockResolvedValue(undefined),
   emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
   reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
+  openThread: vi.fn(),
 })
 const me = { id: 'u-alice', username: 'alice' }
 const dto = (o: Partial<EmojiDTO> = {}): EmojiDTO => ({ recent: [], custom: [], custom_enabled: false, ...o })
@@ -416,18 +417,77 @@ test('head shows the author picture with presence; an unknown author gets initia
 
 // fix round 1 (RULING #3): the reply slot is a real prop the threads task
 // will consume, not just an inline `null` placeholder.
-test('replyButton renders in the toolbar between "add reaction" and "…"; absent by default', async () => {
+// Task 6: ↩ sits in the toolbar between "Save" and "…", opens the post's
+// thread (its own, or its root's for a reply), and is absent in the panel
+// (variant 'thread') and for pending/failed/system posts.
+test('↩ (reply) sits between "Save" and "…", opens the thread, absent in the panel and for pending/failed/system posts', async () => {
   const a = actions()
   const { container, rerender } = render(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   await hover(container.querySelector('[data-post-id]')!)
   const toolbar = await screen.findByTestId('post-toolbar')
-  expect(within(toolbar).queryByRole('button', { name: 'Reply' })).toBeNull()
+  const names = within(toolbar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))
+  expect(names).toEqual(['Add reaction', 'Save', 'Reply in thread', 'More actions'])
+  await userEvent.click(within(toolbar).getByRole('button', { name: 'Reply in thread' }))
+  expect(a.openThread).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }))
+
+  rerender(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} variant="thread" />)
+  expect(within(toolbar).queryByRole('button', { name: 'Reply in thread' })).toBeNull()
+
+  rerender(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull()
+
+  const failed = post({ failed: true })
+  rerender(<PostItem serverId={1} post={failed} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull()
+
+  rerender(<PostItem serverId={1} post={post({ system: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull()
+})
+
+// Task 6: the "N replies" line — a clickable link, root posts only, both
+// CRT modes, only in the channel feed; time part omitted when last_reply_at
+// is 0 (a non-CRT page carries none — carry item, no 1970 fallback).
+test('"N replies" is a clickable link under a root (both CRT modes), never under a reply, and never in the panel', async () => {
+  const a = actions()
+  const { rerender } = render(<PostItem serverId={1} post={post({ reply_count: 3, last_reply_at: new Date(2026, 8, 24, 14, 0).getTime() })} head me={me} locale="ru-RU" crt={false} actions={a} editing={false} />)
+  const link = screen.getByRole('button', { name: 'Replies: 3 · last reply 14:00' })
+  await userEvent.click(link)
+  expect(a.openThread).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }))
+
+  rerender(<PostItem serverId={1} post={post({ reply_count: 3, last_reply_at: 0 })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.getByText('Replies: 3')).toBeInTheDocument() // no time part, and not "1970"
+
+  rerender(<PostItem serverId={1} post={post({ reply_count: 3, root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByText(/Replies:/)).toBeNull() // a reply, not a root — carry item
+
+  rerender(<PostItem serverId={1} post={post({ reply_count: 3 })} head me={me} locale="en-US" crt actions={a} editing={false} />)
+  expect(screen.getByText('Replies: 3')).toBeInTheDocument() // CRT on: still shown
+
+  rerender(<PostItem serverId={1} post={post({ reply_count: 3 })} head me={me} locale="en-US" crt={false} actions={a} editing={false} variant="thread" />)
+  expect(screen.queryByText(/Replies:/)).toBeNull() // never in the panel
+})
+
+// Task 6: the reply-context line ("reply to <author>: <snippet>"), fed by
+// feedRows via the replyContext prop — a click opens the thread.
+test('the reply-context line renders "reply to <author>: <snippet>" or "reply in a thread", and opens the thread on click', async () => {
+  const a = actions()
+  const { rerender } = render(
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyContext={{ author: 'bob', snippet: 'hi there' }} />,
+  )
+  const line = screen.getByRole('button', { name: 'Reply to bob: hi there' })
+  await userEvent.click(line)
+  expect(a.openThread).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }))
 
   rerender(
-    <PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyButton={<button aria-label="Reply">Reply</button>} />,
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyContext={{ author: '', snippet: '' }} />,
   )
-  const names = within(toolbar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-  expect(names).toEqual(['Add reaction', 'Save', 'Reply', 'More actions'])
+  expect(screen.getByRole('button', { name: 'Reply in a thread' })).toBeInTheDocument()
+
+  rerender(<PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByText(/Reply/)).toBeNull()
 })
 
 // Task 3 brief: "сохранить" sits after "добавить реакцию" and before the

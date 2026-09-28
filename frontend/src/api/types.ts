@@ -170,6 +170,7 @@ export interface PostView {
   create_at: number
   edit_at?: number
   reply_count?: number
+  last_reply_at?: number // the root's newest reply's create_at; 0 = unknown (a non-CRT page carries none)
   system?: boolean
   bot?: boolean
   pending?: boolean
@@ -179,6 +180,11 @@ export interface PostView {
   files?: FileView[]
   reactions?: ReactionView[]
   saved?: boolean
+  // root_author/root_snippet: a reply's context line without CRT ("reply to
+  // <author>: <snippet>") — the root's author and a collapsed, cut snippet
+  // of its text; absent when the root is not held (show "reply in a thread").
+  root_author?: string
+  root_snippet?: string
 }
 
 export interface ChannelDTO {
