@@ -81,7 +81,12 @@ export function buildRows(
     rows.push({ kind: 'post', key: p.pending_post_id || p.id, post: p, head, replyContext })
     broken = false
     if (variant === 'thread' && firstPost && !p.root_id) {
-      rows.push({ kind: 'threadReplies', key: 'thread-replies', count: ch.posts.length - 1 })
+      // The root's own reply_count is the thread's true total — never the
+      // number of replies currently paged into the panel (ThreadPage=60,
+      // growing toward ThreadMaxReplies=200 as older pages load; fix round
+      // 1 review). Fall back to the loaded count only if reply_count is
+      // itself absent (e.g. genuinely zero replies, omitempty on the wire).
+      rows.push({ kind: 'threadReplies', key: 'thread-replies', count: p.reply_count ?? ch.posts.length - 1 })
       broken = true
     }
     firstPost = false

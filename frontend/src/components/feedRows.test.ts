@@ -107,3 +107,52 @@ test('thread variant: no divider is inserted before the root loads', () => {
   const rows = buildRows(ch([]), 'thread')
   expect(rows.some((r) => r.kind === 'threadReplies')).toBe(false)
 })
+
+// Fix round 1 (review): the divider must show the root's actual reply_count,
+// not how many replies happen to be loaded into the panel right now — the
+// panel only ever holds a page (ThreadPage=60) up to the cap
+// (ThreadMaxReplies=200), so "loaded posts - 1" undercounts a thread with
+// more replies than are currently paged in, and drifts upward as older
+// pages load.
+const divider = (rows: Row[]) => rows.find((r) => r.kind === 'threadReplies') as Extract<Row, { kind: 'threadReplies' }>
+
+test('thread divider count comes from the root reply_count, not the number of loaded replies', () => {
+  const root = P('root', 'bob', 0, { reply_count: 87 })
+  const loaded = Array.from({ length: 60 }, (_, i) => P(`r${i}`, 'carol', i + 1, { root_id: 'root' }))
+  const rows = buildRows(ch([root, ...loaded], { has_more: true }), 'thread')
+  expect(divider(rows).count).toBe(87)
+})
+
+test('thread divider count is unchanged after an older page loads more replies into the panel', () => {
+  const root = P('root', 'bob', 0, { reply_count: 87 })
+  const firstPage = Array.from({ length: 60 }, (_, i) => P(`r${i}`, 'carol', i + 1, { root_id: 'root' }))
+  const beforeRows = buildRows(ch([root, ...firstPage], { has_more: true }), 'thread')
+  expect(divider(beforeRows).count).toBe(87)
+
+  // Older replies paged in (loaded goes from 60 to 87): the count must stay 87.
+  const fullPage = Array.from({ length: 87 }, (_, i) => P(`r${i}`, 'carol', i + 1, { root_id: 'root' }))
+  const afterRows = buildRows(ch([root, ...fullPage], { has_more: false }), 'thread')
+  expect(divider(afterRows).count).toBe(87)
+})
+
+test('thread divider count reflects a live new reply (reply_count grows)', () => {
+  const root = P('root', 'bob', 0, { reply_count: 3 })
+  const replies = Array.from({ length: 3 }, (_, i) => P(`r${i}`, 'carol', i + 1, { root_id: 'root' }))
+  const before = buildRows(ch([root, ...replies]), 'thread')
+  expect(divider(before).count).toBe(3)
+
+  const rootAfterLive = P('root', 'bob', 0, { reply_count: 4 })
+  const after = buildRows(ch([rootAfterLive, ...replies, P('r3', 'bob', 4, { root_id: 'root' })]), 'thread')
+  expect(divider(after).count).toBe(4)
+})
+
+test('thread divider count reflects a reply deletion (reply_count shrinks)', () => {
+  const root = P('root', 'bob', 0, { reply_count: 3 })
+  const replies = Array.from({ length: 3 }, (_, i) => P(`r${i}`, 'carol', i + 1, { root_id: 'root' }))
+  const before = buildRows(ch([root, ...replies]), 'thread')
+  expect(divider(before).count).toBe(3)
+
+  const rootAfterDelete = P('root', 'bob', 0, { reply_count: 2 })
+  const after = buildRows(ch([rootAfterDelete, replies[0], replies[2]]), 'thread')
+  expect(divider(after).count).toBe(2)
+})
