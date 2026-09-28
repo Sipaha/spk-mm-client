@@ -5,6 +5,7 @@ import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
 import { buildRows, type Row } from './feedRows'
+import { IconArrowDown } from './icons'
 import { PostItem, type PostActions } from './PostItem'
 import { ScrollShift } from './scrollShift'
 
@@ -20,6 +21,7 @@ interface Props {
 
 const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
+const NEW_BADGE_CAP = 99
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
 const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
 
@@ -93,6 +95,17 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   const loading = useRef(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const frame = useFrames()
+  // Jump-to-latest button: visible once the feed is far enough from the
+  // bottom, with a badge counting others' posts that arrived since. `far`
+  // mirrors `jumpVisible` in a ref so onScroll (fired on every scroll event)
+  // only calls setState when the visible/hidden state actually flips, not on
+  // every pixel of scroll — same rule as `atBottom`.
+  const [jumpVisible, setJumpVisible] = useState(false)
+  const far = useRef(false)
+  const [newCount, setNewCount] = useState(0)
+  const newIds = useRef<Set<string>>(new Set()) // counted arrivals since the user left the bottom
+  const newestSeenAt = useRef<number | null>(null) // create_at of the newest post accounted for; null before the first pass
+  const knownAtBaseline = useRef<Set<string>>(new Set()) // ids present as of newestSeenAt's own pass — tie-breaks posts sharing its create_at
   // WebKit queues a scroll event for every element scrolled by script (the
   // virtualizer scrolls each new feed to its end) and keeps the element until
   // the next paint dispatches it; a hidden window never paints, so every
@@ -148,6 +161,56 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
     shift.flush()
     v.scrollToIndex(...a)
   }
+
+  // Resets the jump-to-latest badge: the user reached the bottom, by any
+  // means (scrolling there, or clicking the button itself).
+  const resetNewPosts = () => {
+    if (newIds.current.size) {
+      newIds.current.clear()
+      setNewCount(0)
+    }
+  }
+
+  // Tracks posts that arrive at the *live end* while the user is away from
+  // the bottom, for the jump-to-latest badge — own posts don't count. Driven
+  // by rows changing (new data), not by scroll events. Compares create_at
+  // against the newest post already accounted for, not "was this id seen
+  // before": scrolling up loads older history pages, which also make
+  // previously-unseen posts appear in rows — those have an older create_at
+  // than everything already known and must not inflate the badge (e2e-caught:
+  // scrolling to the top of a 150-post channel read as dozens of "new"
+  // posts). A post exactly at the baseline counts only if it wasn't already
+  // known as of that baseline (knownAtBaseline) — two posts can share a
+  // create_at (same millisecond, or several arriving in one batch), and a
+  // plain ">" would silently drop the second of such a pair on a later pass.
+  // newestSeenAt/knownAtBaseline seed silently on the first pass so the
+  // channel's initial posts are never counted.
+  useEffect(() => {
+    let newest: number | null = null
+    const ids = new Set<string>()
+    for (const r of rows) {
+      if (r.kind !== 'post') continue
+      ids.add(r.post.id)
+      if (newest === null || r.post.create_at > newest) newest = r.post.create_at
+    }
+    const baseline = newestSeenAt.current
+    if (baseline !== null && !atBottom.current) {
+      let grew = false
+      for (const r of rows) {
+        if (r.kind !== 'post' || r.post.user_id === me.id || newIds.current.has(r.post.id)) continue
+        const isNew = r.post.create_at > baseline || (r.post.create_at === baseline && !knownAtBaseline.current.has(r.post.id))
+        if (isNew) {
+          newIds.current.add(r.post.id)
+          grew = true
+        }
+      }
+      if (grew) setNewCount(newIds.current.size)
+    }
+    if (newest !== null && (baseline === null || newest > baseline)) {
+      newestSeenAt.current = newest
+      knownAtBaseline.current = ids
+    }
+  }, [rows, me.id])
 
   // Anchor on the post the user actually sees at the top, read from the
   // DOM. Not v.range.startIndex: the virtualizer's own scroll offset
@@ -282,9 +345,40 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
     const el = scroller.current
     if (!el) return
     shift.onScroll()
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    const wasAtBottom = atBottom.current
+    atBottom.current = distance < NEAR_BOTTOM
+    if (!wasAtBottom && atBottom.current) resetNewPosts()
     if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
+    // Hysteresis: show past one viewport from the bottom, hide within
+    // NEAR_BOTTOM, leave it as-is in between — so it doesn't flicker.
+    if (distance > el.clientHeight) {
+      if (!far.current) {
+        far.current = true
+        setJumpVisible(true)
+      }
+    } else if (distance < NEAR_BOTTOM) {
+      if (far.current) {
+        far.current = false
+        setJumpVisible(false)
+      }
+    }
+  }
+
+  // Uses the feed's own scroll path (flushes any pending ScrollShift first —
+  // see the scrollToIndex wrapper above and AGENTS.md's scroll-shift rule).
+  // rows.length - 1 is always the last *loaded* row: when the window is
+  // stale with a gap (channel.gap_after set), buildRows appends the gap
+  // marker immediately after the last loaded post, so this already lands on
+  // "the end of what is loaded" without a dedicated load-latest binding —
+  // none exists yet (AGENTS.md has no such API; see the report).
+  const goToLatest = () => {
+    scrollToIndex(rows.length - 1, { align: 'end' })
+    atBottom.current = true
+    far.current = false
+    setJumpVisible(false)
+    resetNewPosts()
   }
 
   const renderRow = (r: Row) => {
@@ -340,6 +434,29 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       {!rows.length && (
         <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
       )}
+      {/* Before the sizer div, not after: e2e's scroll-shift probe (and
+          ScrollShift itself has no opinion either way, but the probe does)
+          finds the shift-carrying container via the scroller's
+          lastElementChild — the sizer div must stay last. */}
+      <button
+        type="button"
+        onClick={goToLatest}
+        aria-hidden={!jumpVisible}
+        tabIndex={jumpVisible ? 0 : -1}
+        aria-label={newCount > 0 ? t('feed.jumpToLatestNew', { n: String(newCount) }) : t('feed.jumpToLatest')}
+        title={newCount > 0 ? t('feed.jumpToLatestNew', { n: String(newCount) }) : t('feed.jumpToLatest')}
+        className={`absolute bottom-4 right-5 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-panel text-fg shadow-lg ring-1 ring-line transition-opacity duration-150 ${jumpVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+      >
+        <IconArrowDown size={18} />
+        {newCount > 0 && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1 -top-1 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-accent-fg"
+          >
+            {newCount > NEW_BADGE_CAP ? '99+' : newCount}
+          </span>
+        )}
+      </button>
       <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
         {v.getVirtualItems().map((it) => (
           <div

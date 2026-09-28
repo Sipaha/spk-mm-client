@@ -16,6 +16,30 @@ test('sidebar, feed and sending once', async ({ page }) => {
   await removeServerFromMenu(page)
 })
 
+test('jump-to-latest button: appears scrolling up, badges a post from someone else, click returns to it', async ({ page }) => {
+  await signInAlice(page)
+  const log = feed(page)
+  await expect(log.getByText('Message #150', { exact: true })).toBeVisible()
+  const button = page.getByRole('button', { name: 'Jump to latest messages' })
+  await expect(button).toBeHidden()
+
+  // Town Square has 150 seeded posts and a 60-post window: scrolling to the
+  // top is well over a viewport away from the bottom.
+  await log.evaluate((el) => el.scrollTo({ top: 0 }))
+  await expect(button).toBeVisible()
+
+  const text = unique('while scrolled away')
+  await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: text })
+  const badged = page.getByRole('button', { name: 'Jump to latest messages — 1 new' })
+  await expect(badged).toBeVisible()
+  await expect(badged.getByText('1', { exact: true })).toBeVisible()
+
+  await badged.click()
+  await expect(log.getByText(text, { exact: true })).toBeInViewport()
+  await expect(page.getByRole('button', { name: /Jump to latest messages/ })).toBeHidden()
+  await removeServerFromMenu(page)
+})
+
 test('a mention from someone else: badges, notification, reading clears it', async ({ page }) => {
   await signInAlice(page)
   const id = await serverId(page)

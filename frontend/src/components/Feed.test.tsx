@@ -175,6 +175,117 @@ test('an unmounted feed leaves its scroller empty', async () => {
   expect(log.childNodes.length).toBe(0)
 })
 
+// Sets the scroller's scrollHeight/clientHeight (jsdom never computes real
+// layout) so distance-from-bottom math in Feed's onScroll is meaningful, then
+// fires a scroll event — the same path a real wheel/touch scroll drives.
+function scrollAway(log: HTMLElement, distanceFromBottom: number, clientHeight = 600) {
+  Object.defineProperty(log, 'scrollHeight', { value: distanceFromBottom + clientHeight, configurable: true })
+  Object.defineProperty(log, 'clientHeight', { value: clientHeight, configurable: true })
+  log.scrollTop = 0
+  fireEvent.scroll(log)
+}
+
+test('jump-to-latest button: hidden at the bottom', () => {
+  render(<Feed {...props()} />)
+  expect(screen.queryByRole('button', { name: 'Jump to latest messages' })).not.toBeInTheDocument()
+})
+
+test('jump-to-latest button: shown after scrolling up more than a viewport', () => {
+  render(<Feed {...props()} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700) // more than the 600px viewport away from the bottom
+  expect(screen.getByRole('button', { name: 'Jump to latest messages' })).toBeInTheDocument()
+})
+
+test('jump-to-latest button: clicking it scrolls to the end and hides the button', () => {
+  // scrollTo is already a vi.fn() no-op stub (beforeAll, for jsdom's lack of layout).
+  const scrollTo = HTMLElement.prototype.scrollTo as unknown as ReturnType<typeof vi.fn>
+  render(<Feed {...props()} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700)
+  const before = scrollTo.mock.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Jump to latest messages' }))
+  expect(scrollTo.mock.calls.length).toBeGreaterThan(before) // the feed's own scroll path (scrollToIndex → elementScroll)
+  expect(screen.queryByRole('button', { name: /Jump to latest messages/ })).not.toBeInTheDocument()
+})
+
+test('jump-to-latest button: loading older history while away does not inflate the badge', () => {
+  // Regression (e2e-caught): scrolling up in a long channel loads pages of
+  // *older* history, which also newly appear in `rows` — those must not
+  // count as "arrived while away", only posts newer than anything seen so far.
+  const p = props({ has_more: true })
+  const { rerender } = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700)
+  expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
+
+  // An older page lands above (smaller minAgo → further in the past, prepended).
+  const older = [P('o1', 'bob', 90), P('o2', 'carol', 80), P('o3', 'bob', 70)]
+  const posts = [...older, ...p.channel.posts]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
+
+  // A genuinely new post at the live end still counts.
+  const withNew = [...posts, P('n1', 'bob', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts: withNew }} />)
+  expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
+})
+
+test('jump-to-latest button: badge counts only others’ posts that arrived while away, and resets at the bottom', () => {
+  const p = props()
+  const { rerender } = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700)
+  expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
+
+  // bob's post arrives while away: counted
+  let posts = [...p.channel.posts, P('n1', 'bob', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
+
+  // my own post arrives too: not counted
+  posts = [...posts, P('n2', 'me', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  expect(screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })).toBeInTheDocument()
+
+  // carol's post: counted again
+  posts = [...posts, P('n3', 'carol', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  expect(screen.getByRole('button', { name: 'Jump to latest messages — 2 new' })).toBeInTheDocument()
+
+  // reaching the bottom by scrolling (not the button) resets the count and hides the button
+  scrollAway(log, 10)
+  expect(screen.queryByRole('button', { name: /Jump to latest messages/ })).not.toBeInTheDocument()
+  scrollAway(log, 700)
+  expect(screen.queryByRole('button', { name: /new/ })).not.toBeInTheDocument()
+})
+
+test('jump-to-latest button: badge caps the displayed count at 99+', () => {
+  const p = props()
+  const { rerender } = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700)
+  let posts = p.channel.posts
+  for (let i = 0; i < 100; i++) posts = [...posts, P(`x${i}`, 'bob', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  const button = screen.getByRole('button', { name: 'Jump to latest messages — 100 new' })
+  expect(button).toHaveTextContent('99+')
+})
+
+test('jump-to-latest button: aria-label and title, with and without a badge', () => {
+  const p = props()
+  const { rerender } = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  scrollAway(log, 700)
+  const plain = screen.getByRole('button', { name: 'Jump to latest messages' })
+  expect(plain).toHaveAttribute('title', 'Jump to latest messages')
+
+  const posts = [...p.channel.posts, P('n1', 'bob', 0)]
+  rerender(<Feed {...p} channel={{ ...p.channel, posts }} />)
+  const withBadge = screen.getByRole('button', { name: 'Jump to latest messages — 1 new' })
+  expect(withBadge).toHaveAttribute('title', 'Jump to latest messages — 1 new')
+})
+
 test('StrictMode keeps the rows of a feed that stays mounted', async () => {
   render(
     <StrictMode>

@@ -228,6 +228,29 @@ test('a new post arriving at the bottom while a shift is pending is followed', a
   expect((await bottom(page)).toEnd).toBeLessThan(2)
 })
 
+test('jump-to-latest button: clicking it while a scroll shift is pending lands the last post flush', async ({ page }) => {
+  // The button's click path (scrollToIndex → shift.flush() → v.scrollToIndex,
+  // see Feed.tsx) must land any pending shift as part of the same jump, not
+  // leave it to the idle timer — else the jump could undershoot or the last
+  // post could land above blank space (see scrollShift.ts).
+  await openSecret(page)
+  await wheel(page, 110, -100)
+  const mid = await bottom(page)
+  expect(mid.shift, 'a shift is pending right after the wheel input (else this tests nothing)').not.toBe(0)
+  const button = page.getByRole('button', { name: /Jump to latest messages/ })
+  await expect(button, 'the button reflects the scroll-away, mid shift').toBeVisible()
+  // A direct DOM click (not Playwright's .click(), which hovers/scrolls
+  // first) to click while the shift is still pending, not after its own
+  // round-trip lets the 150ms idle timer land it on its own.
+  await page.evaluate(() => (document.querySelector('button[aria-label^="Jump to latest"]') as HTMLElement)?.click())
+  await expect(feed(page).getByText(`scroll post ${POSTS - 1}`, { exact: true })).toBeInViewport()
+  const after = await bottom(page)
+  expect(after.shift, 'the shift landed as part of the jump').toBe(0)
+  expect(after.toEnd, 'the last post sits flush at the bottom, not above blank space').toBeLessThan(2)
+  const p = await probe(page)
+  expect(p.torn, 'no torn frames from the jump').toBe(0)
+})
+
 test('history loads while a shift is pending, and scrolling on reaches the first post', async ({ page }) => {
   await openSecret(page)
   const first = feed(page).getByText('scroll post 0', { exact: true })

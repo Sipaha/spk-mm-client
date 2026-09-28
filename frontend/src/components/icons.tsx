@@ -226,6 +226,14 @@ export function IconPlay(p: IconProps) {
   )
 }
 
+export function IconArrowDown(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.59-5.58L4 12l8 8 8-8z" />
+    </Icon>
+  )
+}
+
 export function IconReply(p: IconProps) {
   return (
     <Icon {...p}>
