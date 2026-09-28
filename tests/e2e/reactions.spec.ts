@@ -26,27 +26,28 @@ test('hovering a reaction chip shows who reacted; "and N others" opens the full 
 
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
-  await expect(tooltip).toHaveText('bob and carol reacted :+1:')
+  await expect(tooltip).toHaveText('bob and carol reacted with :+1:')
   await expect(chip).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id') ?? '')
   await page.screenshot({ path: 'test-results/reactions-tooltip.png' })
 
-  // Ten more reactors the client can never name (mmfake.ReactAsUnknown,
-  // via the react-extra test route — outside the fake's user directory) —
-  // the tooltip truncates to the known names plus a clickable overflow.
+  // Ten more real, named fake accounts (mmfake.Options.ExtraUsers — dave,
+  // erin, frank, ... — seeded as c-town members precisely so this works)
+  // react too: 12 total, every one of them resolvable via POST users/ids.
+  // The tooltip truncates to the first 10 shown plus a clickable overflow.
   await testPost(page, 'fake/react-extra', { channel_id: 'c-town', message: text, emoji: '+1', n: 10 })
   await heading.hover() // move the pointer away first so the next hover is a real mouseenter
   await expect(chip).toHaveAccessibleName('👍 12')
   await chip.hover()
-  const more = page.getByRole('button', { name: '10 others' })
+  const more = page.getByRole('button', { name: '2 others' })
   await expect(more).toBeVisible()
   await more.click()
 
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('listitem')).toHaveCount(12)
-  await expect(dialog.getByText('bob', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('carol', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('Unknown user')).toHaveCount(10)
+  const names = ['bob', 'carol', 'dave', 'erin', 'frank', 'grace', 'heidi', 'ivan', 'judy', 'mallory', 'niaj', 'olivia']
+  await expect(dialog.getByRole('listitem')).toHaveCount(names.length)
+  for (const name of names) await expect(dialog.getByText(name, { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Unknown user')).toHaveCount(0) // every reactor here has a real, resolved profile
   await page.screenshot({ path: 'test-results/reactions-modal.png' })
 
   await page.keyboard.press('Escape')

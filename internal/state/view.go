@@ -82,8 +82,14 @@ type ChannelView struct {
 	GapAfter string     `json:"gap_after"`
 	Draft    string     `json:"draft"`
 	MeID     string     `json:"me_id"`
-	CRT      bool       `json:"crt"`
-	Muted    bool       `json:"muted"`
+	// MeAvatar: my own picture version (avatarLocked(MeID) — "" if not
+	// loaded yet), the same field PostView uses for a post's author,
+	// exposed here too so the UI can show my real avatar somewhere I'm not
+	// a post's author (e.g. the "You" row of the reaction-chip "who
+	// reacted" modal — Reactions/ReactorsModal).
+	MeAvatar string `json:"me_avatar"`
+	CRT      bool   `json:"crt"`
+	Muted    bool   `json:"muted"`
 }
 
 // ChannelView renders a channel for the UI: browsed history, the window
@@ -98,7 +104,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	v := ChannelView{
 		ID: ch.Info.ID, Name: s.channelNameLocked(ch), Type: ch.Info.Type, Header: ch.Info.Header, Purpose: ch.Info.Purpose,
 		TeamName: s.teamNameLocked(ch), TeamID: ch.Info.TeamID, Loaded: ch.Win.Loaded, Syncing: !ch.Win.Loaded || ch.Win.Stale,
-		GapAfter: ch.Win.GapAfter, Draft: s.drafts[channelID], MeID: s.me.ID, CRT: s.crtLocked(), Muted: ch.Member.Muted(),
+		GapAfter: ch.Win.GapAfter, Draft: s.drafts[channelID], MeID: s.me.ID, MeAvatar: s.avatarLocked(s.me.ID), CRT: s.crtLocked(), Muted: ch.Member.Muted(),
 		Posts: []PostView{},
 	}
 	var posts []model.Post

@@ -14,7 +14,7 @@ interface Props {
   serverId: number
   postId: string
   reactions: ReactionView[]
-  me: { id: string }
+  me: { id: string; avatar?: string }
   onToggle(r: ReactionView): void
   onAdd?(trigger: HTMLElement): void // the "add reaction" chip opens the picker next to itself
   loadReactors(postId: string, emoji: string): Promise<ReactionUsersDTO>
@@ -210,6 +210,7 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
             count={modal.r.count}
             mine={modal.r.mine}
             meId={me.id}
+            meAvatar={me.avatar ?? ''}
             users={modal.dto.users}
             anchorEl={modal.anchor}
             onClose={closeModal}

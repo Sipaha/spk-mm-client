@@ -36,6 +36,7 @@ func TestChannelViewComposition(t *testing.T) {
 	assert.Equal(t, "team", v.TeamName)
 	assert.Equal(t, "draft text", v.Draft)
 	assert.Equal(t, "u1", v.MeID)
+	assert.Equal(t, "0", v.MeAvatar, "my own picture version, like a post's author's — fixture's alice has LastPictureUpdate 0")
 	assert.True(t, v.HasMore)
 	assert.True(t, v.Syncing)
 	assert.Equal(t, "m", v.GapAfter)
@@ -154,4 +155,21 @@ func TestNonCRTReplyCarriesRootContext(t *testing.T) {
 	v = byID()
 	assert.Equal(t, "bob", v["r3"].RootAuthor, "root found in the loaded history")
 	assert.Equal(t, "from history", v["r3"].RootSnippet)
+}
+
+// TestChannelViewMeAvatarReflectsMyPictureVersion: MeAvatar is not fixed to
+// the bootstrap snapshot — a later picture version for me (e.g. a live
+// user_updated, mirrored here via SetUsers) shows up on the next view, the
+// same way it already would for a post I authored (PostView.Avatar).
+func TestChannelViewMeAvatarReflectsMyPictureVersion(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("off", nil, true, 0, 0)
+	v, ok := s.ChannelView("off")
+	require.True(t, ok)
+	assert.Equal(t, "0", v.MeAvatar)
+
+	s.SetUsers([]model.User{{ID: "u1", Username: "alice", LastPictureUpdate: 42}})
+	v, ok = s.ChannelView("off")
+	require.True(t, ok)
+	assert.Equal(t, "42", v.MeAvatar)
 }

@@ -139,6 +139,63 @@ func TestReactionArchivedChannelErrorIDDiffersBySaveAndDelete(t *testing.T) {
 	assert.Equal(t, "api.reaction.delete.archived_channel.app_error", delErr["id"])
 }
 
+// TestReactAsUnknownIsNeverResolvable: a synthetic reactor id outside
+// Options.Users can react (membership alone gates it) but POST users/ids
+// never finds it — the deliberately-unresolvable path used by
+// mmsync.Worker.ReactionUsers's "unknown" tests.
+func TestReactAsUnknownIsNeverResolvable(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	id := s.PostAs("c-town", "alice", "reactors").ID
+
+	s.ReactAsUnknown("u-ghost", "c-town", id, "+1")
+	assert.Contains(t, reactionNames(s, id), "u-ghost:+1")
+
+	var users []model.User
+	require.Equal(t, 200, a.call("POST", "/api/v4/users/ids", []string{"u-ghost"}, &users))
+	assert.Empty(t, users, "outside Options.Users — the fake genuinely cannot resolve it")
+}
+
+// TestExtraUsersAreRealAndTownMembers: Options.ExtraUsers seeds real,
+// named accounts (unlike ReactAsUnknown's synthetic ones) that resolve via
+// POST users/ids and can react in c-town without a separate membership
+// step — used by tests/e2e/reactions.spec.ts for a reactor list that
+// resolves in full.
+func TestExtraUsersAreRealAndTownMembers(t *testing.T) {
+	s := Start(Options{ExtraUsers: 3})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	id := s.PostAs("c-town", "alice", "reactors").ID
+
+	names := ExtraUserNames[:3]
+	for _, name := range names {
+		s.ReactAs(name, id, "+1") // panics (test failure) if not a c-town member
+	}
+
+	ids := make([]string, len(names))
+	for i, name := range names {
+		ids[i] = "u-" + name
+	}
+	var users []model.User
+	require.Equal(t, 200, a.call("POST", "/api/v4/users/ids", ids, &users))
+	require.Len(t, users, len(names))
+	got := make([]string, len(users))
+	for i, u := range users {
+		got[i] = u.Username
+	}
+	assert.ElementsMatch(t, names, got)
+}
+
+// TestExtraUsersCappedAtThePoolSize: asking for more than
+// len(ExtraUserNames) never panics or duplicates — it just stops at the
+// pool's end.
+func TestExtraUsersCappedAtThePoolSize(t *testing.T) {
+	s := Start(Options{ExtraUsers: len(ExtraUserNames) + 5})
+	defer s.Close()
+	assert.Len(t, s.opts.Users, 3+len(ExtraUserNames)) // alice/bob/carol + the whole pool, no more
+}
+
 func TestBrokenReplyAndIdempotentRetries(t *testing.T) {
 	s := Start(Options{})
 	defer s.Close()

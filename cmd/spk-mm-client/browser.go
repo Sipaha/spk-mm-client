@@ -64,7 +64,11 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 
 	var fake *mmfake.Server
 	if o.MMFake {
-		fake = mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels})
+		// ExtraUsers: len(mmfake.ExtraUserNames) real, named accounts
+		// beyond alice/bob/carol — dev/e2e only, harmless to every other
+		// scenario (they're only members of c-town, added by seed()), and
+		// needed by tests/e2e/reactions.spec.ts's reactor list.
+		fake = mmfake.Start(mmfake.Options{ExtraChannels: o.FakeChannels, ExtraUsers: len(mmfake.ExtraUserNames)})
 		closers = append(closers, fake.Close)
 		slog.Warn("fake Mattermost server started (development only)", "url", fake.URL())
 	}
@@ -370,10 +374,13 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"post_id": id})
 		}))
-		// react-extra: n reactions from synthetic user ids outside the
-		// fake's user directory (mmfake.ReactAsUnknown) — for e2e coverage
-		// of a reactor list with many entries the client can never name,
-		// without seeding extra named accounts into the shared fake.
+		// react-extra: n more reactions from the fake's real ExtraUsers
+		// (dave, erin, ... — see mmfake.Options.ExtraUsers/ExtraUserNames),
+		// bounded to however many exist — for e2e coverage of a reactor
+		// list long enough to truncate with names that actually resolve
+		// via POST /users/ids (unlike mmfake.ReactAsUnknown, which is for
+		// the opposite, deliberately-unresolvable case and is exercised
+		// directly by Go tests, not over HTTP).
 		tm.HandleFunc("POST /api/_test/fake/react-extra", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				ChannelID string `json:"channel_id"`
@@ -387,8 +394,8 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 				writeJSON(w, http.StatusBadRequest, map[string]string{"code": "no_post"})
 				return
 			}
-			for i := 0; i < in.N; i++ {
-				fake.ReactAsUnknown(fmt.Sprintf("u-extra-%d", i), in.ChannelID, id, in.Emoji)
+			for i := 0; i < in.N && i < len(mmfake.ExtraUserNames); i++ {
+				fake.ReactAs(mmfake.ExtraUserNames[i], id, in.Emoji)
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"post_id": id})
 		}))

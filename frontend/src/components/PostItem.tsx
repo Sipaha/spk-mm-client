@@ -40,7 +40,7 @@ interface Props {
   serverId: number
   post: PostView
   head: boolean
-  me: { id: string; username: string }
+  me: { id: string; username: string; avatar?: string }
   locale: string
   crt: boolean
   actions: PostActions

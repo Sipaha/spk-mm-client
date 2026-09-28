@@ -23,17 +23,25 @@ func (w *Worker) ReactionUsers(ctx context.Context, postID, emoji string) (state
 		return state.ReactionUsersView{}, ErrNoPost
 	}
 	if missing := w.st.MissingAmong(ids); len(missing) > 0 {
-		w.usersMu.Lock()
-		users, err := w.rc.UsersByIDs(ctx, missing)
-		w.usersMu.Unlock()
-		if err != nil {
-			if sessionExpired(err) {
-				w.signalAuth()
+		// A func literal so defer actually protects the unlock (matching
+		// loadUsers/refreshUsers's own w.usersMu.Lock(); defer Unlock() —
+		// fix round 1: this used to unlock manually after the call, which
+		// would leave the mutex held forever if UsersByIDs ever panicked).
+		func() {
+			w.usersMu.Lock()
+			defer w.usersMu.Unlock()
+			users, err := w.rc.UsersByIDs(ctx, missing)
+			if err != nil {
+				if sessionExpired(err) {
+					w.signalAuth()
+				}
+				slog.Warn("reactor profiles unavailable", "srv", w.srv.ID, "err", err)
+				return
 			}
-			slog.Warn("reactor profiles unavailable", "srv", w.srv.ID, "err", err)
-		} else if len(users) > 0 {
-			w.st.SetUsers(users)
-		}
+			if len(users) > 0 {
+				w.st.SetUsers(users)
+			}
+		}()
 	}
 	return w.st.ResolveReactors(ids), nil
 }

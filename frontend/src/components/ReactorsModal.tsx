@@ -11,6 +11,7 @@ interface Props {
   count: number
   mine: boolean
   meId: string
+  meAvatar: string // my own picture version; '' = not loaded yet (ChannelDTO.me_avatar)
   users: Reactor[] // everyone except me, oldest reaction first (ReactionUsersDTO.users)
   // anchorEl: the reaction chip whose "and N others" opened this — focus
   // returns to it on close, like Viewer/Downloads/PostMenu.
@@ -22,7 +23,7 @@ interface Props {
 // others" button (UI ruling, 2026-09-28): a portal into document.body, Esc
 // or the backdrop closes it, focus is trapped inside while open and
 // returns to anchorEl on close — dark theme like Viewer/Downloads.
-export function ReactorsModal({ serverId, emoji, count, mine, meId, users, anchorEl, onClose }: Props) {
+export function ReactorsModal({ serverId, emoji, count, mine, meId, meAvatar, users, anchorEl, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -85,7 +86,7 @@ export function ReactorsModal({ serverId, emoji, count, mine, meId, users, ancho
         <div role="list" aria-label={t('reaction.whoList')} className="min-h-0 flex-1 overflow-y-auto p-2">
           {mine && (
             <div role="listitem" className="flex items-center gap-2 rounded px-1 py-1.5 text-sm">
-              <Avatar serverId={serverId} userId={meId} name={t('reaction.you')} size={24} surface="app" />
+              <Avatar serverId={serverId} userId={meId} version={meAvatar || undefined} name={t('reaction.you')} size={24} surface="app" />
               <span className="truncate">{t('reaction.you')}</span>
             </div>
           )}

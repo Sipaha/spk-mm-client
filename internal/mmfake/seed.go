@@ -58,7 +58,13 @@ func (s *Server) seed() {
 			s.chat.members[id][u] = &model.ChannelMember{ChannelID: id, UserID: u, NotifyProps: defaultNotify()}
 		}
 	}
-	add("c-town", model.ChannelOpen, "Town Square", "town-square", "u-alice", "u-bob", "u-carol")
+	// ExtraUsers (see Options) are members of c-town too, so tests can react
+	// as them there without a separate membership step.
+	townUsers := []string{"u-alice", "u-bob", "u-carol"}
+	for i := 0; i < o.ExtraUsers && i < len(ExtraUserNames); i++ {
+		townUsers = append(townUsers, "u-"+ExtraUserNames[i])
+	}
+	add("c-town", model.ChannelOpen, "Town Square", "town-square", townUsers...)
 	add("c-offtopic", model.ChannelOpen, "Off-Topic", "off-topic", "u-alice", "u-bob")
 	add("c-secret", model.ChannelPrivate, "Secret", "secret", "u-alice")
 	add("c-dm-bob", model.ChannelDirect, "", "u-alice__u-bob", "u-alice", "u-bob")

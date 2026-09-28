@@ -38,10 +38,16 @@ export function reactorWhoParts({ mine, names, unknown }: ReactorTextInput): Rea
   return { shown, overflowLabel }
 }
 
-// reactorWhoText builds "You, bob and carol reacted" / "bob, carol and 3
-// others reacted" (no trailing emoji) — see reactorTooltipText for the
-// full tooltip string, and AGENTS.md/the brief for the exact wording rules
-// this was derived from.
+// reactorWhoText builds "You, bob and carol reacted with" / "bob, carol and
+// 3 others reacted with" (no trailing emoji) — see reactorTooltipText for
+// the full tooltip string. 'reaction.reacted' bakes in the verb *and* the
+// preposition before the emoji ("reacted with" / "отреагировал с") to
+// match the webapp's own reaction tooltip exactly — read verbatim from the
+// sparse-checked reference at webapp/channels/src/i18n/{en,ru}.json, key
+// "reaction.reacted": en "{users} {reactionVerb} with {emoji}" (reactionVerb
+// is always "reacted"); ru "{users} {reactionVerb} с {emoji}" (reactionVerb
+// is always the singular "отреагировал", not pluralized by the webapp
+// either — controller finding, fix round 1, 2026-09-28).
 export function reactorWhoText(input: ReactorTextInput): string {
   const { shown, overflowLabel } = reactorWhoParts(input)
   const parts = overflowLabel ? [...shown, overflowLabel] : shown
@@ -49,9 +55,8 @@ export function reactorWhoText(input: ReactorTextInput): string {
 }
 
 // reactorTooltipText is the full tooltip content: who reacted, then the
-// emoji name in colons (the brief's spec, matching the webapp's own
-// reaction tooltip, which also renders ":name:" as text rather than an
-// image there).
+// emoji name in colons (matching the webapp's own reaction tooltip, which
+// also renders ":name:" as text there rather than an image).
 export function reactorTooltipText(input: ReactorTextInput, emoji: string): string {
   return `${reactorWhoText(input)} :${emoji}:`
 }

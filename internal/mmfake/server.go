@@ -30,10 +30,27 @@ type User struct {
 	LastName  string
 }
 
+// ExtraUserNames is the fixed pool Options.ExtraUsers draws from, in
+// order — exported so callers building on the fake (e.g.
+// cmd/spk-mm-client/browser.go's test-api routes) can react/post as one by
+// name without hardcoding the list a second time.
+var ExtraUserNames = []string{"dave", "erin", "frank", "grace", "heidi", "ivan", "judy", "mallory", "niaj", "olivia"}
+
 type Options struct {
 	SiteName      string // default DefaultSiteName
 	DisableGitLab bool   // GitLab SSO is advertised and served unless set
 	Users         []User // default: alice/bob/carol, password "secret"
+	// ExtraUsers appends this many more real, named, resolvable accounts
+	// (from ExtraUserNames, capped at its length) to Users at Start —
+	// before the server begins serving, so it never mutates the directory
+	// concurrently with the many unlocked reads of Users elsewhere in this
+	// package (AGENTS.md: Options.Users is assumed immutable after Start).
+	// Also added as members of c-town by seed(). For tests/e2e that need
+	// more than bob/carol's two real accounts to react (e.g. a reactor
+	// list long enough to prove truncation with names that actually
+	// resolve, not synthetic ids — see ReactAsUnknown for the opposite,
+	// deliberately-unresolvable case).
+	ExtraUsers int
 
 	CRT           bool // CollapsedThreads client config: always_on vs disabled
 	SeedPosts     int  // 0 -> 150 posts in Town Square; <0 -> none
@@ -98,6 +115,10 @@ func Start(o Options) *Server {
 			{ID: "u-bob", Username: "bob", Password: "secret"},
 			{ID: "u-carol", Username: "carol", Password: "secret"},
 		}
+	}
+	for i := 0; i < o.ExtraUsers && i < len(ExtraUserNames); i++ {
+		name := ExtraUserNames[i]
+		o.Users = append(o.Users, User{ID: "u-" + name, Username: name, Password: "secret"})
 	}
 	if o.MaxFileSize == 0 {
 		o.MaxFileSize = DefaultMaxFileSize

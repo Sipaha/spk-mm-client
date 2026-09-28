@@ -102,7 +102,7 @@ test('hovering a chip shows the tooltip after the hover delay, with the right te
   expect(loadReactors).not.toHaveBeenCalled() // not before the delay
   await act(async () => vi.advanceTimersByTime(300))
   expect(loadReactors).toHaveBeenCalledWith('p1', '+1')
-  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('You, bob and carol reacted :+1:'))
+  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('You, bob and carol reacted with :+1:'))
   expect(chip).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id)
 })
 
@@ -113,7 +113,7 @@ test('ru wording matches the brief exactly', async () => {
   render(<Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 2, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />)
   await user.hover(screen.getByRole('button'))
   await act(async () => vi.advanceTimersByTime(300))
-  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Вы и bob отреагировали :+1:'))
+  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Вы и bob отреагировал с :+1:'))
 })
 
 test('12 reactors: the tooltip truncates to 10 shown plus an "and N others" button', async () => {
@@ -144,7 +144,7 @@ test('shows "…" while loading', async () => {
     resolve(dto([{ id: 'u-bob', name: 'bob', avatar: '' }]))
     await Promise.resolve()
   })
-  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('bob reacted :+1:'))
+  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('bob reacted with :+1:'))
 })
 
 test('the cache is hit for the same count and misses when the count changes', async () => {
@@ -163,7 +163,7 @@ test('the cache is hit for the same count and misses when the count changes', as
   // Same count: a second hover hits the cache — no new call.
   await user.hover(chip)
   await act(async () => vi.advanceTimersByTime(300))
-  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('bob reacted :+1:'))
+  await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('bob reacted with :+1:'))
   expect(loadReactors).toHaveBeenCalledTimes(1)
   await user.unhover(chip)
   await act(async () => vi.advanceTimersByTime(200))

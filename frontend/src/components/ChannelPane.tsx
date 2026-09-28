@@ -89,7 +89,10 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
     }),
     [server.id, server.url, channelId, teamName],
   )
-  const me = useMemo(() => ({ id: channel?.me_id ?? '', username: server.username }), [channel?.me_id, server.username])
+  const me = useMemo(
+    () => ({ id: channel?.me_id ?? '', username: server.username, avatar: channel?.me_avatar ?? '' }),
+    [channel?.me_id, channel?.me_avatar, server.username],
+  )
   if (!channel) {
     return <div className="flex flex-1 items-center justify-center bg-app text-fg-muted">{t('channel.none')}</div>
   }

@@ -21,6 +21,7 @@ test('unresolved reactors show as "Unknown user" rows, real ones by name', () =>
       count={3}
       mine={false}
       meId="u-alice"
+      meAvatar=""
       users={[{ id: 'u-bob', name: 'bob', avatar: '' }, { id: 'u-x1', name: '', avatar: '' }]}
       anchorEl={a}
       onClose={() => {}}
@@ -34,6 +35,30 @@ test('unresolved reactors show as "Unknown user" rows, real ones by name', () =>
   a.remove()
 })
 
+test('the "You" row shows my real avatar when a picture version is known', () => {
+  const a = anchor()
+  render(
+    <ReactorsModal
+      serverId={1}
+      emoji="+1"
+      count={2}
+      mine={true}
+      meId="u-alice"
+      meAvatar="7"
+      users={[{ id: 'u-bob', name: 'bob', avatar: '' }]}
+      anchorEl={a}
+      onClose={() => {}}
+    />,
+  )
+  const dialog = screen.getByRole('dialog')
+  const rows = within(dialog).getAllByRole('listitem')
+  expect(rows[0]).toHaveTextContent('You')
+  // Decorative (alt=""), so not queryable by role — same convention as
+  // every other Avatar in the app.
+  expect(rows[0].querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-alice?v=7')
+  a.remove()
+})
+
 test('Tab past the last focusable element wraps to the first (focus trap)', async () => {
   const user = userEvent.setup()
   const a = anchor()
@@ -44,6 +69,7 @@ test('Tab past the last focusable element wraps to the first (focus trap)', asyn
       count={1}
       mine={false}
       meId="u-alice"
+      meAvatar=""
       users={[{ id: 'u-bob', name: 'bob', avatar: '' }]}
       anchorEl={a}
       onClose={() => {}}
@@ -61,7 +87,7 @@ test('Tab past the last focusable element wraps to the first (focus trap)', asyn
 test('closing returns focus to the anchor chip', () => {
   const a = anchor()
   const { unmount } = render(
-    <ReactorsModal serverId={1} emoji="+1" count={1} mine={false} meId="u-alice" users={[]} anchorEl={a} onClose={() => {}} />,
+    <ReactorsModal serverId={1} emoji="+1" count={1} mine={false} meId="u-alice" meAvatar="" users={[]} anchorEl={a} onClose={() => {}} />,
   )
   unmount()
   expect(a).toHaveFocus()

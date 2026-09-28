@@ -192,6 +192,7 @@ export interface ChannelDTO {
   gap_after: string
   draft: string
   me_id: string
+  me_avatar?: string // my own picture version; absent/'' = not loaded yet
   crt: boolean
   muted: boolean
 }
