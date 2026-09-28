@@ -54,3 +54,21 @@ func TestSeededPDFIsARealMultiPageDocument(t *testing.T) {
 	assert.True(t, bytes.HasPrefix(junk, []byte("%PDF-")), "passes the client's magic check")
 	assert.NotContains(t, string(junk), "xref", "but it is no document")
 }
+
+// TestSeededPDFHasOneLandscapePage: fix round 1 (review of cffdfe9) —
+// PdfView.tsx must size each page from its own viewport instead of page 1's,
+// so the fake exercises a document with one page turned sideways.
+func TestSeededPDFHasOneLandscapePage(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	_, doc := a.raw("GET", "/api/v4/files/"+PDFFileID, nil)
+
+	assert.Equal(t, PDFPages-1, bytes.Count(doc, []byte("/MediaBox [0 0 595 842]")), "every page but one stays portrait A4")
+	assert.Equal(t, 1, bytes.Count(doc, []byte("/MediaBox [0 0 842 595]")), "exactly one page is landscape A4")
+	assert.Contains(t, string(doc), fmt.Sprintf("Page %d of %d, landscape", LandscapePage, PDFPages))
+	// Pages the existing test above already pins by exact "(Page %d of %d) Tj"
+	// text (1 and PDFPages) must stay portrait, not collide with LandscapePage.
+	assert.NotEqual(t, 1, LandscapePage)
+	assert.NotEqual(t, PDFPages, LandscapePage)
+}
