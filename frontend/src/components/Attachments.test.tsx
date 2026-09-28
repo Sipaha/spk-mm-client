@@ -85,11 +85,11 @@ test('a staged image mid-upload shows a progress bar; uploaded shows none; faile
 
 test('a staged non-image file (a generic card) shows the same progress/error, and no download/open buttons', () => {
   const h = handlers()
-  const doc: FileView = { id: 'a2', name: 'notes.pdf', size: 1000, mime: 'application/pdf', staged: true, state: 'uploading', sent: 400 }
+  const doc: FileView = { id: 'a2', name: 'notes.docx', size: 1000, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', staged: true, state: 'uploading', sent: 400 }
   render(<Attachments serverId={1} files={[doc]} {...h} />)
-  expect(screen.getByText('notes.pdf')).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Download notes.pdf' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Open notes.pdf' })).toBeNull()
+  expect(screen.getByText('notes.docx')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Download notes.docx' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Open notes.docx' })).toBeNull()
 })
 
 test('text files: a fixed-height snippet, expand, view; unreadable text falls back to a card', async () => {
@@ -145,14 +145,28 @@ test('video and audio: fixed-box poster (video) and a compact row (audio), prelo
   vi.restoreAllMocks()
 })
 
-test('other files are cards with download and open', async () => {
+test('other files are cards with download and open, and no Preview action', async () => {
+  const h = handlers()
+  const zip: FileView = { id: 'f-arc', name: 'archive.zip', ext: 'zip', size: 2048, mime: 'application/zip' }
+  render(<Attachments serverId={1} files={[zip, { id: 's', name: 'logo.svg', ext: 'svg', size: 10, mime: 'image/svg+xml' }]} {...h} />)
+  expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Open archive.zip' }))
+  expect(h.onOpen).toHaveBeenCalledWith(zip)
+  expect(screen.getByRole('button', { name: 'Download logo.svg' })).toBeInTheDocument()
+  expect(document.querySelector('img')).toBeNull()
+  expect(screen.queryByRole('button', { name: /View/ })).toBeNull()
+})
+
+test('a pdf file is a card with a Preview action, alongside download and open', async () => {
   const h = handlers()
   const pdf: FileView = { id: 'f-spec', name: 'spec.pdf', ext: 'pdf', size: 2048, mime: 'application/pdf' }
-  render(<Attachments serverId={1} files={[pdf, { id: 's', name: 'logo.svg', ext: 'svg', size: 10, mime: 'image/svg+xml' }]} {...h} />)
+  render(<Attachments serverId={1} files={[pdf]} {...h} />)
+  expect(screen.getByText('spec.pdf')).toBeInTheDocument()
   expect(screen.getByText('2.0 KB')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Open spec.pdf' }))
-  expect(h.onOpen).toHaveBeenCalledWith(pdf)
-  expect(screen.getByRole('button', { name: 'Download logo.svg' })).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'View spec.pdf' }))
+  expect(h.onView).toHaveBeenCalledWith(pdf)
+  expect(screen.getByRole('button', { name: 'Download spec.pdf' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open spec.pdf' })).toBeInTheDocument()
   expect(document.querySelector('img')).toBeNull()
 })
 

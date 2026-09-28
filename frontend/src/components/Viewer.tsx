@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
@@ -10,6 +10,11 @@ import { IconChevronLeft, IconChevronRight, IconClose } from './icons'
 import { MarkdownView } from './MarkdownView'
 import { MediaPlayer } from './MediaPlayer'
 import { TextView } from './TextView'
+
+// pdf.js (PdfView) is loaded only once a PDF is actually opened — ruling
+// (plan.md): "nothing may block startup", checked by
+// scripts/check-pdf-bundle.mjs against the built initial chunk.
+const PdfView = lazy(() => import('./PdfView'))
 
 interface Props {
   serverId: number
@@ -231,6 +236,19 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
           )
         ) : kind === 'video' || kind === 'audio' ? (
           <MediaPlayer key={file.id} serverId={serverId} file={file} kind={kind} big onDownload={onDownload} onOpen={onOpen} />
+        ) : kind === 'pdf' ? (
+          failedIds.has(file.id) ? (
+            <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
+          ) : (
+            // Never an <iframe>/<embed>/<object> (plan.md ruling): WebKitGTK
+            // renders application/pdf with its own bundled pdf.js 4.1.392,
+            // which has eval and PDF scripting on (CVE-2024-4367 class) and
+            // cannot be configured off. This is pdf.js run by us, in a
+            // Suspense'd lazy chunk, drawing into canvases only.
+            <Suspense key={file.id} fallback={<span className="text-fg-muted">{t('file.loading')}</span>}>
+              <PdfView serverId={serverId} file={file} onFail={() => addFailed(file.id)} />
+            </Suspense>
+          )
         ) : isMarkdown && !mdSource ? (
           <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} />
         ) : (

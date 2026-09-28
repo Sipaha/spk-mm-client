@@ -4,13 +4,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p . && vite build",
+    "build": "tsc --noEmit -p . && vite build && node scripts/check-pdf-bundle.mjs",
     "test": "vitest run",
     "lint": "eslint ."
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",
     "@wailsio/runtime": "3.0.0-beta.25",
+    "pdfjs-dist": "6.3.289",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",

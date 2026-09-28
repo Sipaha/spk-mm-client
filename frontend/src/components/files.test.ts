@@ -1,5 +1,5 @@
 import type { FileView } from '../api/types'
-import { fileKind, fitBox, imageSrc, videoBox } from './files'
+import { fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
 
 const F = (o: Partial<FileView>): FileView => ({ id: 'f', name: 'x', size: 100, mime: '', ...o })
 
@@ -15,7 +15,15 @@ test('what kind of preview a file gets', () => {
   expect(fileKind(F({ name: 'Makefile' }))).toBe('text')
   expect(fileKind(F({ name: 'notes.md', ext: 'md', mime: 'text/markdown' }))).toBe('markdown')
   expect(fileKind(F({ name: 'notes.markdown', ext: 'markdown', mime: 'text/plain' }))).toBe('markdown')
-  expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf' }))).toBe('other')
+  expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf' }))).toBe('pdf')
+})
+
+test('pdf kind: by extension or MIME, up to PDF_MAX; over the cap it is just a card', () => {
+  expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf', size: 1000 }))).toBe('pdf')
+  // No extension left (e.g. stripped on upload): MIME alone is enough.
+  expect(fileKind(F({ name: 'spec', ext: '', mime: 'application/pdf', size: 1000 }))).toBe('pdf')
+  expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf', size: PDF_MAX }))).toBe('pdf')
+  expect(fileKind(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf', size: PDF_MAX + 1 }))).toBe('other')
 })
 
 test('video/audio kinds, by extension and by MIME (matches internal/media\'s allowlist)', () => {

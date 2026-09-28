@@ -5,15 +5,18 @@ import { downloadErrorMessage } from '../errors'
 import { formatSize, formatTime } from '../format'
 import { t } from '../i18n'
 import { IconButton } from './FileCard'
-import { fileKind } from './files'
+import { fileKind, type FileKind } from './files'
 import { IconAudio, IconClose, IconFile, IconFolder, IconImage, IconNote, IconOpenExternal, IconVideo, type IconProps } from './icons'
 import { placeBelow } from './panelPosition'
 
 const W = 360
 const H = 420
 
-const KIND_ICON: Record<string, (p: IconProps) => ReactElement> = {
-  image: IconImage, video: IconVideo, audio: IconAudio, text: IconNote, markdown: IconNote, other: IconFile,
+// Record<FileKind, ...> (not Record<string, ...>): a new FileKind (like
+// 'pdf', Task 2) that forgot this map is a compile error, not a crash at
+// render (Cmp undefined → "Element type is invalid").
+const KIND_ICON: Record<FileKind, (p: IconProps) => ReactElement> = {
+  image: IconImage, video: IconVideo, audio: IconAudio, text: IconNote, markdown: IconNote, pdf: IconFile, other: IconFile,
 }
 
 function KindIcon({ d, className }: { d: DownloadView; className?: string }) {

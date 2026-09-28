@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { client } from './api/client'
 import { useLiveEpoch } from './store'
 
-export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' | 'staged' | 'posticon'
+export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' | 'staged' | 'posticon' | 'pdf'
 
 // mediaURL addresses a picture or file snippet that Go serves on the UI's
 // own origin (internal/media): the UI never talks to a Mattermost server

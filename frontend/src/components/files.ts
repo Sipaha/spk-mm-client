@@ -1,6 +1,10 @@
 import type { FileView } from '../api/types'
 
-export type FileKind = 'image' | 'video' | 'audio' | 'text' | 'markdown' | 'other'
+export type FileKind = 'image' | 'video' | 'audio' | 'text' | 'markdown' | 'pdf' | 'other'
+
+// PDF_MAX must equal internal/media.PDFMax (Task 1, Go): over the cap the
+// file is just a download card, never handed to pdf.js.
+export const PDF_MAX = 50 * 1024 * 1024
 
 const RASTER = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])
 
@@ -75,6 +79,7 @@ export function fileKind(f: FileView): FileKind {
   if (sk) return sk
   const ext = extOf(f)
   const mime = (f.mime || '').toLowerCase()
+  if ((ext === 'pdf' || mime === 'application/pdf') && f.size <= PDF_MAX) return 'pdf'
   if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'markdown'
   if (TEXT_EXT.has(ext) || mime === 'text/plain') return 'text'
   return 'other'

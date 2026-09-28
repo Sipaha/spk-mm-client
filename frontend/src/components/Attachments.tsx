@@ -75,7 +75,10 @@ export function Attachments({
   const audios = files.filter((f) => fileKind(f) === 'audio')
   const texts = files.filter((f) => fileKind(f) === 'text')
   const markdowns = files.filter((f) => fileKind(f) === 'markdown')
-  const others = files.filter((f) => fileKind(f) === 'other')
+  // PDFs are cards too (no thumbnail rendering in the feed — Task 3's
+  // PdfView is the viewer's own lazy chunk), but with a Preview action the
+  // plain 'other' card doesn't get.
+  const others = files.filter((f) => fileKind(f) === 'other' || fileKind(f) === 'pdf')
   return (
     <div className="mt-1 flex flex-col items-start gap-2">
       {images.length > 0 && (
@@ -104,7 +107,7 @@ export function Attachments({
       {others.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {others.map((f) => (
-            <FileCard key={f.id} file={f} onDownload={h.onDownload} onOpen={h.onOpen} />
+            <FileCard key={f.id} file={f} onDownload={h.onDownload} onOpen={h.onOpen} onView={fileKind(f) === 'pdf' ? h.onView : undefined} />
           ))}
         </div>
       )}

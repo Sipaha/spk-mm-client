@@ -6,12 +6,31 @@ import { client } from '../api/client'
 import { setLocale } from '../i18n'
 import { Viewer } from './Viewer'
 
+// PdfView pulls in the real pdfjs-dist chunk; Viewer.tsx only needs to prove
+// it lazy-loads *something* into a Suspense boundary and reacts to onFail —
+// pdf.js's own rendering is PdfView.test.tsx's job.
+let pdfShouldFail = false
+vi.mock('./PdfView', () => ({
+  default: ({ file, onFail }: { file: FileView; onFail(): void }) => {
+    if (pdfShouldFail) {
+      onFail()
+      return null
+    }
+    return <div data-testid="pdf-view">{file.name}</div>
+  },
+}))
+
 const img: FileView = { id: 'f-build', name: 'build.png', ext: 'png', size: 5000, mime: 'image/png', width: 1280, height: 720, has_preview: true }
 const log: FileView = { id: 'f-log', name: 'server.log', ext: 'log', size: 70000, mime: 'text/plain' }
 const readme: FileView = { id: 'f-readme', name: 'README.md', ext: 'md', size: 400, mime: 'text/markdown' }
 const clip: FileView = { id: 'f-clip', name: 'clip.webm', ext: 'webm', size: 43538, mime: 'video/webm' }
 const tone: FileView = { id: 'f-tone', name: 'tone.ogg', ext: 'ogg', size: 9736, mime: 'audio/ogg' }
+const pdf: FileView = { id: 'f-pdf', name: 'spec.pdf', ext: 'pdf', size: 20480, mime: 'application/pdf' }
 const noop = () => {}
+
+beforeEach(() => {
+  pdfShouldFail = false
+})
 
 beforeEach(() => setLocale('en'))
 afterEach(() => vi.unstubAllGlobals())
@@ -399,4 +418,33 @@ test('audio: opens big with native controls, no viewer chrome from the feed row'
   expect(audio).toHaveAttribute('preload', 'none')
   expect(screen.getByRole('dialog').querySelector('header')).toHaveTextContent('tone.ogg') // the viewer's own header, not the feed's row
   vi.restoreAllMocks()
+})
+
+test('pdf: opens the lazy PdfView; download/open in the header still act on the file', async () => {
+  const onDownload = vi.fn()
+  const { container } = render(
+    <Viewer serverId={1} files={[pdf]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />,
+  )
+  expect(await screen.findByTestId('pdf-view')).toHaveTextContent('spec.pdf')
+  await userEvent.click(screen.getByRole('button', { name: 'Download' }))
+  expect(onDownload).toHaveBeenCalledWith(pdf)
+  // Plan.md ruling: never an iframe/embed/object for a PDF (WebKitGTK's own
+  // bundled pdf.js is CVE-2024-4367-class and cannot be configured off).
+  expect(container.querySelector('iframe')).toBeNull()
+  expect(container.querySelector('embed')).toBeNull()
+  expect(container.querySelector('object')).toBeNull()
+})
+
+test('pdf: a load failure falls back to a card, still with no iframe/embed/object anywhere', async () => {
+  pdfShouldFail = true
+  const onDownload = vi.fn()
+  const { container } = render(
+    <Viewer serverId={1} files={[pdf]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={onDownload} onOpen={noop} />,
+  )
+  expect(screen.queryByTestId('pdf-view')).toBeNull()
+  await userEvent.click(await screen.findByRole('button', { name: 'Download spec.pdf' }))
+  expect(onDownload).toHaveBeenCalledWith(pdf)
+  expect(container.querySelector('iframe')).toBeNull()
+  expect(container.querySelector('embed')).toBeNull()
+  expect(container.querySelector('object')).toBeNull()
 })

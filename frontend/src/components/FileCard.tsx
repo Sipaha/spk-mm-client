@@ -3,7 +3,7 @@ import type { FileView } from '../api/types'
 import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
-import { IconDownload, IconFile, IconOpenExternal } from './icons'
+import { IconDownload, IconExpand, IconFile, IconOpenExternal } from './icons'
 
 export interface FileHandlers {
   onView(file: FileView): void
@@ -50,7 +50,18 @@ export function StagedProgress({ file }: { file: FileView }) {
   )
 }
 
-export function FileCard({ file, onDownload, onOpen }: { file: FileView } & Pick<FileHandlers, 'onDownload' | 'onOpen'>) {
+// FileCard: a generic file's download/open card. `onView`, when given (a
+// kind the Viewer knows how to open in place, currently pdf), adds a
+// Preview action — same icon/label convention as the image/text/markdown
+// "view" actions elsewhere (IconExpand + t('file.view')). A staged file (a
+// pending post's, not sent yet) has no server id yet, so it gets none of
+// download/open/preview, same reasoning as the other staged tiles.
+export function FileCard({
+  file,
+  onDownload,
+  onOpen,
+  onView,
+}: { file: FileView; onView?(file: FileView): void } & Pick<FileHandlers, 'onDownload' | 'onOpen'>) {
   return (
     <div className="flex max-w-sm flex-col gap-1 rounded border border-line px-2 py-1 text-xs">
       <div className="flex items-center gap-2">
@@ -59,9 +70,13 @@ export function FileCard({ file, onDownload, onOpen }: { file: FileView } & Pick
           {file.name}
         </span>
         <span className="shrink-0 text-fg-muted">{formatSize(file.size)}</span>
-        {/* A staged file has no server id yet — nothing to download/open. */}
         {!file.staged && (
           <>
+            {onView && (
+              <IconButton label={t('file.view', { name: file.name })} onClick={() => onView(file)}>
+                <IconExpand />
+              </IconButton>
+            )}
             <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
               <IconDownload />
             </IconButton>
