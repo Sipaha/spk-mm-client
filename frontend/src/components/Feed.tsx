@@ -1,10 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
+import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
 import { buildRows, type Row } from './feedRows'
 import { PostItem, type PostActions } from './PostItem'
+import { ScrollShift } from './scrollShift'
 
 interface Props {
   channel: ChannelDTO
@@ -19,6 +21,7 @@ interface Props {
 const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
 const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
 
 // anchorNudge computes how far scrollTop must move to bring the anchor
@@ -106,13 +109,38 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       })
     }
   }, [])
+  // Mid-scroll compensation for rows measured above the fold goes into a
+  // transform on the rows' container, not into scrollTop (which cancels
+  // WebKit's wheel animation) — see ScrollShift.
+  const sizer = useRef<HTMLDivElement>(null)
+  const [, bump] = useReducer((x: number) => x + 1, 0)
+  const [shift] = useState(() => {
+    let queued = false
+    // The shifted rows must be committed before the next paint: the
+    // virtualizer's own notify for them is async. A microtask runs after the
+    // ResizeObserver callback that took the shift and before the paint.
+    const rerender = () => {
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        flushSync(bump)
+      })
+    }
+    return new ScrollShift(() => scroller.current, () => sizer.current, rerender)
+  })
+  useEffect(() => () => shift.dispose(), [shift])
+  useLayoutEffect(() => shift.apply()) // every commit: rows and shift reach the screen together
   const v = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
     estimateSize: (i) => estimate(rows[i]),
     getItemKey: (i) => rows[i].key,
     overscan: 8,
+    observeElementOffset: shift.observeOffset,
+    scrollToFn: shift.scrollTo,
   })
+  v.shouldAdjustScrollPositionOnItemSizeChange = shift.shouldAdjust
 
   // Anchor on the post the user actually sees at the top, read from the
   // DOM. Not v.range.startIndex: the virtualizer's own scroll offset
@@ -245,6 +273,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
+    shift.onScroll()
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
     if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
@@ -287,6 +316,12 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
 
   const onUserGesture = () => {
     userScrolling.current = true
+    shift.onUserInput()
+  }
+  // Keyboard scrolling animates in WebKit too (see ScrollShift); it is not a
+  // gesture for the history anchor, which only yields to wheel/touch.
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (SCROLL_KEYS.has(e.key)) shift.onUserInput()
   }
 
   return (
@@ -295,6 +330,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       onScroll={onScroll}
       onWheel={onUserGesture}
       onTouchMove={onUserGesture}
+      onKeyDown={onKeyDown}
       role="log"
       aria-label={t('feed.label')}
       className="relative min-h-0 flex-1 overflow-y-auto pb-2"
@@ -302,7 +338,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       {!rows.length && (
         <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
       )}
-      <div style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
+      <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
         {v.getVirtualItems().map((it) => (
           <div
             key={it.key}
