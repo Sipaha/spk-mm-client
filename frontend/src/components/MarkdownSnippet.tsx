@@ -55,7 +55,7 @@ export function MarkdownSnippet({
         </span>
       </figcaption>
       <div className={`overflow-x-auto px-2 py-1 text-fg ${open ? 'max-h-96 overflow-y-auto' : 'h-40 overflow-y-hidden'}`}>
-        {res.status === 'loading' ? <span className="text-fg-muted">{t('file.loading')}</span> : <Markdown text={res.text} me={me} onLink={onLink} />}
+        {res.status === 'loading' ? <span className="text-fg-muted">{t('file.loading')}</span> : <Markdown text={res.text} me={me} onLink={onLink} serverId={serverId} />}
       </div>
     </figure>
   )

@@ -147,3 +147,18 @@ export function useQuickReactions(serverId: number, load: () => Promise<EmojiDTO
   }, [serverId, entry, load])
   return useMemo(() => quickNames(entry.dto, idx), [entry.dto, idx])
 }
+
+// useEmojiInfo is Markdown's hook for resolving ":name:" shortcodes to a
+// known custom emoji: it shares this exact cache with useQuickReactions (no
+// second per-server fetch, no second index) — a post's hover bar and its own
+// message text both read/trigger the same in-flight request. load undefined
+// (no emojiInfo() binding available, e.g. a markdown file viewer, not a
+// post) means "never fetch" — the caller only wants whatever is cached
+// already, and any unresolved custom name simply stays literal text.
+export function useEmojiInfo(serverId: number, load?: () => Promise<EmojiDTO>): EmojiDTO | undefined {
+  const entry = useSyncExternalStore(subscribe, () => snapshot(serverId))
+  useEffect(() => {
+    if (load) ensureLoaded(serverId, load)
+  }, [serverId, load, entry])
+  return entry.dto
+}

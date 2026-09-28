@@ -21,7 +21,7 @@ export function MarkdownView({ serverId, file, me, onLink }: { serverId: number;
       {res.status === 'ok' ? (
         <>
           {res.truncated && <p className="mb-2 text-xs text-fg-muted">{t('file.truncated')}</p>}
-          <Markdown text={res.text} me={me} onLink={onLink} />
+          <Markdown text={res.text} me={me} onLink={onLink} serverId={serverId} />
         </>
       ) : (
         <p className="text-fg-muted">{res.status === 'loading' ? t('file.loading') : t('err.no_file')}</p>
