@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { channel, seedThread, signInAlice, threadPane } from './helpers'
+import { channel, removeServerFromMenu, seedThread, signInAlice, threadPane } from './helpers'
 
 // Theme brief 2026-09-28, scope 3a: resizable sidebar/thread-panel
 // splitters, app-wide persistence via internal/api's GetLayout/
@@ -23,6 +23,7 @@ test('dragging the sidebar splitter resizes it and the width survives a reload',
   await page.reload()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await expect(sidebar).toHaveJSProperty('offsetWidth', Math.round(before) + 80)
+  await removeServerFromMenu(page)
 })
 
 test('keyboard steps and double-click reset the sidebar splitter', async ({ page }) => {
@@ -42,6 +43,7 @@ test('keyboard steps and double-click reset the sidebar splitter', async ({ page
   await expect(sep).toHaveAttribute('aria-valuenow', await sep.getAttribute('aria-valuemin'))
   await page.keyboard.press('End')
   await expect(sep).toHaveAttribute('aria-valuenow', await sep.getAttribute('aria-valuemax'))
+  await removeServerFromMenu(page)
 })
 
 test('dragging the thread-panel splitter resizes it', async ({ page }) => {
@@ -67,4 +69,5 @@ test('dragging the thread-panel splitter resizes it', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await page.getByRole('button', { name: /^Replies: 1/ }).click()
   await expect(threadPane(page)).toHaveJSProperty('offsetWidth', Math.round(before) - 60)
+  await removeServerFromMenu(page)
 })
