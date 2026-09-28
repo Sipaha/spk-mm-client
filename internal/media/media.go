@@ -20,7 +20,9 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -133,7 +135,14 @@ type Cache struct {
 	neg      map[string]negEntry // cache key → recent failure
 	inflight map[string]*call    // cache key → fetch in progress
 	stream   *Streamer
-	ext      *http.Client // external post icons: no credentials, public addresses only
+	// External post icons: no credentials, public addresses only (ext) or
+	// private ones too for a server on a private address (extIntranet);
+	// extSem: their own fetch slots; intranets: servers' answers; lookup
+	// resolves a server's host (tests stub it).
+	ext, extIntranet *http.Client
+	extSem           chan struct{}
+	intranets        map[string]intranetEntry
+	lookup           func(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
 // New opens (creating) the cache directory: leftovers of interrupted writes
@@ -164,7 +173,11 @@ func New(o Options) (*Cache, error) {
 	}
 	c := &Cache{o: o, sem: make(chan struct{}, o.Fetches), index: map[string]*entry{},
 		neg: map[string]negEntry{}, inflight: map[string]*call{}, stream: NewStreamer(o.Origin),
-		ext: newExternalClient(publicDial)}
+		ext: newExternalClient(strictDial), extIntranet: newExternalClient(intranetDial),
+		extSem: make(chan struct{}, extFetches), intranets: map[string]intranetEntry{},
+		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		}}
 	for _, de := range des {
 		name := de.Name()
 		switch {
@@ -201,6 +214,8 @@ type request struct {
 var (
 	idRe    = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	emojiRe = regexp.MustCompile(`^[a-zA-Z0-9_+-]{1,64}$`)
+	// iconVersionRe: a posticon's ?v= (state.PostView.IconVersion).
+	iconVersionRe = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
 )
 
 func parse(u *url.URL) (request, bool) {
@@ -232,7 +247,13 @@ func parse(u *url.URL) (request, bool) {
 		if q.variant != "preview" && q.variant != "file" {
 			return request{}, false
 		}
-	case KindThumb, KindStream, KindStaged, KindPostIcon:
+	case KindPostIcon:
+		// v: the version of the post's icon (the UI's cache buster); the
+		// picture itself is keyed by where it comes from.
+		if v := u.Query().Get("v"); v != "" && !iconVersionRe.MatchString(v) {
+			return request{}, false
+		}
+	case KindThumb, KindStream, KindStaged:
 	case KindText:
 		switch u.Query().Get("full") {
 		case "":
@@ -466,19 +487,26 @@ func (c *Cache) emojiID(ctx context.Context, q request) (string, int) {
 // turn comes is skipped (not remembered as a failure): the server's request
 // budget is shared with synchronisation.
 func (c *Cache) fill(key, name string, q request, id string, cl *call) {
-	c.sem <- struct{}{}
+	// An external icon waits for its own slots: a slow host out there must
+	// not hold the ones avatars, previews and emoji use.
+	external := q.kind == KindPostIcon && q.icon.ext != ""
+	sem := c.sem
+	if external {
+		sem = c.extSem
+	}
+	sem <- struct{}{}
 	c.mu.Lock()
 	if cl.waiters == 0 {
 		delete(c.inflight, key)
 		cl.status = http.StatusServiceUnavailable
 		c.mu.Unlock()
-		<-c.sem
+		<-sem
 		close(cl.done)
 		return
 	}
 	c.mu.Unlock()
 	err := c.fetch(q, id, name)
-	<-c.sem
+	<-sem
 	status := 0
 	if err != nil {
 		status = statusFor(err)
@@ -489,10 +517,15 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	// its pictures must appear as soon as it is (asking again costs no
 	// network). Nor is a 401: the session died, the worker asks for a new
 	// sign-in, and the picture must load once it is signed in again.
-	if status != 0 && !errors.Is(err, ErrNoServer) && !unauthorized(err) {
+	// A post icon's 401 is its path's answer, not a dead session (GetIcon
+	// never asks for a sign-in): remembered like a 403.
+	if status != 0 && !errors.Is(err, ErrNoServer) && (!unauthorized(err) || q.kind == KindPostIcon) {
 		ttl := negTTLTransient
 		switch status {
 		case http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
+			ttl = negTTL
+		}
+		if external { // a host out there that failed is not asked again soon
 			ttl = negTTL
 		}
 		if len(c.neg) >= maxNeg {

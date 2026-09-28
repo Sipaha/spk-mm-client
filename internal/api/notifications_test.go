@@ -48,9 +48,15 @@ func TestNotificationText(t *testing.T) {
 	file.Post.Metadata = &model.PostMetadata{Files: []model.FileInfo{{Name: "report.pdf"}}}
 	assert.Equal(t, "bob: 📎 report.pdf", notificationFor(1, file).Body)
 
-	hook := candidate(model.ChannelOpen, "C", "webhook-owner", "deployed")
+	// The sender's name comes from state (override_username only where the
+	// server allows it — TestNotifySenderFollowsTheUsernameOverride); the
+	// props are not read again here.
+	hook := candidate(model.ChannelOpen, "C", "Deploy Bot", "deployed")
 	hook.Post.Props.FromWebhook, hook.Post.Props.OverrideUsername = true, "Deploy Bot"
 	assert.Equal(t, "Deploy Bot: deployed", notificationFor(1, hook).Body)
+	off := candidate(model.ChannelOpen, "C", "webhook-owner", "deployed")
+	off.Post.Props.FromWebhook, off.Post.Props.OverrideUsername = true, "Deploy Bot"
+	assert.Equal(t, "webhook-owner: deployed", notificationFor(1, off).Body, "EnablePostUsernameOverride off: state gave the account")
 }
 
 type collect struct {

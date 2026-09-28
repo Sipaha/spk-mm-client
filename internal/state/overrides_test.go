@@ -91,3 +91,50 @@ func TestConfigCarriesPostOverrideFlags(t *testing.T) {
 	assert.True(t, cfg.PostIconOverride)
 	assert.False(t, cfg.ImageProxy)
 }
+
+// M2: the icon URL the UI uses is versioned by what the post points at.
+func TestPostViewIconVersionFollowsTheIconURL(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("off", webhookPosts(), true, 5, 0)
+	v, _ := s.ChannelView("off")
+	gl := v.Posts[0]
+	require.Equal(t, "post", gl.Icon)
+	assert.Regexp(t, `^[0-9a-f]{16}$`, gl.IconVersion)
+	assert.Empty(t, v.Posts[1].IconVersion, "an emoji icon has no picture to version")
+	assert.Empty(t, v.Posts[3].IconVersion)
+
+	edited := webhookPosts()[0]
+	edited.Props.OverrideIconURL = "https://gitlab.example/fox-2.png"
+	edited.UpdateAt, edited.EditAt = 1500, 1500
+	s.SetWindow("off", []model.Post{edited}, true, 5, 0)
+	v, _ = s.ChannelView("off")
+	assert.NotEqual(t, gl.IconVersion, v.Posts[0].IconVersion, "a changed icon URL is a new version")
+}
+
+// M6: a desktop notification names a webhook post's sender the way the
+// feed does — override_username only when the server allows it.
+func TestNotifySenderFollowsTheUsernameOverride(t *testing.T) {
+	for _, allowed := range []bool{true, false} {
+		s := New(fixedNow)
+		b := fixture()
+		b.Config.PostUsernameOverride = allowed
+		s.Bootstrap(b)
+		s.SetUsers([]model.User{{ID: "u1", Username: "alice"}, {ID: "u2", Username: "bob"}})
+		s.ClearGuard()
+		p := mkPost("h1", "town", "u2", 5000)
+		p.Props = model.PostProps{FromWebhook: true, OverrideUsername: "GitLab"}
+		eff := s.ApplyEvent(postedEv(p, "u1"))
+		require.NotNil(t, eff.Notify)
+		want := "bob"
+		if allowed {
+			want = "GitLab"
+		}
+		assert.Equal(t, want, eff.Notify.SenderName, "allowed=%v", allowed)
+
+		api := mkPost("h2", "town", "u2", 6000)
+		api.Props = model.PostProps{OverrideUsername: "Impostor"}
+		eff = s.ApplyEvent(postedEv(api, "u1"))
+		require.NotNil(t, eff.Notify)
+		assert.Equal(t, "bob", eff.Notify.SenderName, "not from a webhook")
+	}
+}

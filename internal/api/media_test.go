@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -214,4 +217,47 @@ func TestMediaPostIconThroughTheService(t *testing.T) {
 		assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
 	}
 	assert.Equal(t, 1, fake.Hits("GET", mmfake.WebhookIconPath))
+}
+
+// I2: a 401 on a post icon's path is that path's answer — the session
+// stays, the worker stays live; C1: a redirect from the server elsewhere
+// is refused before anything is sent there.
+func TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	f.eventually(func() bool { return f.loaded(id, "c-town") }, "town square not prefetched")
+	var mu sync.Mutex
+	var leaked []string
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		leaked = append(leaked, r.URL.Path+" "+r.Header.Get("Authorization"))
+		mu.Unlock()
+	}))
+	defer elsewhere.Close()
+	locked := fake.WebhookPostAs("c-town", "bob", "locked", model.PostProps{OverrideIconURL: mmfake.UnauthorizedIconPath})
+	away := fake.WebhookPostAs("c-town", "bob", "away",
+		model.PostProps{OverrideIconURL: mmfake.RedirectIconPath + "?to=" + url.QueryEscape(elsewhere.URL+"/x.png")})
+	f.eventually(func() bool { _, ok := f.svc.PostIcon(id, away.ID); return ok }, "the posts never arrived")
+
+	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: f.svc, PostIcons: f.svc})
+	require.NoError(t, err)
+	ts := httptest.NewServer(mc)
+	defer ts.Close()
+	get := func(pid string) int {
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s", ts.URL, id, pid))
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	assert.Equal(t, 403, get(locked.ID))
+	assert.Equal(t, 403, get(locked.ID))
+	assert.Equal(t, 1, fake.Hits("GET", mmfake.UnauthorizedIconPath), "remembered")
+	assert.Equal(t, 403, get(away.ID))
+	mu.Lock()
+	assert.Empty(t, leaked, "nothing reached the redirect's target")
+	mu.Unlock()
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, "live", f.server(id).State, "no new sign-in over an icon")
 }

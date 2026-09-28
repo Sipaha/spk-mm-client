@@ -13,8 +13,9 @@ test('a webhook post shows its own name and icon; a refused icon falls back to t
     channel_id: 'c-town', username: 'bob', message: gitlab,
     override_username: 'GitLab', override_icon_url: '/static/images/webhook-icon.png',
   })) as { id: string }
-  // An icon on a loopback host stands for the user's LAN: Go refuses to
-  // fetch it (SSRF guard), and the UI shows the account's avatar instead.
+  // An icon on the server's host but another port (and a loopback address
+  // at that): Go refuses it — the token must not go there, and the LAN is
+  // off limits — and the UI shows the account's avatar instead.
   const lan = unique('deploy finished')
   await testPost(page, 'fake/webhook', {
     channel_id: 'c-town', username: 'bob', message: lan,
@@ -30,7 +31,7 @@ test('a webhook post shows its own name and icon; a refused icon falls back to t
   await expect(post.getByText('GitLab', { exact: true })).toHaveAttribute('title', 'bob')
   await expect(post.getByText('BOT', { exact: true })).toBeVisible()
   const icon = post.locator('img').first()
-  await expect(icon).toHaveAttribute('src', `/media/${srv}/posticon/${id}`)
+  await expect(icon).toHaveAttribute('src', new RegExp(`^/media/${srv}/posticon/${id}\\?v=[0-9a-f]{16}$`))
   await expect.poll(() => icon.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(64)
 
   const refused = feed(page).locator('article', { hasText: lan })

@@ -13,6 +13,14 @@ import (
 // posts (the server's own emoji icons look like this too).
 const WebhookIconPath = "/static/images/webhook-icon.png"
 
+// UnauthorizedIconPath answers 401 to everyone (a location behind a
+// reverse proxy's own auth); RedirectIconPath?to=<url> redirects there (a
+// server-side redirect off the server). Test paths for post icons.
+const (
+	UnauthorizedIconPath = "/static/images/locked.png"
+	RedirectIconPath     = "/static/images/redirect.png"
+)
+
 // webhookIcon: GitLab-ish orange stripes, recognisable in a screenshot.
 var webhookIcon = patternPNG(64, 64, color.RGBA{226, 67, 41, 255})
 
@@ -20,6 +28,12 @@ func (s *Server) webhookRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+WebhookIconPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(webhookIcon)
+	})
+	mux.HandleFunc("GET "+UnauthorizedIconPath, func(w http.ResponseWriter, _ *http.Request) {
+		appError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "not for you")
+	})
+	mux.HandleFunc("GET "+RedirectIconPath, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Query().Get("to"), http.StatusFound)
 	})
 	mux.HandleFunc("GET /api/v4/image", s.handleAuthed(s.imageProxy))
 }

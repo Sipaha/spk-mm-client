@@ -1,6 +1,8 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"sort"
 	"strings"
@@ -48,6 +50,10 @@ type PostView struct {
 	// picture is /media/<srv>/posticon/<post id>) or ":name:" (an emoji);
 	// "" = the account's avatar.
 	Icon string `json:"icon,omitempty"`
+	// IconVersion: with Icon "post", what its picture is (a hash of the
+	// icon URL) — the UI's ?v= on /media/…/posticon/<id>, so an edit that
+	// changes the icon is not served from the old picture's cache.
+	IconVersion string `json:"icon_version,omitempty"`
 	// Webhook: from_webhook — never grouped with its neighbours (webapp
 	// areConsecutivePostsBySameUser).
 	Webhook       bool               `json:"webhook,omitempty"`
@@ -269,6 +275,10 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 		v.RealAuthor = s.displayNameLocked(p.UserID)
 	}
 	v.Icon = s.iconOverrideLocked(p)
+	if v.Icon == "post" {
+		sum := sha256.Sum256([]byte(p.Props.OverrideIconURL))
+		v.IconVersion = hex.EncodeToString(sum[:8])
+	}
 	if u, ok := s.users[p.UserID]; ok && u.IsBot {
 		v.Bot = true
 	}

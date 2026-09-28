@@ -162,6 +162,7 @@ export interface PostView {
   avatar?: string // picture version of the author; absent: profile not loaded
   // icon: a webhook's own picture — 'post' (/media/<srv>/posticon/<id>) or ':name:' (an emoji); absent: the avatar
   icon?: string
+  icon_version?: string // with icon 'post': what the picture is (?v=), so an edited icon is fetched anew
   webhook?: boolean // from_webhook: never grouped with its neighbours
   status?: string // presence of the author (online | away | dnd | offline | ooo)
   root_id?: string

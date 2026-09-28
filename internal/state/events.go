@@ -271,7 +271,7 @@ func (s *Server) onPostedLocked(ev ws.Event, eff *Effects) {
 	eff.Notify = &NotifyCandidate{
 		Post: p, Channel: ch.Info, ChannelName: s.channelNameLocked(ch), Member: ch.Member, Me: s.me,
 		Status: s.status, CRT: crt, Focused: s.focused, Active: s.active, ActiveThread: s.openThread,
-		Mentions: d.Mentions, Followers: d.Followers, SenderName: s.displayNameLocked(p.UserID),
+		Mentions: d.Mentions, Followers: d.Followers, SenderName: s.authorLocked(p),
 	}
 	if eff.Notify.SenderName == "" {
 		eff.Notify.SenderName = trimAt(d.SenderName)

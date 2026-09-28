@@ -87,6 +87,19 @@ func (s *Service) PostIcon(serverID int64, postID string) (media.PostIcon, bool)
 		Live: w.Status() == mmsync.StatusLive}, true
 }
 
+// GetIcon implements media.PostIcons: a GET of a live server's image path
+// with its session and limiter, on a client that follows only the redirects
+// redirect allows (the transfer transport, no whole-request timeout). A
+// 401 here is the path's answer, not the session's: no CheckAuth.
+func (s *Service) GetIcon(ctx context.Context, serverID int64, path string, redirect func(*http.Request, []*http.Request) error) (*http.Response, error) {
+	w := s.running(serverID)
+	if w == nil {
+		return nil, media.ErrNoServer
+	}
+	hc := &http.Client{Transport: transportOf(s.transfer), CheckRedirect: redirect}
+	return w.REST().WithHTTPClient(hc).Stream(ctx, path, nil)
+}
+
 // SetMediaStreamBase makes MediaStreamBase ask fn (the desktop's lazily
 // started loopback stream server) instead of answering "/media".
 func (s *Service) SetMediaStreamBase(fn func() (string, error)) {

@@ -5,7 +5,7 @@ import { EmojiGlyph } from './EmojiGlyph'
 
 interface Props {
   serverId: number
-  post: Pick<PostView, 'id' | 'user_id' | 'author' | 'avatar' | 'status' | 'icon'>
+  post: Pick<PostView, 'id' | 'user_id' | 'author' | 'avatar' | 'status' | 'icon' | 'icon_version'>
   size: number
 }
 
@@ -15,7 +15,10 @@ interface Props {
 // account's avatar, which is also what a failed icon falls back to. Eager
 // like Avatar (see there).
 export function PostAvatar({ serverId, post, size }: Props) {
-  const [failed, fail] = useLoadFailure(serverId, post.id)
+  // A failure is remembered per icon version: an edit that changes the
+  // icon tries the new one.
+  const version = post.icon_version ?? ''
+  const [failed, fail] = useLoadFailure(serverId, `${post.id}|${version}`)
   const icon = post.icon ?? ''
   const emoji = icon.length > 2 && icon.startsWith(':') && icon.endsWith(':') ? icon.slice(1, -1) : ''
   if (emoji) {
@@ -32,7 +35,7 @@ export function PostAvatar({ serverId, post, size }: Props) {
     return (
       <span className="relative block shrink-0" style={{ width: size, height: size }}>
         <img
-          src={mediaURL(serverId, 'posticon', post.id)}
+          src={mediaURL(serverId, 'posticon', post.id, version ? { v: version } : {})}
           alt=""
           width={size}
           height={size}

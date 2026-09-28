@@ -48,10 +48,7 @@ func (r *RecordingNotifier) List() []Notification {
 }
 
 func notificationFor(serverID int64, c state.NotifyCandidate) Notification {
-	sender := c.SenderName
-	if bool(c.Post.Props.FromWebhook) && c.Post.Props.OverrideUsername != "" {
-		sender = string(c.Post.Props.OverrideUsername)
-	}
+	sender := c.SenderName // state's author: a webhook's name only where the server allows it
 	body := postText(c.Post)
 	if c.Channel.Type != model.ChannelDirect {
 		body = sender + ": " + body
