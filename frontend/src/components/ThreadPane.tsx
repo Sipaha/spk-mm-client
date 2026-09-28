@@ -169,7 +169,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
+      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
     >
       <header className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         {narrow && (

@@ -65,6 +65,20 @@ beforeEach(() => {
   })) as unknown as typeof window.matchMedia
 })
 
+// Fix round 2 (review): the non-narrow panel must establish its own
+// positioning context (`relative`), like ChannelPane's <section> does —
+// otherwise the drop-target overlay (`.file-drop-target-active::after`,
+// `absolute inset-0`) positions against whatever ancestor App.tsx happens to
+// give it (its whole content row) instead of the 420px panel. jsdom has no
+// layout, so this only checks for the class that creates the containing
+// block, not the resulting geometry — see the real-browser proof in the
+// report for the actual bounding box.
+test('the panel (non-narrow) is a positioned ancestor for its drop-target overlay', () => {
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const target = container.querySelector('[data-file-drop-target]')!
+  expect(target).toHaveClass('relative')
+})
+
 test('the panel shows the root, its replies, the "N replies" divider, and a composer', () => {
   render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
   expect(screen.getByRole('complementary', { name: 'Thread' })).toBeInTheDocument()
