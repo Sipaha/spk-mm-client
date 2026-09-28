@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test'
 import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
+// A failed test must not leave its server behind: every later test signs in
+// from the empty start screen (same rule as feed-scroll.spec.ts).
+test.afterEach(async ({ page }) => {
+  if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
+})
+
 test('sidebar, feed and sending once', async ({ page }) => {
   await signInAlice(page)
   // the DM row is now "avatar + bob, <status>"; the group "👥 alice, bob, carol" does not start with "bob"
