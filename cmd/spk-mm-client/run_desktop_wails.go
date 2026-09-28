@@ -66,7 +66,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	// A nil *media.Cache in the interface would not be a nil handler:
 	// mediaH stays a nil interface when the cache cannot be opened.
 	var mediaH http.Handler
-	if mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc}); err != nil {
+	if mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc, PostIcons: svc}); err != nil {
 		slog.Warn("media cache unavailable; pictures will not load", "err", err)
 	} else {
 		mediaH = mc

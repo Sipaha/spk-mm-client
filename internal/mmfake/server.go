@@ -65,6 +65,13 @@ type Options struct {
 
 	DisableCustomEmoji bool // custom emoji endpoints answer 501 and the config says false
 
+	// DisablePostOverrides: EnablePostUsernameOverride and
+	// EnablePostIconOverride say false (the fake allows both by default).
+	DisablePostOverrides bool
+	// ImageProxy: HasImageProxy is true and GET /api/v4/image serves the
+	// pictures registered with SetProxiedImage (webhook.go).
+	ImageProxy bool
+
 	DisableFileAttachments bool  // EnableFileAttachments client config; POST /api/v4/files answers 403 when set
 	MaxFileSize            int64 // bytes; 0 -> DefaultMaxFileSize
 
@@ -100,6 +107,8 @@ type Server struct {
 	uploadThrottle int // bytes/sec, 0 = full speed (SetUploadThrottle)
 
 	filesDir string // uploads on disk (Options.FilesDir); "" = in memory
+
+	proxied map[string][]byte // image proxy: url → picture (SetProxiedImage)
 }
 
 // DefaultSiteName is the fake's site (and so server) name unless set.
@@ -148,6 +157,7 @@ func Start(o Options) *Server {
 	s.mediaRoutes(mux)
 	s.reactionRoutes(mux)
 	s.threadRoutes(mux)
+	s.webhookRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }
@@ -242,16 +252,20 @@ func (s *Server) clientConfig(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	fileAttachments, maxFileSize, crt := !s.opts.DisableFileAttachments, s.opts.MaxFileSize, s.chat.crtMode
 	s.mu.Unlock()
+	overrides := fmt.Sprint(!s.opts.DisablePostOverrides)
 	writeJSON(w, 200, map[string]string{
-		"SiteName":               s.opts.SiteName,
-		"SiteURL":                s.ts.URL,
-		"Version":                "10.11.0-fake",
-		"EnableSignUpWithGitLab": fmt.Sprint(!s.opts.DisableGitLab),
-		"CollapsedThreads":       crt,
-		"TeammateNameDisplay":    "username",
-		"EnableCustomEmoji":      fmt.Sprint(!s.opts.DisableCustomEmoji),
-		"EnableFileAttachments":  fmt.Sprint(fileAttachments),
-		"MaxFileSize":            strconv.FormatInt(maxFileSize, 10),
+		"SiteName":                   s.opts.SiteName,
+		"SiteURL":                    s.ts.URL,
+		"Version":                    "10.11.0-fake",
+		"EnableSignUpWithGitLab":     fmt.Sprint(!s.opts.DisableGitLab),
+		"CollapsedThreads":           crt,
+		"TeammateNameDisplay":        "username",
+		"EnableCustomEmoji":          fmt.Sprint(!s.opts.DisableCustomEmoji),
+		"EnableFileAttachments":      fmt.Sprint(fileAttachments),
+		"MaxFileSize":                strconv.FormatInt(maxFileSize, 10),
+		"EnablePostUsernameOverride": overrides,
+		"EnablePostIconOverride":     overrides,
+		"HasImageProxy":              fmt.Sprint(s.opts.ImageProxy),
 	})
 }
 

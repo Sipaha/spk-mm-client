@@ -25,6 +25,13 @@ type Config struct {
 	CustomEmoji             bool   `json:"custom_emoji,omitempty"`
 	MaxFileSize             int64  `json:"max_file_size,omitempty"`
 	EnableFileAttachments   bool   `json:"enable_file_attachments,omitempty"`
+	// PostUsernameOverride/PostIconOverride: EnablePostUsernameOverride and
+	// EnablePostIconOverride — whether a webhook post shows its own name
+	// and picture (the webapp checks them when it shows the post).
+	// ImageProxy: HasImageProxy — external pictures go through the server.
+	PostUsernameOverride bool `json:"post_username_override,omitempty"`
+	PostIconOverride     bool `json:"post_icon_override,omitempty"`
+	ImageProxy           bool `json:"image_proxy,omitempty"`
 }
 
 type Bootstrap struct {
@@ -275,6 +282,14 @@ func (s *Server) MaxFileSize() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cfg.MaxFileSize
+}
+
+// Config is the server's client config as of the last bootstrap (or the
+// snapshot).
+func (s *Server) Config() Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg
 }
 
 func (s *Server) FileAttachmentsEnabled() bool {

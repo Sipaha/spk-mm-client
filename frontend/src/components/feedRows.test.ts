@@ -23,6 +23,14 @@ test('webhook posts of one user with different names are not grouped', () => {
   expect(shape(rows)).toEqual(['day', 'w1*', 'w2*'])
 })
 
+test('a webhook post is never grouped, even under the same name (webapp areConsecutivePostsBySameUser)', () => {
+  const rows = buildRows(ch([
+    P('w1', 'hook', 0, { author: 'GitLab', webhook: true }), P('w2', 'hook', 1, { author: 'GitLab', webhook: true }),
+    P('h1', 'hook', 2), P('h2', 'hook', 3),
+  ]))
+  expect(shape(rows)).toEqual(['day', 'w1*', 'w2*', 'h1*', 'h2'])
+})
+
 test('new-messages line: before the first newer post from someone else, once', () => {
   const rows = buildRows(ch([P('old', 'bob', 0), P('mine', 'me', 2), P('n1', 'bob', 3), P('n2', 'bob', 4)], { new_since: base + 60_000 }))
   expect(shape(rows)).toEqual(['day', 'old*', 'mine*', 'new', 'n1*', 'n2'])

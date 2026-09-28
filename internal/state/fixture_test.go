@@ -49,7 +49,7 @@ func fixture() Bootstrap {
 	arch.DeleteAt = 99
 	return Bootstrap{
 		Me:     model.User{ID: "u1", Username: "alice"},
-		Config: Config{CollapsedThreads: "disabled", TeammateNameDisplay: "username"},
+		Config: Config{CollapsedThreads: "disabled", TeammateNameDisplay: "username", PostUsernameOverride: true, PostIconOverride: true},
 		Prefs: []model.Preference{
 			{Category: "direct_channel_show", Name: "u3", Value: "false"},
 			{Category: "group_channel_show", Name: "gm", Value: "true"},

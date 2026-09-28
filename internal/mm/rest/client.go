@@ -41,6 +41,9 @@ func New(baseURL, token string, hc *http.Client) *Client {
 	return &Client{base: baseURL, token: token, hc: hc, sleep: sleepCtx}
 }
 
+// Base is the server's base URL (what API paths are appended to).
+func (c *Client) Base() string { return c.base }
+
 // WithToken returns a copy that authenticates with token ("" = anonymous).
 func (c *Client) WithToken(token string) *Client {
 	cp := *c

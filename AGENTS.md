@@ -85,6 +85,29 @@
 - Картинки и фрагменты файлов UI берёт только с `/media/<srv>/<kind>/<key>`; путь строится
   только из проверенных ключей, открытого прокси к серверу Mattermost нет — обслуживает
   `internal/media`. — `TestBadRequests`.
+- Своя картинка webhook-поста (`override_icon_url`) — только `/media/<srv>/posticon/<post id>`: ключ —
+  id поста, никогда URL со страницы; Go сам находит пост в state и берёт URL, только если сервер
+  разрешает (`EnablePostIconOverride`) и пост подходит (`from_webhook`, не системный, без
+  `use_user_icon`; `override_icon_emoji` рисуется в UI через `EmojiGlyph`, без загрузки). Откуда
+  качать, решает `media.routeIcon`: относительный URL или origin сервера — REST-клиентом сервера (с
+  сессией; вне базового пути — отказ); внешний при `HasImageProxy` — через `/api/v4/image?url=` (с
+  сессией, как webapp); иначе — напрямую **без** токена/cookie, только http(s) без userinfo, ≤ 3
+  редиректов, без прокси окружения, со строгими таймаутами, и каждый dial (редиректы тоже) проверяет
+  реальный IP: loopback/private/link-local/CGNAT/служебные диапазоны отказываются (403, SSRF во
+  внутреннюю сеть из враждебного webhook). Дальше — те же растровые/размерные/пиксельные проверки,
+  дисковый кэш (одна копия на URL для всех постов webhook) и негативный кэш; офлайн не качает
+  (`PostIcon.Live`). Имя (`override_username`) — только при `EnablePostUsernameOverride` и
+  `from_webhook`; такой пост всегда BOT и никогда не группируется с соседями. —
+  `TestPostIconIsKeyedByPostID`, `TestRouteIcon`, `TestPostIconExternalSendsNoCredentials`,
+  `TestPostIconExternalRefusesPrivateAddresses`, `TestPublicAddr`, `TestPostIconExternalRedirects`,
+  `TestPostIconExternalRasterOnlySizeCapAndNegativeCache`, `TestPostIconThroughTheImageProxy`,
+  `TestPostIconFetchesOnlyWhileLive`, `TestPostViewWebhookOverridesFollowTheServerConfig`,
+  `TestPostViewWebhookOverridesOffInConfig`, `TestMediaPostIconThroughTheService`,
+  `frontend/src/components/PostItem.test.tsx` («a webhook icon that fails to load falls back to the
+  account avatar»), `feedRows.test.ts`, `tests/e2e/webhook.spec.ts`. Фейк: `Options.ImageProxy`,
+  `Options.DisablePostOverrides`, `WebhookPostAs`, `WebhookIconPath`, `SetProxiedImage`; test-API
+  `/api/_test/fake/webhook` `{channel_id, username, message, override_username, override_icon_url,
+  override_icon_emoji}` → `{id}`.
 - Browser-режим: доступ к `/media/` закрыт за cookie `spk_media` (HttpOnly, SameSite=Strict)
   или bearer-токеном — иначе картинку мог бы утащить любой сайт в браузере пользователя. —
   `TestMediaNeedsThePageCookie`.

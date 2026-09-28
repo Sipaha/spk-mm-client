@@ -6,10 +6,10 @@ import { errorMessage } from '../errors'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { Attachments } from './Attachments'
-import { Avatar } from './Avatar'
 import { EmojiGlyph } from './EmojiGlyph'
 import { IconAddReaction, IconBookmark, IconBookmarkFilled, IconMore } from './icons'
 import { Markdown } from './Markdown'
+import { PostAvatar } from './PostAvatar'
 import PostMenu from './PostMenu'
 import { Reactions } from './Reactions'
 
@@ -248,7 +248,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     >
       <div className="w-9 shrink-0 pt-0.5">
         {head ? (
-          <Avatar serverId={serverId} userId={post.user_id} version={post.avatar} name={post.author} status={post.status} size={36} surface="app" />
+          <PostAvatar serverId={serverId} post={post} size={36} />
         ) : (
           <time className="invisible block pt-1 text-right text-[10px] text-fg-subtle group-hover:visible">{time}</time>
         )}
@@ -256,7 +256,9 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
       <div className="min-w-0 flex-1">
         {head && (
           <header className="flex items-baseline gap-2">
-            <span className="font-semibold">{post.author}</span>
+            <span className="font-semibold" title={post.real_author}>
+              {post.author}
+            </span>
             {post.bot && <span className="rounded bg-hover px-1 text-[10px] font-semibold text-fg-muted">BOT</span>}
             <time className="text-xs text-fg-muted">{time}</time>
           </header>

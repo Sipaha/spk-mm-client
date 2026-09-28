@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
@@ -469,4 +469,37 @@ test('pending, failed and system posts offer no save button', async () => {
   rerender(<PostItem serverId={1} post={post({ failed: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
   expect(screen.queryByTestId('post-toolbar')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+})
+
+test('a webhook post shows its own name (the account in a tooltip) and its icon from /media/posticon', () => {
+  const { container } = render(
+    <PostItem serverId={1} post={post({ id: 'w1', author: 'GitLab', real_author: 'bob', icon: 'post', bot: true, webhook: true, avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />,
+  )
+  const name = screen.getByText('GitLab')
+  expect(name).toHaveAttribute('title', 'bob')
+  expect(screen.getByText('BOT')).toBeInTheDocument()
+  const img = container.querySelector('img')
+  expect(img).toHaveAttribute('src', '/media/1/posticon/w1')
+})
+
+test('a webhook icon that fails to load falls back to the account avatar', () => {
+  const { container } = render(
+    <PostItem serverId={1} post={post({ id: 'w1', author: 'GitLab', icon: 'post', avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />,
+  )
+  fireEvent.error(container.querySelector('img')!)
+  expect(container.querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-bob?v=5')
+})
+
+test('an emoji icon is drawn as the avatar', () => {
+  const { container } = render(
+    <PostItem serverId={1} post={post({ id: 'w2', author: 'GitLab', icon: ':tada:', avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />,
+  )
+  expect(container.querySelector('img')).toBeNull()
+  expect(screen.getByText('🎉')).toBeInTheDocument()
+})
+
+test('without an override the account avatar and a plain name are shown', () => {
+  const { container } = render(<PostItem serverId={1} post={post({ avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(container.querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-bob?v=5')
+  expect(screen.getByText('bob')).not.toHaveAttribute('title')
 })

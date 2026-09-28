@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/spk/spk-mm-client/internal/media"
+	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mmfake"
 )
 
 func TestMediaOriginStreamsThroughTheWorker(t *testing.T) {
@@ -169,4 +171,47 @@ func TestMediaStreamThroughTheLoopbackServer(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, get("f-clip-mp4", "bytes=0-9").StatusCode)
 	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "a stream 401 did not ask for a new sign-in")
 	assert.Equal(t, http.StatusNotFound, get("f-clip-webm", "").StatusCode, "not live: no stream")
+}
+
+// A webhook post's own picture: found by post id in the worker's state,
+// fetched from the server (a relative override_icon_url) with the session.
+func TestMediaPostIconThroughTheService(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	f.eventually(func() bool { return f.loaded(id, "c-town") }, "town square not prefetched")
+	p := fake.WebhookPostAs("c-town", "bob", "pipeline passed",
+		model.PostProps{OverrideUsername: "GitLab", OverrideIconURL: mmfake.WebhookIconPath})
+	plain := fake.PostAs("c-town", "bob", "hi")
+	f.eventually(func() bool {
+		_, ok := f.svc.PostIcon(id, plain.ID)
+		_, known := f.svc.PostIcon(id, p.ID)
+		return !ok && known
+	},
+		"the webhook post never arrived")
+
+	ic, ok := f.svc.PostIcon(id, p.ID)
+	require.True(t, ok)
+	assert.Equal(t, media.PostIcon{URL: mmfake.WebhookIconPath, Base: fake.URL(), Live: true}, ic)
+	_, ok = f.svc.PostIcon(999, p.ID)
+	assert.False(t, ok, "unknown server")
+
+	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: f.svc, PostIcons: f.svc})
+	require.NoError(t, err)
+	ts := httptest.NewServer(mc)
+	defer ts.Close()
+	for _, pid := range []string{p.ID, p.ID, plain.ID} {
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s", ts.URL, id, pid))
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if pid == plain.ID {
+			assert.Equal(t, 404, resp.StatusCode, "a post without an icon override")
+			continue
+		}
+		assert.Equal(t, 200, resp.StatusCode)
+		assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
+	}
+	assert.Equal(t, 1, fake.Hits("GET", mmfake.WebhookIconPath))
 }

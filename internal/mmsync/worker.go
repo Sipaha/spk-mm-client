@@ -761,6 +761,9 @@ func (w *Worker) fetchMeta(ctx context.Context) (b state.Bootstrap, settled bool
 		CustomEmoji:             cfg.EnableCustomEmoji == "true",
 		MaxFileSize:             cfg.MaxFileSizeBytes(),
 		EnableFileAttachments:   cfg.FileAttachmentsEnabled(),
+		PostUsernameOverride:    cfg.EnablePostUsernameOverride == "true",
+		PostIconOverride:        cfg.EnablePostIconOverride == "true",
+		ImageProxy:              cfg.HasImageProxy == "true",
 	}
 	if b.Me, err = w.rc.Me(ctx); err != nil {
 		return b, false, err

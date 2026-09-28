@@ -16,6 +16,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/api/transport"
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/media"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/paths"
 	"github.com/spk/spk-mm-client/internal/store"
@@ -94,7 +95,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
 	}
-	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc})
+	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc, PostIcons: svc})
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("media cache: %w", err)
@@ -242,6 +243,20 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			p := fake.ReplyAs(in.ChannelID, in.RootID, in.Username, in.Message)
+			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/webhook", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ChannelID         string `json:"channel_id"`
+				Username          string `json:"username"` // the webhook's owner
+				Message           string `json:"message"`
+				OverrideUsername  string `json:"override_username"`
+				OverrideIconURL   string `json:"override_icon_url"`
+				OverrideIconEmoji string `json:"override_icon_emoji"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			p := fake.WebhookPostAs(in.ChannelID, in.Username, in.Message, model.PostProps{OverrideUsername: model.FlexString(in.OverrideUsername),
+				OverrideIconURL: in.OverrideIconURL, OverrideIconEmoji: in.OverrideIconEmoji})
 			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
 		}))
 		tm.HandleFunc("POST /api/_test/fake/thread", withFake(func(w http.ResponseWriter, r *http.Request) {

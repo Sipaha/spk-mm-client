@@ -8,7 +8,10 @@ import (
 	"github.com/spk/spk-mm-client/internal/mmsync"
 )
 
-var _ media.Origin = (*Service)(nil)
+var (
+	_ media.Origin    = (*Service)(nil)
+	_ media.PostIcons = (*Service)(nil)
+)
 
 // running is the worker of a signed-in server whose session is live. Media
 // never fetches otherwise: offline or reconnecting the request would fail
@@ -59,6 +62,29 @@ func (s *Service) EmojiID(ctx context.Context, serverID int64, name string) (str
 		return "", media.ErrNoServer
 	}
 	return w.EmojiID(ctx, name)
+}
+
+// PostIcon implements media.PostIcons: the override_icon_url of a post the
+// server's worker holds (state decides whether it applies — the server's
+// EnablePostIconOverride, a webhook post), with the server's base URL and
+// image-proxy flag. Known offline too (its picture may be on disk); Live
+// says whether one may be fetched.
+func (s *Service) PostIcon(serverID int64, postID string) (media.PostIcon, bool) {
+	m := s.manager()
+	if m == nil {
+		return media.PostIcon{}, false
+	}
+	w := m.Worker(serverID)
+	if w == nil {
+		return media.PostIcon{}, false
+	}
+	st := w.State()
+	u, ok := st.PostIconURL(postID)
+	if !ok {
+		return media.PostIcon{}, false
+	}
+	return media.PostIcon{URL: u, Base: w.REST().Base(), ImageProxy: st.Config().ImageProxy,
+		Live: w.Status() == mmsync.StatusLive}, true
 }
 
 // SetMediaStreamBase makes MediaStreamBase ask fn (the desktop's lazily

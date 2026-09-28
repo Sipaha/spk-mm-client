@@ -158,7 +158,11 @@ export interface PostView {
   id: string
   user_id: string
   author: string
+  real_author?: string // the account behind a webhook's own name (author), for a tooltip
   avatar?: string // picture version of the author; absent: profile not loaded
+  // icon: a webhook's own picture — 'post' (/media/<srv>/posticon/<id>) or ':name:' (an emoji); absent: the avatar
+  icon?: string
+  webhook?: boolean // from_webhook: never grouped with its neighbours
   status?: string // presence of the author (online | away | dnd | offline | ooo)
   root_id?: string
   message: string

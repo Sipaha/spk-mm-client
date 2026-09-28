@@ -1,6 +1,7 @@
 package state
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 
@@ -37,9 +38,19 @@ type ReactionView struct {
 }
 
 type PostView struct {
-	ID            string             `json:"id"`
-	UserID        string             `json:"user_id"`
-	Author        string             `json:"author"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	Author string `json:"author"`
+	// RealAuthor: the account's name when Author is a webhook's
+	// override_username (for a tooltip); "" otherwise.
+	RealAuthor string `json:"real_author,omitempty"`
+	// Icon: the author's picture is overridden by a webhook — "post" (the
+	// picture is /media/<srv>/posticon/<post id>) or ":name:" (an emoji);
+	// "" = the account's avatar.
+	Icon string `json:"icon,omitempty"`
+	// Webhook: from_webhook — never grouped with its neighbours (webapp
+	// areConsecutivePostsBySameUser).
+	Webhook       bool               `json:"webhook,omitempty"`
 	Avatar        string             `json:"avatar,omitempty"` // picture version; "" = profile not loaded
 	Status        string             `json:"status,omitempty"` // presence of the author; "" for bots
 	RootID        string             `json:"root_id,omitempty"`
@@ -198,20 +209,66 @@ func (s *Server) teamNameLocked(ch *Chan) string {
 	return ""
 }
 
-// authorLocked is the name shown for p's author (a webhook may override it).
+// authorLocked is the name shown for p's author: a webhook's
+// override_username when the server allows it (webapp post/user_profile.tsx).
 func (s *Server) authorLocked(p model.Post) string {
-	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" {
-		return string(p.Props.OverrideUsername)
+	if name, ok := s.overrideNameLocked(p); ok {
+		return name
 	}
 	return s.displayNameLocked(p.UserID)
+}
+
+func (s *Server) overrideNameLocked(p model.Post) (string, bool) {
+	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" && s.cfg.PostUsernameOverride {
+		return string(p.Props.OverrideUsername), true
+	}
+	return "", false
+}
+
+// iconOverrideLocked is PostView.Icon: webapp post_profile_picture — a
+// webhook post (not a system one), not asking for the account's picture
+// (use_user_icon), on a server with EnablePostIconOverride. An emoji icon
+// wins: the server also rewrites override_icon_url to that emoji's
+// picture, which the UI draws itself. Without either the account's avatar
+// stays (the webapp would show its generic webhook logo).
+func (s *Server) iconOverrideLocked(p model.Post) string {
+	if !bool(p.Props.FromWebhook) || p.IsSystem() || bool(p.Props.UseUserIcon) || !s.cfg.PostIconOverride {
+		return ""
+	}
+	if name := strings.Trim(p.Props.OverrideIconEmoji, ":"); emojiNameRe.MatchString(name) {
+		return ":" + name + ":"
+	}
+	if p.Props.OverrideIconURL != "" {
+		return "post"
+	}
+	return ""
+}
+
+var emojiNameRe = regexp.MustCompile(`^[a-zA-Z0-9_+-]{1,64}$`)
+
+// PostIconURL is the override_icon_url of a held post whose picture the
+// UI shows from /media/<srv>/posticon/<id> (PostView.Icon == "post");
+// false for an unknown post or one without such a picture.
+func (s *Server) PostIconURL(postID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.findPostLocked(postID)
+	if !ok || s.iconOverrideLocked(p) != "post" {
+		return "", false
+	}
+	return p.Props.OverrideIconURL, true
 }
 
 func (s *Server) postViewLocked(p model.Post) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
 		EditAt: p.EditAt, ReplyCount: p.ReplyCount, LastReplyAt: p.LastReplyAt, System: p.IsSystem(), Attachments: p.Props.Attachments,
-		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
+		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), Webhook: bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
 	v.Saved = s.prefs[prefKey{flaggedPostCategory, p.ID}] == "true"
 	v.Author = s.authorLocked(p)
+	if _, ok := s.overrideNameLocked(p); ok {
+		v.RealAuthor = s.displayNameLocked(p.UserID)
+	}
+	v.Icon = s.iconOverrideLocked(p)
 	if u, ok := s.users[p.UserID]; ok && u.IsBot {
 		v.Bot = true
 	}

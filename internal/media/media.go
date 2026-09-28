@@ -48,6 +48,9 @@ const (
 	// KindStaged is a picture attached to a message not sent yet; key the
 	// attachment id. Read from the local file (Staged), scaled like feed.
 	KindStaged Kind = "staged"
+	// KindPostIcon is a webhook post's own author picture
+	// (override_icon_url); key the POST id, never a URL — posticon.go.
+	KindPostIcon Kind = "posticon"
 )
 
 // Limits of the cache and of what it accepts.
@@ -97,10 +100,12 @@ type Options struct {
 	Dir      string
 	MaxBytes int64 // total size cap; 0 → DefaultMaxBytes
 	Origin   Origin
-	Staged   Staged        // nil: staged pictures are not found
-	Fetches  int           // concurrent upstream fetches; 0 → 6
-	Timeout  time.Duration // per upstream fetch; 0 → 60 s
-	Now      func() time.Time
+	Staged   Staged // nil: staged pictures are not found
+	// PostIcons: nil — posticon pictures are not found.
+	PostIcons PostIcons
+	Fetches   int           // concurrent upstream fetches; 0 → 6
+	Timeout   time.Duration // per upstream fetch; 0 → 60 s
+	Now       func() time.Time
 }
 
 type entry struct {
@@ -128,6 +133,7 @@ type Cache struct {
 	neg      map[string]negEntry // cache key → recent failure
 	inflight map[string]*call    // cache key → fetch in progress
 	stream   *Streamer
+	ext      *http.Client // external post icons: no credentials, public addresses only
 }
 
 // New opens (creating) the cache directory: leftovers of interrupted writes
@@ -157,7 +163,8 @@ func New(o Options) (*Cache, error) {
 		return nil, err
 	}
 	c := &Cache{o: o, sem: make(chan struct{}, o.Fetches), index: map[string]*entry{},
-		neg: map[string]negEntry{}, inflight: map[string]*call{}, stream: NewStreamer(o.Origin)}
+		neg: map[string]negEntry{}, inflight: map[string]*call{}, stream: NewStreamer(o.Origin),
+		ext: newExternalClient(publicDial)}
 	for _, de := range des {
 		name := de.Name()
 		switch {
@@ -186,8 +193,9 @@ func (c *Cache) Size() int64 {
 type request struct {
 	server  int64
 	kind    Kind
-	key     string // user id, file id or emoji name
-	variant string // avatar: picture version; feed/full: "preview" | "file"
+	key     string    // user id, file id or emoji name
+	variant string    // avatar: picture version; feed/full: "preview" | "file"
+	icon    iconRoute // posticon: where the picture comes from (resolved in get)
 }
 
 var (
@@ -224,7 +232,7 @@ func parse(u *url.URL) (request, bool) {
 		if q.variant != "preview" && q.variant != "file" {
 			return request{}, false
 		}
-	case KindThumb, KindStream, KindStaged:
+	case KindThumb, KindStream, KindStaged, KindPostIcon:
 	case KindText:
 		switch u.Query().Get("full") {
 		case "":
@@ -269,6 +277,8 @@ func (q request) spec(id string) spec {
 		return spec{path: p, max: 25 << 20, scale: q.kind == KindFeed}
 	case KindStaged: // a local file: no path
 		return spec{max: 25 << 20, scale: true}
+	case KindPostIcon: // shown as a 36 px avatar: large ones are scaled down
+		return spec{path: q.icon.path, max: 2 << 20, scale: true}
 	case KindText:
 		limit := int64(TextLimit)
 		if q.variant == "full" {
@@ -378,8 +388,8 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	if q.kind == KindEmoji {
-		h.Set("Cache-Control", "private, max-age=3600") // by name: may be re-created
+	if q.kind == KindEmoji || q.kind == KindPostIcon {
+		h.Set("Cache-Control", "private, max-age=3600") // by name / by post: may change
 	} else {
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
@@ -393,6 +403,12 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 	if q.kind == KindEmoji {
 		var status int
 		if id, status = c.emojiID(ctx, q); status != 0 {
+			return "", status
+		}
+	}
+	if q.kind == KindPostIcon {
+		var status int
+		if id, q.icon, status = c.postIcon(q); status != 0 {
 			return "", status
 		}
 	}
@@ -503,7 +519,13 @@ func (c *Cache) fetch(q request, id, name string) error {
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), c.o.Timeout)
 		defer cancel()
-		resp, err := c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
+		var resp *http.Response
+		var err error
+		if q.kind == KindPostIcon {
+			resp, err = c.openIcon(ctx, q)
+		} else {
+			resp, err = c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)
+		}
 		if err != nil {
 			return err
 		}
@@ -641,6 +663,8 @@ func statusFor(err error) int {
 		return http.StatusRequestEntityTooLarge
 	case errors.Is(err, errType):
 		return http.StatusUnsupportedMediaType
+	case errors.Is(err, errBlocked):
+		return http.StatusForbidden
 	case errors.Is(err, errStore):
 		return http.StatusInternalServerError
 	case errors.Is(err, context.DeadlineExceeded):

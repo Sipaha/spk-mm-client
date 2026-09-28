@@ -29,7 +29,9 @@ export function buildRows(ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' |
         prev.author !== p.author ||
         p.create_at - prev.create_at > GROUP_MS ||
         !!p.system ||
-        !!prev.system
+        !!prev.system ||
+        !!p.webhook ||
+        !!prev.webhook
     }
     if (!lineDone && ch.new_since > 0 && p.create_at > ch.new_since && p.user_id !== ch.me_id && !p.pending && !p.failed) {
       rows.push({ kind: 'new', key: 'new' })

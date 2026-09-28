@@ -387,6 +387,32 @@ func TestTestAPIThreadControls(t *testing.T) {
 	assert.Empty(t, readList, "no PUT read calls were made in this test")
 }
 
+// fake/webhook posts as an incoming webhook: from_webhook plus the given
+// overrides (e2e: a GitLab-like post with its own name and icon).
+func TestTestAPIWebhookPost(t *testing.T) {
+	ts, token, fake := setup(t, true)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/_test/fake/webhook", strings.NewReader(
+		`{"channel_id":"c-town","username":"bob","message":"pipeline passed","override_username":"GitLab",`+
+			`"override_icon_url":"/static/images/webhook-icon.png","override_icon_emoji":":tada:"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Origin", ts.URL)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var out struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	posts := fake.VisiblePosts("c-town")
+	p := posts[len(posts)-1]
+	assert.Equal(t, out.ID, p.ID)
+	assert.True(t, bool(p.Props.FromWebhook))
+	assert.Equal(t, "GitLab", string(p.Props.OverrideUsername))
+	assert.Equal(t, "/static/images/webhook-icon.png", p.Props.OverrideIconURL)
+	assert.Equal(t, ":tada:", p.Props.OverrideIconEmoji)
+}
+
 // "Show in folder" has no file manager in browser mode: e2e reads the
 // requests from the test-API.
 func TestTestAPIRevealedFiles(t *testing.T) {

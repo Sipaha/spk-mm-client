@@ -48,6 +48,28 @@ func TestBootstrapCarriesFileAttachmentsDisabled(t *testing.T) {
 	assert.False(t, h.w.State().FileAttachmentsEnabled())
 }
 
+// TestBootstrapCarriesPostOverrides: EnablePostUsernameOverride,
+// EnablePostIconOverride and HasImageProxy reach state.Config.
+func TestBootstrapCarriesPostOverrides(t *testing.T) {
+	h := newHarness(t, mmfake.Options{ImageProxy: true})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch did not finish")
+	cfg := h.w.State().Config()
+	assert.True(t, cfg.PostUsernameOverride)
+	assert.True(t, cfg.PostIconOverride)
+	assert.True(t, cfg.ImageProxy)
+
+	off := newHarness(t, mmfake.Options{DisablePostOverrides: true})
+	off.start()
+	off.live()
+	off.eventually(off.allLoaded, "prefetch did not finish")
+	cfg = off.w.State().Config()
+	assert.False(t, cfg.PostUsernameOverride)
+	assert.False(t, cfg.PostIconOverride)
+	assert.False(t, cfg.ImageProxy)
+}
+
 func TestLivePostArrivesCountsAndNotifies(t *testing.T) {
 	h := newHarness(t, mmfake.Options{})
 	h.start()

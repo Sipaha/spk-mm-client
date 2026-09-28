@@ -1,0 +1,93 @@
+package state
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/spk/spk-mm-client/internal/mm/model"
+)
+
+// webhookPosts: a GitLab webhook with its own name and icon, one with an
+// emoji icon (the server also rewrites its URL to the emoji's), one asking
+// for the account's own picture, and a plain API post carrying the same
+// props without from_webhook (the webapp ignores them there).
+func webhookPosts() []model.Post {
+	gl := mkPost("w1", "off", "u2", 1000)
+	gl.Props = model.PostProps{FromWebhook: true, OverrideUsername: "GitLab", OverrideIconURL: "https://gitlab.example/fox.png"}
+	emo := mkPost("w2", "off", "u2", 2000)
+	emo.Props = model.PostProps{FromWebhook: true, OverrideIconEmoji: ":tada:", OverrideIconURL: "/static/emoji/1f389.png"}
+	own := mkPost("w3", "off", "u2", 3000)
+	own.Props = model.PostProps{FromWebhook: true, OverrideIconURL: "https://gitlab.example/fox.png", UseUserIcon: true}
+	api := mkPost("w4", "off", "u2", 4000)
+	api.Props = model.PostProps{OverrideUsername: "Impostor", OverrideIconURL: "https://evil.example/x.png"}
+	odd := mkPost("w5", "off", "u2", 5000)
+	odd.Props = model.PostProps{FromWebhook: true, OverrideIconEmoji: "../x", OverrideIconURL: "https://gitlab.example/fox.png"}
+	return []model.Post{gl, emo, own, api, odd}
+}
+
+func TestPostViewWebhookOverridesFollowTheServerConfig(t *testing.T) {
+	s := newFixture()
+	s.SetWindow("off", webhookPosts(), true, 5, 0)
+	v, ok := s.ChannelView("off")
+	require.True(t, ok)
+	require.Len(t, v.Posts, 5)
+
+	gl := v.Posts[0]
+	assert.Equal(t, "GitLab", gl.Author)
+	assert.Equal(t, "bob", gl.RealAuthor, "the account behind the webhook, for a tooltip")
+	assert.Equal(t, "post", gl.Icon)
+	assert.True(t, gl.Bot, "a webhook post is marked BOT (webapp: BotTag for from_webhook)")
+	assert.True(t, gl.Webhook)
+	assert.Empty(t, gl.Status, "no presence dot for a webhook")
+
+	assert.Equal(t, ":tada:", v.Posts[1].Icon, "an emoji icon wins over the URL the server derived from it")
+	assert.Equal(t, "bob", v.Posts[1].Author, "no override_username: the account's name")
+	assert.Empty(t, v.Posts[1].RealAuthor)
+
+	assert.Empty(t, v.Posts[2].Icon, "use_user_icon keeps the account's picture")
+
+	api := v.Posts[3]
+	assert.Equal(t, "bob", api.Author, "not from a webhook: overrides are ignored")
+	assert.Empty(t, api.Icon)
+	assert.False(t, api.Webhook)
+	assert.False(t, api.Bot)
+
+	assert.Equal(t, "post", v.Posts[4].Icon, "an emoji name that is not a name falls back to the URL")
+
+	url, ok := s.PostIconURL("w1")
+	assert.True(t, ok)
+	assert.Equal(t, "https://gitlab.example/fox.png", url)
+	for _, id := range []string{"w2", "w3", "w4", "nope"} {
+		_, ok := s.PostIconURL(id)
+		assert.False(t, ok, "%s: no picture to fetch for it", id)
+	}
+}
+
+func TestPostViewWebhookOverridesOffInConfig(t *testing.T) {
+	s := New(fixedNow)
+	b := fixture()
+	b.Config.PostUsernameOverride, b.Config.PostIconOverride = false, false
+	s.Bootstrap(b)
+	s.SetUsers([]model.User{{ID: "u1", Username: "alice"}, {ID: "u2", Username: "bob"}})
+	s.SetWindow("off", webhookPosts(), true, 5, 0)
+	v, ok := s.ChannelView("off")
+	require.True(t, ok)
+	gl := v.Posts[0]
+	assert.Equal(t, "bob", gl.Author, "EnablePostUsernameOverride=false: the account's name")
+	assert.Empty(t, gl.RealAuthor)
+	assert.Empty(t, gl.Icon, "EnablePostIconOverride=false: the account's picture")
+	assert.Empty(t, v.Posts[1].Icon)
+	assert.True(t, gl.Bot, "still a webhook post")
+	_, ok = s.PostIconURL("w1")
+	assert.False(t, ok, "no icon override allowed: nothing to fetch")
+}
+
+func TestConfigCarriesPostOverrideFlags(t *testing.T) {
+	s := newFixture()
+	cfg := s.Config()
+	assert.True(t, cfg.PostUsernameOverride)
+	assert.True(t, cfg.PostIconOverride)
+	assert.False(t, cfg.ImageProxy)
+}

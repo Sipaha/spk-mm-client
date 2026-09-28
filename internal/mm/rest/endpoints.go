@@ -21,6 +21,10 @@ type ClientConfig struct {
 	EnableCustomEmoji       string `json:"EnableCustomEmoji"`
 	MaxFileSize             string `json:"MaxFileSize"`
 	EnableFileAttachments   string `json:"EnableFileAttachments"`
+	// Webhook posts' own name/picture, and the server's image proxy.
+	EnablePostUsernameOverride string `json:"EnablePostUsernameOverride"`
+	EnablePostIconOverride     string `json:"EnablePostIconOverride"`
+	HasImageProxy              string `json:"HasImageProxy"`
 }
 
 func (c ClientConfig) GitLabEnabled() bool { return c.EnableSignUpWithGitLab == "true" }

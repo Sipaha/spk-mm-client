@@ -469,7 +469,7 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	}
 	now := s.nowLocked()
 	p := &fpost{Post: model.Post{ID: newID(), ChannelID: c.ID, UserID: userID, RootID: in.RootID,
-		Message: in.Message, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
+		Message: in.Message, Props: in.Props, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
 	if len(in.FileIDs) > 0 {
 		if files := s.attachFilesLocked(p.ID, c.ID, userID, in.FileIDs); len(files) > 0 {
 			for _, fi := range files {

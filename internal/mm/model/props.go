@@ -60,9 +60,14 @@ type Attachment struct {
 // field of an unexpected shape is dropped, not the whole post (bots and
 // plugins put arbitrary JSON in props).
 type PostProps struct {
-	FromBot           Flag         `json:"from_bot,omitempty"`
-	FromWebhook       Flag         `json:"from_webhook,omitempty"`
-	OverrideUsername  FlexString   `json:"override_username,omitempty"`
+	FromBot          Flag       `json:"from_bot,omitempty"`
+	FromWebhook      Flag       `json:"from_webhook,omitempty"`
+	OverrideUsername FlexString `json:"override_username,omitempty"`
+	// OverrideIconURL/OverrideIconEmoji: a webhook's own picture (strings
+	// only, as the server validates them); UseUserIcon keeps the account's.
+	OverrideIconURL   string       `json:"override_icon_url,omitempty"`
+	OverrideIconEmoji string       `json:"override_icon_emoji,omitempty"`
+	UseUserIcon       Flag         `json:"use_user_icon,omitempty"`
 	ForceNotification Flag         `json:"force_notification,omitempty"`
 	Attachments       []Attachment `json:"attachments,omitempty"`
 }
@@ -77,6 +82,9 @@ func (p *PostProps) UnmarshalJSON(b []byte) error {
 	_ = json.Unmarshal(m["from_webhook"], &p.FromWebhook)
 	_ = json.Unmarshal(m["override_username"], &p.OverrideUsername)
 	_ = json.Unmarshal(m["force_notification"], &p.ForceNotification)
+	_ = json.Unmarshal(m["override_icon_url"], &p.OverrideIconURL)
+	_ = json.Unmarshal(m["override_icon_emoji"], &p.OverrideIconEmoji)
+	_ = json.Unmarshal(m["use_user_icon"], &p.UseUserIcon)
 	if raw, ok := m["attachments"]; ok {
 		var atts []Attachment
 		if json.Unmarshal(raw, &atts) == nil {

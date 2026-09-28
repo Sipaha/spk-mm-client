@@ -66,3 +66,18 @@ func TestDMPartnerAndMuted(t *testing.T) {
 	assert.True(t, ChannelMember{NotifyProps: map[string]string{"mark_unread": "mention"}}.Muted())
 	assert.False(t, ChannelMember{}.Muted())
 }
+
+func TestPostPropsIconOverrides(t *testing.T) {
+	raw := `{"id":"p1","props":{"from_webhook":"true","override_icon_url":"https://gitlab.example/fox.png",
+		"override_icon_emoji":":tada:","use_user_icon":"true"}}`
+	var p Post
+	require.NoError(t, json.Unmarshal([]byte(raw), &p))
+	assert.Equal(t, "https://gitlab.example/fox.png", p.Props.OverrideIconURL)
+	assert.Equal(t, ":tada:", p.Props.OverrideIconEmoji)
+	assert.True(t, bool(p.Props.UseUserIcon))
+
+	var odd Post
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"p2","props":{"override_icon_url":42,"override_icon_emoji":{"x":1}}}`), &odd))
+	assert.Empty(t, odd.Props.OverrideIconURL, "a non-string icon URL is dropped (the server refuses one too)")
+	assert.Empty(t, odd.Props.OverrideIconEmoji)
+}
