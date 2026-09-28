@@ -6,6 +6,7 @@ import { formatTime } from '../format'
 import { t } from '../i18n'
 import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
+import { IconAddReaction, IconDelete, IconEdit, IconLink, IconMarkUnread } from './icons'
 import { Markdown } from './Markdown'
 import { Reactions } from './Reactions'
 
@@ -125,7 +126,7 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
 
 function ToolButton({ label, onClick, children }: { label: string; onClick(e: React.MouseEvent<HTMLButtonElement>): void; children: React.ReactNode }) {
   return (
-    <button aria-label={label} title={label} onClick={onClick} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-hover">
+    <button aria-label={label} title={label} onClick={onClick} className="flex items-center justify-center rounded px-1.5 py-0.5 text-fg-muted hover:bg-hover">
       {children}
     </button>
   )
@@ -224,16 +225,16 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
         >
           {canReact && (
             <ToolButton label={t('reaction.add')} onClick={(e) => openPicker(e.currentTarget)}>
-              ☺
+              <IconAddReaction />
             </ToolButton>
           )}
           {post.user_id === me.id && !post.system && (
-            <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}>✎</ToolButton>
+            <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}><IconEdit /></ToolButton>
           )}
-          <ToolButton label={t('post.markUnread')} onClick={() => actions.markUnread(post)}>◉</ToolButton>
-          <ToolButton label={t('post.copyLink')} onClick={() => actions.copyLink(post)}>🔗</ToolButton>
+          <ToolButton label={t('post.markUnread')} onClick={() => actions.markUnread(post)}><IconMarkUnread /></ToolButton>
+          <ToolButton label={t('post.copyLink')} onClick={() => actions.copyLink(post)}><IconLink /></ToolButton>
           {post.user_id === me.id && !post.system && (
-            <ToolButton label={t('post.delete')} onClick={() => actions.remove(post)}>🗑</ToolButton>
+            <ToolButton label={t('post.delete')} onClick={() => actions.remove(post)}><IconDelete /></ToolButton>
           )}
         </div>
       )}

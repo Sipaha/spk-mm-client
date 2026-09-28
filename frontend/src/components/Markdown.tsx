@@ -2,6 +2,7 @@ import { memo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { IconImage } from './icons'
 import { remarkMentions } from './remarkMentions'
 
 const plugins = [remarkGfm, remarkBreaks, remarkMentions]
@@ -26,8 +27,9 @@ export const Markdown = memo(function Markdown({ text, me, onLink }: { text: str
     img: ({ src, alt }) => {
       const href = typeof src === 'string' ? src : ''
       return (
-        <a href={href} title={href} className="text-accent hover:underline" onClick={linkTo(href, onLink)}>
-          🖼 {alt || href}
+        <a href={href} title={href} className="inline-flex items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
+          <IconImage size={14} />
+          {alt || href}
         </a>
       )
     },

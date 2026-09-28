@@ -6,6 +6,7 @@ import { streamURL, useLoadFailure } from '../media'
 import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
 import { videoBox } from './files'
+import { IconAudio, IconExpand, IconPlay } from './icons'
 import { registerMediaElement, releaseMediaElement } from './mediaSession'
 
 interface Props {
@@ -96,13 +97,13 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
     if (big) return el
     return (
       <div className="flex w-full max-w-xl items-center gap-2 rounded border border-line bg-panel px-2 py-1 text-xs">
-        <span aria-hidden>🎵</span>
+        <IconAudio className="shrink-0 text-fg-muted" />
         <span className="min-w-0 shrink-0 truncate font-medium" title={file.name} style={{ maxWidth: '40%' }}>
           {file.name}
         </span>
         {el}
         <IconButton label={t('file.view', { name: file.name })} onClick={() => onView?.(file)}>
-          ⤢
+          <IconExpand />
         </IconButton>
       </div>
     )
@@ -153,9 +154,7 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
           onClick={play}
           className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-panel text-fg hover:bg-hover"
         >
-          <span aria-hidden className="text-3xl">
-            ▶
-          </span>
+          <IconPlay size={32} />
           <span className="max-w-full truncate px-2 text-xs" title={file.name}>
             {file.name}
           </span>
@@ -167,7 +166,7 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
         onClick={() => onView?.(file)}
         className="absolute right-1 top-1 bg-black/50 text-white hover:bg-black/70"
       >
-        ⤢
+        <IconExpand />
       </IconButton>
     </div>
   )

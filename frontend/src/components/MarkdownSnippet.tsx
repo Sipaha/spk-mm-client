@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
+import { IconDownload, IconExpand, IconNote, IconOpenExternal } from './icons'
 import { Markdown } from './Markdown'
 import { useTextFile } from './textFile'
 
@@ -33,7 +34,7 @@ export function MarkdownSnippet({
     // bg-app.
     <figure className="w-full max-w-3xl overflow-hidden rounded border border-line bg-panel text-xs">
       <figcaption className="flex items-center gap-2 border-b border-line px-2 py-1">
-        <span aria-hidden>📝</span>
+        <IconNote className="shrink-0 text-fg-muted" />
         <span className="min-w-0 truncate font-medium" title={file.name}>
           {file.name}
         </span>
@@ -43,13 +44,13 @@ export function MarkdownSnippet({
             {t(open ? 'file.collapse' : 'file.expand')}
           </button>
           <IconButton label={t('file.view', { name: file.name })} onClick={() => onView(file)}>
-            ⤢
+            <IconExpand />
           </IconButton>
           <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-            ⬇
+            <IconDownload />
           </IconButton>
           <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
-            ↗
+            <IconOpenExternal />
           </IconButton>
         </span>
       </figcaption>

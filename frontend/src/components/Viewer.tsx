@@ -6,6 +6,7 @@ import { isShortcut } from '../keyboard'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
+import { IconClose } from './icons'
 import { MarkdownView } from './MarkdownView'
 import { MediaPlayer } from './MediaPlayer'
 import { TextView } from './TextView'
@@ -179,8 +180,8 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
           <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => onOpen(file)}>
             {t('viewer.open')}
           </button>
-          <button ref={closeRef} type="button" aria-label={t('viewer.close')} title={t('viewer.close')} className="rounded px-2 py-0.5 hover:bg-hover" onClick={onClose}>
-            ✕
+          <button ref={closeRef} type="button" aria-label={t('viewer.close')} title={t('viewer.close')} className="flex items-center justify-center rounded px-2 py-0.5 hover:bg-hover" onClick={onClose}>
+            <IconClose />
           </button>
         </span>
       </header>

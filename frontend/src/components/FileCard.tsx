@@ -3,6 +3,7 @@ import type { FileView } from '../api/types'
 import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
+import { IconDownload, IconFile, IconOpenExternal } from './icons'
 
 export interface FileHandlers {
   onView(file: FileView): void
@@ -22,7 +23,7 @@ export function IconButton({
   className?: string
 }) {
   return (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className={`rounded px-1 text-fg-muted hover:bg-hover hover:text-fg ${className}`}>
+    <button type="button" aria-label={label} title={label} onClick={onClick} className={`flex items-center justify-center rounded px-1 text-fg-muted hover:bg-hover hover:text-fg ${className}`}>
       {children}
     </button>
   )
@@ -53,7 +54,7 @@ export function FileCard({ file, onDownload, onOpen }: { file: FileView } & Pick
   return (
     <div className="flex max-w-sm flex-col gap-1 rounded border border-line px-2 py-1 text-xs">
       <div className="flex items-center gap-2">
-        <span aria-hidden>📎</span>
+        <IconFile className="shrink-0 text-fg-muted" />
         <span className="min-w-0 truncate" title={file.name}>
           {file.name}
         </span>
@@ -62,10 +63,10 @@ export function FileCard({ file, onDownload, onOpen }: { file: FileView } & Pick
         {!file.staged && (
           <>
             <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-              ⬇
+              <IconDownload />
             </IconButton>
             <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
-              ↗
+              <IconOpenExternal />
             </IconButton>
           </>
         )}

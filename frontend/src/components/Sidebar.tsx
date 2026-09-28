@@ -3,6 +3,7 @@ import type { CategoryView, ChannelItem, ServerDTO, SidebarDTO } from '../api/ty
 import { t } from '../i18n'
 import { Avatar, presenceLabel } from './Avatar'
 import { channelGlyph } from './glyph'
+import { IconChevronDown, IconChevronRight, IconMore } from './icons'
 
 interface Props {
   server: ServerDTO
@@ -92,8 +93,8 @@ export function Sidebar(p: Props) {
           <div className="truncate font-semibold text-fg">{p.server.name}</div>
           <div className="truncate text-xs text-fg-subtle">@{p.server.username}</div>
         </div>
-        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="rounded px-2 text-lg hover:bg-hover" onClick={() => setMenu(!menu)}>
-          ⋯
+        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="flex items-center justify-center rounded px-2 hover:bg-hover" onClick={() => setMenu(!menu)}>
+          <IconMore />
         </button>
         {menu && (
           <div role="menu" className="absolute right-2 top-11 z-10 flex w-44 flex-col rounded border border-line bg-panel py-1 shadow-lg">
@@ -135,7 +136,7 @@ export function Sidebar(p: Props) {
                 onClick={() => setCollapsed({ ...collapsed, [cat.id]: !isCollapsed })}
                 className="flex w-full items-center gap-1 px-3 py-0.5 text-left text-xs font-semibold uppercase tracking-wide text-fg-muted hover:text-fg"
               >
-                <span className="w-3">{isCollapsed ? '▸' : '▾'}</span>
+                <span className="flex w-3 items-center">{isCollapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}</span>
                 {categoryName(cat)}
               </button>
               <ul>

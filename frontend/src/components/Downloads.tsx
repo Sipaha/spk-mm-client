@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { useEffect, useRef } from 'react'
 import type { DownloadView } from '../api/types'
 import { downloadErrorMessage } from '../errors'
@@ -5,16 +6,18 @@ import { formatSize, formatTime } from '../format'
 import { t } from '../i18n'
 import { IconButton } from './FileCard'
 import { fileKind } from './files'
+import { IconAudio, IconClose, IconFile, IconFolder, IconImage, IconNote, IconOpenExternal, IconVideo, type IconProps } from './icons'
 
 const W = 360
 const H = 420
 
-const KIND_GLYPH: Record<string, string> = {
-  image: '🖼', video: '🎬', audio: '🎵', text: '📄', markdown: '📄', other: '📎',
+const KIND_ICON: Record<string, (p: IconProps) => ReactElement> = {
+  image: IconImage, video: IconVideo, audio: IconAudio, text: IconNote, markdown: IconNote, other: IconFile,
 }
 
-function kindGlyph(d: DownloadView): string {
-  return KIND_GLYPH[fileKind({ id: String(d.id), name: d.name, size: d.size, mime: d.mime })]
+function KindIcon({ d, className }: { d: DownloadView; className?: string }) {
+  const Cmp = KIND_ICON[fileKind({ id: String(d.id), name: d.name, size: d.size, mime: d.mime })]
+  return <Cmp className={className} />
 }
 
 // placePanel puts the panel under its button, or above it when there is no
@@ -28,7 +31,7 @@ export function placePanel(anchor: Pick<DOMRect, 'top' | 'bottom' | 'right'>, vw
 }
 
 interface Props {
-  // anchorEl: the header's ⬇ button — its rect places the panel, and it is
+  // anchorEl: the header's downloads button — its rect places the panel, and it is
   // (a) excluded from the outside-click check, so the same click that
   // toggles it open doesn't also toggle it closed via that check, and (b)
   // where focus returns to once the panel closes.
@@ -118,9 +121,7 @@ export default function Downloads({ anchorEl, downloads, locale, primaryAction, 
             const primary = primaryAction(d)
             return (
               <div key={d.id} role="listitem" className="flex items-center gap-2 rounded px-1 py-1.5 text-xs">
-                <span aria-hidden className="shrink-0 text-base">
-                  {kindGlyph(d)}
-                </span>
+                <KindIcon d={d} className="shrink-0 text-fg-muted" />
                 <button
                   type="button"
                   data-row={i}
@@ -148,17 +149,17 @@ export default function Downloads({ anchorEl, downloads, locale, primaryAction, 
                 <div className="flex shrink-0 items-center gap-0.5">
                   {d.state === 'done' && d.exists && d.openable && (
                     <IconButton label={t('downloads.open', { name: d.name })} onClick={() => onOpen(d.id)}>
-                      ↗
+                      <IconOpenExternal />
                     </IconButton>
                   )}
                   {d.state === 'done' && d.exists && (
                     <IconButton label={t('downloads.reveal', { name: d.name })} onClick={() => onReveal(d.id)}>
-                      📂
+                      <IconFolder />
                     </IconButton>
                   )}
                   {d.state !== 'downloading' && (
                     <IconButton label={t('downloads.remove', { name: d.name })} onClick={() => onRemove(d.id)}>
-                      ✕
+                      <IconClose />
                     </IconButton>
                   )}
                 </div>

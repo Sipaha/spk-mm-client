@@ -6,6 +6,7 @@ import { errorMessage } from '../errors'
 import { t } from '../i18n'
 import { useStore } from '../store'
 import { AttachmentsTray } from './AttachmentsTray'
+import { IconAttach } from './icons'
 
 const DRAFT_DELAY = 500
 
@@ -186,9 +187,9 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
           aria-label={t('composer.attach')}
           title={t('composer.attach')}
           onClick={onAttachClick}
-          className="shrink-0 rounded px-2 py-2 text-fg-muted hover:bg-hover hover:text-fg"
+          className="flex shrink-0 items-center justify-center rounded px-2 py-2 text-fg-muted hover:bg-hover hover:text-fg"
         >
-          📎
+          <IconAttach />
         </button>
         <textarea
           ref={textareaRef}

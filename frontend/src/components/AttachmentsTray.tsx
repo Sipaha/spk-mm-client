@@ -5,11 +5,12 @@ import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { mediaURL, useLoadFailure } from '../media'
+import { IconFile } from './icons'
 
 // isImage: whether a staged attachment's own mime is worth trying as a
 // picture — /media/<srv>/staged/<id> only ever serves raster types
 // (internal/media's stagedPicture); anything else (or a load that fails —
-// e.g. a huge/corrupt file the cache refuses) falls back to the 📎 icon.
+// e.g. a huge/corrupt file the cache refuses) falls back to the file icon.
 const isImage = (mime: string) => mime.startsWith('image/') && mime !== 'image/svg+xml'
 
 function Chip({
@@ -53,8 +54,8 @@ function Chip({
       {showImage ? (
         <img src={url} alt="" onError={fail} className="h-8 w-8 shrink-0 rounded object-cover" />
       ) : (
-        <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-hover text-base">
-          📎
+        <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-hover">
+          <IconFile />
         </span>
       )}
       <div className="min-w-0 flex-1">

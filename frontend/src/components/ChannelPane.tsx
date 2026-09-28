@@ -15,6 +15,7 @@ import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
 import { channelGlyph } from './glyph'
+import { IconDownload } from './icons'
 import type { PostActions } from './PostItem'
 import { Viewer } from './Viewer'
 
@@ -120,9 +121,9 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           title={downloadsLabel}
           aria-label={downloadsLabel}
           onClick={() => (downloadsOpen ? closeDownloadsPanel() : openDownloadsPanel())}
-          className="relative ml-auto shrink-0 rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
+          className="relative ml-auto flex shrink-0 items-center justify-center rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
         >
-          ⬇
+          <IconDownload />
           {activeDownloads > 0 && (
             <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-white">
               {activeDownloads}

@@ -2,12 +2,13 @@ import type { ReactionView } from '../api/types'
 import { emojiChar, useEmojiIndex } from '../emoji'
 import { t } from '../i18n'
 import { EmojiGlyph } from './EmojiGlyph'
+import { IconAddReaction } from './icons'
 
 interface Props {
   serverId: number
   reactions: ReactionView[]
   onToggle(r: ReactionView): void
-  onAdd?(trigger: HTMLElement): void // the "☺+" chip opens the picker next to itself
+  onAdd?(trigger: HTMLElement): void // the "add reaction" chip opens the picker next to itself
 }
 
 // Reactions: a chip per emoji; clicking toggles our own reaction with the
@@ -39,9 +40,9 @@ export function Reactions({ serverId, reactions, onToggle, onAdd }: Props) {
           aria-label={t('reaction.add')}
           title={t('reaction.add')}
           onClick={(e) => onAdd(e.currentTarget)}
-          className="flex h-6 items-center rounded-full border border-line px-1.5 text-xs text-fg-muted hover:bg-hover"
+          className="flex h-6 items-center justify-center rounded-full border border-line px-1.5 text-xs text-fg-muted hover:bg-hover"
         >
-          ☺+
+          <IconAddReaction size={14} />
         </button>
       )}
     </div>
