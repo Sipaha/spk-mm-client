@@ -199,6 +199,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         </div>
       )}
       <Feed
+        key={`feed-${thread.channel_id}-${thread.root_id}`}
         data={data}
         variant="thread"
         serverId={server.id}

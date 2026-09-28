@@ -79,6 +79,55 @@ test('the panel (non-narrow) is a positioned ancestor for its drop-target overla
   expect(target).toHaveClass('relative')
 })
 
+// Task 7 reviewer follow-up: the panel's <Feed> had no per-thread key, so
+// opening a different thread while the panel stayed open reused the same
+// Feed instance — carrying over its scroll position and its spent
+// "auto-load more" budget (fillViewportIfShort/ready.current) into a thread
+// that has nothing to do with either. Keying it by (channel, root), like the
+// Composer already is, forces a fresh mount per thread.
+test('switching to a different thread remounts the feed (fresh scroll/load state), not reusing the old instance', () => {
+  const { container, rerender } = render(<ThreadPane server={server()} thread={thread({ root_id: 'root' })} onClose={() => {}} />)
+  const firstLog = container.querySelector('[data-feed="thread"]')
+  expect(firstLog).not.toBeNull()
+
+  rerender(
+    <ThreadPane
+      server={server()}
+      thread={thread({
+        root_id: 'root2',
+        posts: [post({ id: 'root2', message: 'another thread' })],
+      })}
+      onClose={() => {}}
+    />,
+  )
+  const secondLog = container.querySelector('[data-feed="thread"]')
+  expect(secondLog).not.toBeNull()
+  expect(secondLog).not.toBe(firstLog) // a fresh DOM node — the old Feed unmounted
+  expect(firstLog!.isConnected).toBe(false)
+})
+
+// Companion guard: a content refresh of the *same* thread (e.g. a new reply
+// arriving via thread_changed) must NOT remount the feed — that would lose
+// the user's scroll position on every live update, not just on switching
+// threads.
+test('refreshing the same open thread (new posts, same root) keeps the same feed instance', () => {
+  const { container, rerender } = render(<ThreadPane server={server()} thread={thread({ root_id: 'root' })} onClose={() => {}} />)
+  const firstLog = container.querySelector('[data-feed="thread"]')
+
+  rerender(
+    <ThreadPane
+      server={server()}
+      thread={thread({
+        root_id: 'root',
+        posts: [post(), post({ id: 'r1', root_id: 'root' }), post({ id: 'r2', root_id: 'root', message: 'new reply' })],
+      })}
+      onClose={() => {}}
+    />,
+  )
+  const secondLog = container.querySelector('[data-feed="thread"]')
+  expect(secondLog).toBe(firstLog) // same instance: no remount for an ordinary refresh
+})
+
 test('the panel shows the root, its replies, the "N replies" divider, and a composer', () => {
   render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
   expect(screen.getByRole('complementary', { name: 'Thread' })).toBeInTheDocument()
