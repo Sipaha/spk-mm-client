@@ -1,13 +1,16 @@
 import { lazy, memo, Suspense, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Attachment, EmojiDTO, FileView, PostView } from '../api/types'
+import { invalidateRecent, useQuickReactions } from '../emoji/recent'
 import { errorMessage } from '../errors'
 import { formatTime } from '../format'
 import { t } from '../i18n'
 import { Attachments } from './Attachments'
 import { Avatar } from './Avatar'
-import { IconAddReaction, IconDelete, IconEdit, IconLink, IconMarkUnread } from './icons'
+import { EmojiGlyph } from './EmojiGlyph'
+import { IconAddReaction, IconMore } from './icons'
 import { Markdown } from './Markdown'
+import PostMenu from './PostMenu'
 import { Reactions } from './Reactions'
 
 const EmojiPicker = lazy(() => import('./EmojiPicker'))
@@ -126,9 +129,30 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
 
 function ToolButton({ label, onClick, children }: { label: string; onClick(e: React.MouseEvent<HTMLButtonElement>): void; children: React.ReactNode }) {
   return (
-    <button aria-label={label} title={label} onClick={onClick} className="flex items-center justify-center rounded px-1.5 py-0.5 text-fg-muted hover:bg-hover">
+    <button aria-label={label} title={label} onClick={onClick} className="flex h-8 w-8 items-center justify-center rounded text-fg-muted hover:bg-hover">
       {children}
     </button>
+  )
+}
+
+// QuickReactions: the hover bar's up-to-3 one-click reactions (Task 2's
+// getOneClickReactionEmojis equivalent — see emoji/recent.ts). A separate
+// component so useQuickReactions (and the api.emojiInfo() call it can
+// trigger) only mounts once the toolbar itself is actually rendered, i.e.
+// at the post's first "show" — never for a merely-mounted, not-hot row.
+function QuickReactions({ serverId, post, load, react }: { serverId: number; post: PostView; load(): Promise<EmojiDTO>; react(emoji: string, add: boolean): void }) {
+  const quick = useQuickReactions(serverId, load)
+  return (
+    <>
+      {quick.map((name) => {
+        const mine = post.reactions?.some((r) => r.emoji === name && r.mine) ?? false
+        return (
+          <ToolButton key={name} label={t('reaction.quick', { emoji: `:${name}:` })} onClick={() => react(name, !mine)}>
+            <EmojiGlyph serverId={serverId} name={name} size={20} />
+          </ToolButton>
+        )
+      })}
+    </>
   )
 }
 
@@ -149,14 +173,43 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     setPicker(null)
     trigger.current?.focus()
   }
+  // react wraps actions.react: adding one of our reactions bumps the
+  // emoji's recency on the server, so the quick-reactions cache is marked
+  // stale and re-read at the toolbar's next show (emoji/recent.ts).
+  const react = (emoji: string, add: boolean) => {
+    actions.react(post, emoji, add)
+    if (add) invalidateRecent(serverId)
+  }
   const pick = (name: string) => {
     closePicker()
-    if (!post.reactions?.some((r) => r.emoji === name && r.mine)) actions.react(post, name, true)
+    if (!post.reactions?.some((r) => r.emoji === name && r.mine)) react(name, true)
   }
+  // hot: the toolbar renders only for the "hot" post (hovered, focused, or
+  // with its own menu/picker open) — see AGENTS.md's Ruling: a toolbar
+  // rendered (even CSS-hidden) for every row would load every quick
+  // reaction's custom-emoji picture for rows nobody is looking at.
+  const [hot, setHot] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const moreBtn = useRef<HTMLElement | null>(null)
+  const articleRef = useRef<HTMLElement | null>(null)
+  const visible = hot || menuOpen || !!picker
+  const openMenu = (el: HTMLElement) => {
+    moreBtn.current = el
+    setMenuOpen(true)
+  }
+  const closeMenu = () => setMenuOpen(false)
   return (
     <article
+      ref={articleRef}
       data-post-id={post.id}
       className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''} ${post.pending ? 'opacity-60' : ''}`}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
+      onFocus={() => setHot(true)}
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null
+        if (!next || !articleRef.current?.contains(next)) setHot(false)
+      }}
     >
       <div className="w-9 shrink-0 pt-0.5">
         {head ? (
@@ -194,7 +247,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           />
         )}
         {post.reactions && post.reactions.length > 0 && (
-          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => actions.react(post, r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />
+          <Reactions serverId={serverId} reactions={post.reactions} onToggle={(r) => react(r.emoji, !r.mine)} onAdd={canReact ? openPicker : undefined} />
         )}
         {crt && (post.reply_count ?? 0) > 0 && <div className="mt-0.5 text-xs font-medium text-accent">{t('post.replies', { n: String(post.reply_count) })}</div>}
         {post.pending && (
@@ -217,25 +270,24 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           </div>
         )}
       </div>
-      {!post.pending && !post.failed && !editing && (
+      {!post.pending && !post.failed && !editing && visible && (
         <div
+          data-testid="post-toolbar"
           role="toolbar"
           aria-label={t('post.actions')}
-          className="absolute -top-3 right-3 hidden gap-0.5 rounded border border-line bg-panel px-1 shadow-sm group-focus-within:flex group-hover:flex"
+          className="absolute -top-4 right-3 flex gap-0.5 rounded border border-line bg-panel px-1 shadow-sm"
         >
+          {canReact && <QuickReactions serverId={serverId} post={post} load={actions.emojiInfo} react={react} />}
           {canReact && (
             <ToolButton label={t('reaction.add')} onClick={(e) => openPicker(e.currentTarget)}>
-              <IconAddReaction />
+              <IconAddReaction size={20} />
             </ToolButton>
           )}
-          {post.user_id === me.id && !post.system && (
-            <ToolButton label={t('post.edit')} onClick={() => actions.edit(post)}><IconEdit /></ToolButton>
-          )}
-          <ToolButton label={t('post.markUnread')} onClick={() => actions.markUnread(post)}><IconMarkUnread /></ToolButton>
-          <ToolButton label={t('post.copyLink')} onClick={() => actions.copyLink(post)}><IconLink /></ToolButton>
-          {post.user_id === me.id && !post.system && (
-            <ToolButton label={t('post.delete')} onClick={() => actions.remove(post)}><IconDelete /></ToolButton>
-          )}
+          {/* reply — added by a later, threads task (IconReply) */}
+          {null}
+          <ToolButton label={t('post.more')} onClick={(e) => openMenu(e.currentTarget)}>
+            <IconMore size={20} />
+          </ToolButton>
         </div>
       )}
       {picker &&
@@ -243,6 +295,20 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           <Suspense fallback={null}>
             <EmojiPicker serverId={serverId} anchor={picker.anchor} info={picker.info} onPick={pick} onClose={closePicker} />
           </Suspense>,
+          document.body,
+        )}
+      {menuOpen &&
+        moreBtn.current &&
+        createPortal(
+          <PostMenu
+            anchorEl={moreBtn.current}
+            canEdit={post.user_id === me.id && !post.system}
+            onMarkUnread={() => actions.markUnread(post)}
+            onCopyLink={() => actions.copyLink(post)}
+            onEdit={() => actions.edit(post)}
+            onDelete={() => actions.remove(post)}
+            onClose={closeMenu}
+          />,
           document.body,
         )}
     </article>

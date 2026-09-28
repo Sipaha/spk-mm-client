@@ -3,6 +3,7 @@ import type { EmojiDTO } from '../api/types'
 import { searchEmoji, useEmojiIndex } from '../emoji'
 import { t, type I18nKey } from '../i18n'
 import { mediaURL } from '../media'
+import { placeBelow } from './panelPosition'
 
 export const COLS = 9
 const W = 360
@@ -33,12 +34,9 @@ interface Section {
 }
 
 // placePicker puts the picker under its button, or above it when there is
-// no room below, always inside the viewport.
+// no room below, always inside the viewport — see placeBelow.
 export function placePicker(anchor: Pick<DOMRect, 'top' | 'bottom' | 'right'>, vw: number, vh: number) {
-  const left = Math.max(8, Math.min(anchor.right - W, vw - W - 8))
-  const below = anchor.bottom + 4
-  const top = below + H <= vh - 8 ? below : Math.max(8, anchor.top - H - 4)
-  return { left, top }
+  return placeBelow(anchor, vw, vh, W, H)
 }
 
 // layout numbers rows through all sections, so arrow keys move by the

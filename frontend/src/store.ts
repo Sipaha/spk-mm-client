@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO } from './api/types'
+import { forgetRecent } from './emoji/recent'
 
 export interface NoticeAction {
   label: string
@@ -90,6 +91,12 @@ export const useStore = create<State>((set, get) => ({
       if (s.state === 'live' && prev.find((p) => p.id === s.id)?.state !== 'live') {
         liveEpochs = { ...liveEpochs, [s.id]: (liveEpochs[s.id] ?? 0) + 1 }
       }
+    }
+    // A server no longer in the list was removed: drop its quick-reactions
+    // cache (emoji/recent.ts) — an id is never reused, so keeping it would
+    // just grow the cache forever across add/remove churn.
+    for (const p of prev) {
+      if (!list.some((s) => s.id === p.id)) forgetRecent(p.id)
     }
     set({
       servers: list,

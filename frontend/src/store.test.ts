@@ -1,5 +1,9 @@
+import { vi } from 'vitest'
 import type { DownloadView, ServerDTO } from './api/types'
+import { forgetRecent } from './emoji/recent'
 import { useStore } from './store'
+
+vi.mock('./emoji/recent', () => ({ forgetRecent: vi.fn() }))
 
 const srv = (o: Partial<ServerDTO> = {}): ServerDTO => ({
   id: 1, name: 'A', url: 'https://a', signed_in: true, username: 'alice', gitlab: false,
@@ -92,6 +96,17 @@ test('a server going live bumps its live epoch; other updates do not', () => {
   expect(epoch(1)).toBe(e1 + 1)
   useStore.getState().setServers([srv({ state: 'live' }), srv({ id: 2, state: 'live' })])
   expect(epoch(1)).toBe(e1 + 2)
+})
+
+test('a server dropped from the list has its quick-reactions cache forgotten (emoji/recent.ts)', () => {
+  vi.mocked(forgetRecent).mockClear() // the mock is shared across this file's tests
+  useStore.getState().setServers([srv({ id: 1 }), srv({ id: 2 })])
+  expect(forgetRecent).not.toHaveBeenCalled()
+  useStore.getState().setServers([srv({ id: 1 })]) // server 2 removed
+  expect(forgetRecent).toHaveBeenCalledTimes(1)
+  expect(forgetRecent).toHaveBeenCalledWith(2)
+  useStore.getState().setServers([srv({ id: 1 })]) // no change: not called again
+  expect(forgetRecent).toHaveBeenCalledTimes(1)
 })
 
 const dl = (over: Partial<DownloadView> = {}): DownloadView => ({

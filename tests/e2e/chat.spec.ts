@@ -67,10 +67,12 @@ test('edit with arrow-up, delete with confirmation', async ({ page }) => {
   await expect(feed(page).getByText(`${text} v2`)).toBeVisible()
   await expect(feed(page).locator('article', { hasText: `${text} v2` }).getByText('(edited)')).toBeVisible()
 
+  // Edit and Delete moved into the "…" menu (Task 2, UI pass 2026-09-28).
   const post = feed(page).locator('article', { hasText: `${text} v2` })
   await post.hover()
+  await post.getByRole('button', { name: 'More actions' }).click()
   page.once('dialog', (d) => d.accept())
-  await post.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('menuitem', { name: 'Delete' }).click()
   await expect(feed(page).getByText(`${text} v2`)).toHaveCount(0)
   await removeServerFromMenu(page)
 })
@@ -81,7 +83,8 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
   await expect.poll(unread).toBe(false) // baseline: nothing unread, so the dot below comes from this action
   const post = feed(page).locator('article', { hasText: 'Message #140' })
   await post.hover()
-  await post.getByRole('button', { name: 'Mark as unread' }).click()
+  await post.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Mark as unread' }).click()
   // exact: true — same substring clash as above ("Fake MM — Unread messages" on the button).
   await expect(page.getByRole('navigation').getByLabel('Unread messages', { exact: true })).toBeVisible()
   await page.waitForTimeout(1000) // the open, focused channel must NOT auto-read it again

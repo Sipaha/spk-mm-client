@@ -7,6 +7,7 @@ import { t } from '../i18n'
 import { IconButton } from './FileCard'
 import { fileKind } from './files'
 import { IconAudio, IconClose, IconFile, IconFolder, IconImage, IconNote, IconOpenExternal, IconVideo, type IconProps } from './icons'
+import { placeBelow } from './panelPosition'
 
 const W = 360
 const H = 420
@@ -21,13 +22,10 @@ function KindIcon({ d, className }: { d: DownloadView; className?: string }) {
 }
 
 // placePanel puts the panel under its button, or above it when there is no
-// room below, always inside the viewport — same rule as the emoji picker's
-// placePicker (frontend/src/components/EmojiPicker.tsx).
+// room below, always inside the viewport — see placeBelow (also used by the
+// emoji picker's placePicker and PostMenu).
 export function placePanel(anchor: Pick<DOMRect, 'top' | 'bottom' | 'right'>, vw: number, vh: number, h = H) {
-  const left = Math.max(8, Math.min(anchor.right - W, vw - W - 8))
-  const below = anchor.bottom + 4
-  const top = below + h <= vh - 8 ? below : Math.max(8, anchor.top - h - 4)
-  return { left, top }
+  return placeBelow(anchor, vw, vh, W, h)
 }
 
 interface Props {

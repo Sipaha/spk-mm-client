@@ -1,8 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
-import type { PostView } from '../api/types'
+import type { EmojiDTO, PostView } from '../api/types'
+import { forgetRecent } from '../emoji/recent'
 import { setLocale } from '../i18n'
 import { PostItem, type PostActions } from './PostItem'
 
@@ -16,8 +17,27 @@ const actions = (): PostActions => ({
   emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
 })
 const me = { id: 'u-alice', username: 'alice' }
+const dto = (o: Partial<EmojiDTO> = {}): EmojiDTO => ({ recent: [], custom: [], custom_enabled: false, ...o })
 
 beforeEach(() => setLocale('en'))
+// emoji/recent.ts caches per server id across the whole module — every
+// test here uses server 1 (or 2), so drop both between tests or an
+// earlier test's quick-reaction cache leaks into a later one. cleanup()
+// runs first and explicitly (not left to RTL's own automatic afterEach,
+// whose registration order relative to this one is not guaranteed):
+// forgetRecent's notify() would otherwise re-awaken a not-yet-unmounted
+// leftover QuickReactions from the previous test, which then refetches
+// with *that* test's mock and can land its result here instead.
+afterEach(() => {
+  cleanup()
+  forgetRecent(1)
+  forgetRecent(2)
+})
+
+// hover shows the toolbar (PostItem's "hot" state, pointerenter/focusin —
+// see the Ruling in AGENTS.md): it is only actually mounted once hot, not
+// merely CSS-hidden, so every toolbar-button test needs this first.
+const hover = (el: Element) => userEvent.hover(el)
 
 test('head shows author, time and bot badge; follow-up hides them', () => {
   const { rerender } = render(<PostItem serverId={1} post={post({ bot: true, edit_at: 1 })} head me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
@@ -97,22 +117,103 @@ test('a pending post with no files offers no Cancel button', () => {
   expect(screen.queryByRole('button', { name: 'Cancel sending' })).toBeNull()
 })
 
-test('own post offers edit and delete; others only mark unread and copy link', async () => {
+test('own post: the "…" menu offers edit and delete; others only mark unread and copy link', async () => {
   const a = actions()
   const own = post({ user_id: 'u-alice' })
-  const { rerender } = render(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
-  await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  const { container, rerender } = render(<PostItem serverId={1} post={own} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull() // not hovered/focused yet: not even mounted
+  await hover(container.querySelector('[data-post-id]')!)
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  const menu = await screen.findByRole('menu')
+  expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Mark as unread', 'Copy link', 'Edit', 'Delete'])
+  await userEvent.click(within(menu).getByRole('menuitem', { name: 'Edit' }))
   expect(a.edit).toHaveBeenCalledWith(own)
-  await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  expect(screen.queryByRole('menu')).toBeNull() // picking an item closes the menu
+
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
   expect(a.remove).toHaveBeenCalledWith(own)
+
   const other = post()
   rerender(<PostItem serverId={1} post={other} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
-  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
-  await userEvent.click(screen.getByRole('button', { name: 'Mark as unread' }))
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  const menu2 = await screen.findByRole('menu')
+  expect(within(menu2).queryByRole('menuitem', { name: 'Edit' })).toBeNull()
+  expect(within(menu2).queryByRole('menuitem', { name: 'Delete' })).toBeNull()
+  await userEvent.click(within(menu2).getByRole('menuitem', { name: 'Mark as unread' }))
   expect(a.markUnread).toHaveBeenCalledWith(other)
-  await userEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }))
   expect(a.copyLink).toHaveBeenCalledWith(other)
+})
+
+test('the toolbar is not rendered before hover/focus; it stays visible while the "…" menu is open after the pointer leaves', async () => {
+  const a = actions()
+  const { container } = render(<PostItem serverId={1} post={post({ user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const article = container.querySelector('[data-post-id]')!
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  await hover(article)
+  expect(await screen.findByTestId('post-toolbar')).toBeInTheDocument()
+  await userEvent.unhover(article)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull() // no menu/picker open: hides again
+
+  await hover(article)
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  await userEvent.unhover(article)
+  expect(screen.getByTestId('post-toolbar')).toBeInTheDocument() // menu still open: toolbar stays
+  await userEvent.keyboard('{Escape}')
+  expect(screen.queryByRole('menu')).toBeNull()
+})
+
+test('focusing an element inside the post (not just hovering it) also shows the toolbar', async () => {
+  const a = actions()
+  render(<PostItem serverId={1} post={post({ reactions: [{ emoji: '+1', count: 1, mine: false }] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  screen.getByRole('button', { name: '👍 1' }).focus() // the reaction chip, not a toolbar button
+  expect(await screen.findByTestId('post-toolbar')).toBeInTheDocument()
+})
+
+test('quick reactions: the first 3 known names appear once emojiInfo resolves; clicking toggles the reaction', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ recent: ['tada', 'unknown_custom', 'fire', 'rocket'], custom: [] }))
+  const { container } = render(<PostItem serverId={1} post={post({ user_id: 'u-bob' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  const toolbar = await screen.findByTestId('post-toolbar')
+  await waitFor(() => expect(within(toolbar).getAllByRole('button', { name: /^React with/ })).toHaveLength(3))
+  const names = within(toolbar).getAllByRole('button', { name: /^React with/ }).map((b) => b.getAttribute('aria-label'))
+  expect(names).toEqual(['React with :tada:', 'React with :fire:', 'React with :rocket:'])
+  await userEvent.click(within(toolbar).getByRole('button', { name: 'React with :tada:' }))
+  expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'tada', true)
+})
+
+test('quick reactions: clicking a name we already reacted with removes it instead', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ recent: ['tada'] }))
+  const { container } = render(<PostItem serverId={1} post={post({ reactions: [{ emoji: 'tada', count: 1, mine: true }] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  const toolbar = await screen.findByTestId('post-toolbar')
+  const quick = await within(toolbar).findByRole('button', { name: 'React with :tada:' })
+  await userEvent.click(quick)
+  expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'tada', false)
+})
+
+test('hovering several posts on the same server calls emojiInfo only once', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ recent: ['tada'] }))
+  const { container } = render(
+    <>
+      <PostItem serverId={1} post={post({ id: 'p1' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+      <PostItem serverId={1} post={post({ id: 'p2' })} head={false} me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </>,
+  )
+  const articles = container.querySelectorAll('[data-post-id]')
+  await hover(articles[0])
+  await waitFor(() => expect(within(screen.getByTestId('post-toolbar')).queryAllByRole('button', { name: /^React with/ })).toHaveLength(1))
+  await userEvent.unhover(articles[0])
+  await hover(articles[1])
+  await waitFor(() => expect(within(screen.getByTestId('post-toolbar')).queryAllByRole('button', { name: /^React with/ })).toHaveLength(1))
+  expect(a.emojiInfo).toHaveBeenCalledTimes(1)
 })
 
 test('inline edit: Enter saves, Escape cancels, errors stay visible', async () => {
@@ -155,6 +256,32 @@ test('system and pending posts offer no reaction button', () => {
   expect(screen.queryByRole('button', { name: 'Add reaction' })).toBeNull()
   rerender(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
   expect(screen.queryByRole('button', { name: 'Add reaction' })).toBeNull()
+})
+
+// Review Focus #4: a pending, failed or system post gets no quick
+// reactions (and no "save" once Task 3 adds it) even when hovered — and,
+// unlike an ordinary post, hovering it never calls emojiInfo at all.
+test('a system post shows a toolbar (mark unread/copy link still apply) but no quick reactions, and never calls emojiInfo', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ recent: ['tada'] }))
+  const { container } = render(<PostItem serverId={1} post={post({ system: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  const toolbar = await screen.findByTestId('post-toolbar')
+  expect(within(toolbar).queryAllByRole('button', { name: /^React with/ })).toHaveLength(0)
+  expect(within(toolbar).queryByRole('button', { name: 'Add reaction' })).toBeNull()
+  expect(within(toolbar).getByRole('button', { name: 'More actions' })).toBeInTheDocument()
+  await new Promise((r) => setTimeout(r, 0))
+  expect(a.emojiInfo).not.toHaveBeenCalled()
+})
+
+test('a pending or failed post shows no toolbar at all, hovered or not', async () => {
+  const a = actions()
+  const { container, rerender } = render(<PostItem serverId={1} post={post({ pending: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  rerender(<PostItem serverId={1} post={post({ failed: true })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('[data-post-id]')!)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
 })
 
 test('head shows the author picture with presence; an unknown author gets initials', () => {
