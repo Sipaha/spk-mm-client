@@ -203,18 +203,34 @@ test('wheel zooms in around the cursor and reports a growing percentage; wheel o
   }
 })
 
-test('double-click zooms from fit to natural size, and again back to fit', () => {
+test('double-click on the image zooms from fit to natural size, and again back to fit', () => {
+  const restore = stubImageRect(400, 300)
+  try {
+    const { onPercent } = renderZoom(img)
+    // A real double-click that should zoom lands on the <img> itself, not on
+    // the container div around it (that's the empty-area case below, and
+    // Viewer.tsx's own backdrop click closes the viewer for that one).
+    const el = screen.getByRole('img', { name: 'build.png' })
+    const fitPercent = onPercent.mock.calls.at(-1)![0] as number
+    fireEvent.doubleClick(el, { clientX: 200, clientY: 150 })
+    const naturalPercent = onPercent.mock.calls.at(-1)![0] as number
+    expect(naturalPercent).toBeGreaterThan(fitPercent)
+    fireEvent.doubleClick(el, { clientX: 200, clientY: 150 })
+    const backToFit = onPercent.mock.calls.at(-1)![0] as number
+    expect(backToFit).toBe(fitPercent)
+  } finally {
+    restore()
+  }
+})
+
+test('double-click on the empty area around the image (not on the <img>) does not toggle zoom', () => {
   const restore = stubImageRect(400, 300)
   try {
     const { onPercent } = renderZoom(img)
     const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
     const fitPercent = onPercent.mock.calls.at(-1)![0] as number
     fireEvent.doubleClick(stage, { clientX: 200, clientY: 150 })
-    const naturalPercent = onPercent.mock.calls.at(-1)![0] as number
-    expect(naturalPercent).toBeGreaterThan(fitPercent)
-    fireEvent.doubleClick(stage, { clientX: 200, clientY: 150 })
-    const backToFit = onPercent.mock.calls.at(-1)![0] as number
-    expect(backToFit).toBe(fitPercent)
+    expect(onPercent.mock.calls.at(-1)![0]).toBe(fitPercent) // unchanged — Viewer.tsx closes on the leading click instead
   } finally {
     restore()
   }

@@ -96,7 +96,29 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       draggedRef.current = false
       return
     }
-    if (e.target === e.currentTarget) onClose()
+    const target = e.target as HTMLElement
+    // A literal hit on this handler's own element (the classic "backdrop"
+    // case), or a hit on ImageZoom's root div: that div fills the whole
+    // pane (so the image can be centered/panned within it) and sits in
+    // front of the pane div wherever the image itself doesn't cover —
+    // `data-viewer-empty` marks it so a click there still counts as
+    // clicking the empty area, not the pane div underneath (833c3e6 made
+    // that space unreachable by `target === currentTarget` alone). A click
+    // on the <img> itself (or any other control) has that element as its
+    // target, never this one, so it's unaffected. Other viewer kinds
+    // (video/audio, markdown/text, file cards) don't need this: video/audio
+    // has no such wrapper, and markdown/text intentionally fill the pane
+    // with real content that must not close on click.
+    const isEmptyArea = target === e.currentTarget || target.hasAttribute('data-viewer-empty')
+    if (isEmptyArea) {
+      // Stop this bubbling further: the dialog's own onClick also uses
+      // closeOnBackdrop, and without this a click matched here by the
+      // `data-viewer-empty` branch (target !== that handler's own
+      // currentTarget) would otherwise satisfy it too and call onClose a
+      // second time.
+      e.stopPropagation()
+      onClose()
+    }
   }
   const nav = 'absolute top-1/2 -translate-y-1/2 rounded-full bg-black/50 px-3 py-1 text-2xl text-white hover:bg-black/70'
   const kind = fileKind(file)

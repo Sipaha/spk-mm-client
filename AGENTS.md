@@ -191,11 +191,21 @@
   8× натурального размера. Оригинал запрашивается сразу вместе с превью (оба `<img>` смонтированы
   с самого начала), превью остаётся видимым до готовности оригинала — не наоборот; колёсный и
   клавиатурный обработчики подписываются один раз при монтировании и читают свежее состояние
-  через ref, а не переподписываются на каждое изменение масштаба. — `frontend/src/components/
+  через ref, а не переподписываются на каждое изменение масштаба. Корневой `<div>` `ImageZoom`
+  занимает всю панель (`data-viewer-empty`) — Viewer.tsx считает клик по нему (не по `<img>`)
+  кликом по пустой области и закрывает просмотрщик, как и клик по самой панели; двойной клик
+  переключает вписать/100% только когда его цель — сам `<img>` (двойной клик по пустой области —
+  это для браузера сначала обычный `click`, который уже закрывает просмотрщик — до `dblclick`
+  дело не доходит). — `frontend/src/components/
   ImageZoom.test.tsx` («wheel zooms in around the cursor and reports a growing percentage; wheel
   out returns toward it», «the original is requested immediately, and the preview is shown as a
   placeholder until it loads», «wheel and keyboard zoom subscribe once, not on every scale
-  change»), `frontend/src/components/imageZoom.test.ts`.
+  change», «double-click on the image zooms from fit to natural size, and again back to fit»,
+  «double-click on the empty area around the image (not on the `<img>`) does not toggle zoom»),
+  `frontend/src/components/imageZoom.test.ts`, `frontend/src/components/Viewer.test.tsx`
+  («clicking the empty area around the image closes the viewer, while loading and after load;
+  clicking the image itself does not», «at zoom > 1, clicking the visible image still does not
+  close; clicking the uncovered area around it still does»).
 - Видео и аудио стримятся, не кэшируются на диске и не буферизуются в памяти: `MediaPlayer`
   берёт URL у `streamURL()`/`MediaStreamBase` (Task 7) и рендерит `<video controls>`/
   `<audio controls preload="none">`. Играет одновременно только один элемент во всём приложении

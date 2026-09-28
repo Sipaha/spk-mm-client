@@ -165,6 +165,15 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   }, [])
 
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only a double-click that actually lands on the image toggles zoom. A
+    // double-click on the empty area around it is, from the browser's own
+    // event order (click, click, dblclick), preceded by two `click`s — the
+    // first of which already closed the viewer via Viewer.tsx's
+    // closeOnBackdrop (see `data-viewer-empty` below) before this handler
+    // would even run. Checking the target here documents that choice
+    // explicitly and keeps this component correct on its own, independent
+    // of the parent's click behaviour.
+    if ((e.target as HTMLElement).tagName !== 'IMG') return
     const el = activeEl()
     if (!el) return
     const rect = el.getBoundingClientRect()
@@ -250,6 +259,15 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
   return (
     <div
       ref={containerRef}
+      // data-viewer-empty: this container fills the whole pane (so the
+      // image can be centered/panned within it), which means a real mouse
+      // click "around" the image at fit scale (or on any part of the pane
+      // the image doesn't cover when zoomed in) actually lands on this div,
+      // not on the pane div behind it — Viewer.tsx's closeOnBackdrop treats
+      // this marker the same as a literal backdrop hit. A click on the
+      // <img> itself (or a control) is unaffected: its target is the <img>,
+      // not this div, so it never matches.
+      data-viewer-empty="true"
       className="relative flex h-full w-full items-center justify-center"
       onMouseDown={onMouseDown}
       onDoubleClick={onDoubleClick}

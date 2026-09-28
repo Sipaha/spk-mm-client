@@ -71,19 +71,22 @@ test('a loading indicator shows until the image loads', async () => {
   expect(screen.getByRole('img', { name: 'build.png' })).toBeInTheDocument()
 })
 
-test('clicking the backdrop closes the viewer around an image, while loading and after load; clicking the image itself does not', async () => {
+test('clicking the empty area around the image closes the viewer, while loading and after load; clicking the image itself does not', async () => {
   const onClose = vi.fn()
-  render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
-  const dialog = screen.getByRole('dialog', { name: 'File viewer' })
-  // The content div wrapping the image and its nav buttons — this is the
-  // "backdrop" a user clicks around the image to dismiss the viewer.
-  const backdrop = dialog.children[1] as HTMLElement
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
   const el = screen.getByRole('img', { name: 'build.png' })
+  // ImageZoom's own root div fills the whole pane (so the image can be
+  // centered/panned inside it) — a real mouse aiming at the empty area
+  // around the image actually lands on this div, not on the pane div
+  // behind it. Firing the click directly on the pane div (as this test used
+  // to) is unrealistic: no real mouse can hit it while the image is shown.
+  const emptyArea = container.querySelector('[data-viewer-empty]') as HTMLElement
+  expect(emptyArea).not.toBeNull()
   expect(screen.getByText('Loading…')).toBeInTheDocument() // still loading
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
-  fireEvent.click(backdrop)
+  fireEvent.click(emptyArea)
   expect(onClose).toHaveBeenCalledTimes(1)
 
   onClose.mockClear()
@@ -92,8 +95,58 @@ test('clicking the backdrop closes the viewer around an image, while loading and
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
+  fireEvent.click(emptyArea)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('at zoom > 1, clicking the visible image still does not close; clicking the uncovered area around it still does', async () => {
+  const onClose = vi.fn()
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const el = screen.getByRole('img', { name: 'build.png' })
+  fireEvent.load(el)
+  const emptyArea = container.querySelector('[data-viewer-empty]') as HTMLElement
+  fireEvent.keyDown(window, { key: '+' }) // zoom in past fit
+
+  await userEvent.click(el)
+  expect(onClose).not.toHaveBeenCalled()
+  fireEvent.click(emptyArea)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('a double-click on the empty area around the image closes the viewer on its first click, same as a plain click (real browsers fire click before dblclick — the leading click is what closes it; ImageZoom.test.tsx covers that the double-click itself does not toggle zoom there)', async () => {
+  const onClose = vi.fn()
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const el = screen.getByRole('img', { name: 'build.png' })
+  fireEvent.load(el)
+  const emptyArea = container.querySelector('[data-viewer-empty]') as HTMLElement
+  fireEvent.click(emptyArea)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('video: clicking the pane around the player closes the viewer; clicking the player itself does not', async () => {
+  vi.spyOn(client, 'mediaStreamBase').mockResolvedValue('/media')
+  const onClose = vi.fn()
+  const { container } = render(
+    <Viewer serverId={1} files={[clip]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />,
+  )
+  const dialog = screen.getByRole('dialog', { name: 'File viewer' })
+  const backdrop = dialog.children[1] as HTMLElement
+  const video = container.querySelector('video')!
+  fireEvent.click(video)
+  expect(onClose).not.toHaveBeenCalled()
   fireEvent.click(backdrop)
   expect(onClose).toHaveBeenCalledTimes(1)
+  vi.restoreAllMocks()
+})
+
+test('markdown/text: clicking inside the rendered content does not close the viewer (it fills the pane by design)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\nbody text\n')))
+  const onClose = vi.fn()
+  render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const heading = await screen.findByRole('heading', { name: 'Title' })
+  fireEvent.click(heading)
+  expect(onClose).not.toHaveBeenCalled()
+  vi.unstubAllGlobals()
 })
 
 test('a pan-drag that ends without a following click (e.g. released outside the window) does not swallow a later, unrelated backdrop click', async () => {
