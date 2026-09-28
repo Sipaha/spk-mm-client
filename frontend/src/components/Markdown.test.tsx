@@ -4,7 +4,7 @@ import { vi } from 'vitest'
 import type { EmojiDTO } from '../api/types'
 import { forgetRecent } from '../emoji/recent'
 import { Markdown } from './Markdown'
-import { isEmojiOnlyText, splitEmoji } from './remarkEmoji'
+import { emojiNames, isEmojiOnlyText, splitEmoji } from './remarkEmoji'
 import { splitMentions } from './remarkMentions'
 
 afterEach(() => {
@@ -126,4 +126,52 @@ test('emoji: a URL-like "http://x:8080:" is not mangled into a shortcode', () =>
 test('emoji: jumbo — a message made only of emoji renders larger', () => {
   const { container } = render(<Markdown text={':white_check_mark: :tada:'} me="alice" onLink={() => {}} serverId={1} />)
   expect(container.querySelectorAll('.text-3xl')).toHaveLength(2)
+})
+
+// --- Fix round 1 (review findings) ---
+
+test('splitEmoji/emojiNames accept uppercase letters in the name, as the webapp and server do', () => {
+  expect(splitEmoji(':MyEmoji:')).toEqual([{ emoji: 'MyEmoji', raw: ':MyEmoji:' }])
+  expect(emojiNames('go :MyEmoji: and :white_check_mark: go')).toEqual(['MyEmoji', 'white_check_mark'])
+})
+
+test('isEmojiOnlyText accepts uppercase names in its shape check too', () => {
+  expect(isEmojiOnlyText(':MyEmoji:')).toBe(true)
+})
+
+test('emoji: a mixed-case standard shortcode resolves case-insensitively, same lookup as the webapp', () => {
+  const { container } = render(<Markdown text={'done :White_Check_Mark:'} me="alice" onLink={() => {}} serverId={1} />)
+  expect(container.textContent).toBe('done ✅')
+})
+
+test('emoji: an uppercase custom emoji name is tokenized and resolves via emojiInfo (case preserved for the lookup)', async () => {
+  const emojiInfo = vi.fn().mockResolvedValue({ recent: [], custom: ['MyEmoji'], custom_enabled: true } satisfies EmojiDTO)
+  const { container } = render(<Markdown text={'go :MyEmoji: go'} me="alice" onLink={() => {}} serverId={1} emojiInfo={emojiInfo} />)
+  await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+  expect(container.querySelector('img')!.getAttribute('src')).toContain('/media/1/emoji/MyEmoji')
+})
+
+test('emoji: jumbo does not fire when the message mixes a resolved and an unresolved shortcode', () => {
+  const { container } = render(<Markdown text={':white_check_mark: :notanemoji:'} me="alice" onLink={() => {}} serverId={1} />)
+  // The resolved half must not render enlarged just because the raw text's
+  // *shape* looked jumbo-eligible — review round 1 #2.
+  expect(container.querySelector('.text-3xl')).toBeNull()
+  expect(container.textContent).toBe('✅ :notanemoji:')
+})
+
+test('emoji: jumbo waits for a custom name to resolve before firing, then applies to the whole message', async () => {
+  const emojiInfo = vi.fn().mockResolvedValue({ recent: [], custom: ['party'], custom_enabled: true } satisfies EmojiDTO)
+  const { container } = render(<Markdown text={':white_check_mark: :party:'} me="alice" onLink={() => {}} serverId={1} emojiInfo={emojiInfo} />)
+  await waitFor(() => expect(container.querySelectorAll('.text-3xl')).toHaveLength(2))
+})
+
+test('emoji: a shortcode inside a markdown link\'s label converts; the URL itself is untouched', async () => {
+  const onLink = vi.fn()
+  const { container } = render(
+    <Markdown text={'[:smile: click here](https://example.com)'} me="alice" onLink={onLink} serverId={1} />,
+  )
+  const link = screen.getByRole('link')
+  expect(link.textContent).toBe('😄 click here')
+  await userEvent.click(link)
+  expect(onLink).toHaveBeenCalledWith('https://example.com')
 })
