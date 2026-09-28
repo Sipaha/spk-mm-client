@@ -69,7 +69,9 @@ markdown и подгрузкой истории, отправка/правка/�
 
     make build          # фронт + бинарь (browser-режим)
     make run-browser    # http://127.0.0.1:5180 с фейковым сервером
-    make run            # desktop
+    make run            # пересобрать всё (фронт + desktop-бинарь) и запустить в foreground;
+                        # уже запущенный экземпляр не останавливает — Ctrl+C его сначала
+                        # (SIGINT/SIGTERM оба гасят приложение чисто за ~1 с)
     make test           # go + фронт + e2e
     make install-dev-linux  # зарегистрировать dev-сборку для mmauth:// (Linux)
     make pss PID=<pid>  # память процесса и потомков: Private_Dirty (бюджет) и PSS (Linux)

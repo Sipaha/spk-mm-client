@@ -23,7 +23,14 @@
 ## Сборка и тесты
 
 - `make build` — фронт + бинарь для browser-режима (`build/bin/spk-mm-client`).
-- `make build-desktop` — desktop-бинарь (теги `wails gtk3`).
+- `make build-desktop` — desktop-бинарь (теги `wails gtk3`); собирает во временный файл в
+  `build/bin` и атомарно переносит (`mv`) на место — уже запущенный экземпляр держит старый
+  (отвязанный) inode, пока сам не завершится, а неудачная сборка не трогает существующий бинарь.
+- `make run` — `build-desktop` + запуск свежего бинаря в foreground (как `make run` в spk-mail).
+  Не останавливает уже запущенный экземпляр — сначала завершить его самому (Ctrl+C/SIGINT или
+  SIGTERM: оба гасят приложение чисто и быстро, `cmd/spk-mm-client/main.go` заводит
+  `signal.NotifyContext` на оба сигнала, а `internal/desktop/run.go` реагирует на отмену контекста
+  тем же путём, что и «Quit» из трея — `app.Quit()`, с закрытием store/media/стримов через defer).
 - `make test-go`, `make test-front`, `make test-e2e`, `make lint`, `make cross-check`.
 - `make run-browser` — UI на http://127.0.0.1:5180 с фейковым сервером MM (данные во временном каталоге).
 - `E2E_BIN=<путь> E2E_PORT=<порт>` для `pnpm exec playwright test` в `tests/e2e` — прогнать e2e против

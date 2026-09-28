@@ -21,9 +21,13 @@ build-go:
 	mkdir -p $(BIN_DIR)
 	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mm-client)
 
+# Builds to a temp file and mv's it into place atomically: a running
+# instance keeps its old (now-unlinked) inode alive across the replace
+# (see `make run`), and a failed build never touches the existing binary.
 build-desktop: build-frontend
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-desktop ./cmd/spk-mm-client)
+	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-desktop.tmp ./cmd/spk-mm-client)
+	mv -f $(BIN_DIR)/spk-mm-client-desktop.tmp $(BIN_DIR)/spk-mm-client-desktop
 
 release: build-frontend
 	mkdir -p $(BIN_DIR)
@@ -61,6 +65,10 @@ tidy:
 clean:
 	rm -rf build frontend/dist
 
+# Rebuilds everything (frontend + desktop binary, build-desktop's temp+mv)
+# and runs the fresh binary in the foreground. Does not stop an already
+# running instance — Ctrl+C the old one first (SIGINT/SIGTERM both quit it
+# cleanly within ~1s: internal/desktop/run.go, cmd/spk-mm-client/main.go).
 run: build-desktop
 	$(BIN_DIR)/spk-mm-client-desktop
 
