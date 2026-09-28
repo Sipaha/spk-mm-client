@@ -167,9 +167,7 @@ test('emoji: jumbo waits for a custom name to resolve before firing, then applie
 
 test('emoji: a shortcode inside a markdown link\'s label converts; the URL itself is untouched', async () => {
   const onLink = vi.fn()
-  const { container } = render(
-    <Markdown text={'[:smile: click here](https://example.com)'} me="alice" onLink={onLink} serverId={1} />,
-  )
+  render(<Markdown text={'[:smile: click here](https://example.com)'} me="alice" onLink={onLink} serverId={1} />)
   const link = screen.getByRole('link')
   expect(link.textContent).toBe('😄 click here')
   await userEvent.click(link)
