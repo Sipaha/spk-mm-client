@@ -191,7 +191,12 @@ export function TextView({
 
   return (
     <div className="flex h-full w-full flex-col gap-1">
-      <div className="flex shrink-0 items-center gap-2">
+      {/* bg-panel (opaque): fix round 1, controller review — this row had no
+          background of its own and relied on the dialog's translucent
+          bg-black/85 backdrop, so the sidebar behind the viewer showed
+          through the search controls. PdfView.tsx's own toolbar row gets
+          the same fix. */}
+      <div className="flex shrink-0 items-center gap-2 rounded bg-panel px-2 py-1.5">
         <input
           ref={inputRef}
           type="text"

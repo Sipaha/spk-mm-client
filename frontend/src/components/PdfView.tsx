@@ -18,7 +18,7 @@
 //  4. Everything is released on unmount: `loadingTask.destroy()` (which
 //     terminates the pdf.js worker), every render/text task cancelled, every
 //     canvas zeroed.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type PDFPageProxy, type RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { FileView } from '../api/types'
@@ -57,6 +57,10 @@ function zeroCanvas(c: HTMLCanvasElement): void {
 export default function PdfView({ serverId, file, onFail }: { serverId: number; file: FileView; onFail(): void }) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [base, setBase] = useState<{ w: number; h: number } | null>(null) // page 1 at scale 1, CSS px
+  // naturalSizes: each page's own size at scale 1, once known (fix round 1
+  // — real PDFs mix portrait/landscape/oddly-sized pages; a page not yet
+  // fetched falls back to page 1's size as a placeholder until it is).
+  const [naturalSizes, setNaturalSizes] = useState<Record<number, { w: number; h: number }>>({})
   const [fit, setFit] = useState(true)
   const [zoom, setZoom] = useState(1)
   const [width, setWidth] = useState(0)
@@ -113,6 +117,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
         const v = p1.getViewport({ scale: 1 })
         if (cancelled) return
         setBase({ w: v.width, h: v.height })
+        setNaturalSizes({ 1: { w: v.width, h: v.height } })
         setDoc(d)
       } catch {
         if (!cancelled) onFailRef.current()
@@ -140,19 +145,51 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     return () => ro.disconnect()
   }, [])
 
-  const pageH = base ? Math.round(base.h * scale) : 0
-  const pageW = base ? Math.round(base.w * scale) : 0
   const n = doc?.numPages ?? 0
 
-  // Which pages are on screen: from scrollTop, assuming a uniform page size
-  // (page 1's) — good enough for paging/visibility, not for exact layout.
+  // boxOf: a page's own CSS box at the current scale — its measured size
+  // once known (renderPage below records it the moment the page is
+  // fetched, before it's actually rendered), or page 1's as a placeholder
+  // until then. Never a single shared size for every page: a landscape
+  // page stretched into a portrait page's box would distort its bitmap and
+  // misalign the text layer over it (fix round 1).
+  function boxOf(i: number): { w: number; h: number } {
+    const sz = naturalSizes[i] ?? base
+    return sz ? { w: Math.round(sz.w * scale), h: Math.round(sz.h * scale) } : { w: 0, h: 0 }
+  }
+
+  // layout: cumulative top offset and box height of every page, from
+  // boxOf — recomputed whenever a page's real size becomes known, the zoom
+  // changes, or the document (page count) changes. O(n) per change, which
+  // is cheap next to the cost of actually rendering a page.
+  const layout = useMemo(() => {
+    const offsets: number[] = new Array(n + 1).fill(0) // 1-indexed
+    const heights: number[] = new Array(n + 1).fill(0)
+    let y = 0
+    for (let i = 1; i <= n; i++) {
+      const h = boxOf(i).h
+      offsets[i] = y
+      heights[i] = h
+      y += h + GAP
+    }
+    return { offsets, heights }
+  }, [naturalSizes, base, scale, n])
+
+  // Which pages are on screen: from scrollTop and each page's own real (or
+  // placeholder) height — no longer a uniform-page-size assumption (fix
+  // round 1). `<=` matches the old floor-based formula's boundary exactly
+  // in the uniform case: a page's slot is treated as reaching up to (but
+  // not including) the next page's offset.
   useEffect(() => {
     const el = scroller.current
-    if (!el || !pageH || !n) return
+    if (!el || !n) return
     const update = () => {
       const top = el.scrollTop
-      const first = Math.max(1, Math.floor(top / (pageH + GAP)) + 1)
-      const last = Math.min(n, Math.floor((top + el.clientHeight) / (pageH + GAP)) + 1)
+      const bottom = top + el.clientHeight
+      let first = 1
+      for (let i = 1; i <= n; i++) if (layout.offsets[i] <= top) first = i
+      let last = first
+      for (let i = 1; i <= n; i++) if (layout.offsets[i] <= bottom) last = i
       setCurrent(first)
       const s = new Set<number>()
       for (let i = Math.max(1, first - KEEP); i <= Math.min(n, last + KEEP); i++) s.add(i)
@@ -161,7 +198,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     update()
     el.addEventListener('scroll', update, { passive: true })
     return () => el.removeEventListener('scroll', update)
-  }, [pageH, n])
+  }, [layout, n])
 
   // Render the visible pages; release everything that fell out of the
   // window first, so its canvas is back in the pool before a newly visible
@@ -229,7 +266,12 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   const pages = Array.from({ length: n }, (_, k) => k + 1)
   return (
     <div className="flex h-full w-full min-w-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 pb-2 text-xs text-fg-muted">
+      {/* bg-panel (opaque): fix round 1, controller review — this row had no
+          background of its own and relied on the dialog's translucent
+          bg-black/85 backdrop, so the sidebar behind the viewer showed
+          through the zoom controls. TextView.tsx's own toolbar row gets the
+          same fix. */}
+      <div className="mb-2 flex shrink-0 items-center gap-2 rounded bg-panel px-2 py-1.5 text-xs text-fg-muted">
         <span>{n ? t('pdf.page', { i: String(current), n: String(n) }) : t('file.loading')}</span>
         <button type="button" aria-label={t('pdf.zoomOut')} className={btn} onClick={() => zoomBy(1 / ZOOM_STEP)}>
           −
@@ -244,14 +286,20 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       </div>
       <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
         {base &&
-          pages.map((i) => (
+          pages.map((i) => {
             // bg-panel, not a hard-coded white: the app is dark by default
             // (theme.test.ts guards against light patches) and this box is
             // only the placeholder shown before a page's canvas has
             // rendered — the canvas itself paints the PDF's own (usually
-            // white) page background once it loads.
-            <div key={i} data-page={i} className="relative mx-auto bg-panel shadow" style={{ width: pageW, height: pageH, marginBottom: GAP }} />
-          ))}
+            // white) page background once it loads. Sized from the page's
+            // own measured viewport (or page 1's, as a placeholder, until
+            // it's been fetched) — never a single shared size for every
+            // page (fix round 1).
+            const box = boxOf(i)
+            return (
+              <div key={i} data-page={i} className="relative mx-auto bg-panel shadow" style={{ width: box.w, height: box.h, marginBottom: GAP }} />
+            )
+          })}
       </div>
     </div>
   )
@@ -262,6 +310,13 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     try {
       s.page ??= await d.getPage(i)
       if (slots.current.get(i) !== s) return // released while awaiting getPage
+      // Measured the moment the page is known — before it's actually
+      // rendered, so its placeholder box (and the scroll/current-page math
+      // above) is corrected as early as possible, not just once painted.
+      if (!naturalSizes[i]) {
+        const v1 = s.page.getViewport({ scale: 1 })
+        setNaturalSizes((old) => (old[i] ? old : { ...old, [i]: { w: v1.width, h: v1.height } }))
+      }
       const vp = s.page.getViewport({ scale: sc })
       const dpr = window.devicePixelRatio || 1
       // Lever 2: cap the bitmap at ~2 MP regardless of zoom/DPR — the CSS

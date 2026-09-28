@@ -9,10 +9,17 @@ import { setLocale } from '../i18n'
 const getPage = vi.fn(async (i: number) => makePage(i))
 const destroy = vi.fn(async () => {})
 let numPages = 5
+// Per-page size at scale 1 — overridden per test to mock a document with
+// mixed portrait/landscape pages (fix round 1: pages used to all share page
+// 1's box regardless of their own size).
+let sizeForPage: (i: number) => { w: number; h: number } = () => ({ w: 100, h: 100 })
 
 function makePage(i: number) {
   return {
-    getViewport: ({ scale }: { scale: number }) => ({ width: 100 * scale, height: 100 * scale }),
+    getViewport: ({ scale }: { scale: number }) => {
+      const { w, h } = sizeForPage(i)
+      return { width: w * scale, height: h * scale }
+    },
     render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
     streamTextContent: vi.fn(() => ({})),
     cleanup: vi.fn(),
@@ -54,6 +61,7 @@ afterAll(() => {
 beforeEach(() => {
   setLocale('en')
   numPages = 5
+  sizeForPage = () => ({ w: 100, h: 100 })
   getPage.mockClear()
   destroy.mockClear()
   vi.stubGlobal(
@@ -150,4 +158,45 @@ test('scrolling out of a page returns its canvas to the pool instead of allocati
   const laterCanvas = container.querySelector('[data-page="4"] canvas') ?? container.querySelector('[data-page="3"] canvas')
   expect(laterCanvas).not.toBeNull()
   expect(laterCanvas).toBe(firstCanvas) // same DOM node, reused — not a fresh one
+})
+
+test("a page with a different aspect ratio than page 1 gets its own box and canvas size (fix round 1: real PDFs mix portrait/landscape)", async () => {
+  numPages = 4
+  sizeForPage = (i) => (i === 3 ? { w: 200, h: 50 } : { w: 100, h: 100 })
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 4')
+
+  // Not yet measured pages (and page 1 itself) use page 1's square box.
+  const page1Box = container.querySelector('[data-page="1"]') as HTMLElement
+  expect(page1Box.style.width).toBe('100px')
+  expect(page1Box.style.height).toBe('100px')
+
+  // Scroll far enough that page 3 (landscape, 200x50) enters the visible
+  // window and gets measured.
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 230 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await waitFor(() => expect(getPage).toHaveBeenCalledWith(3))
+
+  // Its placeholder box is corrected to its own size, not page 1's — and the
+  // rendered canvas's own backing store matches that aspect ratio too (it
+  // always did; the bug was the CSS box around it stretching a 200x50
+  // bitmap to a 100x100 square via width:100%;height:100%).
+  await waitFor(() => {
+    const box3 = container.querySelector('[data-page="3"]') as HTMLElement
+    expect(box3.style.width).toBe('200px')
+    expect(box3.style.height).toBe('50px')
+  })
+  const canvas3 = container.querySelector('[data-page="3"] canvas') as HTMLCanvasElement
+  expect(canvas3.width).toBe(200)
+  expect(canvas3.height).toBe(50)
+
+  // The current-page counter is still correct with mixed sizes.
+  expect(await screen.findByText('3 / 4')).toBeInTheDocument()
+
+  // Page 1's own box is untouched by another page's size.
+  expect(page1Box.style.width).toBe('100px')
+  expect(page1Box.style.height).toBe('100px')
 })
