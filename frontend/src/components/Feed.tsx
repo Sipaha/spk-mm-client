@@ -422,22 +422,42 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   }
 
   return (
-    <div
-      ref={scroller}
-      onScroll={onScroll}
-      onWheel={onUserGesture}
-      onTouchMove={onUserGesture}
-      role="log"
-      aria-label={t('feed.label')}
-      className="relative min-h-0 flex-1 overflow-y-auto pb-2 [overflow-anchor:none]"
-    >
-      {!rows.length && (
-        <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
-      )}
-      {/* Before the sizer div, not after: e2e's scroll-shift probe (and
-          ScrollShift itself has no opinion either way, but the probe does)
-          finds the shift-carrying container via the scroller's
-          lastElementChild — the sizer div must stay last. */}
+    // The jump-to-latest button must NOT be a child of the scrolling element
+    // itself: an absolutely positioned descendant of an overflow:auto box
+    // anchors `bottom` to the bottom of the box's full *scrollable* content,
+    // not its visible clientHeight, so it scrolls away with the content and
+    // lands off-screen the moment the user scrolls up (measured: bottom:-5926px
+    // in a channel scrolled near the top) instead of floating in place. This
+    // outer div (not scrolling, `relative`) is the button's containing block;
+    // the inner div is the actual `overflow-y-auto` scroller.
+    <div className="relative min-h-0 flex-1">
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        onWheel={onUserGesture}
+        onTouchMove={onUserGesture}
+        role="log"
+        aria-label={t('feed.label')}
+        className="h-full overflow-y-auto pb-2 [overflow-anchor:none]"
+      >
+        {!rows.length && (
+          <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(channel.loaded ? 'feed.empty' : 'feed.loading')}</div>
+        )}
+        <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
+          {v.getVirtualItems().map((it) => (
+            <div
+              key={it.key}
+              data-index={it.index}
+              data-key={it.key}
+              data-kind={rows[it.index].kind}
+              ref={v.measureElement}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${it.start}px)` }}
+            >
+              {renderRow(rows[it.index])}
+            </div>
+          ))}
+        </div>
+      </div>
       <button
         type="button"
         onClick={goToLatest}
@@ -457,20 +477,6 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
           </span>
         )}
       </button>
-      <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
-        {v.getVirtualItems().map((it) => (
-          <div
-            key={it.key}
-            data-index={it.index}
-            data-key={it.key}
-            data-kind={rows[it.index].kind}
-            ref={v.measureElement}
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${it.start}px)` }}
-          >
-            {renderRow(rows[it.index])}
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
