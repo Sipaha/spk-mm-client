@@ -140,6 +140,14 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
     scrollToFn: shift.scrollTo,
   })
   v.shouldAdjustScrollPositionOnItemSizeChange = shift.shouldAdjust
+  // Our own scrolls land a pending shift *before* the virtualizer computes
+  // the target: it clamps to the scroll range, which the shift has shrunk,
+  // and would undershoot by it for a frame (index scrolls) or for good
+  // (offset restores). ScrollShift.scrollTo landing it later is too late.
+  const scrollToIndex: typeof v.scrollToIndex = (...a) => {
+    shift.flush()
+    v.scrollToIndex(...a)
+  }
 
   // Anchor on the post the user actually sees at the top, read from the
   // DOM. Not v.range.startIndex: the virtualizer's own scroll offset
@@ -229,9 +237,9 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       const i = rows.findIndex((r) => r.kind === 'new')
       if (i >= 0) {
         atBottom.current = false
-        v.scrollToIndex(i, { align: 'start' })
+        scrollToIndex(i, { align: 'start' })
       } else {
-        v.scrollToIndex(rows.length - 1, { align: 'end' })
+        scrollToIndex(rows.length - 1, { align: 'end' })
       }
       fillViewportIfShort()
       return
@@ -244,6 +252,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       const offset = anchorOffset.current
       anchor.current = null
       const el = scroller.current
+      shift.flush() // before the target is computed (see scrollToIndex)
       const i = rows.findIndex((r) => r.key === key)
       const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
       if (info && el) {
@@ -255,7 +264,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
       return
     }
     const last = rows[rows.length - 1]
-    if (atBottom.current || (last.kind === 'post' && last.post.pending)) v.scrollToIndex(rows.length - 1, { align: 'end' })
+    if (atBottom.current || (last.kind === 'post' && last.post.pending)) scrollToIndex(rows.length - 1, { align: 'end' })
     fillViewportIfShort()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
 
@@ -266,7 +275,7 @@ export function Feed({ channel, serverId, me, locale, actions, editingId, onLoad
   useLayoutEffect(() => {
     if (!editingId) return
     const i = rows.findIndex((r) => r.kind === 'post' && r.post.id === editingId)
-    if (i >= 0) v.scrollToIndex(i, { align: 'auto' })
+    if (i >= 0) scrollToIndex(i, { align: 'auto' })
   }, [editingId]) // only when editing starts, not on every new post
 
   const onScroll = () => {

@@ -202,6 +202,18 @@ test('a new post arriving at the bottom while a shift is pending is followed', a
   await wheel(page, 110, -100)
   await wheel(page, 200, 100)
   expect((await bottom(page)).shift, 'a shift is pending at the bottom (else this tests nothing)').toBeGreaterThan(0)
+  // From here on, at every frame and every scroll event: how far the feed is
+  // from the end of its range. Following the post must not undershoot by the
+  // pending shift even for one frame (a scroll event there reads "not at the
+  // bottom" and the next post would not be followed).
+  await feed(page).evaluate((el) => {
+    const w = window as unknown as { __toEnd: number[]; __stop: boolean }
+    w.__toEnd = []
+    const rec = () => w.__toEnd.push(Math.round(el.scrollHeight - el.scrollTop - el.clientHeight))
+    el.addEventListener('scroll', rec)
+    const frame = () => { rec(); if (!w.__stop) requestAnimationFrame(frame) }
+    requestAnimationFrame(frame)
+  })
   const text = unique('arrives while shifted')
   await testPost(page, 'fake/post', { channel_id: 'c-secret', username: 'alice', message: text })
   // keep the gesture going (wheel at the end of the range scrolls nothing)
@@ -209,6 +221,8 @@ test('a new post arriving at the bottom while a shift is pending is followed', a
   const post = feed(page).getByText(text, { exact: true })
   for (let i = 0; i < 200 && !(await post.count()); i++) await wheel(page, 1, 100)
   await expect(post).toBeInViewport()
+  const toEnd = await page.evaluate(() => (window as unknown as { __toEnd: number[] }).__toEnd)
+  expect(Math.max(...toEnd), `distance from the end of the range, per frame/scroll event: ${toEnd.filter((d) => d > 0)}`).toBeLessThanOrEqual(3)
   await idle(page)
   await expect(post).toBeInViewport()
   expect((await bottom(page)).toEnd).toBeLessThan(2)
