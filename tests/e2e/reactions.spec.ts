@@ -38,7 +38,7 @@ test('hovering a reaction chip shows who reacted; "and N others" opens the full 
   await heading.hover() // move the pointer away first so the next hover is a real mouseenter
   await expect(chip).toHaveAccessibleName('👍 12')
   await chip.hover()
-  const more = page.getByRole('button', { name: '2 others' })
+  const more = page.getByRole('button', { name: '2 other users' })
   await expect(more).toBeVisible()
   await more.click()
 
