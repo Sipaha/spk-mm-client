@@ -96,6 +96,7 @@ type Server struct {
 	suppressView  string
 	guard         map[string]int64
 	seen          seenSet
+	gone          seenSet           // deleted replies already taken off their root's count
 	orphans       []orphan          // posted events for channels not known yet
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
@@ -110,16 +111,24 @@ func New(now func() time.Time) *Server {
 	return &Server{
 		now: now, prefs: map[prefKey]string{}, chans: map[string]*Chan{}, cats: map[string]model.OrderedCategories{},
 		users: map[string]model.User{}, emoji: map[string]string{}, presence: map[string]string{}, pending: map[string][]Pending{}, drafts: map[string]string{},
-		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), dirty: newDirtySet(),
+		nav: Nav{Channel: map[string]string{}}, guard: map[string]int64{}, seen: newSeenSet(2000), gone: newSeenSet(2000), dirty: newDirtySet(),
 		intents: map[string]intent{},
 	}
 }
 
 // Bootstrap replaces all metadata with a fresh server read. Post windows of
 // channels we are still in survive; channels we left disappear.
-func (s *Server) Bootstrap(b Bootstrap) {
+//
+// crtChanged: CRT is on now and was off before, or the reverse — before
+// being the previous bootstrap or a snapshot saved in the other mode (the
+// admin switched CollapsedThreads, or the preference changed while we were
+// away: no preferences_changed reached us). The windows then hold the
+// wrong kind of posts; the caller resets them. A first bootstrap (nothing
+// held) reports no change.
+func (s *Server) Bootstrap(b Bootstrap) (crtChanged bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	held, wasCRT := s.me.ID != "", s.crtLocked()
 	s.me, s.status, s.cfg = b.Me, b.Status, b.Config
 	s.presence[b.Me.ID] = b.Status.Status
 	s.users[b.Me.ID] = b.Me
@@ -176,6 +185,7 @@ func (s *Server) Bootstrap(b Bootstrap) {
 		s.nav.TeamID = s.teams[0].ID
 	}
 	s.dirty.meta = true
+	return held && wasCRT != s.crtLocked()
 }
 
 // forgetChannelLocked drops everything local about a channel (left, kicked,

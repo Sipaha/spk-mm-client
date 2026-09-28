@@ -67,7 +67,7 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 		}
 	case "post_deleted":
 		if p, err := ws.DecodePost(ev); err == nil {
-			if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p.ID) {
+			if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, p) {
 				eff.Channels = []string{p.ChannelID}
 			}
 		}

@@ -623,13 +623,20 @@ func (w *Worker) finishRefresh(r metaResult) error {
 		return nil
 	}
 	w.refreshBackoff = 0
-	w.st.Bootstrap(r.b)
+	crtChanged := w.st.Bootstrap(r.b)
+	if crtChanged {
+		w.st.ResetWindows()
+	}
 	w.metaSettled(r.settled)
 	w.replayOrphans()
 	w.goBG(w.loadUsers)
 	w.enqueueAll()
 	w.startEmojiLoad()
-	w.changed(state.Change{Sidebar: true, Badge: true})
+	c := state.Change{Sidebar: true, Badge: true}
+	if crtChanged {
+		c.Channels = []string{w.st.Active()}
+	}
+	w.changed(c)
 	return nil
 }
 
@@ -685,7 +692,12 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	if err != nil {
 		return err
 	}
-	w.st.Bootstrap(b)
+	if w.st.Bootstrap(b) {
+		// CRT switched without a preferences_changed (admin config, or a
+		// snapshot saved in the other mode): the windows hold the wrong
+		// kind of posts — refetched below by enqueueAll.
+		w.st.ResetWindows()
+	}
 	w.metaSettled(settled)
 	if lost {
 		w.st.MarkStale(w.live.gapStart())

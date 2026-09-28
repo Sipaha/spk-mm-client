@@ -77,12 +77,29 @@ func (s *Server) trimWindowLocked(ch *Chan) {
 	}
 }
 
+// keepNewerReplies gives p (a fresh read of a post held as local) the
+// local reply count when p's own is older: the server moves a root's
+// update_at to each reply's time, so a root whose update_at is behind the
+// newest reply applied live was read before it.
+func keepNewerReplies(p *model.Post, local model.Post) {
+	if p.UpdateAt < local.LastReplyAt {
+		p.ReplyCount, p.LastReplyAt = local.ReplyCount, local.LastReplyAt
+	}
+}
+
+// keepRepliesOnUpdate is keepNewerReplies for a single post's update (an
+// edit echo, a since= row): one without a reply count keeps the local one.
+func keepRepliesOnUpdate(p *model.Post, local model.Post) {
+	if p.ReplyCount == 0 {
+		p.ReplyCount, p.LastReplyAt = local.ReplyCount, local.LastReplyAt
+	}
+	keepNewerReplies(p, local)
+}
+
 func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 	if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
 		if p.UpdateAt >= ch.Win.Posts[i].UpdateAt {
-			if p.ReplyCount == 0 {
-				p.ReplyCount, p.LastReplyAt = ch.Win.Posts[i].ReplyCount, ch.Win.Posts[i].LastReplyAt
-			}
+			keepRepliesOnUpdate(&p, ch.Win.Posts[i])
 			// An update that doesn't carry pending_post_id (e.g. a plain
 			// edit echo) must not erase the value the confirmation set —
 			// the frontend keys its feed row by it across the pending ->
@@ -100,9 +117,11 @@ func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 	s.dirty.posts[ch.Info.ID] = true
 }
 
-// removeLocked deletes a post and its replies (they die with the root).
-func (s *Server) removeLocked(ch *Chan, id string) bool {
-	gone := func(p model.Post) bool { return p.ID == id || p.RootID == id }
+// removeLocked deletes the post d and its replies (they die with the
+// root). A deleted reply lowers its root's count — see replyGoneLocked.
+// d.RootID may be unknown ("") and d.UpdateAt 0 (not the deletion time).
+func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
+	gone := func(p model.Post) bool { return p.ID == d.ID || p.RootID == d.ID }
 	n := len(ch.Win.Posts)
 	ch.Win.Posts = slices.DeleteFunc(ch.Win.Posts, gone)
 	changed := len(ch.Win.Posts) != n
@@ -114,7 +133,63 @@ func (s *Server) removeLocked(ch *Chan, id string) bool {
 	if changed {
 		s.dirty.posts[ch.Info.ID] = true
 	}
+	return s.replyGoneLocked(ch, d) || changed
+}
+
+// replyGoneLocked lowers the root's reply count for the deleted reply d,
+// once per id however many paths report it (REST DeletePost, post_deleted,
+// a since= page) — the gone ring — and never below 0. A root read at or
+// after the deletion (the server moves its update_at to the deletion time)
+// already has the lower count and is left alone.
+func (s *Server) replyGoneLocked(ch *Chan, d model.Post) bool {
+	if d.RootID == "" || s.gone.has(d.ID) {
+		return false
+	}
+	s.gone.add(d.ID)
+	return s.eachRootLocked(ch, d.RootID, func(r *model.Post) bool {
+		if r.ReplyCount == 0 || (d.UpdateAt != 0 && r.UpdateAt >= d.UpdateAt) {
+			return false
+		}
+		r.ReplyCount--
+		return true
+	})
+}
+
+// eachRootLocked applies f to every copy of the post rootID held for ch —
+// the window and, for the open channel, the loaded history — and reports
+// whether f changed any.
+func (s *Server) eachRootLocked(ch *Chan, rootID string, f func(*model.Post) bool) bool {
+	changed := false
+	if i := indexOf(ch.Win.Posts, rootID); i >= 0 && f(&ch.Win.Posts[i]) {
+		s.dirty.posts[ch.Info.ID] = true
+		changed = true
+	}
+	if ch.Info.ID == s.active {
+		if i := indexOf(s.older, rootID); i >= 0 && f(&s.older[i]) {
+			changed = true
+		}
+	}
 	return changed
+}
+
+// replyPosted updates root for its new reply p: the reply's own
+// reply_count is the thread's total at its moment (the server fills it
+// in), taken unless an even newer reply was applied already; without it
+// (0), a reply not counted yet (new id, newer than LastReplyAt) adds one.
+func replyPosted(root *model.Post, p model.Post, isNew bool) bool {
+	switch {
+	case p.ReplyCount > 0 && p.CreateAt >= root.LastReplyAt:
+		if root.ReplyCount == p.ReplyCount && root.LastReplyAt == p.CreateAt {
+			return false
+		}
+		root.ReplyCount = p.ReplyCount
+	case p.ReplyCount == 0 && isNew && p.CreateAt > root.LastReplyAt:
+		root.ReplyCount++
+	default:
+		return false
+	}
+	root.LastReplyAt = p.CreateAt
+	return true
 }
 
 // SetWindow installs the latest page of a channel. Posts already in the
@@ -136,6 +211,11 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	var newest int64
 	for _, p := range page {
 		if keep(p, crt) {
+			if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
+				keepNewerReplies(&p, ch.Win.Posts[i])
+			} else if i := indexOf(s.older, p.ID); channelID == s.active && i >= 0 {
+				keepNewerReplies(&p, s.older[i])
+			}
 			merged = append(merged, p)
 		}
 		newest = max(newest, p.CreateAt)
@@ -180,7 +260,7 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 		case p.OriginalID != "":
 			continue // edit-history row
 		case p.DeleteAt > 0:
-			s.removeLocked(ch, p.ID)
+			s.removeLocked(ch, p)
 		case !keep(p, crt):
 			continue
 		case indexOf(ch.Win.Posts, p.ID) >= 0 || p.CreateAt >= oldest:
@@ -506,15 +586,9 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		if ch.Win.Loaded {
 			s.upsertLocked(ch, p)
 		}
-	case crt && !root && isNew:
-		// The root may already have this reply's count from a REST fetch
-		// (its ReplyCount/LastReplyAt fields came straight from the
-		// server); only bump if this reply is not already reflected there.
-		if i := indexOf(ch.Win.Posts, p.RootID); i >= 0 && p.CreateAt > ch.Win.Posts[i].LastReplyAt {
-			ch.Win.Posts[i].ReplyCount++
-			ch.Win.Posts[i].LastReplyAt = p.CreateAt
-			s.dirty.posts[ch.Info.ID] = true
-		}
+	}
+	if !root {
+		s.eachRootLocked(ch, p.RootID, func(r *model.Post) bool { return replyPosted(r, p, isNew) })
 	}
 	if !isNew {
 		return false, false
@@ -529,8 +603,13 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		ch.Info.LastRootPostAt = max(ch.Info.LastRootPostAt, p.CreateAt)
 	}
 	if p.UserID == s.me.ID {
-		ch.Member.MsgCount, ch.Member.MsgCountRoot = ch.Info.TotalMsgCount, ch.Info.TotalMsgCountRoot
-		ch.Member.LastViewedAt = max(ch.Member.LastViewedAt, p.CreateAt)
+		// The server marks the channel viewed for our post, except a
+		// reply under CRT (app/post.go, isCRTReply): that one is read in
+		// its thread, and unread roots stay unread.
+		if root || !crt {
+			ch.Member.MsgCount, ch.Member.MsgCountRoot = ch.Info.TotalMsgCount, ch.Info.TotalMsgCountRoot
+			ch.Member.LastViewedAt = max(ch.Member.LastViewedAt, p.CreateAt)
+		}
 	} else if slices.Contains(mentions, s.me.ID) {
 		ch.Member.MentionCount++
 		if root {
@@ -563,6 +642,7 @@ func (s *Server) updatePostLocked(p model.Post) bool {
 	}
 	if ch.Info.ID == s.active {
 		if i := indexOf(s.older, p.ID); i >= 0 && p.UpdateAt >= s.older[i].UpdateAt {
+			keepRepliesOnUpdate(&p, s.older[i])
 			s.older[i] = p
 			changed = true
 		}
@@ -570,13 +650,18 @@ func (s *Server) updatePostLocked(p model.Post) bool {
 	return changed
 }
 
+// RemovePost applies our own DeletePost. The post is looked up first for
+// its channel and root; one not held (a reply under CRT) is left to the
+// post_deleted event, which carries both.
 func (s *Server) RemovePost(postID string) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for id, ch := range s.chans {
-		if s.removeLocked(ch, postID) {
-			return Change{Channels: []string{id}}
-		}
+	p, ok := s.findPostLocked(postID)
+	if !ok {
+		return Change{}
+	}
+	if ch := s.chans[p.ChannelID]; ch != nil && s.removeLocked(ch, model.Post{ID: p.ID, ChannelID: p.ChannelID, RootID: p.RootID}) {
+		return Change{Channels: []string{p.ChannelID}}
 	}
 	return Change{}
 }
@@ -584,6 +669,10 @@ func (s *Server) RemovePost(postID string) Change {
 func (s *Server) FindPost(postID string) (model.Post, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.findPostLocked(postID)
+}
+
+func (s *Server) findPostLocked(postID string) (model.Post, bool) {
 	for _, ch := range s.chans {
 		if i := indexOf(ch.Win.Posts, postID); i >= 0 {
 			return ch.Win.Posts[i], true
@@ -710,6 +799,10 @@ func (s *Server) NeedsView(channelID string) bool {
 	ch := s.chans[channelID]
 	if ch == nil || s.suppressView == channelID {
 		return false
+	}
+	if s.crtLocked() {
+		// Replies are read in their threads (spike §4.1 п.7).
+		return ch.Info.TotalMsgCountRoot > ch.Member.MsgCountRoot || ch.Member.MentionCountRoot > 0
 	}
 	return ch.Info.TotalMsgCount > ch.Member.MsgCount || ch.Info.TotalMsgCountRoot > ch.Member.MsgCountRoot ||
 		ch.Member.MentionCount > 0 || ch.Member.MentionCountRoot > 0

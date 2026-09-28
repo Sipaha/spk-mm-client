@@ -2,6 +2,7 @@ package state
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
 )
@@ -46,6 +47,7 @@ type PostView struct {
 	CreateAt      int64              `json:"create_at"`
 	EditAt        int64              `json:"edit_at,omitempty"`
 	ReplyCount    int64              `json:"reply_count,omitempty"`
+	LastReplyAt   int64              `json:"last_reply_at,omitempty"`
 	System        bool               `json:"system,omitempty"`
 	Bot           bool               `json:"bot,omitempty"`
 	Pending       bool               `json:"pending,omitempty"`
@@ -56,6 +58,12 @@ type PostView struct {
 	Reactions     []ReactionView     `json:"reactions,omitempty"`
 	// Saved: a flagged_post preference for this post — see SetPostSaved.
 	Saved bool `json:"saved,omitempty"`
+	// RootAuthor/RootSnippet: a reply's context line in the channel feed
+	// without CRT ("reply to <author>: <snippet>") — the root's author and
+	// its text, collapsed and cut to rootSnippetRunes. Empty when the root
+	// is not held (the UI then says "reply in a thread").
+	RootAuthor  string `json:"root_author,omitempty"`
+	RootSnippet string `json:"root_snippet,omitempty"`
 }
 
 type ChannelView struct {
@@ -104,20 +112,64 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	} else {
 		v.HasMore = ch.Win.Loaded && !ch.Win.Complete
 	}
+	// Without CRT replies sit in the feed and carry their root's context,
+	// looked up in what is shown (history + window).
+	var roots map[string]int
+	rootContext := func(pv *PostView) {
+		if v.CRT || pv.RootID == "" {
+			return
+		}
+		if roots == nil {
+			roots = make(map[string]int, len(posts))
+			for i, p := range posts {
+				roots[p.ID] = i
+			}
+		}
+		if i, ok := roots[pv.RootID]; ok {
+			pv.RootAuthor, pv.RootSnippet = s.authorLocked(posts[i]), rootSnippet(posts[i])
+		}
+	}
 	for _, p := range posts {
-		v.Posts = append(v.Posts, s.postViewLocked(p))
+		pv := s.postViewLocked(p)
+		rootContext(&pv)
+		v.Posts = append(v.Posts, pv)
 	}
 	pend := append([]Pending(nil), s.pending[channelID]...)
 	sort.SliceStable(pend, func(i, j int) bool { return pend[i].CreateAt < pend[j].CreateAt })
 	for _, p := range pend {
-		v.Posts = append(v.Posts, PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
+		if v.CRT && p.RootID != "" {
+			continue // a reply being sent shows in its thread only
+		}
+		pv := PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),
 			Avatar: s.avatarLocked(s.me.ID), Status: s.presenceLocked(s.me.ID),
 			RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt, Pending: !p.Failed, Failed: p.Failed,
 			// Keys the feed row across confirmation: the eventual real post
 			// echoes this same id back as its own PendingPostID.
-			PendingPostID: p.ID, Files: p.Files})
+			PendingPostID: p.ID, Files: p.Files}
+		rootContext(&pv)
+		v.Posts = append(v.Posts, pv)
 	}
 	return v, true
+}
+
+// rootSnippetRunes bounds PostView.RootSnippet.
+const rootSnippetRunes = 80
+
+// rootSnippet is a root's text for a reply's context line: whitespace
+// collapsed, cut to rootSnippetRunes (with "…"); no text — the first
+// file's name.
+func rootSnippet(p model.Post) string {
+	text := strings.Join(strings.Fields(p.Message), " ")
+	if text == "" {
+		if p.Metadata != nil && len(p.Metadata.Files) > 0 {
+			return p.Metadata.Files[0].Name
+		}
+		return ""
+	}
+	if r := []rune(text); len(r) > rootSnippetRunes {
+		return string(r[:rootSnippetRunes-1]) + "…"
+	}
+	return text
 }
 
 func (s *Server) teamNameLocked(ch *Chan) string {
@@ -133,15 +185,20 @@ func (s *Server) teamNameLocked(ch *Chan) string {
 	return ""
 }
 
+// authorLocked is the name shown for p's author (a webhook may override it).
+func (s *Server) authorLocked(p model.Post) string {
+	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" {
+		return string(p.Props.OverrideUsername)
+	}
+	return s.displayNameLocked(p.UserID)
+}
+
 func (s *Server) postViewLocked(p model.Post) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
-		EditAt: p.EditAt, ReplyCount: p.ReplyCount, System: p.IsSystem(), Attachments: p.Props.Attachments,
+		EditAt: p.EditAt, ReplyCount: p.ReplyCount, LastReplyAt: p.LastReplyAt, System: p.IsSystem(), Attachments: p.Props.Attachments,
 		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
 	v.Saved = s.prefs[prefKey{flaggedPostCategory, p.ID}] == "true"
-	v.Author = s.displayNameLocked(p.UserID)
-	if bool(p.Props.FromWebhook) && p.Props.OverrideUsername != "" {
-		v.Author = string(p.Props.OverrideUsername)
-	}
+	v.Author = s.authorLocked(p)
 	if u, ok := s.users[p.UserID]; ok && u.IsBot {
 		v.Bot = true
 	}

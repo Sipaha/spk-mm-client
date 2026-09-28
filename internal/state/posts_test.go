@@ -203,3 +203,56 @@ func TestUpsertPreservesPendingPostIDAcrossLaterUpdatesWithoutIt(t *testing.T) {
 	assert.Equal(t, "u2:1", p.PendingPostID, "an update without pending_post_id must not erase the stored value")
 	assert.Equal(t, int64(2000), p.EditAt, "the update itself still applies")
 }
+
+// Spike §4.1 п.6: the server moves a root's update_at to each reply's time,
+// so a page whose root is older than the newest reply we applied live was
+// read before that reply — it must not roll the count back. A newer page
+// wins.
+func TestSetWindowKeepsNewerLocalReplyCount(t *testing.T) {
+	for _, crt := range []bool{true, false} {
+		t.Run(fmt.Sprint("crt=", crt), func(t *testing.T) {
+			s := crtFixture(crt)
+			root := mkPost("root", "town", "u2", 1000)
+			root.ReplyCount, root.LastReplyAt, root.UpdateAt = 1, 2000, 2000
+			s.SetWindow("town", []model.Post{root}, true, 5)
+			s.ApplyEvent(postedEv(reply("r2", "root", "u3", 3000, 2)))
+
+			old := root // read before r2
+			s.SetWindow("town", []model.Post{old}, true, 6)
+			n, last := rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(2), n, "SetWindow: an older page keeps the live count")
+			assert.Equal(t, int64(3000), last)
+
+			edited := root // an edit echo read before r2, update_at still behind it
+			edited.Message, edited.EditAt, edited.UpdateAt = "edited", 2500, 2500
+			s.ApplyPostUpdate(edited)
+			p, _ := windowPost(s, "town", "root")
+			assert.Equal(t, "edited", p.Message, "the edit itself applies")
+			assert.Equal(t, int64(2), p.ReplyCount, "upsert: an older root keeps the live count")
+			assert.Equal(t, int64(3000), p.LastReplyAt)
+
+			fresh := root // read after r2 and one more reply we missed
+			fresh.ReplyCount, fresh.LastReplyAt, fresh.UpdateAt = 3, 3500, 3500
+			s.SetWindow("town", []model.Post{fresh}, true, 7)
+			n, last = rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(3), n, "a newer page takes its own count")
+			assert.Equal(t, int64(3500), last)
+		})
+	}
+}
+
+// Spike §4.1 п.7: under CRT a reply does not make the channel need a view
+// (its read state is the thread's), only roots do.
+func TestNeedsViewUnderCRTCountsRootsOnly(t *testing.T) {
+	s := crtFixture(true)
+	s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5)
+	require.False(t, s.NeedsView("town"), "sanity: town is read")
+	s.ApplyEvent(postedEv(reply("r1", "root", "u2", 5000, 1), "u1"))
+	assert.False(t, s.NeedsView("town"), "a reply (even one mentioning us) is not the channel's to read")
+	s.ApplyEvent(postedEv(mkPost("root2", "town", "u2", 6000)))
+	assert.True(t, s.NeedsView("town"), "a new root is")
+
+	s = crtFixture(false)
+	s.ApplyEvent(postedEv(reply("r1", "root", "u2", 5000, 1)))
+	assert.True(t, s.NeedsView("town"), "without CRT a reply is an ordinary message")
+}

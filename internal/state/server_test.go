@@ -160,3 +160,26 @@ func TestRefreshUsersKeepsNewerProfilesAndReportsChanges(t *testing.T) {
 	assert.False(t, s.RefreshUsers([]model.User{{ID: "u8", Username: "stranger"}}), "only users we know")
 	assert.Equal(t, []string{"u1", "u2", "u3"}, s.KnownUserIDs())
 }
+
+// Spike §4.1 п.5: Bootstrap reports a CRT change against what was held —
+// a live session or a snapshot saved in the other mode — so the worker can
+// drop the windows that hold the wrong kind of posts.
+func TestBootstrapReportsCRTChange(t *testing.T) {
+	crtOn := fixture()
+	crtOn.Config.CollapsedThreads = "always_on"
+	byPref := fixture()
+	byPref.Config.CollapsedThreads = "default_off"
+	byPref.Prefs = append(byPref.Prefs, model.Preference{Category: "display_settings", Name: "collapsed_reply_threads", Value: "on"})
+
+	s := New(fixedNow)
+	assert.False(t, s.Bootstrap(fixture()), "the first bootstrap has nothing to compare with")
+	assert.False(t, s.Bootstrap(fixture()), "same mode")
+	assert.True(t, s.Bootstrap(crtOn), "admin turned CRT on")
+	assert.False(t, s.Bootstrap(byPref), "on by preference is still on")
+	assert.True(t, s.Bootstrap(fixture()), "off again")
+
+	put, _ := s.TakeSnapshot() // saved with CRT off
+	r := New(fixedNow)
+	require.NoError(t, r.Restore(put))
+	assert.True(t, r.Bootstrap(crtOn), "a snapshot saved in the other mode counts")
+}

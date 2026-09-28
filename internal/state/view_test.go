@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,4 +91,67 @@ func TestChannelViewDMNameAndUnknownChannel(t *testing.T) {
 	assert.True(t, v.Syncing)
 	_, ok = s.ChannelView("nope")
 	assert.False(t, ok)
+}
+
+// T7 / spike §4.1 п.6: under CRT a reply being sent lives in the thread
+// pane only; without CRT the feed shows it inline.
+func TestPendingReplyIsNotInTheCRTFeed(t *testing.T) {
+	for _, crt := range []bool{true, false} {
+		s := crtFixture(crt)
+		s.SetWindow("town", []model.Post{mkPost("root", "town", "u2", 1000)}, true, 5)
+		s.AddPending("town", "root", "a reply")
+		s.AddPending("town", "", "a root")
+		v, _ := s.ChannelView("town")
+		var msgs []string
+		for _, p := range v.Posts {
+			msgs = append(msgs, p.Message)
+		}
+		if crt {
+			assert.Equal(t, []string{"msg root", "a root"}, msgs, "crt: the pending reply is not in the feed")
+		} else {
+			assert.Equal(t, []string{"msg root", "a reply", "a root"}, msgs, "no crt: inline")
+		}
+	}
+}
+
+// Without CRT a reply in the feed carries its root's author and a short
+// snippet, taken from what is held (window, loaded history); a root not
+// held gives none (the UI says "reply in a thread").
+func TestNonCRTReplyCarriesRootContext(t *testing.T) {
+	s := crtFixture(false)
+	long := mkPost("long", "town", "u2", 1000)
+	long.Message = "  first   line\n\nsecond\tline " + strings.Repeat("я", 100)
+	file := mkPost("file", "town", "u3", 1100)
+	file.Message = " \n "
+	file.Metadata = &model.PostMetadata{Files: []model.FileInfo{{ID: "f1", Name: "report.pdf"}, {ID: "f2", Name: "b.png"}}}
+	hist := mkPost("hist", "town", "u2", 500)
+	hist.Message = "from history"
+	s.SetWindow("town", []model.Post{long, file,
+		reply("r1", "long", "u3", 2000, 1), reply("r2", "file", "u2", 2100, 1),
+		reply("r3", "hist", "u3", 2200, 1), reply("r4", "gone", "u3", 2300, 1)}, false, 5)
+
+	byID := func() map[string]PostView {
+		v, _ := s.ChannelView("town")
+		out := map[string]PostView{}
+		for _, p := range v.Posts {
+			out[p.ID] = p
+		}
+		return out
+	}
+	v := byID()
+	assert.Equal(t, "bob", v["r1"].RootAuthor)
+	want := []rune("first line second line " + strings.Repeat("я", 100))
+	assert.Equal(t, string(want[:79])+"…", v["r1"].RootSnippet, "whitespace collapsed, ≤ 80 runes")
+	assert.Equal(t, 80, len([]rune(v["r1"].RootSnippet)))
+	assert.Equal(t, "carol", v["r2"].RootAuthor)
+	assert.Equal(t, "report.pdf", v["r2"].RootSnippet, "no text: the first file's name")
+	assert.Empty(t, v["r3"].RootAuthor, "root not held yet")
+	assert.Empty(t, v["r4"].RootSnippet)
+	assert.Empty(t, v["long"].RootAuthor, "roots carry no context")
+
+	s.SetActive("town")
+	s.AppendOlder("town", []model.Post{hist}, true)
+	v = byID()
+	assert.Equal(t, "bob", v["r3"].RootAuthor, "root found in the loaded history")
+	assert.Equal(t, "from history", v["r3"].RootSnippet)
 }

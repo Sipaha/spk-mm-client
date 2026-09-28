@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -305,4 +306,155 @@ func TestCRTReplyAlreadyReflectedByRESTDoesNotDoubleBump(t *testing.T) {
 	s.mu.Unlock()
 	assert.Equal(t, int64(1), got.ReplyCount, "not double-bumped")
 	assert.Equal(t, int64(2000), got.LastReplyAt)
+}
+
+// crtFixture is newFixture with CollapsedThreads forced on or off.
+func crtFixture(crt bool) *Server {
+	b := fixture()
+	if crt {
+		b.Config.CollapsedThreads = "always_on"
+	}
+	s := New(fixedNow)
+	s.Bootstrap(b)
+	s.SetUsers([]model.User{{ID: "u1", Username: "alice"}, {ID: "u2", Username: "bob"}, {ID: "u3", Username: "carol"}})
+	s.ClearGuard()
+	return s
+}
+
+func reply(id, root, user string, at, replyCount int64) model.Post {
+	p := mkPost(id, "town", user, at)
+	p.RootID, p.ReplyCount = root, replyCount
+	return p
+}
+
+func rootCount(t *testing.T, s *Server, ch, id string) (int64, int64) {
+	t.Helper()
+	p, ok := windowPost(s, ch, id)
+	require.True(t, ok, "root %s not in the window", id)
+	return p.ReplyCount, p.LastReplyAt
+}
+
+// Review focus 1: the root's reply count comes from the reply's own
+// reply_count (the server's current total), is applied once however many
+// times the reply arrives (REST CreatePost + WS echo + a replayed event),
+// and a late event of an older reply never rolls it back.
+func TestReplyCountComesFromPostedOnce(t *testing.T) {
+	for _, crt := range []bool{true, false} {
+		t.Run(fmt.Sprint("crt=", crt), func(t *testing.T) {
+			s := crtFixture(crt)
+			root := mkPost("root", "town", "u2", 1000)
+			root.ReplyCount, root.LastReplyAt = 2, 2000
+			s.SetWindow("town", []model.Post{root}, true, 5)
+
+			// The server says 5: replies we never saw are counted too.
+			mine := reply("r5", "root", "u1", 3000, 5)
+			s.PostCreated(mine)
+			n, last := rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(5), n, "reply_count of the posted reply is taken as is")
+			assert.Equal(t, int64(3000), last)
+
+			s.ApplyEvent(postedEv(mine)) // WS echo of our own reply
+			s.ApplyEvent(postedEv(mine)) // replayed event
+			n, _ = rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(5), n, "applied once")
+
+			// A reply created before the newest one arrives late with the
+			// smaller total of its moment.
+			s.ApplyEvent(postedEv(reply("r4", "root", "u3", 2500, 4)))
+			n, last = rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(5), n, "a late older reply does not lower the count")
+			assert.Equal(t, int64(3000), last)
+
+			// Without reply_count (older servers): one ++ per new id.
+			s.ApplyEvent(postedEv(reply("r6", "root", "u3", 4000, 0)))
+			s.ApplyEvent(postedEv(reply("r6", "root", "u3", 4000, 0)))
+			n, last = rootCount(t, s, "town", "root")
+			assert.Equal(t, int64(6), n)
+			assert.Equal(t, int64(4000), last)
+
+			v, _ := s.ChannelView("town")
+			require.NotEmpty(t, v.Posts)
+			assert.Equal(t, int64(4000), v.Posts[0].LastReplyAt, "PostView carries last_reply_at")
+		})
+	}
+}
+
+// Review focus 1: a deleted reply lowers its root's count exactly once
+// whether the REST DeletePost result, the post_deleted event, or both (in
+// either order, replayed) report it; never below zero.
+func TestReplyDeleteDecrementsOnce(t *testing.T) {
+	for _, crt := range []bool{true, false} {
+		for _, restFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("crt=%v/restFirst=%v", crt, restFirst), func(t *testing.T) {
+				s := crtFixture(crt)
+				root := mkPost("root", "town", "u2", 1000)
+				root.ReplyCount, root.LastReplyAt = 2, 2100
+				s.SetWindow("town", []model.Post{root, reply("r1", "root", "u1", 2000, 1), reply("r2", "root", "u3", 2100, 2)}, true, 5)
+
+				gone := reply("r1", "root", "u1", 2000, 0)
+				gone.DeleteAt, gone.UpdateAt = 5000, 5000
+				if restFirst {
+					s.RemovePost("r1")
+					s.ApplyEvent(postEv("post_deleted", gone))
+				} else {
+					s.ApplyEvent(postEv("post_deleted", gone))
+					s.RemovePost("r1")
+				}
+				s.ApplyEvent(postEv("post_deleted", gone))
+				n, _ := rootCount(t, s, "town", "root")
+				assert.Equal(t, int64(1), n, "decremented once")
+				assert.NotContains(t, windowIDs(s, "town"), "r1")
+
+				gone2 := reply("r2", "root", "u3", 2100, 0)
+				gone2.DeleteAt, gone2.UpdateAt = 5100, 5100
+				s.ApplyEvent(postEv("post_deleted", gone2))
+				gone3 := reply("r3", "root", "u3", 2200, 0) // a reply we never held
+				gone3.DeleteAt, gone3.UpdateAt = 5200, 5200
+				s.ApplyEvent(postEv("post_deleted", gone3))
+				n, _ = rootCount(t, s, "town", "root")
+				assert.Equal(t, int64(0), n, "never below zero")
+			})
+		}
+	}
+}
+
+// A root that already reflects the deletion (fetched after it: the server
+// moves the root's update_at to the deletion time) is not lowered again by
+// the late post_deleted event.
+func TestReplyDeleteAfterFresherRootIsNotCountedTwice(t *testing.T) {
+	s := crtFixture(true)
+	root := mkPost("root", "town", "u2", 1000)
+	root.ReplyCount, root.LastReplyAt, root.UpdateAt = 1, 2000, 5000 // page read after r1 was deleted
+	s.SetWindow("town", []model.Post{root}, true, 5)
+	gone := reply("r1", "root", "u1", 3000, 0)
+	gone.DeleteAt, gone.UpdateAt = 5000, 5000
+	s.ApplyEvent(postEv("post_deleted", gone))
+	n, _ := rootCount(t, s, "town", "root")
+	assert.Equal(t, int64(1), n)
+}
+
+// Spike §4.1 п.4: the server does not mark the channel viewed for a CRT
+// reply (app/post.go: isCRTReply), so neither do we.
+func TestOwnCRTReplyDoesNotMarkTheChannelRead(t *testing.T) {
+	s := crtFixture(true)
+	s.SetWindow("off", []model.Post{mkPost("root", "off", "u2", 1000)}, true, 5)
+	before, mb := counts(s, "off")
+	r := mkPost("r1", "off", "u1", 5000)
+	r.RootID = "root"
+	s.PostCreated(r)
+	info, m := counts(s, "off")
+	assert.Equal(t, before.TotalMsgCount+1, info.TotalMsgCount, "the reply is still a message of the channel")
+	assert.Equal(t, before.TotalMsgCountRoot, info.TotalMsgCountRoot)
+	assert.Equal(t, mb.MsgCount, m.MsgCount)
+	assert.Equal(t, mb.MsgCountRoot, m.MsgCountRoot, "unread roots stay unread")
+	assert.Equal(t, mb.LastViewedAt, m.LastViewedAt)
+	s.mu.Lock()
+	unread, _ := s.unreadLocked(s.chans["off"])
+	s.mu.Unlock()
+	assert.True(t, unread, "Off-Topic is still unread")
+
+	// A root of our own does mark it read, as before.
+	s.PostCreated(mkPost("mine", "off", "u1", 6000))
+	info, m = counts(s, "off")
+	assert.Equal(t, info.TotalMsgCountRoot, m.MsgCountRoot)
 }

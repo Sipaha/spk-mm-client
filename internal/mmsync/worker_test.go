@@ -3,6 +3,7 @@ package mmsync
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,4 +263,60 @@ func TestAddedToChannelRefreshesSidebar(t *testing.T) {
 func TestSleptDetection(t *testing.T) {
 	assert.False(t, slept(5*time.Second, 5*time.Second, 15*time.Second))
 	assert.True(t, slept(10*time.Minute, 5*time.Second, 15*time.Second))
+}
+
+// Spike §4.1 п.5: CRT changed without a preferences_changed event — the
+// admin switched CollapsedThreads while we were connected, or while we were
+// away and the snapshot was saved in the other mode. The next bootstrap
+// drops the windows (replies inline vs roots only) and refetches them.
+func TestBootstrapWithOtherCRTResetsWindows(t *testing.T) {
+	hasReply := func(h *harness) bool {
+		for _, p := range h.view("c-town").Posts {
+			if p.RootID != "" {
+				return true
+			}
+		}
+		return false
+	}
+	caughtUp := func(h *harness, crt bool) func() bool {
+		return func() bool {
+			v := h.view("c-town")
+			return v.CRT == crt && v.Loaded && !v.Syncing && h.allLoaded()
+		}
+	}
+
+	t.Run("live", func(t *testing.T) {
+		h := newHarness(t, mmfake.Options{})
+		h.fake.SeedThread("c-town", "alice", 3)
+		h.start()
+		h.live()
+		h.eventually(caughtUp(h, false), "prefetch")
+		require.True(t, hasReply(h), "sanity: without CRT replies are inline")
+
+		h.fake.SetCollapsedThreads("always_on")
+		h.fake.DropConnections(true) // the next session bootstraps afresh
+		h.eventually(func() bool { return caughtUp(h, true)() && !hasReply(h) }, "windows fetched without CRT were not dropped")
+	})
+
+	t.Run("snapshot", func(t *testing.T) {
+		h := newHarness(t, mmfake.Options{})
+		h.fake.SeedThread("c-town", "alice", 3)
+		h.start()
+		h.live()
+		h.eventually(caughtUp(h, false), "prefetch")
+		require.True(t, hasReply(h), "sanity: without CRT replies are inline")
+		h.stop()
+		entries, err := h.store.LoadCache(context.Background(), h.srv.ID)
+		require.NoError(t, err)
+		saved := false
+		for _, e := range entries {
+			saved = saved || (e.Kind == "posts" && e.Key == "c-town" && strings.Contains(string(e.Data), `"root_id"`))
+		}
+		require.True(t, saved, "sanity: the snapshot holds the town window with replies")
+
+		h.fake.SetCollapsedThreads("always_on")
+		h.start()
+		h.live()
+		h.eventually(func() bool { return caughtUp(h, true)() && !hasReply(h) }, "the snapshot's windows were not dropped")
+	})
 }
