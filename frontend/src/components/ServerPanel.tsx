@@ -59,7 +59,7 @@ export function ServerPanel({ server, client, loginFailures = 0, reauth = false,
           {server.gitlab && (
             <>
               <button
-                className="rounded bg-orange-600 px-3 py-1.5 text-white disabled:opacity-50"
+                className="rounded bg-accent px-3 py-1.5 text-accent-fg disabled:opacity-50"
                 disabled={busy}
                 onClick={() => run(async () => { await client.startGitLabLogin(server.id); setWaitingGitLab(true) })}
               >
@@ -81,7 +81,7 @@ export function ServerPanel({ server, client, loginFailures = 0, reauth = false,
               {t('server.password')}
               <input type="password" className="rounded border border-line bg-app px-2 py-1.5 text-fg" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
-            <button type="submit" disabled={busy || !login || !password} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
+            <button type="submit" disabled={busy || !login || !password} className="rounded bg-accent px-3 py-1.5 text-accent-fg disabled:opacity-50">
               {t('server.signIn')}
             </button>
           </form>

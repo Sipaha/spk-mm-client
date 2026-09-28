@@ -36,7 +36,7 @@ export function AddServerForm(props: { add: (url: string) => Promise<Pick<Server
         />
       </label>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-      <button type="submit" disabled={busy || !url.trim()} className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50">
+      <button type="submit" disabled={busy || !url.trim()} className="rounded bg-accent px-3 py-1.5 text-accent-fg disabled:opacity-50">
         {busy ? t('add.checking') : t('add.submit')}
       </button>
     </form>

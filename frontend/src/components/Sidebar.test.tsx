@@ -69,6 +69,17 @@ test('unread, mentions, muted and active are visible', () => {
   expect(screen.getByRole('button', { name: /Town Square/ })).toHaveAttribute('aria-current', 'true')
 })
 
+test('tone classes: read, unread and active channels each use their own sidebar token', () => {
+  renderSidebar()
+  const read = screen.getByRole('button', { name: 'Town Square' }) // active (selected_channel is c-town's aria-current, but Town Square is also active here)
+  const unread = screen.getByRole('button', { name: /Off-Topic/ })
+  const muted = screen.getByRole('button', { name: 'Noise' }) // read, not active
+  expect(read).toHaveClass('border-sidebar-active-border', 'bg-sidebar-active-bg', 'text-sidebar-fg-unread')
+  expect(unread).toHaveClass('font-semibold', 'text-sidebar-fg-unread', 'border-transparent')
+  expect(muted).toHaveClass('text-sidebar-fg', 'border-transparent')
+  expect(muted).not.toHaveClass('font-semibold')
+})
+
 test('team switcher appears with more than one team', async () => {
   const p = renderSidebar()
   await userEvent.click(screen.getByRole('button', { name: /Two/ }))

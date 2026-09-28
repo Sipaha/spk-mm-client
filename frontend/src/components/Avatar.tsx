@@ -83,7 +83,11 @@ export const Avatar = memo(function Avatar({ serverId, userId, version, name, st
       ) : (
         <span
           aria-hidden="true"
-          className={`flex h-full w-full items-center justify-center rounded-full font-semibold text-white ${colorFor(userId)}`}
+          // text-accent-fg (near-black): better contrast than white against
+          // 9 of these 10 swatches, roughly tied on the other 2 — see
+          // theme-report.md's avatar contrast table. The swatches themselves
+          // stay varied per user (brief scope 4).
+          className={`flex h-full w-full items-center justify-center rounded-full font-semibold text-accent-fg ${colorFor(userId)}`}
           style={{ fontSize: Math.round(size * 0.4) }}
         >
           {(name[0] ?? '?').toUpperCase()}

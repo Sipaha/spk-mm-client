@@ -30,14 +30,25 @@ function categoryName(c: CategoryView): string {
 
 function MentionPill({ n }: { n: number }) {
   return (
-    <span aria-label={t('rail.mentions', { n: String(n) })} className="ml-auto rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-4 text-white">
+    <span aria-label={t('rail.mentions', { n: String(n) })} className="ml-auto rounded-full bg-danger px-1.5 text-[10px] font-bold leading-4 text-danger-fg">
       {n > 99 ? '99+' : n}
     </span>
   )
 }
 
+// Mattermost-style tone (theme brief scope 2): read channels use the dimmer
+// --color-sidebar-fg; unread channels are bold, full --color-sidebar-fg-
+// unread; the active channel gets a 3px accent left border plus a tinted
+// background instead of a solid fill — border-transparent on the other two
+// tones keeps the same 3px reserved so switching tones never shifts layout.
+function rowTone(active: boolean, unread: boolean): string {
+  if (active) return 'border-l-[3px] border-sidebar-active-border bg-sidebar-active-bg pl-[9px] text-sidebar-fg-unread'
+  if (unread) return 'border-l-[3px] border-transparent pl-[9px] font-semibold text-sidebar-fg-unread'
+  return 'border-l-[3px] border-transparent pl-[9px] text-sidebar-fg'
+}
+
 function ChannelRow({ serverId, item, active, onClick }: { serverId: number; item: ChannelItem; active: boolean; onClick(): void }) {
-  const tone = active ? 'bg-blue-700 text-white' : item.unread ? 'font-semibold text-fg' : 'text-fg-subtle'
+  const tone = rowTone(active, item.unread)
   const person = item.type === 'D' && item.user_id
   const status = item.bot ? '' : (item.status ?? '')
   // The presence goes into the button's name as a whole label: a visually
@@ -51,7 +62,7 @@ function ChannelRow({ serverId, item, active, onClick }: { serverId: number; ite
       aria-current={active}
       aria-label={label}
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-hover ${tone} ${item.muted ? 'opacity-50' : ''}`}
+      className={`flex w-full items-center gap-2 rounded py-1 pr-3 text-left hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tone} ${item.muted ? 'opacity-50' : ''}`}
     >
       {person ? (
         <Avatar serverId={serverId} userId={item.user_id!} version={item.avatar} name={item.name} status={status} size={20} surface="sidebar" />

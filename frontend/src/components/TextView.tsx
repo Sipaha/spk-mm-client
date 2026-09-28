@@ -175,7 +175,7 @@ export function TextView({
               : undefined
           }
           data-current={isCurrent ? 'true' : undefined}
-          className={isCurrent ? 'bg-accent text-black' : 'bg-yellow-500/70 text-black'}
+          className={isCurrent ? 'bg-accent text-accent-fg' : 'bg-mention-bg text-mention-fg'}
         >
           {text.slice(m.start, m.end)}
         </mark>,

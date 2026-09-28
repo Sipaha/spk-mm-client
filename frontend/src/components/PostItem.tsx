@@ -146,7 +146,7 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
         className="w-full resize-none rounded border border-accent bg-app px-2 py-1 text-fg focus:outline-none"
       />
       <div className="flex items-center gap-3 text-xs">
-        <button className="rounded bg-blue-600 px-2 py-0.5 text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>
+        <button className="rounded bg-accent px-2 py-0.5 text-accent-fg disabled:opacity-50" disabled={busy} onClick={() => void save()}>
           {t('post.save')}
         </button>
         <button className="text-fg underline" onClick={actions.cancelEdit}>

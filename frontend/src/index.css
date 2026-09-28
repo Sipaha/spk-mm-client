@@ -1,25 +1,52 @@
 @import "tailwindcss";
 
-/* Dark theme, out of the box, no setting: see docs/specs UI section. */
+/* Dark theme, out of the box, no setting: Catppuccin Macchiato (user
+   decision, 2026-09-28 — see .superpowers/sdd/fixes-2026-09-28/theme-brief.md
+   and its source material's token_table.md/report.md). Body-text contrast
+   (--color-fg on --color-app) is ~9.9:1 — comfortable, down from the
+   previous theme's ~16:1. No light theme and no prefers-color-scheme block
+   exist in this file — one theme only, by the same brief's ruling (a
+   switcher, or following the MM server theme, is future work — see
+   docs/backlog.md). Token *values* only change here: component code never
+   hard-codes a hex, so a future theme/switcher only touches this block plus
+   the sidebar tokens below. */
 @theme {
-  --color-app: #1f1f23;
-  --color-panel: #232327;
-  --color-sidebar: #18181b;
-  --color-rail: #111113;
-  --color-fg: #e4e4e7;
-  --color-fg-muted: #a1a1aa;
-  --color-fg-subtle: #71717a;
-  --color-line: #34343a;
-  --color-hover: #2a2a30;
-  --color-accent: #4f8cff;
-  --color-accent-fg: #ffffff;
-  --color-mention-bg: #4a3b12;
-  --color-mention-fg: #fcd34d;
-  --color-danger: #f87171;
-  --color-code-bg: #2a2a30;
-  --color-online: #06d6a0;
-  --color-away: #ffbc1f;
-  --color-dnd: #d24b4e;
+  --color-app: #24273a;
+  --color-panel: #363a4f;
+  --color-sidebar: #1e2030;
+  --color-rail: #181926;
+  --color-fg: #cad3f5;
+  --color-fg-muted: #b8c0e0;
+  --color-fg-subtle: #a5adcb;
+  --color-line: #494d64;
+  --color-hover: #303347;
+  --color-accent: #8aadf4;
+  --color-accent-fg: #0a0a0c;
+  --color-mention-bg: #504d50;
+  --color-mention-fg: #eed49f;
+  --color-danger: #ed8796;
+  /* danger-fg: paired with --color-danger the same way accent-fg pairs with
+     --color-accent (Macchiato's danger is a light pink — a dark foreground
+     reads far better on it than white, 8.0:1 vs 2.5:1). Also backs the
+     mention/unread-count badge (Sidebar.tsx, ServerRail.tsx): a dedicated
+     mention-badge token was not needed — it is the same "urgent count" red
+     as danger, just a different shape. */
+  --color-danger-fg: #0a0a0c;
+  --color-code-bg: #363a4f;
+  --color-online: #a6da95;
+  --color-away: #f5a97f;
+  --color-dnd: #ed8796;
+
+  /* Sidebar tones (Mattermost-style, theme brief scope 2): read channels
+     sit at ~68% of the sidebar fg colour over --color-sidebar (dimmer than
+     body text, but not as dim as the old text-fg-subtle); unread channels
+     are the full sidebar fg colour, bold; the active channel is a subtle
+     accent-tinted background plus a 3px accent left border, replacing the
+     old solid bg-blue-700 fill. */
+  --color-sidebar-fg: #939ab6;
+  --color-sidebar-fg-unread: #cad3f5;
+  --color-sidebar-active-bg: #2f374f;
+  --color-sidebar-active-border: #8aadf4;
 }
 
 /* Message markdown: Tailwind's preflight resets these elements. */

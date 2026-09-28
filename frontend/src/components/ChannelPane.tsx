@@ -133,7 +133,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         >
           <IconDownload />
           {activeDownloads > 0 && (
-            <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-white">
+            <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-accent-fg">
               {activeDownloads}
             </span>
           )}

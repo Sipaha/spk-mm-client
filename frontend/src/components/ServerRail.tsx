@@ -9,7 +9,7 @@ const stateLabel: Partial<Record<ServerDTO['state'], Parameters<typeof t>[0]>> =
 
 export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | null; onSelect: (id: number | null) => void }) {
   return (
-    <nav className="flex w-16 shrink-0 flex-col items-center gap-3 bg-rail py-3">
+    <nav className="flex w-16 shrink-0 flex-col items-center gap-3 border-r border-line bg-rail py-3">
       {props.servers.map((s) => {
         const problem = s.signed_in ? stateLabel[s.state] : undefined
         const dim = !s.signed_in || s.state === 'needs_reauth'
@@ -26,14 +26,14 @@ export function ServerRail(props: { servers: ServerDTO[]; selectedId: number | n
               aria-label={accessibleName}
               aria-current={s.id === props.selectedId}
               onClick={() => props.onSelect(s.id)}
-              className={`h-11 w-11 rounded-xl text-sm font-semibold text-white ${s.id === props.selectedId ? 'bg-blue-600' : 'bg-hover'} ${dim ? 'opacity-60' : ''} ${s.state === 'reconnecting' ? 'ring-2 ring-mention-fg' : ''}`}
+              className={`h-11 w-11 rounded-xl text-sm font-semibold ${s.id === props.selectedId ? 'bg-accent text-accent-fg' : 'bg-hover text-fg'} ${dim ? 'opacity-60' : ''} ${s.state === 'reconnecting' ? 'ring-2 ring-mention-fg' : ''}`}
             >
               {s.name.slice(0, 2).toUpperCase()}
             </button>
             {s.mentions > 0 ? (
               <span
                 aria-label={t('rail.mentions', { n: String(s.mentions) })}
-                className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-red-600 px-1 text-center text-[10px] font-bold leading-5 text-white"
+                className="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-danger px-1 text-center text-[10px] font-bold leading-5 text-danger-fg"
               >
                 {s.mentions > 99 ? '99+' : s.mentions}
               </span>
