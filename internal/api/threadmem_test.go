@@ -81,6 +81,8 @@ func TestThreadCacheHeapReturnsToBaseline(t *testing.T) {
 	mb := func(b uint64) string { return fmt.Sprintf("%.2f MB", float64(b)/(1<<20)) }
 	t.Logf("go heap after GC: baseline %s, one open thread of %d replies %s, after %d threads opened and closed %s",
 		mb(base), replies, mb(peak), threads, mb(after))
+	// The check measures something: a thread at its cap is visible in the heap.
+	assert.Greater(t, peak, base, "an open thread of %d replies costs heap", replies)
 	assert.InDelta(t, float64(base), float64(after), 1<<19, "the heap comes back to the baseline ±0.5 MB")
 }
 

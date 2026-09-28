@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
@@ -106,44 +106,135 @@ test('pickAnchor: the topmost post row still (partly) visible below the viewport
   expect(pickAnchor([], viewTop)).toBeNull()
 })
 
-// A history page that lands while the feed is still at the very top (its
-// anchor restore could not move it — e2e "history loads up to the first
-// message" caught it stuck at scrollTop 0 with has_more) must not wait for a
-// scroll event: at scrollTop 0 another scrollTo(0) or wheel-up fires none,
-// so the next page would never load. The rule is onScroll's own (within
-// NEAR_TOP of the top with more history → load), applied after the rows
-// change too.
-test('a page that lands with the feed still at the top loads the next one without a scroll event', async () => {
-  const onLoadOlder = vi.fn().mockResolvedValue(true)
-  const p = props({ has_more: true }, onLoadOlder)
-  // jsdom has no layout: the scroller's geometry is set by hand, as it is
-  // after the first rows in a browser — taller than the viewport (not the
-  // "page does not fill the viewport" case) and scrolled to its end.
+// ---- history loads that leave the feed at the very top ----
+//
+// jsdom has no layout, so these tests drive it by hand: animation frames run
+// only when flushed (exact, no timed waits), the scroller has a fixed
+// geometry, post rows have a box (so the history anchor is really captured),
+// and scrollTo is jsdom's no-op — the anchor restore is attempted but cannot
+// move the feed, the failure seen in e2e ("history loads up to the first
+// message": a page landed, the feed stayed at scrollTop 0 with has_more).
+
+function manualFrames() {
+  const pending = new Map<number, FrameRequestCallback>()
+  let next = 1
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    pending.set(next, cb)
+    return next++
+  })
+  const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => void pending.delete(id))
+  // flush runs the frames due now and the ones they schedule (bounded: the
+  // virtualizer's own reconcile loop reschedules itself), then settles promises.
+  const flush = async () => {
+    for (let i = 0; i < 10 && pending.size > 0; i++) {
+      const due = [...pending.values()]
+      pending.clear()
+      await act(async () => due.forEach((cb) => cb(performance.now())))
+    }
+    await act(async () => {})
+  }
+  return { flush, restore: () => (raf.mockRestore(), caf.mockRestore()) }
+}
+
+// A feed the user has scrolled to its top: tall content, scrollTop 0 that
+// the restore cannot change, rows with a box below the viewport top.
+function atTheTop(log: HTMLElement) {
   let top = 4400
-  const geometry = {
+  Object.defineProperties(log, {
     scrollHeight: { configurable: true, get: () => 5000 },
     clientHeight: { configurable: true, get: () => 600 },
     scrollTop: { configurable: true, get: () => top, set: (v: number) => void (top = v) },
-  }
-  const { rerender } = render(<Feed {...p} />)
+  })
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const post = this.dataset.kind === 'post'
+    return { top: post ? 10 : 0, bottom: post ? 50 : 0, left: 0, right: 0, width: 0, height: post ? 40 : 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+  })
+  return { setTop: (v: number) => void (top = v), restore: () => rect.mockRestore() }
+}
+
+const older = (n: number) => Array.from({ length: n }, (_, i) => P(`o${n - i}`, i % 2 ? 'carol' : 'bob', 100 + n - i))
+
+async function openAtTop(variant: 'channel' | 'thread') {
+  const frames = manualFrames()
+  const onLoadOlder = vi.fn().mockResolvedValue(true)
+  const p = { ...props({ has_more: true }, onLoadOlder), variant }
+  const view = render(<Feed {...p} />)
   const log = screen.getByRole('log')
-  Object.defineProperties(log, geometry) // scrollTo is a no-op here: the restore cannot move the feed
-  await new Promise((r) => setTimeout(r, 50)) // the mount's frames
+  const geo = atTheTop(log)
+  await frames.flush() // the mount's frames
   onLoadOlder.mockClear()
-
-  top = 0 // the user reaches the top
+  vi.mocked(HTMLElement.prototype.scrollTo).mockClear()
+  geo.setTop(0) // the user reaches the top
   fireEvent.scroll(log)
-  await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(1))
+  await frames.flush()
+  expect(onLoadOlder).toHaveBeenCalledTimes(1)
+  const land = async (posts: PostView[]) => {
+    view.rerender(<Feed {...p} data={{ ...p.data, posts: [...posts, ...p.data.posts] }} />)
+    await frames.flush()
+  }
+  const cleanup = () => (frames.restore(), geo.restore())
+  return { log, onLoadOlder, geo, land, flush: frames.flush, cleanup }
+}
 
-  // The page lands; the feed is still at scrollTop 0 and no scroll event follows.
-  rerender(<Feed {...p} data={{ ...p.data, posts: [P('o1', 'bob', 90), P('o2', 'carol', 80), ...p.data.posts] }} />)
-  await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2))
+// The page landed, the anchor restore was attempted and could not move the
+// feed off the top; at scrollTop 0 neither scrollTo(0) nor the wheel fires a
+// scroll event, so onScroll would never ask again — the fill path does
+// (onScroll's own rule: within NEAR_TOP of the top with more history).
+test.each(['channel', 'thread'] as const)('%s: a page that lands with the feed still at the top (failed restore) loads the next one without a scroll event', async (variant) => {
+  const f = await openAtTop(variant)
+  try {
+    await f.land(older(2))
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalled() // the anchor restore was attempted
+    expect(f.log.scrollTop).toBe(0) // …and could not move the feed
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(2)
 
-  // Away from the top (a restore that worked), a new page asks for nothing more.
-  top = 2000
-  rerender(<Feed {...p} data={{ ...p.data, posts: [P('o0', 'bob', 95), P('o1', 'bob', 90), P('o2', 'carol', 80), ...p.data.posts] }} />)
-  await new Promise((r) => setTimeout(r, 50))
-  expect(onLoadOlder).toHaveBeenCalledTimes(2)
+    // Away from the top (a restore that worked), a new page asks for nothing more.
+    f.geo.setTop(2000)
+    await f.land(older(3))
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(2)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// Review of d1ba0ac: without a bound the fill path re-requested every frame
+// (32 calls in 500 ms) when a load left everything as it was — Go dropped the
+// page (stale generation or cursor) or the thread had nothing to page from.
+test.each(['channel', 'thread'] as const)('%s: a load that changes nothing asks for no more pages until the user scrolls or wheels', async (variant) => {
+  const f = await openAtTop(variant)
+  try {
+    await f.land([]) // the same rows again, the feed still at the top
+    await f.land([])
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(1)
+
+    fireEvent.wheel(f.log, { deltaY: -100 }) // a real gesture at the top (no scroll event there)
+    await f.flush()
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(2)
+  } finally {
+    f.cleanup()
+  }
+})
+
+// Even loads that do add rows continue on their own at most twice while the
+// feed stays stuck at the top: the worst case of a restore that keeps
+// failing is two extra pages, not the channel's whole history.
+test.each(['channel', 'thread'] as const)('%s: loads continue on their own at most twice, then wait for the user', async (variant) => {
+  const f = await openAtTop(variant)
+  try {
+    await f.land(older(2))
+    await f.land(older(4))
+    await f.land(older(6))
+    await f.land(older(8))
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(3) // the user's + 2 automatic
+
+    fireEvent.wheel(f.log, { deltaY: -100 })
+    await f.flush()
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(4)
+    await f.land(older(10)) // a fresh budget after the gesture
+    expect(f.onLoadOlder).toHaveBeenCalledTimes(5)
+  } finally {
+    f.cleanup()
+  }
 })
 
 test('the history row keeps its box while loading: the label is only hidden, never removed', async () => {

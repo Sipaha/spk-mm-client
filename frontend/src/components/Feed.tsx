@@ -29,6 +29,7 @@ interface Props {
 const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
 const NEW_BADGE_CAP = 99
+const MAX_AUTO_LOADS = 2 // history loads the feed starts on its own (fillViewportIfShort) before it waits for the user
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
 const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
 
@@ -99,7 +100,10 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const anchor = useRef<string | null>(null)
   const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
   const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
+  const anchorTried = useRef(false) // the last rows change restored a history anchor (dev diagnostics)
   const loading = useRef(false)
+  const autoLoads = useRef(0) // fillViewportIfShort's loads since the last user gesture or leaving the top
+  const lastLoad = useRef<{ rows: number; top: number } | null>(null) // rows and scrollTop when the last load started
   const [loadingOlder, setLoadingOlder] = useState(false)
   const frame = useFrames()
   // Jump-to-latest button: visible once the feed is far enough from the
@@ -246,6 +250,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     if (loading.current || !data.has_more) return
     loading.current = true
     setLoadingOlder(true)
+    lastLoad.current = { rows: rows.length, top: scroller.current?.scrollTop ?? 0 }
     captureAnchor()
     try {
       if (!(await onLoadOlder())) anchor.current = null
@@ -262,12 +267,24 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // still true: under-filled after one page wasn't enough, or left at
   // scrollTop 0 by a page whose anchor restore could not move it (e2e caught
   // it; at the top neither scrollTo(0) nor the wheel fires another scroll
-  // event, so onScroll would never ask again). A restore that worked puts
-  // the feed a whole page below the top, so this doesn't cascade.
+  // event, so onScroll would never ask again).
+  // Bounded (review of d1ba0ac — unbounded, it re-requested every frame): it
+  // continues only if the last load changed something (more rows, or a
+  // scrollTop that moved — a page Go dropped changes neither), and at most
+  // MAX_AUTO_LOADS times until a wheel/touch gesture or the feed leaving the
+  // top. A restore that keeps failing costs two extra pages, not the
+  // channel's whole history.
   const fillViewportIfShort = () => {
     frame('fill', () => {
       const el = scroller.current
-      if (el && data.has_more && (el.scrollHeight <= el.clientHeight || el.scrollTop < NEAR_TOP)) void loadOlder()
+      if (!el || !data.has_more || loading.current) return
+      if (el.scrollHeight > el.clientHeight && el.scrollTop >= NEAR_TOP) return
+      if (autoLoads.current >= MAX_AUTO_LOADS) return
+      const last = lastLoad.current
+      if (last && rows.length <= last.rows && el.scrollTop === last.top) return // the last load changed nothing
+      if (import.meta.env.DEV && anchorTried.current) console.debug('feed: history restore left the feed at the top; loading on')
+      autoLoads.current++
+      void loadOlder()
     })
   }
 
@@ -319,6 +336,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       fillViewportIfShort()
       return
     }
+    anchorTried.current = !!anchor.current
     if (anchor.current) {
       // History landed above: keep the anchored row at the exact screen
       // position it had before the prepend (not necessarily the viewport
@@ -363,6 +381,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     if (!wasAtBottom && atBottom.current) resetNewPosts()
     if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
+    else autoLoads.current = 0 // away from the top: the next arrival there is a new episode
     // Hysteresis: show past one viewport from the bottom, hide within
     // NEAR_BOTTOM, leave it as-is in between — so it doesn't flicker.
     if (distance > el.clientHeight) {
@@ -436,9 +455,16 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     }
   }
 
+  // A real wheel/touch gesture: a fresh budget for automatic history loads,
+  // and at the top — where it fires no scroll event — a try of its own (the
+  // user asked; a load that changed nothing does not block it).
   const onUserGesture = () => {
     userScrolling.current = true
     shift.onUserInput()
+    autoLoads.current = 0
+    lastLoad.current = null
+    const el = scroller.current
+    if (el && el.scrollTop < NEAR_TOP) fillViewportIfShort()
   }
 
   return (
