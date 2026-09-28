@@ -105,7 +105,7 @@ test('at zoom > 1, clicking the visible image still does not close; clicking the
   const el = screen.getByRole('img', { name: 'build.png' })
   fireEvent.load(el)
   const emptyArea = container.querySelector('[data-viewer-empty]') as HTMLElement
-  fireEvent.keyDown(window, { key: '+' }) // zoom in past fit
+  fireEvent.keyDown(window, { key: '+', code: 'Equal' }) // zoom in past fit
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
@@ -331,6 +331,17 @@ test('markdown: Ctrl+F in Rendered mode switches to Source and focuses the searc
   expect(screen.queryByRole('textbox', { name: 'Search in file' })).toBeNull()
 
   await userEvent.keyboard('{Control>}f{/Control}')
+
+  expect(await screen.findByRole('textbox', { name: 'Search in file' })).toHaveFocus()
+  expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull() // switched to Source
+})
+
+test('markdown: Ctrl+F works on a Russian keyboard layout (key is "а", not "f" — matched by the physical key instead)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\nsome body text\n')))
+  render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
+
+  fireEvent.keyDown(window, { key: 'а', code: 'KeyF', ctrlKey: true })
 
   expect(await screen.findByRole('textbox', { name: 'Search in file' })).toHaveFocus()
   expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull() // switched to Source

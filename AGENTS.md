@@ -206,6 +206,24 @@
   («clicking the empty area around the image closes the viewer, while loading and after load;
   clicking the image itself does not», «at zoom > 1, clicking the visible image still does not
   close; clicking the uncovered area around it still does»).
+- Клавиатурные шорткаты на букву/цифру/знак пунктуации (не только с модификатором — тот же урок
+  для одиночных `+`/`-`/`0`) сравниваются по физической клавише (`KeyboardEvent.code`, например
+  `KeyF`/`Digit0`/`Equal`), а не по `KeyboardEvent.key` — на нелатинской раскладке (русской и т.п.)
+  `key` для физической F — `'а'`, так что `e.key === 'f'` там молча никогда не сработает; `code`
+  от раскладки не зависит. Общий хелпер — `frontend/src/keyboard.ts` (`isShortcut(e, code(s),
+  {ctrl?, shift?})`); клавиши без раскладочной зависимости (Escape, Enter, стрелки, Delete,
+  Backspace, Tab) по-прежнему сравниваются через `key` напрямую — хелпер им не нужен. `+` на
+  многих раскладках — это Shift+Equal: код `Equal` матчится с Shift и без него (плюс `NumpadAdd`
+  отдельно, `Digit0`/`Minus` — с `Numpad0`/`NumpadSubtract`). Разобрано на всех буквенных/
+  цифровых/пунктуационных шорткатах фронтенда (Ctrl+F в `TextView` и в `Viewer` — переключение
+  markdown на Source, `+`/`-`/`0` в `ImageZoom`); Go-сторона (`internal/desktop/observe_gtk.go`,
+  жест вставки) уже сравнивает физическую клавишу через `hardware_keycode`/группы раскладки
+  (`spk_key_is`) — менять не нужно. — `frontend/src/keyboard.test.ts`, `frontend/src/components/
+  TextView.test.tsx` («Ctrl+F works on a Russian keyboard layout (key is "а", not "f" — matched by
+  the physical key instead)»), `frontend/src/components/Viewer.test.tsx` («markdown: Ctrl+F works
+  on a Russian keyboard layout…»), `frontend/src/components/ImageZoom.test.tsx` («+/- and 0 keys
+  work regardless of keyboard layout (matched by the physical key, not the character it
+  produces)»).
 - Видео и аудио стримятся, не кэшируются на диске и не буферизуются в памяти: `MediaPlayer`
   берёт URL у `streamURL()`/`MediaStreamBase` (Task 7) и рендерит `<video controls>`/
   `<audio controls preload="none">`. Играет одновременно только один элемент во всём приложении

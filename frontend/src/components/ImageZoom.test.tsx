@@ -117,7 +117,7 @@ test('unmounting mid-drag removes the window mousemove/mouseup listeners (no lea
   try {
     const { unmount } = render(<ImageZoom serverId={1} file={img} loaded={false} onLoaded={noop} onFail={noop} onDragEnd={noop} onPercent={noop} />)
     const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
-    fireEvent.keyDown(window, { key: '+' }) // zoom in so there's room to pan
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' }) // zoom in so there's room to pan
     fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
     fireEvent.mouseMove(window, { clientX: 130, clientY: 110 }) // mid-drag — no mouseup yet
 
@@ -159,8 +159,8 @@ test('wheel and keyboard zoom subscribe once, not on every scale change', () => 
     const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
     fireEvent.wheel(stage, { deltaY: -100, clientX: 250, clientY: 150 })
     fireEvent.wheel(stage, { deltaY: -100, clientX: 250, clientY: 150 })
-    fireEvent.keyDown(window, { key: '+' })
-    fireEvent.keyDown(window, { key: '-' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
+    fireEvent.keyDown(window, { key: '-', code: 'Minus' })
 
     expect(wheelSubs()).toBe(wheelBefore) // no resubscription from scale changes
     expect(keydownSubs()).toBe(keydownBefore)
@@ -241,22 +241,42 @@ test('+/- and 0 keys zoom and reset; they are ignored while typing in an input',
   try {
     const { onPercent } = renderZoom(img)
     const fitPercent = onPercent.mock.calls.at(-1)![0] as number
-    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
     const zoomedPercent = onPercent.mock.calls.at(-1)![0] as number
     expect(zoomedPercent).toBeGreaterThan(fitPercent)
-    fireEvent.keyDown(window, { key: '-' })
+    fireEvent.keyDown(window, { key: '-', code: 'Minus' })
     const backDown = onPercent.mock.calls.at(-1)![0] as number
     expect(backDown).toBeLessThan(zoomedPercent)
-    fireEvent.keyDown(window, { key: '0' })
+    fireEvent.keyDown(window, { key: '0', code: 'Digit0' })
     expect(onPercent.mock.calls.at(-1)![0]).toBe(fitPercent)
 
     const input = document.createElement('input')
     document.body.appendChild(input)
     input.focus()
     const before = onPercent.mock.calls.length
-    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
     expect(onPercent.mock.calls.length).toBe(before) // ignored: focus is in an input
     input.remove()
+  } finally {
+    restore()
+  }
+})
+
+test('+/- and 0 keys work regardless of keyboard layout (matched by the physical key, not the character it produces)', () => {
+  const restore = stubImageRect(400, 300)
+  try {
+    const { onPercent } = renderZoom(img)
+    const fitPercent = onPercent.mock.calls.at(-1)![0] as number
+    // `key` values a real layout could produce for these physical keys that
+    // are not '+'/'-'/'0' at all — only `code` is layout-independent.
+    fireEvent.keyDown(window, { key: 'BOGUS', code: 'Equal', shiftKey: true }) // "+" is Shift+Equal on many layouts
+    const zoomedPercent = onPercent.mock.calls.at(-1)![0] as number
+    expect(zoomedPercent).toBeGreaterThan(fitPercent)
+    fireEvent.keyDown(window, { key: 'BOGUS', code: 'Minus' })
+    const backDown = onPercent.mock.calls.at(-1)![0] as number
+    expect(backDown).toBeLessThan(zoomedPercent)
+    fireEvent.keyDown(window, { key: 'BOGUS', code: 'Digit0' })
+    expect(onPercent.mock.calls.at(-1)![0]).toBe(fitPercent)
   } finally {
     restore()
   }
@@ -267,7 +287,7 @@ test('the Fit imperative handle resets zoom back to fit', () => {
   try {
     const { onPercent, ref } = renderZoom(img)
     const fitPercent = onPercent.mock.calls.at(-1)![0] as number
-    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
     expect(onPercent.mock.calls.at(-1)![0]).toBeGreaterThan(fitPercent)
     act(() => ref.current?.fit())
     expect(onPercent.mock.calls.at(-1)![0]).toBe(fitPercent)
@@ -281,7 +301,7 @@ test('dragging with the left mouse button pans once zoomed in, and reports a dra
   try {
     const { onDragEnd } = renderZoom(img)
     const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
-    fireEvent.keyDown(window, { key: '+' }) // zoom in so there's room to pan
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' }) // zoom in so there's room to pan
     fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
     fireEvent.mouseMove(window, { clientX: 140, clientY: 130 })
     fireEvent.mouseUp(window)
@@ -296,7 +316,7 @@ test('a plain click (no movement) does not report a drag end', () => {
   try {
     const { onDragEnd } = renderZoom(img)
     const stage = document.querySelector('.relative.flex.h-full.w-full') as HTMLElement
-    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
     fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
     fireEvent.mouseUp(window, { clientX: 100, clientY: 100 })
     expect(onDragEnd).not.toHaveBeenCalled()
@@ -324,7 +344,7 @@ test('switching files resets zoom to fit (a fresh ImageZoom keyed by file id)', 
   try {
     const onPercent = vi.fn()
     const { rerender } = render(<ImageZoom key="a" serverId={1} file={img} loaded={false} onLoaded={noop} onFail={noop} onDragEnd={noop} onPercent={onPercent} />)
-    fireEvent.keyDown(window, { key: '+' })
+    fireEvent.keyDown(window, { key: '+', code: 'Equal' })
     const zoomed = onPercent.mock.calls.at(-1)![0] as number
     onPercent.mockClear()
     rerender(<ImageZoom key="b" serverId={1} file={noPreview} loaded={false} onLoaded={noop} onFail={noop} onDragEnd={noop} onPercent={onPercent} />)

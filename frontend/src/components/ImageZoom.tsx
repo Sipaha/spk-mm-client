@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { t } from '../i18n'
+import { isShortcut } from '../keyboard'
 import { mediaURL } from '../media'
 import { imageOriginalOk } from './files'
 import { FIT, MAX_ZOOM_OF_NATURAL, ZOOM_STEP, naturalScale, panBy, scalePercent, toggleFitAndNatural, zoomAround, type ZoomState } from './imageZoom'
@@ -228,13 +229,18 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
       const { zoom: z0, natural: n0, showOriginal: so } = latestRef.current
       const active = so ? originalRef.current : previewRef.current
       const { maxScale } = natAndMax(active, z0.scale, n0.w)
-      if (e.key === '0') {
+      // Matched by physical key (`code`), not `key` — see keyboard.ts:
+      // layout-dependent punctuation (e.g. '+' is Shift+Equal on many
+      // layouts, and layouts remap digits/punctuation too, not just
+      // letters) would otherwise silently never fire on some layouts.
+      // Equal matches with or without Shift (covers both "=" and "+").
+      if (isShortcut(e, ['Digit0', 'Numpad0'])) {
         e.preventDefault()
         setZoom(FIT)
-      } else if (e.key === '+' || e.key === '=') {
+      } else if (isShortcut(e, ['Equal', 'NumpadAdd'])) {
         e.preventDefault()
         setZoom((z) => zoomAround(z, { x: 0, y: 0 }, ZOOM_STEP, maxScale))
-      } else if (e.key === '-') {
+      } else if (isShortcut(e, ['Minus', 'NumpadSubtract'])) {
         e.preventDefault()
         setZoom((z) => zoomAround(z, { x: 0, y: 0 }, 1 / ZOOM_STEP, maxScale))
       }

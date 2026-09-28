@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { t } from '../i18n'
+import { isShortcut } from '../keyboard'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
 import { useTextFile } from './textFile'
@@ -118,9 +119,12 @@ export function TextView({
 
   // Ctrl+F is intercepted at the window so it works no matter where focus
   // is in the viewer, and so the webview's own find-in-page never opens.
+  // Matched by physical key (`code`), not `key` — see keyboard.ts: `key`
+  // is 'а' for this same key on a Russian layout, so matching it directly
+  // would silently never fire there.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+      if (isShortcut(e, 'KeyF', { ctrl: true })) {
         e.preventDefault()
         inputRef.current?.focus()
         inputRef.current?.select()

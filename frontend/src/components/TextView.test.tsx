@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { FileView } from '../api/types'
@@ -162,5 +162,20 @@ test('Ctrl+F focuses the search field from anywhere in the viewer', async () => 
   const box = screen.getByRole('textbox', { name: 'Search in file' })
   expect(box).not.toHaveFocus()
   await userEvent.keyboard('{Control>}{f}{/Control}')
+  expect(box).toHaveFocus()
+})
+
+test('Ctrl+F works on a Russian keyboard layout (key is "а", not "f" — matched by the physical key instead)', async () => {
+  stubFetch('hello world')
+  render(
+    <>
+      <button>elsewhere</button>
+      <TextView serverId={1} file={log} />
+    </>,
+  )
+  screen.getByRole('button', { name: 'elsewhere' }).focus()
+  const box = screen.getByRole('textbox', { name: 'Search in file' })
+  expect(box).not.toHaveFocus()
+  fireEvent.keyDown(window, { key: 'а', code: 'KeyF', ctrlKey: true })
   expect(box).toHaveFocus()
 })

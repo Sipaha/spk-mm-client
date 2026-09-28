@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
+import { isShortcut } from '../keyboard'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
@@ -71,11 +72,12 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       } else if (e.key === 'ArrowLeft' && files.length > 1) {
         e.preventDefault()
         onIndex((index - 1 + files.length) % files.length)
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+      } else if (isShortcut(e, 'KeyF', { ctrl: true })) {
         // TextView (Source) intercepts Ctrl+F itself once mounted; in
         // Rendered mode there is no search field to intercept for at all,
         // so without this Ctrl+F silently did nothing. Switch to Source
-        // and hand off focus to its search field once it mounts.
+        // and hand off focus to its search field once it mounts. Matched
+        // by physical key (`code`), not `key` — see keyboard.ts.
         const f = files[index]
         if (f && fileKind(f) === 'markdown' && !mdSource) {
           e.preventDefault()
