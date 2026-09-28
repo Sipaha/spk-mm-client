@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { channel, removeServerFromMenu, seedThread, signInAlice, threadPane } from './helpers'
+import { apiCall, channel, removeServerFromMenu, seedThread, signInAlice, threadPane } from './helpers'
 
 // Theme brief 2026-09-28, scope 3a: resizable sidebar/thread-panel
 // splitters, app-wide persistence via internal/api's GetLayout/
@@ -48,6 +48,13 @@ test('keyboard steps and double-click reset the sidebar splitter', async ({ page
 
 test('dragging the thread-panel splitter resizes it', async ({ page }) => {
   await signInAlice(page)
+  // The sidebar width is app-wide and may carry over from another test in
+  // this file (e.g. the keyboard test above leaves it at its max via End) —
+  // reset it so the thread panel's own room (and this test's fixed drag
+  // delta) doesn't depend on run order.
+  await apiCall(page, 'SetSidebarWidth', { width: 256 })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await seedThread(page, 'layout root', ['layout reply 1'])
   await channel(page, /Town Square/).click()
   await page.getByRole('button', { name: /^Replies: 1/ }).click()
