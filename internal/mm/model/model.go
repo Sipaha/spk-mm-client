@@ -135,6 +135,10 @@ type Reaction struct {
 	PostID    string `json:"post_id"`
 	EmojiName string `json:"emoji_name"`
 	CreateAt  int64  `json:"create_at,omitempty"`
+	// UpdateAt/DeleteAt: set on a removal (reaction_removed carries the
+	// deleted row, reaction_store.go Delete → PreUpdate).
+	UpdateAt int64 `json:"update_at,omitempty"`
+	DeleteAt int64 `json:"delete_at,omitempty"`
 }
 
 // Emoji is a server's custom emoji.

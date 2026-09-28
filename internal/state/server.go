@@ -109,6 +109,9 @@ type Server struct {
 	openThread   string
 	threadEpoch  uint64
 	threadDrafts map[string]string
+	// threadRedirect: the last thread opened by a reply's id → its root's
+	// (RedirectThread); ThreadView resolves the former to the latter.
+	threadRedirect [2]string
 
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8

@@ -184,6 +184,7 @@ type Worker struct {
 	queue       *fetchQueue
 	viewing     sync.Map // channel id → in-flight view
 	threadLoads sync.Map // root id → in-flight thread load (loadThread)
+	threadAgain sync.Map // root id → a load was asked for while one ran
 	reactMu     sync.Mutex
 	reactPairs  map[string]*reactPair // post/emoji → our reaction being sent or waiting for a retry
 	reactPoke   chan struct{}         // a pair started waiting: reactLoop re-arms its timer

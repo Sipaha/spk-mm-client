@@ -75,3 +75,12 @@ loop:
 	assert.GreaterOrEqual(t, n, 1)
 	assert.LessOrEqual(t, n, 2, "5 replies in a burst → 1–2 events, not 5")
 }
+
+func TestOpenThreadWithoutARootIsNoPost(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.loaded(id, "c-town") }, "prefetch")
+	_, err := f.svc.OpenThread(context.Background(), id, "c-town", "")
+	assert.Equal(t, CodeNoPost, codeOf(err))
+}

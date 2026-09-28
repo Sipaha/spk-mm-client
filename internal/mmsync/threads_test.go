@@ -3,6 +3,7 @@ package mmsync
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -159,4 +160,58 @@ func TestCRTSwitchReloadsTheOpenThread(t *testing.T) {
 		return !v.CRT && v.Loaded && len(v.Posts) == 3 && h.threadHits(root) > hits
 	}, fmt.Sprintf("the open thread was not read again (hits %d)", hits))
 	assert.Equal(t, root, h.w.State().OpenThreadID(), "the panel stays open")
+}
+
+// Fix round 1, minor 4: opening the thread again (the user's retry) while
+// a failing load is in flight is not lost when that load gives up.
+func TestRetryWhileAFailingLoadRunsIsServed(t *testing.T) {
+	h := newHarness(t, mmfake.Options{CRT: true})
+	// A slow failure the REST client does not retry: a client timeout.
+	h.tune = func(c *Config) { c.HTTPClient = &http.Client{Timeout: 400 * time.Millisecond} }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	root := h.fake.SeedThread("c-town", "alice", 2)
+	h.fake.SetLatency("/thread", time.Second)
+	_, ok := h.w.OpenThread("c-town", root)
+	require.True(t, ok)
+	h.eventually(func() bool { return h.threadHits(root) == 1 }, "the first load started")
+	h.fake.SetLatency("/thread", 0)
+	h.w.OpenThread("c-town", root) // finds the load busy
+	h.eventually(func() bool { v := h.thread(root); return v.Loaded && len(v.Posts) == 3 && v.Error == "" },
+		"the retry that found the load busy was dropped")
+}
+
+// Fix round 1, minor 6: a reply's id opens its root's thread. Not held
+// (its window moved on): the page tells, order[0] is the reply with its
+// root_id.
+func TestOpeningAReplyOpensItsRoot(t *testing.T) {
+	h := newHarness(t, mmfake.Options{})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	root := h.fake.SeedThread("c-town", "alice", 1)
+	replyID := h.fake.FindPost("c-town", "Reply 1")
+	for i := 0; i < 61; i++ {
+		h.fake.PostAs("c-town", "bob", fmt.Sprintf("filler %d", i))
+	}
+	h.eventually(func() bool { return h.hasMessage("c-town", "filler 60") }, "fillers")
+	_, held := h.w.State().FindPost(replyID)
+	require.False(t, held, "the reply has left the window")
+
+	_, ok := h.w.OpenThread("c-town", replyID)
+	require.True(t, ok)
+	h.eventually(func() bool {
+		v := h.thread(replyID)
+		return v.RootID == root && v.Loaded && len(v.Posts) == 2
+	}, "the reply's id did not lead to its root's thread")
+	assert.Equal(t, root, h.w.State().OpenThreadID())
+
+	// Held: mapped at once.
+	r2 := h.fake.SeedThread("c-town", "alice", 1)
+	reply2 := h.fake.FindPost("c-town", "Reply 1")
+	h.eventually(func() bool { _, ok := h.w.State().FindPost(reply2); return ok }, "reply held")
+	v, ok := h.w.OpenThread("c-town", reply2)
+	require.True(t, ok)
+	assert.Equal(t, r2, v.RootID)
 }

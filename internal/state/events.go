@@ -85,7 +85,7 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 		}
 	case "reaction_added", "reaction_removed":
 		add := ev.Type == "reaction_added"
-		if r, err := ws.DecodeReaction(ev); err == nil && !s.staleEchoLocked(r, add) && s.reactLocked(ev.Broadcast.ChannelID, r, add) {
+		if r, err := ws.DecodeReaction(ev); err == nil && !s.staleEchoLocked(r, add) && s.reactLocked(ev.Broadcast.ChannelID, r, add, true) {
 			eff.Channels = []string{ev.Broadcast.ChannelID}
 			eff.Threads = s.threadsHoldingLocked(r.PostID)
 		}

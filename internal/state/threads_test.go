@@ -111,7 +111,7 @@ func TestThreadCacheStaysBounded(t *testing.T) {
 		check(fmt.Sprintf("thread %d opened", i))
 		for mustThread(t, s, root.ID).HasMore {
 			id, _ := s.OldestReply(root.ID)
-			s.AppendOlderReplies(root.ID, epoch, olderPage(root, replies, id))
+			s.AppendOlderReplies(root.ID, epoch, id, olderPage(root, replies, id))
 			check(fmt.Sprintf("thread %d scrolled", i))
 		}
 		v := mustThread(t, s, root.ID)
@@ -172,7 +172,7 @@ func TestClosingTrimsTheThread(t *testing.T) {
 	id, at := s.OldestReply("R")
 	assert.Equal(t, replies[90].ID, id)
 	assert.Equal(t, replies[90].CreateAt, at)
-	s.AppendOlderReplies("R", epoch, olderPage(root, replies, id))
+	s.AppendOlderReplies("R", epoch, id, olderPage(root, replies, id))
 	v := mustThread(t, s, "R")
 	require.Len(t, v.Posts, 1+120)
 	assert.True(t, v.HasMore)
@@ -238,7 +238,7 @@ func TestLateThreadPageAfterResetIsIgnored(t *testing.T) {
 	epoch, _, _ := s.OpenThread("town", "R")
 	s.ResetThreads()
 	s.SetThreadPage("R", epoch, threadPage(root, replies, false))
-	s.AppendOlderReplies("R", epoch, threadPage(root, replies, false))
+	s.AppendOlderReplies("R", epoch, "", threadPage(root, replies, false))
 	s.FailThread("R", epoch, "unreachable")
 	v := mustThread(t, s, "R")
 	assert.False(t, v.Loaded, "the page from before the reset is dropped")
@@ -487,4 +487,134 @@ func TestThreadAuthorsAreLoadedAndPolled(t *testing.T) {
 	assert.Contains(t, s.StatusTargets(0), "u9", "the open thread's authors")
 	s.CloseThread()
 	assert.NotContains(t, s.StatusTargets(0), "u9", "not once it is closed")
+}
+
+// Fix round 1, minor 1: a reaction or a root edit applied live while a
+// (re)load is in flight survives the older page; our click reads "was
+// mine" from the first copy, not from whichever copy changed.
+func TestLiveChangesInFlightSurviveThePage(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 3)
+	openLoaded(t, s, root, replies)
+	s.MarkStale(5) // a reload is due
+	_, epoch, need := s.ThreadFetch("R")
+	require.True(t, need)
+
+	s.ApplyEvent(townEv("reaction_added", model.Reaction{UserID: "u3", PostID: replies[0].ID, EmojiName: "tada", CreateAt: 5000}, "reaction"))
+	edited := root
+	edited.Message, edited.EditAt, edited.UpdateAt = "edited", 5100, 5100
+	s.ApplyPostUpdate(edited)
+	s.SetThreadPage("R", epoch, latestPage(root, replies)) // read before both
+	v := mustThread(t, s, "R")
+	assert.Equal(t, "edited", v.Posts[0].Message, "the newer root copy is kept")
+	assert.Equal(t, int64(3), v.Posts[0].ReplyCount)
+	assert.Equal(t, []ReactionView{{Emoji: "tada", Count: 1}}, v.Posts[1].Reactions, "the live reaction is kept")
+
+	// A page read after the reaction (its update_at moved) wins.
+	fresh := replies[0]
+	fresh.UpdateAt = 5200
+	rs := slices.Clone(replies)
+	rs[0] = fresh
+	s.MarkStale(6)
+	_, epoch, _ = s.ThreadFetch("R")
+	s.SetThreadPage("R", epoch, latestPage(root, rs))
+	assert.Empty(t, mustThread(t, s, "R").Posts[1].Reactions)
+}
+
+func TestClickReadsWasFromTheFirstCopy(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 1)
+	mine := root
+	mine.Metadata = &model.PostMetadata{Reactions: []model.Reaction{{UserID: "u1", PostID: "R", EmojiName: "+1"}}}
+	s.SetWindow("town", []model.Post{mine}, true, 5, 0)
+	openLoaded(t, s, root, replies) // the thread's root copy has no reaction
+	_, was, ok := s.ReactLocalWas("R", "+1", true)
+	require.True(t, ok)
+	assert.True(t, was, "the feed's copy says it was mine")
+}
+
+// Fix round 1, minor 2: an older page applies only on top of the reply it
+// was requested from.
+func TestOlderPageAppliesOnlyToItsCursor(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 150)
+	epoch := openLoaded(t, s, root, replies)
+	cursor, _ := s.OldestReply("R")
+	page := olderPage(root, replies, cursor)
+	s.AppendOlderReplies("R", epoch, cursor, page)
+	require.Len(t, mustThread(t, s, "R").Posts, 1+120)
+	s.AppendOlderReplies("R", epoch, cursor, page) // a concurrent twin
+	require.Len(t, mustThread(t, s, "R").Posts, 1+120)
+
+	// Evicted and reopened meanwhile: other replies are held now.
+	for _, id := range []string{"A", "B", "C"} {
+		r, rs := seededThread(id, 1)
+		openLoaded(t, s, r, rs)
+	}
+	root2, replies2 := seededThread("R", 170)
+	epoch = openLoaded(t, s, root2, replies2)
+	before := threadPostIDs(mustThread(t, s, "R"))
+	s.AppendOlderReplies("R", epoch, cursor, page)
+	assert.Equal(t, before, threadPostIDs(mustThread(t, s, "R")), "not grafted onto other replies")
+}
+
+// Fix round 1, minor 3: a thread closed while its page was in flight is
+// trimmed once the page lands.
+func TestThreadClosedWhilePageInFlightIsTrimmed(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 60)
+	epoch, _, _ := s.OpenThread("town", "R")
+	for k := 0; k < 30; k++ {
+		s.ApplyEvent(postedEv(reply(fmt.Sprintf("R-live%02d", k), "R", "u3", 5000+int64(k), 61+int64(k))))
+	}
+	s.CloseThread()
+	s.SetThreadPage("R", epoch, latestPage(root, replies))
+	v := mustThread(t, s, "R")
+	assert.Len(t, v.Posts, 1+ThreadPage)
+	assert.True(t, v.HasMore)
+
+	r2, rs2 := seededThread("S", 150)
+	e2 := openLoaded(t, s, r2, rs2)
+	cursor, _ := s.OldestReply("S")
+	s.CloseThread()
+	s.AppendOlderReplies("S", e2, cursor, olderPage(r2, rs2, cursor))
+	assert.Len(t, mustThread(t, s, "S").Posts, 1+ThreadPage)
+}
+
+// Fix round 1, minor 5: a failed load is not "syncing".
+func TestFailedThreadIsNotSyncing(t *testing.T) {
+	s := crtFixture(true)
+	e, _, _ := s.OpenThread("town", "R")
+	s.FailThread("R", e, "unreachable")
+	v := mustThread(t, s, "R")
+	assert.Equal(t, "unreachable", v.Error)
+	assert.False(t, v.Syncing)
+}
+
+// Fix round 1, minor 6: a reply's id opens its root's thread — at once if
+// the reply is held, after the page otherwise (its order[0] is the reply,
+// with root_id).
+func TestOpeningAReplyOpensItsRoot(t *testing.T) {
+	s := crtFixture(false)
+	root, replies := seededThread("R", 2)
+	s.SetWindow("town", []model.Post{root, replies[0], replies[1]}, true, 5, 0)
+	assert.Equal(t, "R", s.ThreadRootOf(replies[1].ID))
+	assert.Equal(t, "R", s.ThreadRootOf("R"))
+	assert.Equal(t, "unknown", s.ThreadRootOf("unknown"))
+
+	_, _, ok := s.OpenThread("town", "X")
+	require.True(t, ok)
+	_, need, ok := s.RedirectThread("X", "R")
+	require.True(t, ok)
+	assert.True(t, need)
+	assert.Equal(t, "R", s.OpenThreadID())
+	v := mustThread(t, s, "X")
+	assert.Equal(t, "R", v.RootID, "the reply's id resolves to its root's thread")
+	_, ok = s.ThreadView("nope")
+	assert.False(t, ok)
+	s.mu.Lock()
+	assert.Nil(t, s.threads["X"])
+	s.mu.Unlock()
+	_, _, ok = s.RedirectThread("gone", "R")
+	assert.False(t, ok, "only a held thread is redirected")
 }

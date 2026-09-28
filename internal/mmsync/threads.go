@@ -16,8 +16,11 @@ const threadLoadTries = 3
 
 // OpenThread opens rootID's thread in the panel: the cached view at once
 // (Loaded=false while the first page is read), the page in the background —
-// thread_changed follows. ok=false: channelID is not known.
+// thread_changed follows. ok=false: channelID is not known. A reply's id
+// opens its root's thread: at once if the reply is held, else once its
+// page shows its root_id (fetchThread).
 func (w *Worker) OpenThread(channelID, rootID string) (state.ThreadView, bool) {
+	rootID = w.st.ThreadRootOf(rootID)
 	_, need, ok := w.st.OpenThread(channelID, rootID)
 	if !ok {
 		return state.ThreadView{}, false
@@ -49,9 +52,11 @@ func (w *Worker) reloadOpenThread() {
 }
 
 // loadThread reads the latest page of a thread in the background, one
-// request per thread at a time (like view); a need that arises while one
-// runs is served by it afterwards.
+// request per thread at a time (like view); a load asked for while one
+// runs is served by it afterwards — even once it gave up (threadAgain: the
+// user's retry after a failure).
 func (w *Worker) loadThread(rootID string) {
+	w.threadAgain.Store(rootID, true) // before the busy check: see loadThreadLoop
 	if _, busy := w.threadLoads.LoadOrStore(rootID, true); busy {
 		return
 	}
@@ -63,6 +68,7 @@ func (w *Worker) loadThread(rootID string) {
 func (w *Worker) loadThreadLoop(ctx context.Context, rootID string) {
 	tries := 0
 	for {
+		w.threadAgain.Delete(rootID) // served by this round
 		for ; tries < threadLoadTries && ctx.Err() == nil; tries++ {
 			crt, epoch, need := w.st.ThreadFetch(rootID)
 			if !need {
@@ -73,12 +79,18 @@ func (w *Worker) loadThreadLoop(ctx context.Context, rootID string) {
 			}
 		}
 		w.threadLoads.Delete(rootID)
-		// A caller that found us busy after our last check relies on this
-		// one: its need is visible now.
-		if tries >= threadLoadTries || ctx.Err() != nil {
+		// A caller that found us busy set threadAgain before its busy
+		// check, so after this Delete it is visible here: a fresh request
+		// (tries start over). Otherwise a need that arose meanwhile (an
+		// epoch bump) is served within the tries left.
+		_, again := w.threadAgain.LoadAndDelete(rootID)
+		if ctx.Err() != nil {
 			return
 		}
-		if _, _, need := w.st.ThreadFetch(rootID); !need {
+		if again {
+			tries = 0
+		}
+		if _, _, need := w.st.ThreadFetch(rootID); !need || tries >= threadLoadTries {
 			return
 		}
 		if _, busy := w.threadLoads.LoadOrStore(rootID, true); busy {
@@ -103,6 +115,15 @@ func (w *Worker) fetchThread(ctx context.Context, rootID string, crt bool, epoch
 		w.st.FailThread(rootID, epoch, threadErrCode(err))
 		w.changed(state.Change{Threads: []string{rootID}})
 		return false
+	}
+	if p, ok := l.Posts[rootID]; ok && p.RootID != "" {
+		// rootID is a reply's (opened by a reply's id the feed no longer
+		// held): its root's thread takes over.
+		if _, need, ok := w.st.RedirectThread(rootID, p.RootID); ok && need {
+			w.loadThread(p.RootID)
+		}
+		w.changed(state.Change{Threads: []string{rootID, p.RootID}})
+		return true
 	}
 	w.st.SetThreadPage(rootID, epoch, l)
 	w.loadUsers(ctx)
@@ -136,11 +157,11 @@ func threadErrCode(err error) string {
 func (w *Worker) LoadOlderReplies(ctx context.Context, rootID string) error {
 	// The epoch first: a reset after it drops the page.
 	crt, epoch, _ := w.st.ThreadFetch(rootID)
-	v, ok := w.st.ThreadView(rootID)
+	more, ok := w.st.ThreadHasMore(rootID)
 	if !ok {
 		return ErrNoPost
 	}
-	if !v.HasMore {
+	if !more {
 		return nil
 	}
 	id, at := w.st.OldestReply(rootID)
@@ -151,7 +172,7 @@ func (w *Worker) LoadOlderReplies(ctx context.Context, rootID string) error {
 	if err != nil {
 		return w.actionErr(err)
 	}
-	w.st.AppendOlderReplies(rootID, epoch, l)
+	w.st.AppendOlderReplies(rootID, epoch, id, l)
 	w.loadUsers(ctx)
 	if w.st.OpenThreadID() == rootID {
 		w.requestStatuses()

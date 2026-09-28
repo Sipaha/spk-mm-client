@@ -737,7 +737,12 @@ func (s *Server) findPostLocked(postID string) (model.Post, bool) {
 	return model.Post{}, false
 }
 
-func (s *Server) reactLocked(channelID string, r model.Reaction, add bool) bool {
+// reactLocked applies a reaction to every copy of its post. server: it is
+// the server's (an event), not our optimistic click — the server moved the
+// post's update_at to that moment (reaction_store.go
+// updatePostForReactionsOn*), so the copy's does too: a page read before it
+// then does not win over the live reaction (SetThreadPage).
+func (s *Server) reactLocked(channelID string, r model.Reaction, add, server bool) bool {
 	ch := s.chans[channelID]
 	if ch == nil {
 		return false
@@ -765,6 +770,9 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add bool) bool 
 			}
 		}
 		p.Metadata = &model.PostMetadata{Files: files, Reactions: reacts}
+		if server {
+			p.UpdateAt = max(p.UpdateAt, r.CreateAt, r.UpdateAt, r.DeleteAt)
+		}
 		return true
 	}
 	// Every copy: the feed (window or history) and the thread cache.

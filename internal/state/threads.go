@@ -65,6 +65,10 @@ func (t *thread) needsFetch() bool { return !t.rootDeleted && (!t.loaded || t.st
 func (s *Server) OpenThread(channelID, rootID string) (epoch uint64, needFetch bool, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.openThreadLocked(channelID, rootID)
+}
+
+func (s *Server) openThreadLocked(channelID, rootID string) (epoch uint64, needFetch bool, ok bool) {
 	if s.chans[channelID] == nil || rootID == "" {
 		return s.threadEpoch, false, false
 	}
@@ -134,6 +138,39 @@ func (s *Server) CloseThread() {
 	s.openThread = ""
 }
 
+// ThreadRootOf maps a held reply's id to its root's (a reply has no thread
+// of its own; the server refuses a reply to a reply); any other id is
+// returned as is.
+func (s *Server) ThreadRootOf(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.findPostLocked(id); ok && p.RootID != "" {
+		return p.RootID
+	}
+	return id
+}
+
+// RedirectThread handles a thread opened as fromID that turned out to be a reply's
+// (its page's order[0] has a root_id). The entry goes; if it was open, the
+// root's thread opens instead. ThreadView(fromID) then shows the root's
+// thread (its RootID tells the UI the real root) — only the last redirect
+// is remembered. ok=false: fromID is not held (nothing to redirect).
+func (s *Server) RedirectThread(fromID, toID string) (epoch uint64, need, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[fromID]
+	if t == nil || toID == "" || toID == fromID {
+		return s.threadEpoch, false, false
+	}
+	open := s.openThread == fromID
+	s.dropThreadLocked(fromID)
+	s.threadRedirect = [2]string{fromID, toID}
+	if !open {
+		return s.threadEpoch, false, true
+	}
+	return s.openThreadLocked(t.channelID, toID)
+}
+
 func (s *Server) OpenThreadID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,11 +226,15 @@ func (s *Server) SetThreadPage(rootID string, epoch uint64, l model.PostList) {
 	t.loaded, t.stale, t.err = true, false, ""
 	cut := int64(0)
 	if root.ID != "" {
-		if t.root.ID == rootID {
-			keepNewerReplies(&root, t.root)
-		}
 		cut = max(root.UpdateAt, root.LastReplyAt)
-		t.root = root
+		switch {
+		case t.root.ID != rootID:
+			t.root = root
+		case t.root.UpdateAt > root.UpdateAt: // edited or reacted to live since the read
+		default:
+			keepNewerReplies(&root, t.root)
+			t.root = root
+		}
 	}
 	for _, p := range page {
 		cut = max(cut, p.CreateAt)
@@ -214,16 +255,23 @@ func (s *Server) SetThreadPage(rootID string, epoch uint64, l model.PostList) {
 	sortPosts(merged)
 	t.replies, t.complete, t.capped = merged, !hasNext, false
 	s.capThreadLocked(t)
+	if rootID != s.openThread { // closed while the page was in flight
+		s.trimThreadLocked(t)
+	}
 }
 
 // AppendOlderReplies adds a page of older replies (fromCreateAt/fromPost)
 // above a loaded thread, up to ThreadMaxReplies; then the thread is capped
-// and loads nothing older. Pages of another epoch are ignored.
-func (s *Server) AppendOlderReplies(rootID string, epoch uint64, l model.PostList) {
+// and loads nothing older. before is the page's cursor (fromPost): the page
+// applies only while that reply is still the oldest held — not after the
+// thread was evicted and read again, or once a twin request landed. Pages
+// of another epoch are ignored too.
+func (s *Server) AppendOlderReplies(rootID string, epoch uint64, before string, l model.PostList) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.threads[rootID]
-	if t == nil || epoch != s.threadEpoch || !t.loaded || t.capped || t.rootDeleted {
+	if t == nil || epoch != s.threadEpoch || !t.loaded || t.capped || t.rootDeleted ||
+		len(t.replies) == 0 || t.replies[0].ID != before {
 		return
 	}
 	_, page, hasNext := s.threadPageLocked(rootID, l)
@@ -237,6 +285,20 @@ func (s *Server) AppendOlderReplies(rootID string, epoch uint64, l model.PostLis
 	sortPosts(t.replies)
 	t.complete = !hasNext
 	s.capThreadLocked(t)
+	if rootID != s.openThread {
+		s.trimThreadLocked(t)
+	}
+}
+
+// ThreadHasMore reports whether older replies of a held thread can be loaded.
+func (s *Server) ThreadHasMore(rootID string) (more, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[rootID]
+	if t == nil {
+		return false, false
+	}
+	return t.loaded && !t.complete && !t.capped, true
 }
 
 // capThreadLocked keeps the newest ThreadMaxReplies; a thread at the cap
@@ -465,13 +527,17 @@ func (s *Server) ThreadView(rootID string) (ThreadView, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.threads[rootID]
+	if t == nil && s.threadRedirect[0] == rootID {
+		rootID = s.threadRedirect[1]
+		t = s.threads[rootID]
+	}
 	if t == nil {
 		return ThreadView{}, false
 	}
 	v := ThreadView{
 		RootID: rootID, ChannelID: t.channelID, Posts: []PostView{},
 		HasMore: t.loaded && !t.complete && !t.capped, Capped: t.capped, Loaded: t.loaded,
-		Syncing: !t.loaded || t.stale, RootDeleted: t.rootDeleted, Error: t.err,
+		Syncing: (!t.loaded || t.stale) && t.err == "", RootDeleted: t.rootDeleted, Error: t.err,
 		Draft: s.threadDrafts[rootID], MeID: s.me.ID, CRT: s.crtLocked(),
 	}
 	if ch := s.chans[t.channelID]; ch != nil {

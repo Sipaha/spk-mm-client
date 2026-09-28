@@ -5,6 +5,9 @@ import "context"
 // OpenThread implements API. The worker must be running (the thread is
 // read by it); the view may still be loading — thread_changed follows.
 func (s *Service) OpenThread(ctx context.Context, id int64, channelID, rootID string) (ThreadDTO, error) {
+	if rootID == "" {
+		return ThreadDTO{}, coded(CodeNoPost, nil)
+	}
 	w, err := s.worker(ctx, id)
 	if err != nil {
 		return ThreadDTO{}, err

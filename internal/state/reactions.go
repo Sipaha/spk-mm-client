@@ -66,10 +66,13 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 	// A pinned intent's request waits for a retry, which will send this
 	// click: it stays pinned.
 	s.intents[k] = intent{add: add, until: now.Add(intentTTL), pinned: s.intents[k].pinned}
-	changed := s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add)
-	// The post is in memory, so an add that changed nothing found ours
-	// there and a remove that changed something removed it.
-	return Change{Channels: []string{id}, Threads: s.threadsHoldingLocked(postID)}, changed != add, true
+	// "Was mine" is read from the first copy before the click: with several
+	// copies (feed, thread) one that changed says nothing about the others.
+	if p, found := s.findPostLocked(postID); found && p.Metadata != nil {
+		was = slices.ContainsFunc(p.Metadata.Reactions, func(x model.Reaction) bool { return x.UserID == s.me.ID && x.EmojiName == emoji })
+	}
+	s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add, false)
+	return Change{Channels: []string{id}, Threads: s.threadsHoldingLocked(postID)}, was, true
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the
@@ -83,7 +86,7 @@ func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 	if !ok {
 		return Change{}
 	}
-	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: s.now().UnixMilli()}, mine)
+	s.reactLocked(ch, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: s.now().UnixMilli()}, mine, false)
 	return Change{Channels: []string{ch}, Threads: s.threadsHoldingLocked(postID)}
 }
 
