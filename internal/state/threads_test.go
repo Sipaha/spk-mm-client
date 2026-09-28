@@ -521,16 +521,76 @@ func TestLiveChangesInFlightSurviveThePage(t *testing.T) {
 	assert.Empty(t, mustThread(t, s, "R").Posts[1].Reactions)
 }
 
-func TestClickReadsWasFromTheFirstCopy(t *testing.T) {
+// Fix round 2, ruling 1: when the copies of a post (feed, thread) disagree
+// on our reaction, the click is always sent (was = !add) — both endpoints
+// are idempotent; guessing from one copy could drop it.
+func TestClickOnDisagreeingCopiesIsAlwaysSent(t *testing.T) {
+	for _, add := range []bool{true, false} {
+		t.Run(fmt.Sprint("add=", add), func(t *testing.T) {
+			s := crtFixture(true)
+			root, replies := seededThread("R", 1)
+			mine := root
+			mine.Metadata = &model.PostMetadata{Reactions: []model.Reaction{{UserID: "u1", PostID: "R", EmojiName: "+1"}}}
+			feed, thread := root, mine // the panel shows ours, the feed not
+			if add {
+				feed, thread = mine, root
+			}
+			s.SetWindow("town", []model.Post{feed}, true, 5, 0)
+			openLoaded(t, s, thread, replies)
+			_, was, ok := s.ReactLocalWas("R", "+1", add)
+			require.True(t, ok)
+			assert.Equal(t, !add, was, "the request goes out")
+		})
+	}
+	// Agreeing copies still tell the truth.
 	s := crtFixture(true)
 	root, replies := seededThread("R", 1)
-	mine := root
-	mine.Metadata = &model.PostMetadata{Reactions: []model.Reaction{{UserID: "u1", PostID: "R", EmojiName: "+1"}}}
-	s.SetWindow("town", []model.Post{mine}, true, 5, 0)
-	openLoaded(t, s, root, replies) // the thread's root copy has no reaction
-	_, was, ok := s.ReactLocalWas("R", "+1", true)
-	require.True(t, ok)
-	assert.True(t, was, "the feed's copy says it was mine")
+	s.SetWindow("town", []model.Post{root}, true, 5, 0)
+	openLoaded(t, s, root, replies)
+	_, was, _ := s.ReactLocalWas("R", "+1", true)
+	assert.False(t, was)
+	_, was, _ = s.ReactLocalWas("R", "+1", false)
+	assert.True(t, was)
+}
+
+// Fix round 2, ruling 2: the echo of our own click moves update_at too
+// (the reaction is already there, but the server moved the post's).
+func TestOwnEchoMovesUpdateAt(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 1)
+	s.SetWindow("town", []model.Post{root}, true, 5, 0)
+	openLoaded(t, s, root, replies)
+	s.ReactLocalWas("R", "+1", true)
+	s.ApplyEvent(townEv("reaction_added", model.Reaction{UserID: "u1", PostID: "R", EmojiName: "+1", CreateAt: 5000}, "reaction"))
+	p, _ := windowPost(s, "town", "R")
+	assert.Equal(t, int64(5000), p.UpdateAt, "feed copy")
+	s.mu.Lock()
+	assert.Equal(t, int64(5000), s.threads["R"].root.UpdateAt, "thread copy")
+	s.mu.Unlock()
+}
+
+// Fix round 2, ruling 3: a feed page read before a live reaction or edit
+// does not overwrite it (as in SetThreadPage).
+func TestPageDoesNotOverwriteLiveChangesInTheFeed(t *testing.T) {
+	s := crtFixture(false)
+	a, b := mkPost("a", "town", "u2", 1000), mkPost("b", "town", "u3", 1100)
+	s.SetWindow("town", []model.Post{a, b}, true, 5, 0)
+	s.ApplyEvent(townEv("reaction_added", model.Reaction{UserID: "u3", PostID: "a", EmojiName: "tada", CreateAt: 5000}, "reaction"))
+	eb := b
+	eb.Message, eb.EditAt, eb.UpdateAt = "edited", 5100, 5100
+	s.ApplyPostUpdate(eb)
+	s.SetWindow("town", []model.Post{a, b}, true, 6, 0) // read before both
+	pa, _ := windowPost(s, "town", "a")
+	pb, _ := windowPost(s, "town", "b")
+	require.NotNil(t, pa.Metadata)
+	assert.Len(t, pa.Metadata.Reactions, 1, "the live reaction is kept")
+	assert.Equal(t, "edited", pb.Message, "the live edit is kept")
+
+	fresh := a
+	fresh.UpdateAt = 5200 // read after: the server's copy wins
+	s.SetWindow("town", []model.Post{fresh, eb}, true, 7, 0)
+	pa, _ = windowPost(s, "town", "a")
+	assert.Nil(t, pa.Metadata)
 }
 
 // Fix round 1, minor 2: an older page applies only on top of the reply it

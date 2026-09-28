@@ -134,7 +134,14 @@ func TestPostThreadErrors(t *testing.T) {
 	assert.Equal(t, 404, a.call("GET", "/api/v4/posts/unknown/thread", nil, nil), "unknown root")
 	assert.Equal(t, 400, a.call("GET", "/api/v4/posts/"+root+"/thread?perPage=201", nil, nil), "perPage over the cap")
 	assert.Equal(t, 400, a.call("GET", "/api/v4/posts/"+root+"/thread?fromPost=x", nil, nil), "fromPost without fromCreateAt")
-	assert.Equal(t, 400, a.call("GET", "/api/v4/posts/"+replyID+"/thread?collapsedThreads=true", nil, nil), "collapsedThreads on a reply id")
+	// A reply's id under CRT: 200, the reply as order[0], no replies
+	// (the server selects RootId = id; post_store.go:575-697).
+	var rl model.PostList
+	require.Equal(t, 200, a.call("GET", "/api/v4/posts/"+replyID+"/thread?perPage=60&direction=up&collapsedThreads=true", nil, &rl), "collapsedThreads on a reply id")
+	assert.Equal(t, []string{replyID}, rl.Order)
+	assert.Equal(t, root, rl.Posts[replyID].RootID)
+	require.NotNil(t, rl.HasNext)
+	assert.False(t, *rl.HasNext)
 
 	b := loginAs(t, s, "bob") // not a member of c-secret
 	root2 := s.PostAs("c-secret", "alice", "root2")

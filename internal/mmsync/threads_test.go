@@ -215,3 +215,20 @@ func TestOpeningAReplyOpensItsRoot(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, r2, v.RootID)
 }
+
+// Fix round 2, ruling 4: under CRT a reply is never in the feed; opened by
+// its id, the server's page (the reply as order[0]) leads to its root.
+func TestOpeningAReplyUnderCRTOpensItsRoot(t *testing.T) {
+	h := crtHarness(t)
+	root := h.fake.SeedThread("c-town", "alice", 2)
+	replyID := h.fake.FindPost("c-town", "Reply 2")
+	_, held := h.w.State().FindPost(replyID)
+	require.False(t, held)
+	_, ok := h.w.OpenThread("c-town", replyID)
+	require.True(t, ok)
+	h.eventually(func() bool {
+		v := h.thread(replyID)
+		return v.RootID == root && v.Loaded && len(v.Posts) == 3 && v.Error == ""
+	}, "the reply's id did not lead to its root's thread")
+	assert.Equal(t, root, h.w.State().OpenThreadID())
+}

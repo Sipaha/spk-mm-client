@@ -93,6 +93,21 @@ func keepNewerReplies(p *model.Post, local model.Post) {
 	}
 }
 
+// newerOf is what a page read of a post held as local installs: the local
+// copy when it is newer (a reaction or an edit applied live since the
+// read — both move update_at), else p with the local reply count if that
+// is newer (keepNewerReplies).
+func newerOf(p, local model.Post) model.Post {
+	if local.UpdateAt > p.UpdateAt {
+		if p.PendingPostID != "" && local.PendingPostID == "" {
+			local.PendingPostID = p.PendingPostID
+		}
+		return local
+	}
+	keepNewerReplies(&p, local)
+	return p
+}
+
 func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 	if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
 		if p.UpdateAt >= ch.Win.Posts[i].UpdateAt {
@@ -226,9 +241,9 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	for _, p := range page {
 		if keep(p, crt) && !s.gone.has(p.ID) {
 			if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
-				keepNewerReplies(&p, ch.Win.Posts[i])
+				p = newerOf(p, ch.Win.Posts[i])
 			} else if i := indexOf(s.older, p.ID); channelID == s.active && i >= 0 {
-				keepNewerReplies(&p, s.older[i])
+				p = newerOf(p, s.older[i])
 			}
 			merged = append(merged, p)
 		}
@@ -751,6 +766,9 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add, server boo
 		if p.ID != r.PostID {
 			return false
 		}
+		if server { // even for a reaction already shown: our own click's echo
+			p.UpdateAt = max(p.UpdateAt, r.CreateAt, r.UpdateAt, r.DeleteAt)
+		}
 		var reacts []model.Reaction
 		files := []model.FileInfo(nil)
 		if p.Metadata != nil {
@@ -770,9 +788,6 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add, server boo
 			}
 		}
 		p.Metadata = &model.PostMetadata{Files: files, Reactions: reacts}
-		if server {
-			p.UpdateAt = max(p.UpdateAt, r.CreateAt, r.UpdateAt, r.DeleteAt)
-		}
 		return true
 	}
 	// Every copy: the feed (window or history) and the thread cache.

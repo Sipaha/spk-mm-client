@@ -288,11 +288,8 @@ func (s *Server) postThread(w http.ResponseWriter, r *http.Request, u User) {
 		appError(w, 403, "api.context.permissions.app_error", "no permission")
 		return
 	}
-	crt := q.Get("collapsedThreads") == "true"
-	if crt && root.RootID != "" {
-		appError(w, 400, "api.context.invalid_param.app_error", "collapsedThreads requires a root post")
-		return
-	}
+	// A reply's id is answered like the server: under CRT the reply as
+	// order[0] and no replies (it selects RootId = id; post_store.go:575-697).
 
 	hasPerPage := q.Get("perPage") != ""
 	var perPage int

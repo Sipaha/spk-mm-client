@@ -435,16 +435,18 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
   раздела и фейк ошибочно утверждали, что без `perPage` `has_next`
   отсутствует вовсе). Модель — `PostList.HasNext *bool
   json:"has_next,omitempty"`; фейк теперь тоже всегда его выставляет.
-- `collapsedThreads=true` требует, чтобы `id` был корнем
-  (`WHERE RootId = id` в CRT-запросе, `post_store.go:611–619`): у сервера
-  нет явной 400-проверки на это в прочитанном коде — с id ответа CRT-запрос
-  просто вернёт 0 ответов (никто не ссылается на чужой id как на `root_id`
-  ответа этого же ответа) без ошибки. **Наш фейк намеренно строже**
-  (контроллер, для раннего отлова клиентских ошибок): `collapsedThreads=true`
-  с id, у которого `root_id != ""`, — 400
-  `api.context.invalid_param.app_error`. Это отклонение от дословного
-  поведения реального сервера, зафиксировано здесь и в
-  `internal/mmfake/threads.go`.
+- `id` ответа (не корня) — не ошибка. С `collapsedThreads=true` сервер
+  отвечает 200: `order` = `[id ответа]` (сам ответ, с его `root_id`), ответов
+  нет — CRT-запрос выбирает `WHERE RootId = id` (`post_store.go:575–697`),
+  `has_next=false`; `app/post.go:1100–1130` (`GetPostThread`) и
+  `api4/post.go:858–866` ничего не проверяют сверх наличия поста и прав.
+  Без CRT (`post_store.go:714–760`) — ответ в `order[0]`, затем весь тред
+  его корня (корень и ответы, `RootId = <корень>`). Клиент по `root_id`
+  поста `order[0]` понимает, что открыт ответ, и открывает тред корня
+  (`mmsync.fetchThread` → `state.RedirectThread`). Фейк (Task 3, fix round 2)
+  с CRT отвечает как сервер; без CRT отдаёт ответ без треда корня — клиенту
+  этого достаточно (смотрит только `order[0].root_id`). До fix round 2 фейк
+  отвечал на это 400 — было ошибочное «намеренно строже».
 - Удалённые ответы и строки истории правок (`original_id != ""`) не
   отдаются (`DeleteAt=0` в WHERE).
 - Права — как у чтения поста (`GetPostIfAuthorized`, членство в канале);

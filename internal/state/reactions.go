@@ -66,13 +66,50 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 	// A pinned intent's request waits for a retry, which will send this
 	// click: it stays pinned.
 	s.intents[k] = intent{add: add, until: now.Add(intentTTL), pinned: s.intents[k].pinned}
-	// "Was mine" is read from the first copy before the click: with several
-	// copies (feed, thread) one that changed says nothing about the others.
-	if p, found := s.findPostLocked(postID); found && p.Metadata != nil {
-		was = slices.ContainsFunc(p.Metadata.Reactions, func(x model.Reaction) bool { return x.UserID == s.me.ID && x.EmojiName == emoji })
+	// "Was mine" is read from the copies before the click. When they
+	// disagree (feed vs thread) the truth is unknown: was = !add, so the
+	// request is always sent — both endpoints are idempotent.
+	some, all := s.mineInCopiesLocked(postID, emoji)
+	switch {
+	case some != all:
+		was = !add
+	default:
+		was = all
 	}
 	s.reactLocked(id, model.Reaction{UserID: s.me.ID, PostID: postID, EmojiName: emoji, CreateAt: now.UnixMilli()}, add, false)
 	return Change{Channels: []string{id}, Threads: s.threadsHoldingLocked(postID)}, was, true
+}
+
+// mineInCopiesLocked reports whether some / all held copies of postID
+// (windows, the open channel's history, the thread cache) carry our
+// reaction emoji.
+func (s *Server) mineInCopiesLocked(postID, emoji string) (some, all bool) {
+	n := 0
+	all = true
+	see := func(p model.Post) {
+		n++
+		mine := p.Metadata != nil && slices.ContainsFunc(p.Metadata.Reactions, func(x model.Reaction) bool {
+			return x.UserID == s.me.ID && x.EmojiName == emoji
+		})
+		some, all = some || mine, all && mine
+	}
+	for _, ch := range s.chans {
+		if i := indexOf(ch.Win.Posts, postID); i >= 0 {
+			see(ch.Win.Posts[i])
+		}
+	}
+	if i := indexOf(s.older, postID); i >= 0 {
+		see(s.older[i])
+	}
+	for _, t := range s.threads {
+		if t.root.ID == postID {
+			see(t.root)
+		}
+		if i := indexOf(t.replies, postID); i >= 0 {
+			see(t.replies[i])
+		}
+	}
+	return some, all && n > 0
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the
