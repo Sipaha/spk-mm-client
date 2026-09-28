@@ -212,7 +212,8 @@ test('a mention in a thread reply notifies with its root; the click opens the ch
   await page.screenshot({ path: `${shots}/threads-7-mention-badge.png` })
 
   await testPost(page, 'notification-click', { server_id: id, channel_id: 'c-town', root_id: rootId })
-  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  // level 1: the channel's own heading — the open panel's is "Thread · Town Square".
+  await expect(page.getByRole('heading', { level: 1, name: /Town Square/ })).toBeVisible()
   await expect(threadFeed(page).getByText(text)).toBeVisible()
   await expect(badge).toHaveCount(0)
   await expect(page.getByRole('navigation').getByLabel(/Mentions:/)).toHaveCount(0)
