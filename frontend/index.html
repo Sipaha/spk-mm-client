@@ -6,10 +6,12 @@
     <meta name="color-scheme" content="dark" />
     <!-- Dark by default, no setting (see docs/specs UI section): sets the
          background before Tailwind's CSS module has loaded, so there is no
-         white flash at startup. -->
+         white flash at startup. Must track --color-app in index.css (theme
+         brief 2026-09-28: Catppuccin Macchiato) — this one can't reference
+         the CSS variable (it paints before that stylesheet exists). -->
     <style>
       :root { color-scheme: dark; }
-      html, body { background: #1f1f23; }
+      html, body { background: #24273a; }
     </style>
     <title>spk-mm-client</title>
   </head>
