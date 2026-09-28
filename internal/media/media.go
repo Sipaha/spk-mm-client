@@ -1,4 +1,4 @@
-// Package media serves pictures and file snippets of Mattermost servers to
+// Package media serves pictures, file snippets and PDFs of Mattermost servers to
 // the UI from a bounded on-disk cache. The UI never talks to a Mattermost
 // server itself: it requests /media/<server id>/<kind>/<key> on its own
 // origin, and the cache fetches the object through the server's REST client
@@ -53,6 +53,11 @@ const (
 	// KindPostIcon is a webhook post's own author picture
 	// (override_icon_url); key the POST id, never a URL — posticon.go.
 	KindPostIcon Kind = "posticon"
+	// KindPDF is a PDF file for the viewer's pdf.js (the UI's lazy PdfView):
+	// the whole file up to PDFMax, spooled to the cache as it comes, with
+	// "%PDF-" in its first pdfMagicWithin bytes; served as an attachment
+	// that the webview does not keep (pdf.go).
+	KindPDF Kind = "pdf"
 )
 
 // Limits of the cache and of what it accepts.
@@ -61,6 +66,7 @@ const (
 	FeedMax         = 960              // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
 	TextLimit       = 64 << 10         // bytes of a text file shown in the feed snippet
 	TextFullLimit   = 1 << 20          // bytes of a text file shown in the viewer (?full=1)
+	PDFMax          = 50 << 20         // bytes of a PDF the viewer loads (the UI's PDF_MAX)
 	maxPixels       = 50_000_000       // decompression-bomb guard for every image
 	scaleMaxPixels  = 24_000_000       // largest feed image decoded to scale (~96 MB bitmap)
 	negTTL          = 5 * time.Minute  // 403/404/413/415: will not change soon
@@ -253,7 +259,7 @@ func parse(u *url.URL) (request, bool) {
 		if v := u.Query().Get("v"); v != "" && !iconVersionRe.MatchString(v) {
 			return request{}, false
 		}
-	case KindThumb, KindStream, KindStaged:
+	case KindThumb, KindStream, KindStaged, KindPDF:
 	case KindText:
 		switch u.Query().Get("full") {
 		case "":
@@ -277,6 +283,7 @@ type spec struct {
 	max   int64
 	text  bool
 	scale bool
+	pdf   bool
 }
 
 func (q request) spec(id string) spec {
@@ -296,6 +303,8 @@ func (q request) spec(id string) spec {
 			p += "/preview"
 		}
 		return spec{path: p, max: 25 << 20, scale: q.kind == KindFeed}
+	case KindPDF:
+		return spec{path: "/api/v4/files/" + esc, max: PDFMax, pdf: true}
 	case KindStaged: // a local file: no path
 		return spec{max: 25 << 20, scale: true}
 	case KindPostIcon: // shown as a 36 px avatar: large ones are scaled down
@@ -369,7 +378,8 @@ func (c *Cache) stagedPicture(q request) bool {
 }
 
 // serve answers with a cached object. A corrupt one (a text entry without
-// its flag, an image entry that does not sniff as raster) is dropped and
+// its flag, a PDF without its header, an image entry that does not sniff
+// as raster) is dropped and
 // the request fails; the next one fetches it anew. Cache headers are set
 // only on success.
 func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name string, f *os.File) {
@@ -380,7 +390,8 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 	}
 	h := w.Header()
 	var body io.ReadSeeker = f
-	if q.kind == KindText {
+	switch q.kind {
+	case KindText:
 		var flag [1]byte
 		if _, err := io.ReadFull(f, flag[:]); err != nil || (flag[0] != 'T' && flag[0] != 'F') {
 			c.drop(name)
@@ -392,7 +403,21 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 		}
 		h.Set("Content-Type", "text/plain; charset=utf-8")
 		body = io.NewSectionReader(f, 1, fi.Size()-1)
-	} else {
+	case KindPDF:
+		head := make([]byte, pdfMagicWithin)
+		n, _ := io.ReadFull(f, head)
+		if !isPDF(head[:n]) {
+			c.drop(name)
+			http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+			return
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			http.Error(w, "cache read failed", http.StatusInternalServerError)
+			return
+		}
+		h.Set("Content-Type", "application/pdf")
+		h.Set("Content-Disposition", "attachment") // never shown by the webview itself (pdf.go)
+	default:
 		head := make([]byte, sniffLen)
 		n, _ := io.ReadFull(f, head)
 		ctype := http.DetectContentType(head[:n])
@@ -409,9 +434,12 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	if q.kind == KindEmoji || q.kind == KindPostIcon {
+	switch q.kind {
+	case KindPDF: // pdf.js gets the bytes; a copy in the webview's cache would only cost its memory
+		h.Set("Cache-Control", "no-store")
+	case KindEmoji, KindPostIcon:
 		h.Set("Cache-Control", "private, max-age=3600") // by name / by post: may change
-	} else {
+	default:
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, "", time.Time{}, body)
@@ -573,7 +601,11 @@ func (c *Cache) fetch(q request, id, name string, sl *slot) error {
 		defer f.Close()
 		body = f
 	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), c.o.Timeout)
+		timeout := c.o.Timeout
+		if sp.pdf {
+			timeout *= pdfTimeoutFactor
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		var resp *http.Response
 		var err error
@@ -589,6 +621,12 @@ func (c *Cache) fetch(q request, id, name string, sl *slot) error {
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 			return errUpstream
 		}
+		if sp.pdf && resp.StatusCode != http.StatusOK { // the whole file, or nothing
+			return errUpstream
+		}
+		if sp.pdf && resp.ContentLength > sp.max { // not downloaded to be refused
+			return errTooLarge
+		}
 		body, contentRange = resp.Body, resp.Header.Get("Content-Range")
 	}
 	tmp, err := os.CreateTemp(c.o.Dir, "*.tmp")
@@ -597,9 +635,12 @@ func (c *Cache) fetch(q request, id, name string, sl *slot) error {
 		return errStore
 	}
 	var size int64
-	if sp.text {
+	switch {
+	case sp.text:
 		size, err = writeText(tmp, body, contentRange, sp.max)
-	} else {
+	case sp.pdf:
+		size, err = writePDF(tmp, body, sp.max)
+	default:
 		size, err = c.writeImageFrom(tmp, body, sp)
 	}
 	if q.kind == KindStaged && errors.Is(err, errType) {

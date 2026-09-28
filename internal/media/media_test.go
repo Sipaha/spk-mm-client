@@ -427,12 +427,15 @@ func TestBadRequests(t *testing.T) {
 		"/media/x/avatar/u1", "/media/0/avatar/u1", "/media/1/bogus/u1", "/media/1/avatar/..%2Fx",
 		"/media/1/avatar/u1?v=abc", "/media/1/feed/f1?src=evil", "/media/1/avatar", "/media/1/avatar/u1/extra",
 		"/media/1/emoji/bad%20name", "/media/1/text/f1?full=0", "/media/1/text/f1?full=true", "/media/1/text/f1?full=2",
+		"/media/1/pdf", "/media/1/pdf/..%2Fx", "/media/1/pdf/f1/extra", "/media/1/pdf/bad%20id", "/media/x/pdf/f1",
 	} {
 		resp, _ := e.get(p)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, p)
 	}
 	resp, _ := e.get("/media/2/avatar/u1")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "a server that is not signed in")
+	resp, _ = e.get("/media/2/pdf/f1")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "a PDF of a server that is not signed in")
 	resp, err := http.Post(e.srv.URL+"/media/1/avatar/u1", "text/plain", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)

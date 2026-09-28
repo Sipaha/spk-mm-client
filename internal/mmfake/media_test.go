@@ -124,7 +124,7 @@ func TestSeededFilesServeDataThumbnailPreviewAndRange(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, []string{"build.png", "flow.png", "arch.png", "server.log", "spec.pdf", "big.log", "README.md",
+	assert.Equal(t, []string{"build.png", "flow.png", "arch.png", "server.log", "spec.pdf", "manual.pdf", "big.log", "README.md",
 		"clip.webm", "clip.mp4", "tone.ogg"}, names)
 	assert.Equal(t, 1, s.Hits("GET", "/api/v4/files/f-build/info"))
 

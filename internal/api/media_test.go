@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -260,4 +261,47 @@ func TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway(t *testing.T) {
 	mu.Unlock()
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, "live", f.server(id).State, "no new sign-in over an icon")
+}
+
+// A PDF for the viewer comes through the live worker like every other
+// kind: offline a PDF not on disk yet is a 404 the cache does not remember,
+// and it loads once the server is live again.
+func TestPDFOnlyWhileLive(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: f.svc})
+	require.NoError(t, err)
+	ts := httptest.NewServer(mc)
+	defer ts.Close()
+	get := func(file string) (*http.Response, []byte) {
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/pdf/%s", ts.URL, id, file))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, b
+	}
+	resp, body := get(mmfake.PDFFileID)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "application/pdf", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "attachment", resp.Header.Get("Content-Disposition"))
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.True(t, bytes.HasPrefix(body, []byte("%PDF-")))
+
+	fake.SetDown(true)
+	fake.DropConnections(false)
+	f.eventually(func() bool { return f.server(id).State == "reconnecting" }, "never lost the connection")
+	hits := fake.Hits("GET", "/api/v4/files/f-spec")
+	resp, _ = get("f-spec")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "not live: no fetch")
+	assert.Equal(t, hits, fake.Hits("GET", "/api/v4/files/f-spec"))
+	resp, _ = get(mmfake.PDFFileID)
+	assert.Equal(t, 200, resp.StatusCode, "a PDF already on disk is served offline, like a picture")
+
+	fake.SetDown(false)
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live again")
+	resp, body = get("f-spec")
+	assert.Equal(t, 200, resp.StatusCode, "ErrNoServer was not remembered")
+	assert.True(t, bytes.HasPrefix(body, []byte("%PDF-")), "the fake's junk PDF passes the magic check: pdf.js refuses it")
 }

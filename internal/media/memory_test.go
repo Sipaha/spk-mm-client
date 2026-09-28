@@ -192,3 +192,21 @@ func TestSlowFeedDownloadDoesNotBlockOtherPictures(t *testing.T) {
 	release <- struct{}{}
 	assert.Equal(t, 200, <-slowDone)
 }
+
+// A PDF goes to the cache as it comes and to the UI from the file: neither
+// the download nor the answer is ever held whole in the Go heap.
+func TestPDFIsNotReadWhole(t *testing.T) {
+	const size = 20 << 20
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { writePDFBody(w, size) })
+	var got int64
+	n := allocated(func() {
+		resp, err := http.Get(e.srv.URL + "/media/1/pdf/big")
+		require.NoError(t, err)
+		got, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, 200, resp.StatusCode)
+	})
+	assert.Equal(t, int64(size), got)
+	t.Logf("allocated %d bytes for a %d-byte PDF", n, size)
+	assert.Less(t, n, uint64(size/4), "allocated %d bytes for a %d-byte PDF", n, size)
+}
