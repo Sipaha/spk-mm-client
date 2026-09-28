@@ -7,6 +7,7 @@ import type {
   DownloadView,
   EmojiDTO,
   EventType,
+  LayoutDTO,
   ReactionUsersDTO,
   SavedFile,
   ServerDTO,
@@ -28,6 +29,12 @@ export interface Client {
   loginWithPassword(id: number, login: string, password: string): Promise<ServerDTO>
   logout(id: number): Promise<void>
   appInfo(): Promise<AppInfo>
+  /** Saved splitter widths (0: never saved -- apply the built-in default). */
+  getLayout(): Promise<LayoutDTO>
+  /** Persists the sidebar splitter width; call once per commit (pointerup/keyboard step), not per drag frame. */
+  setSidebarWidth(width: number): Promise<void>
+  /** setSidebarWidth's counterpart for the thread panel's splitter. */
+  setThreadWidth(width: number): Promise<void>
   selectServer(id: number): Promise<void>
   setFocused(focused: boolean): Promise<void>
   networkChanged(): Promise<void>
@@ -127,6 +134,9 @@ export const httpClient: Client = {
   loginWithPassword: (id, login, password) => post('LoginWithPassword', { id, login, password }),
   logout: (id) => done(post('Logout', { id })),
   appInfo: () => post('AppInfo', {}),
+  getLayout: () => post('GetLayout', {}),
+  setSidebarWidth: (width) => done(post('SetSidebarWidth', { width })),
+  setThreadWidth: (width) => done(post('SetThreadWidth', { width })),
   selectServer: (id) => done(post('SelectServer', { id })),
   setFocused: (focused) => done(post('SetFocused', { focused })),
   networkChanged: () => done(post('NetworkChanged', {})),
@@ -236,6 +246,9 @@ export const wailsClient: Client = {
   loginWithPassword: (id, login, password) => wcall('LoginWithPassword', id, login, password),
   logout: (id) => wcall('Logout', id),
   appInfo: () => wcall('AppInfo'),
+  getLayout: () => wcall('GetLayout'),
+  setSidebarWidth: (width) => wcall('SetSidebarWidth', width),
+  setThreadWidth: (width) => wcall('SetThreadWidth', width),
   selectServer: (id) => wcall('SelectServer', id),
   setFocused: (focused) => wcall('SetFocused', focused),
   networkChanged: () => wcall('NetworkChanged'),

@@ -33,7 +33,7 @@ func TestOpenCreatesOwnerOnlyFileAndMigrates(t *testing.T) {
 	}
 	var v int
 	require.NoError(t, st.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v))
-	assert.Equal(t, 3, v)
+	assert.Equal(t, 4, v)
 }
 
 func TestOpenTwiceIsIdempotent(t *testing.T) {

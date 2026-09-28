@@ -125,6 +125,19 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/AppInfo", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return h.api.AppInfo(ctx)
 	}))
+	h.mux.HandleFunc("POST /api/GetLayout", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.GetLayout(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/SetSidebarWidth", handle(func(ctx context.Context, r *struct {
+		Width int `json:"width"`
+	}) (any, error) {
+		return nil, h.api.SetSidebarWidth(ctx, r.Width)
+	}))
+	h.mux.HandleFunc("POST /api/SetThreadWidth", handle(func(ctx context.Context, r *struct {
+		Width int `json:"width"`
+	}) (any, error) {
+		return nil, h.api.SetThreadWidth(ctx, r.Width)
+	}))
 	h.mux.HandleFunc("POST /api/SelectServer", handle(func(ctx context.Context, r *idReq) (any, error) {
 		return nil, h.api.SelectServer(ctx, r.ID)
 	}))

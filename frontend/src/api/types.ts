@@ -16,6 +16,13 @@ export interface AppInfo {
   format_locale: string // BCP 47 for dates/times; '' = navigator.language
 }
 
+// LayoutDTO: saved splitter widths, app-wide (not per server). 0 = never
+// saved -- the caller applies its own default.
+export interface LayoutDTO {
+  sidebar_width: number
+  thread_width: number
+}
+
 export interface TeamItem {
   id: string
   name: string

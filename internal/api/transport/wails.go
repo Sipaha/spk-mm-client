@@ -26,8 +26,15 @@ func (w *API) StartGitLabLogin(id int64) error { return w.a.StartGitLabLogin(con
 func (w *API) LoginWithPassword(id int64, login, password string) (api.ServerDTO, error) {
 	return w.a.LoginWithPassword(context.Background(), id, login, password)
 }
-func (w *API) Logout(id int64) error         { return w.a.Logout(context.Background(), id) }
-func (w *API) AppInfo() (api.AppInfo, error) { return w.a.AppInfo(context.Background()) }
+func (w *API) Logout(id int64) error             { return w.a.Logout(context.Background(), id) }
+func (w *API) AppInfo() (api.AppInfo, error)     { return w.a.AppInfo(context.Background()) }
+func (w *API) GetLayout() (api.LayoutDTO, error) { return w.a.GetLayout(context.Background()) }
+func (w *API) SetSidebarWidth(width int) error {
+	return w.a.SetSidebarWidth(context.Background(), width)
+}
+func (w *API) SetThreadWidth(width int) error {
+	return w.a.SetThreadWidth(context.Background(), width)
+}
 func (w *API) SelectServer(id int64) error   { return w.a.SelectServer(context.Background(), id) }
 func (w *API) SetFocused(focused bool) error { return w.a.SetFocused(context.Background(), focused) }
 func (w *API) NetworkChanged() error         { return w.a.NetworkChanged(context.Background()) }

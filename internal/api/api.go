@@ -49,6 +49,15 @@ type API interface {
 	Logout(ctx context.Context, id int64) error
 
 	AppInfo(ctx context.Context) (AppInfo, error)
+	// GetLayout returns the saved sidebar/thread-panel splitter widths
+	// (0: never saved, the frontend uses its own default). App-wide, not
+	// per server.
+	GetLayout(ctx context.Context) (LayoutDTO, error)
+	// SetSidebarWidth persists the sidebar splitter width, once per drag
+	// (pointerup) or keyboard step, not per frame.
+	SetSidebarWidth(ctx context.Context, width int) error
+	// SetThreadWidth is SetSidebarWidth for the thread panel's splitter.
+	SetThreadWidth(ctx context.Context, width int) error
 	SelectServer(ctx context.Context, id int64) error
 	SetFocused(ctx context.Context, focused bool) error
 	NetworkChanged(ctx context.Context) error
