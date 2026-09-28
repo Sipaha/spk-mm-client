@@ -63,10 +63,22 @@ interface Props {
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
 const barColor = (c?: string) => (c && (NAMED_COLORS[c] ?? (/^#[0-9a-f]{3,8}$/i.test(c) ? c : undefined))) || '#d4d4d4'
 
-function AttachmentView({ a, me, onLink }: { a: Attachment; me: string; onLink(href: string): void }) {
+function AttachmentView({
+  serverId,
+  a,
+  me,
+  onLink,
+  emojiInfo,
+}: {
+  serverId: number
+  a: Attachment
+  me: string
+  onLink(href: string): void
+  emojiInfo(): Promise<EmojiDTO>
+}) {
   return (
     <div className="mt-1 max-w-3xl border-l-4 pl-3" style={{ borderColor: barColor(a.color) }}>
-      {a.pretext && <Markdown text={a.pretext} me={me} onLink={onLink} />}
+      {a.pretext && <Markdown text={a.pretext} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
       {a.author_name && <div className="text-xs font-medium text-fg-muted">{a.author_name}</div>}
       {a.title &&
         (a.title_link ? (
@@ -74,15 +86,21 @@ function AttachmentView({ a, me, onLink }: { a: Attachment; me: string; onLink(h
             {a.title}
           </a>
         ) : (
-          <div className="font-semibold">{a.title}</div>
+          <div className="font-semibold">
+            <Markdown text={a.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
+          </div>
         ))}
-      {a.text && <Markdown text={a.text} me={me} onLink={onLink} />}
+      {a.text && <Markdown text={a.text} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
       {a.fields && a.fields.length > 0 && (
         <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
           {a.fields.map((f, i) => (
             <div key={i} className={f.short ? '' : 'col-span-2'}>
-              {f.title && <div className="text-xs font-semibold">{f.title}</div>}
-              {f.value && <Markdown text={f.value} me={me} onLink={onLink} />}
+              {f.title && (
+                <div className="text-xs font-semibold">
+                  <Markdown text={f.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
+                </div>
+              )}
+              {f.value && <Markdown text={f.value} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
             </div>
           ))}
         </div>
@@ -282,11 +300,13 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           <EditBox post={post} actions={actions} />
         ) : (
           <div className={post.system ? 'italic text-fg-muted' : ''}>
-            {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} />}
+            {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
             {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
           </div>
         )}
-        {post.attachments?.map((a, i) => <AttachmentView key={i} a={a} me={me.username} onLink={actions.link} />)}
+        {post.attachments?.map((a, i) => (
+          <AttachmentView key={i} serverId={serverId} a={a} me={me.username} onLink={actions.link} emojiInfo={actions.emojiInfo} />
+        ))}
         {post.files && post.files.length > 0 && (
           <Attachments
             serverId={serverId}

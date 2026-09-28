@@ -84,6 +84,63 @@ test('attachments, files, reactions and reply count', async () => {
   expect(a.react).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), '+1', false)
 })
 
+test('attachment pretext/text/title/field text render ":name:" shortcodes as emoji, same as message text', () => {
+  render(
+    <PostItem
+      serverId={1}
+      post={post({
+        message: '',
+        attachments: [
+          {
+            pretext: ':tada: pretext',
+            title: ':white_check_mark: title',
+            text: ':white_check_mark: Build Successful',
+            fields: [{ title: ':tada: field', value: ':thumbsup: value', short: true }],
+          },
+        ],
+      })}
+      head
+      me={me}
+      locale="en-US"
+      crt={false}
+      actions={actions()}
+      editing={false}
+    />,
+  )
+  expect(screen.getByText(/pretext/).textContent).toBe('🎉 pretext')
+  expect(screen.getByText(/^title/).textContent).toBe('✅ title')
+  expect(screen.getByText(/Build Successful/).textContent).toBe('✅ Build Successful')
+  expect(screen.getByText(/field$/).textContent).toBe('🎉 field')
+  expect(screen.getByText(/value$/).textContent).toBe('👍 value')
+})
+
+test('a custom emoji shortcode renders via /media, in message text and in attachment text alike', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ custom: ['party'], custom_enabled: true }))
+  const { container } = render(
+    <PostItem
+      serverId={1}
+      post={post({
+        message: 'yay :party: time',
+        attachments: [{ text: 'also :party: here' }],
+      })}
+      head
+      me={me}
+      locale="en-US"
+      crt={false}
+      actions={a}
+      editing={false}
+    />,
+  )
+  // EmojiGlyph's <img> is decorative (alt=""), so it carries no accessible
+  // "img" role — query by CSS, same as Markdown.test.tsx's own custom-emoji
+  // case.
+  await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2))
+  const imgs = [...container.querySelectorAll('img')]
+  for (const img of imgs) expect(img.getAttribute('src')).toContain('/media/1/emoji/party')
+  expect(screen.queryByText(/:party:/)).toBeNull()
+})
+
 test('pending and failed posts', async () => {
   const a = actions()
   const { rerender } = render(<PostItem serverId={1} post={post({ pending: true, user_id: 'u-alice' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
