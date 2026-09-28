@@ -9,7 +9,12 @@ function renderSplitter(over: Partial<Parameters<typeof Splitter>[0]> = {}) {
   const onCommit = vi.fn()
   const props = { value: 300, min: 180, max: 480, defaultValue: 256, sign: 1 as const, cssVar: CSS_VAR, label: 'Resize sidebar', onCommit, ...over }
   const r = render(<Splitter {...props} />)
-  return { onCommit, props, rerender: (p: Partial<Parameters<typeof Splitter>[0]>) => r.rerender(<Splitter {...props} {...p} />) }
+  return {
+    onCommit,
+    props,
+    unmount: r.unmount,
+    rerender: (p: Partial<Parameters<typeof Splitter>[0]>) => r.rerender(<Splitter {...props} {...p} />),
+  }
 }
 
 beforeEach(() => {
@@ -106,4 +111,20 @@ test('a non-primary pointer button does not start a drag', () => {
   fireEvent.pointerMove(sep, { clientX: 600, pointerId: 1 })
   fireEvent.pointerUp(sep, { clientX: 600, pointerId: 1 })
   expect(onCommit).not.toHaveBeenCalled()
+})
+
+test('a pending rAF frame from an in-progress drag is canceled on unmount (review follow-up)', () => {
+  // Override the module-wide synchronous rAF mock: this test needs the frame
+  // to stay pending (never auto-invoked) so there's still something to cancel.
+  vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(42)
+  const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+
+  const { unmount } = renderSplitter()
+  const sep = screen.getByRole('separator')
+  fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1 })
+  fireEvent.pointerMove(sep, { clientX: 540, pointerId: 1 }) // schedules the (never-run) frame 42
+
+  unmount()
+
+  expect(cancelSpy).toHaveBeenCalledWith(42)
 })

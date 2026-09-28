@@ -632,9 +632,10 @@
   (`TestSetPostSavedSessionExpired`), `frontend/src/components/PostItem.test.tsx` («save button:
   not-saved and saved states, and the click it sends»).
 - Тема (theme brief 2026-09-28) — одна, Catppuccin Macchiato, без переключателя и без
-  `prefers-color-scheme`: 22 токена в `frontend/src/index.css` (`@theme`), плюс 4 сайдбар-токена
-  (`--color-sidebar-fg[-unread]`, `--color-sidebar-active-bg/-border`) и `--color-danger-fg`
-  (используется и для бейджа упоминаний — отдельный `mention-badge`-токен не понадобился).
+  `prefers-color-scheme`: 23 токена всего в `frontend/src/index.css`'ном `@theme`-блоке —
+  исходные 18, плюс `--color-danger-fg` (используется и для бейджа упоминаний — отдельный
+  `mention-badge`-токен не понадобился), плюс 4 сайдбар-токена (`--color-sidebar-fg[-unread]`,
+  `--color-sidebar-active-bg/-border`).
   Компонент никогда не хардкодит hex — единственное исключение технически неизбежно:
   `frontend/index.html`'ный предзагрузочный `<style>` красит `html,body` до того, как загрузится
   Tailwind-стиль (нет белой вспышки на старте), и должен вручную повторять `--color-app` — при

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { dragValue, stepValue, type StepKey } from './splitter'
 
 interface Props {
@@ -50,6 +50,13 @@ export function Splitter({ value, min, max, defaultValue, sign, cssVar, label, o
     raf.current = null
     pending.current = null
   }
+
+  // Unmounting mid-drag (e.g. the thread panel closes, or the server/channel
+  // switches under it) must not leave a scheduled frame behind — it would
+  // fire after this Splitter instance is gone and write a stale width into
+  // the (still-live, document-level) CSS var, with no pointerup left to
+  // correct it (review follow-up 2026-09-29).
+  useEffect(() => cancelFrame, [])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
