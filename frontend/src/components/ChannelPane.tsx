@@ -59,7 +59,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
     const files = Array.from(e.dataTransfer.files)
     if (files.length === 0) return
     e.preventDefault()
-    uploadAttachments(server.id, channelId, files).catch((err) => useStore.getState().setAttachError(errorMessage(err)))
+    uploadAttachments(server.id, channelId, files, '').catch((err) => useStore.getState().setAttachError(errorMessage(err)))
   }
   // Stable per channel: PostItem is memoized on its props.
   const actions = useMemo<PostActions>(
@@ -98,6 +98,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       data-file-drop-target
       data-srv={server.id}
       data-channel={channel.id}
+      data-root=""
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

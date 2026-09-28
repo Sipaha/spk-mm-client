@@ -13,13 +13,14 @@ import (
 )
 
 // AddBytes attaches bytes that come without a file on disk (a pasted
-// picture, a browser upload): they are streamed into a spool, refusing more
-// than limit bytes (too_large; limit ≤ 0: the server's MaxFileSize only —
-// DefaultMaxFileSize while unknown; the smaller of the two otherwise) or
-// zero bytes (empty_file). name is cleaned (cleanName); mime, when empty,
-// comes from the name or the content.
-func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limit int64) (Attachment, error) {
-	maxSize, err := s.admit(srv, ch)
+// picture, a browser upload) to (srv, ch, root)'s composer: they are
+// streamed into a spool, refusing more than limit bytes (too_large; limit
+// ≤ 0: the server's MaxFileSize only — DefaultMaxFileSize while unknown;
+// the smaller of the two otherwise) or zero bytes (empty_file). name is
+// cleaned (cleanName); mime, when empty, comes from the name or the
+// content.
+func (s *Store) AddBytes(srv int64, ch, root, name, mimeType string, r io.Reader, limit int64) (Attachment, error) {
+	maxSize, err := s.admit(srv, ch, root)
 	if err != nil {
 		return Attachment{}, err
 	}
@@ -40,7 +41,7 @@ func (s *Store) AddBytes(srv int64, ch, name, mimeType string, r io.Reader, limi
 		s.removeSpool(spool)
 		return Attachment{}, err
 	}
-	it.ID, it.Server, it.Channel, it.State = id, srv, ch, StateStaged
+	it.ID, it.Server, it.Channel, it.Root, it.State = id, srv, ch, root, StateStaged
 	it.Name = cleanName(name)
 	it.Mime = mediaType(mimeType)
 	if it.Mime == "" {

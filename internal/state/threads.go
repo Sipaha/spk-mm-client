@@ -16,6 +16,10 @@ const (
 	ThreadCacheSize  = 3
 	ThreadMaxReplies = 200
 	ThreadPage       = 60
+	// ThreadDraftCap bounds s.threadDrafts (SetThreadDraft): the oldest
+	// (by insertion order) is dropped past it. In memory only, never in
+	// the snapshot — see AGENTS.md.
+	ThreadDraftCap = 50
 	// ThreadNotFound is FailThread's code for a root the server does not
 	// have (404: deleted): the thread shows as RootDeleted.
 	ThreadNotFound = "not_found"
@@ -113,6 +117,16 @@ func (s *Server) dropThreadLocked(id string) {
 	}
 }
 
+// dropThreadDraftLocked forgets rootID's draft, if any (SetThreadDraft,
+// forgetThreadsLocked).
+func (s *Server) dropThreadDraftLocked(rootID string) {
+	if _, ok := s.threadDrafts[rootID]; !ok {
+		return
+	}
+	delete(s.threadDrafts, rootID)
+	s.threadDraftOrder = slices.DeleteFunc(s.threadDraftOrder, func(x string) bool { return x == rootID })
+}
+
 // trimThreadLocked keeps only the last page of a thread that is no longer
 // open, in a fresh slice (the old backing array goes).
 func (s *Server) trimThreadLocked(t *thread) {
@@ -175,6 +189,22 @@ func (s *Server) OpenThreadID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.openThread
+}
+
+// ThreadHeld reports whether rootID is a thread this server's cache holds
+// (open or one of the recent ones — OpenThread/RedirectThread put it
+// there; an evicted or never-opened root is not held even if it is a real
+// post). When channelID is not empty, the thread must also belong to it —
+// attachments and SendReply know the channel and check both; a
+// channel-less caller (SaveThreadDraft) checks the root alone.
+func (s *Server) ThreadHeld(channelID, rootID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[rootID]
+	if t == nil {
+		return false
+	}
+	return channelID == "" || t.channelID == channelID
 }
 
 // ThreadFetch is what a thread load needs, read together: the CRT mode,
@@ -375,10 +405,14 @@ func (s *Server) markThreadsStaleLocked() {
 	}
 }
 
-// forgetThreadsLocked lets go of the threads of a channel we left.
+// forgetThreadsLocked lets go of the threads of a channel we left, and any
+// drafts of their roots (a draft of a root the cache no longer holds — LRU
+// eviction, not a channel leave — is left in place: ThreadDraftCap bounds
+// it either way).
 func (s *Server) forgetThreadsLocked(channelID string) {
 	for id, t := range s.threads {
 		if t.channelID == channelID {
+			s.dropThreadDraftLocked(id)
 			s.dropThreadLocked(id)
 		}
 	}

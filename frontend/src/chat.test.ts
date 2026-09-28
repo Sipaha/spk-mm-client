@@ -328,7 +328,7 @@ test('opening a channel fetches its composer tray', async () => {
   vi.mocked(client.attachments).mockResolvedValue([av('x')])
   await openChannel(1, 'a')
   await vi.waitFor(() => expect(useStore.getState().attachments).toEqual([av('x')]))
-  expect(client.attachments).toHaveBeenCalledWith(1, 'a')
+  expect(client.attachments).toHaveBeenCalledWith(1, 'a', '')
 })
 
 test('a stale attachments fetch (channel switched away while it was in flight) is dropped', async () => {
@@ -354,6 +354,26 @@ test('onAttachmentsChanged applies only to the channel on screen', async () => {
   expect(useStore.getState().attachments).toEqual([])
   onAttachmentsChanged({ server_id: 1, channel_id: 'a', items: [av('mine')] })
   expect(useStore.getState().attachments).toEqual([av('mine')])
+})
+
+// Task 4: attachments_changed/attachment_refused carry root_id now; a
+// thread's (root_id set) has no panel to show it in yet (Task 5/6) and is
+// ignored, so it cannot clobber the channel composer's own state.
+test('a thread-scoped attachments_changed/attachment_refused (root_id set) is ignored', async () => {
+  setLocale('en')
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.attachments).mockResolvedValue([av('x')])
+  await openChannel(1, 'a')
+  await vi.waitFor(() => expect(useStore.getState().attachments).toEqual([av('x')]))
+
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: 'r1', items: [av('thread-only')] })
+  expect(useStore.getState().attachments).toEqual([av('x')])
+  onAttachmentRefused({ server_id: 1, channel_id: 'a', root_id: 'r1', code: 'too_many' })
+  expect(useStore.getState().attachError).toBeNull()
+
+  // root_id '' (the channel's own) still applies, as before.
+  onAttachmentsChanged({ server_id: 1, channel_id: 'a', root_id: '', items: [av('channel-only')] })
+  expect(useStore.getState().attachments).toEqual([av('channel-only')])
 })
 
 test('an attachments_changed event beats a slower refreshAttachments reply requested before it', async () => {
@@ -424,11 +444,11 @@ test('react calls addReaction/removeReaction, reports a failure globally, and it
 
 test('pickAttachments/attachFromClipboard are not caught here — the caller shows the error inline', async () => {
   vi.mocked(client.pickAttachments).mockResolvedValue(2)
-  await expect(pickAttachments(1, 'a')).resolves.toBe(2)
-  expect(client.pickAttachments).toHaveBeenCalledWith(1, 'a')
+  await expect(pickAttachments(1, 'a', '')).resolves.toBe(2)
+  expect(client.pickAttachments).toHaveBeenCalledWith(1, 'a', '')
 
   vi.mocked(client.attachFromClipboard).mockRejectedValue(new Error('nope'))
-  await expect(attachFromClipboard(1, 'a')).rejects.toThrow('nope')
+  await expect(attachFromClipboard(1, 'a', '')).rejects.toThrow('nope')
   expect(useStore.getState().lastError).toBeNull() // not turned into a global error by chat.ts
 })
 
@@ -440,9 +460,9 @@ test('uploadAttachments tries every file even if one fails, then throws the firs
     .mockResolvedValueOnce(av('a'))
     .mockRejectedValueOnce(new Error('too big'))
     .mockResolvedValueOnce(av('c'))
-  await expect(uploadAttachments(1, 'a', [good1, bad, good2])).rejects.toThrow('too big')
+  await expect(uploadAttachments(1, 'a', [good1, bad, good2], '')).rejects.toThrow('too big')
   expect(uploadAttachmentBrowser).toHaveBeenCalledTimes(3)
-  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(1, 1, 'a', good1)
-  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(2, 1, 'a', bad)
-  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(3, 1, 'a', good2)
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(1, 1, 'a', good1, '')
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(2, 1, 'a', bad, '')
+  expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(3, 1, 'a', good2, '')
 })

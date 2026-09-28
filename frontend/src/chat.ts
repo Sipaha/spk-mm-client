@@ -100,7 +100,7 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
     // The composer's tray belongs to the channel (a draft Go keeps per
     // channel — see AGENTS.md "Вложения"); fire-and-forget so a slow
     // attachments fetch never delays showing the channel itself.
-    void refreshAttachments(serverId, channelId)
+    void refreshAttachments(serverId, channelId, '')
   } catch (e) {
     if (my === channelSeq) report(e)
   } finally {
@@ -121,27 +121,32 @@ export function openFromNotification(serverId: number, channelId: string) {
 
 // --- Attachments (the composer's tray) ----------------------------------
 
-// refreshAttachments re-reads a channel's composer tray — on open, and as a
-// fallback for onAttachmentsChanged (e.g. the very first load, before any
-// attachments_changed event exists to react to). A failure is silent, like
-// a lost draft: the tray simply stays empty until the next event or open.
-export async function refreshAttachments(serverId: number, channelId: string) {
+// refreshAttachments re-reads a (channel, root) composer's tray — on open,
+// and as a fallback for onAttachmentsChanged (e.g. the very first load,
+// before any attachments_changed event exists to react to). A failure is
+// silent, like a lost draft: the tray simply stays empty until the next
+// event or open. rootId: '' the channel's own composer (the only one this
+// task wires into the UI — the thread panel is Task 5/6).
+export async function refreshAttachments(serverId: number, channelId: string, rootId: string) {
   const my = ++attachmentsSeq
   try {
-    const list = await client.attachments(serverId, channelId)
+    const list = await client.attachments(serverId, channelId, rootId)
     if (my !== attachmentsSeq) return
     const s = useStore.getState()
-    if (s.selectedId === serverId && s.channel?.id === channelId) s.setAttachments(list)
+    if (rootId === '' && s.selectedId === serverId && s.channel?.id === channelId) s.setAttachments(list)
   } catch {
     /* best-effort */
   }
 }
 
 // onAttachmentsChanged applies an EventAttachmentsChanged payload (the
-// whole list, coalesced ~4/s during an upload) — only for the channel on
-// screen; another channel's tray is re-read fresh when it is opened.
+// whole list, coalesced ~4/s during an upload) — only for the channel's own
+// composer (root_id '') on screen; a thread's (root_id set) has no panel
+// yet to show it in (Task 5/6) and is ignored here. Another channel's tray
+// is re-read fresh when it is opened.
 export function onAttachmentsChanged(payload: Record<string, unknown> | undefined) {
   const p = payload ?? {}
+  if ((p.root_id ?? '') !== '') return
   const s = useStore.getState()
   if (Number(p.server_id) === s.selectedId && p.channel_id === s.channel?.id) {
     // Bump the sequence: a refreshAttachments request made before this event
@@ -155,9 +160,11 @@ export function onAttachmentsChanged(payload: Record<string, unknown> | undefine
 
 // onAttachmentRefused applies an EventAttachmentRefused payload: a drop had
 // no caller to report its refusal to (too_many, not_dropped, …) — shown the
-// same way a send error is, in the composer.
+// same way a send error is, in the composer. Only the channel's own
+// composer (root_id '') has anywhere to show it yet (Task 5/6).
 export function onAttachmentRefused(payload: Record<string, unknown> | undefined) {
   const p = payload ?? {}
+  if ((p.root_id ?? '') !== '') return
   const s = useStore.getState()
   if (Number(p.server_id) === s.selectedId && p.channel_id === s.channel?.id) {
     s.setAttachError(errorMessage(new ApiError(String(p.code ?? 'internal'), '')))
@@ -170,19 +177,21 @@ export function onAttachmentRefused(payload: Record<string, unknown> | undefined
 // risk here). pickAttachments/attachFromClipboard are left uncaught: the
 // Composer shows their failure (a limit, "unsupported" in browser mode, a
 // quiet no_paste_gesture) inline, the same way a send error is shown.
+// rootId: '' the channel's own composer (Composer.tsx only ever passes '' —
+// the thread panel is Task 5/6).
 export const removeAttachment = (serverId: number, attachmentId: string) =>
   client.removeAttachment(serverId, attachmentId).catch(report)
 export const retryAttachment = (serverId: number, attachmentId: string) =>
   client.retryAttachment(serverId, attachmentId).catch(report)
-export const pickAttachments = (serverId: number, channelId: string) => client.pickAttachments(serverId, channelId)
-export const attachFromClipboard = (serverId: number, channelId: string) => client.attachFromClipboard(serverId, channelId)
+export const pickAttachments = (serverId: number, channelId: string, rootId: string) => client.pickAttachments(serverId, channelId, rootId)
+export const attachFromClipboard = (serverId: number, channelId: string, rootId: string) => client.attachFromClipboard(serverId, channelId, rootId)
 
 // uploadAttachments (browser mode only): every file is tried, even if one
 // fails — a bad file among several must not block the rest (like Go's
 // addPaths) — and the first failure, if any, is thrown so the caller shows
-// it like a send error.
-export async function uploadAttachments(serverId: number, channelId: string, files: File[]): Promise<void> {
-  const results = await Promise.allSettled(files.map((f) => uploadAttachmentBrowser(serverId, channelId, f)))
+// it like a send error. rootId: '' the channel's own composer.
+export async function uploadAttachments(serverId: number, channelId: string, files: File[], rootId: string): Promise<void> {
+  const results = await Promise.allSettled(files.map((f) => uploadAttachmentBrowser(serverId, channelId, f, rootId)))
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (failed) throw failed.reason
 }

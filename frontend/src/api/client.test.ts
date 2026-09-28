@@ -58,6 +58,8 @@ test('http client chat methods post snake_case bodies', async () => {
   )
   await httpClient.sendPost(3, 'c1', 'hi')
   await httpClient.sendPost(3, 'c1', '', ['a1', 'a2'])
+  await httpClient.sendReply(3, 'c1', 'r1', 're')
+  await httpClient.sendReply(3, 'c1', 'r1', '', ['a1'])
   await httpClient.editPost(3, 'p1', 'v2')
   await httpClient.sidebar(3, '')
   await httpClient.downloadFile(3, 'f1')
@@ -69,11 +71,13 @@ test('http client chat methods post snake_case bodies', async () => {
   await httpClient.revealDownload(7)
   await httpClient.removeDownload(7)
   await httpClient.clearDownloads()
-  await httpClient.attachments(3, 'c1')
+  await httpClient.attachments(3, 'c1', '')
+  await httpClient.attachments(3, 'c1', 'r1')
   await httpClient.removeAttachment(3, 'a1')
   await httpClient.retryAttachment(3, 'a1')
-  await httpClient.attachFromClipboard(3, 'c1')
-  await httpClient.pickAttachments(3, 'c1')
+  await httpClient.attachFromClipboard(3, 'c1', '')
+  await httpClient.pickAttachments(3, 'c1', '')
+  await httpClient.saveThreadDraft(3, 'r1', 'draft text')
   await httpClient.openThread(3, 'c1', 'r1')
   await httpClient.getThread(3, 'r1')
   await httpClient.closeThread(3)
@@ -81,6 +85,8 @@ test('http client chat methods post snake_case bodies', async () => {
   expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
     ['/api/SendPost', { id: 3, channel_id: 'c1', message: 'hi', attachment_ids: [] }],
     ['/api/SendPost', { id: 3, channel_id: 'c1', message: '', attachment_ids: ['a1', 'a2'] }],
+    ['/api/SendReply', { id: 3, channel_id: 'c1', root_id: 'r1', message: 're', attachment_ids: [] }],
+    ['/api/SendReply', { id: 3, channel_id: 'c1', root_id: 'r1', message: '', attachment_ids: ['a1'] }],
     ['/api/EditPost', { id: 3, post_id: 'p1', message: 'v2' }],
     ['/api/Sidebar', { id: 3, team_id: '' }],
     ['/api/DownloadFile', { id: 3, file_id: 'f1' }],
@@ -92,11 +98,13 @@ test('http client chat methods post snake_case bodies', async () => {
     ['/api/RevealDownload', { id: 7 }],
     ['/api/RemoveDownload', { id: 7 }],
     ['/api/ClearDownloads', {}],
-    ['/api/Attachments', { id: 3, channel_id: 'c1' }],
+    ['/api/Attachments', { id: 3, channel_id: 'c1', root_id: '' }],
+    ['/api/Attachments', { id: 3, channel_id: 'c1', root_id: 'r1' }],
     ['/api/RemoveAttachment', { id: 3, attachment_id: 'a1' }],
     ['/api/RetryAttachment', { id: 3, attachment_id: 'a1' }],
-    ['/api/AttachFromClipboard', { id: 3, channel_id: 'c1' }],
-    ['/api/PickAttachments', { id: 3, channel_id: 'c1' }],
+    ['/api/AttachFromClipboard', { id: 3, channel_id: 'c1', root_id: '' }],
+    ['/api/PickAttachments', { id: 3, channel_id: 'c1', root_id: '' }],
+    ['/api/SaveThreadDraft', { id: 3, root_id: 'r1', text: 'draft text' }],
     ['/api/OpenThread', { id: 3, channel_id: 'c1', root_id: 'r1' }],
     ['/api/GetThread', { id: 3, root_id: 'r1' }],
     ['/api/CloseThread', { id: 3 }],
@@ -112,22 +120,35 @@ test('uploadAttachmentBrowser posts the raw File as the body to /api/attachments
     }),
   )
   const file = new File(['abc'], 'x.png', { type: 'image/png' })
-  const a = await uploadAttachmentBrowser(3, 'c1', file)
+  const a = await uploadAttachmentBrowser(3, 'c1', file, '')
   expect(a.id).toBe('a1')
   const [url, init] = fetchMock.mock.calls[0]
-  expect(url).toBe('/api/attachments/3/c1?name=x.png&mime=image%2Fpng')
+  expect(url).toBe('/api/attachments/3/c1?root=&name=x.png&mime=image%2Fpng')
   expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer tok123')
   expect(init!.body).toBe(file)
 })
 
+// Task 4: a non-empty rootId routes the upload to that thread's reply
+// composer instead of the channel's (?root=).
+test('uploadAttachmentBrowser with a rootId sends ?root= for the thread composer', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ id: 'a1', name: 'x.png', size: 3, mime: 'image/png', state: 'staged', sent: 0, error: '' }), {
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  await uploadAttachmentBrowser(3, 'c1', new File(['abc'], 'x.png', { type: 'image/png' }), 'r1')
+  const [url] = fetchMock.mock.calls[0]
+  expect(url).toBe('/api/attachments/3/c1?root=r1&name=x.png&mime=image%2Fpng')
+})
+
 test('uploadAttachmentBrowser turns a non-JSON error response into a generic ApiError', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('too large', { status: 413 }))
-  await expect(uploadAttachmentBrowser(3, 'c1', new File(['x'], 'x.bin'))).rejects.toEqual(new ApiError('internal', 'HTTP 413'))
+  await expect(uploadAttachmentBrowser(3, 'c1', new File(['x'], 'x.bin'), '')).rejects.toEqual(new ApiError('internal', 'HTTP 413'))
 })
 
 test('uploadAttachmentBrowser turns a JSON {code} error response into ApiError', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(JSON.stringify({ code: 'too_large' }), { status: 413, headers: { 'content-type': 'application/json' } }),
   )
-  await expect(uploadAttachmentBrowser(3, 'c1', new File(['x'], 'x.bin'))).rejects.toEqual(new ApiError('too_large', ''))
+  await expect(uploadAttachmentBrowser(3, 'c1', new File(['x'], 'x.bin'), '')).rejects.toEqual(new ApiError('too_large', ''))
 })

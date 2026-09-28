@@ -19,7 +19,7 @@ func TestAFIFOInPlaceOfTheFileIsNotOpened(t *testing.T) {
 	e := newEnv(t)
 	e.b.setLive(1, false)
 	p := e.file("pic.png", string(pngHeader()))
-	a, err := e.s.AddPath(1, "c1", p)
+	a, err := e.s.AddPath(1, "c1", "", p)
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(p))
 	require.NoError(t, syscall.Mkfifo(p, 0o600))
@@ -45,7 +45,7 @@ func TestAFIFOInPlaceOfTheFileIsNotOpened(t *testing.T) {
 
 	fifo := filepath.Join(t.TempDir(), "pipe")
 	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
-	_, err = e.s.AddPath(1, "c1", fifo)
+	_, err = e.s.AddPath(1, "c1", "", fifo)
 	assert.Equal(t, CodeNotAFile, codeOf(err))
 	closed := make(chan struct{})
 	go func() { e.s.Close(); close(closed) }()

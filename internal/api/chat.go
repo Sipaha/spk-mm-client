@@ -115,21 +115,51 @@ func (s *Service) LoadOlder(ctx context.Context, id int64, channelID string) err
 	return actionError(w.LoadOlder(rctx, channelID))
 }
 
-// SendPost implements API. Attachments move from the composer to the
-// pending post at once (all or none); the post is created once they are
-// uploaded.
+// SendPost implements API. Attachments move from the channel's composer to
+// the pending post at once (all or none); the post is created once they
+// are uploaded.
 func (s *Service) SendPost(ctx context.Context, id int64, channelID, message string, attachmentIDs []string) error {
 	w, err := s.writer(ctx, id)
 	if err != nil {
 		return err
 	}
+	return s.sendWith(id, w, channelID, "", message, attachmentIDs)
+}
+
+// SendReply implements API. rootID must be a thread this server's thread
+// cache holds for channelID (state.Server.ThreadHeld) — the panel that
+// offers "reply" always has it open; otherwise no_post. Attachments move
+// from the thread's composer (channelID, rootID) exactly as SendPost's
+// move from the channel's: attach.Store.Take is keyed by (channel, root),
+// so a thread's attachments can never reach the channel's post, or the
+// reverse.
+func (s *Service) SendReply(ctx context.Context, id int64, channelID, rootID, message string, attachmentIDs []string) error {
+	w, err := s.writer(ctx, id)
+	if err != nil {
+		return err
+	}
+	if rootID == "" || !w.State().ThreadHeld(channelID, rootID) {
+		return coded(CodeNoPost, nil)
+	}
+	return s.sendWith(id, w, channelID, rootID, message, attachmentIDs)
+}
+
+// sendWith is SendPost/SendReply's shared body once the target is
+// checked: rootID "" sends to the channel, else to that thread.
+func (s *Service) sendWith(id int64, w *mmsync.Worker, channelID, rootID, message string, attachmentIDs []string) error {
+	send := func(files ...state.FileView) error {
+		if rootID == "" {
+			return w.Send(channelID, message, files...)
+		}
+		return w.SendReply(channelID, rootID, message, files...)
+	}
 	if len(attachmentIDs) == 0 {
-		return actionError(w.Send(channelID, message))
+		return actionError(send())
 	}
 	if s.att == nil {
 		return coded(CodeNotFound, nil)
 	}
-	taken, err := s.att.Take(id, channelID, attachmentIDs)
+	taken, err := s.att.Take(id, channelID, rootID, attachmentIDs)
 	if err != nil {
 		return attachError(err)
 	}
@@ -137,7 +167,7 @@ func (s *Service) SendPost(ctx context.Context, id int64, channelID, message str
 	for _, a := range taken {
 		files = append(files, s.stagedFile(a))
 	}
-	if err := w.Send(channelID, message, files...); err != nil {
+	if err := send(files...); err != nil {
 		postFiles{s}.Release(attachmentIDs)
 		return actionError(err)
 	}
@@ -208,6 +238,22 @@ func (s *Service) SaveDraft(ctx context.Context, id int64, channelID, text strin
 		return err
 	}
 	w.SaveDraft(channelID, text)
+	return nil
+}
+
+// SaveThreadDraft implements API: SaveDraft for a reply. rootID alone
+// (channel-less — the thread cache's key is already the root) must be
+// held (state.Server.ThreadHeld), else no_post: a draft for a root that
+// was never opened, or evicted since, has no panel to show it in.
+func (s *Service) SaveThreadDraft(ctx context.Context, id int64, rootID, text string) error {
+	w, err := s.worker(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !w.State().ThreadHeld("", rootID) {
+		return coded(CodeNoPost, nil)
+	}
+	w.State().SetThreadDraft(rootID, text)
 	return nil
 }
 

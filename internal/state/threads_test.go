@@ -386,6 +386,68 @@ func TestForgottenChannelDropsItsThreads(t *testing.T) {
 	assert.Empty(t, s.threadLRU)
 }
 
+// Task 4: SetThreadDraft is bounded (ThreadDraftCap), like the other
+// bounds in this cache; a channel we leave takes its held threads' drafts
+// with it, an evicted (LRU, not a leave) root's draft is left alone.
+func TestThreadDraftsAreBounded(t *testing.T) {
+	s := crtFixture(true)
+	for i := 0; i < ThreadDraftCap+10; i++ {
+		s.SetThreadDraft(fmt.Sprintf("r%03d", i), "draft text")
+	}
+	s.mu.Lock()
+	assert.Len(t, s.threadDrafts, ThreadDraftCap)
+	assert.Len(t, s.threadDraftOrder, ThreadDraftCap)
+	_, hasOldest := s.threadDrafts["r000"]
+	_, hasNewest := s.threadDrafts[fmt.Sprintf("r%03d", ThreadDraftCap+9)]
+	s.mu.Unlock()
+	assert.False(t, hasOldest, "the oldest inserted draft was evicted")
+	assert.True(t, hasNewest, "the most recent draft survives")
+
+	// Setting the same text again is a no-op (does not requeue it).
+	s.SetThreadDraft(fmt.Sprintf("r%03d", ThreadDraftCap+9), "draft text")
+	s.mu.Lock()
+	orderLen := len(s.threadDraftOrder)
+	s.mu.Unlock()
+	assert.Len(t, s.threadDrafts, ThreadDraftCap)
+	assert.Equal(t, ThreadDraftCap, orderLen)
+
+	// Empty text removes the entry, freeing room instead of evicting
+	// another one.
+	last := fmt.Sprintf("r%03d", ThreadDraftCap+9)
+	s.SetThreadDraft(last, "")
+	s.mu.Lock()
+	_, stillThere := s.threadDrafts[last]
+	n := len(s.threadDrafts)
+	s.mu.Unlock()
+	assert.False(t, stillThere)
+	assert.Equal(t, ThreadDraftCap-1, n)
+
+	// Leaving a channel drops the drafts of its held threads.
+	root, replies := seededThread("D", 2)
+	openLoaded(t, s, root, replies)
+	s.SetThreadDraft("D", "reply in progress")
+	s.mu.Lock()
+	_, held := s.threadDrafts["D"]
+	s.mu.Unlock()
+	require.True(t, held)
+	d, _ := json.Marshal(map[string]any{"channel_id": "town"})
+	s.ApplyEvent(ws.Event{Type: "user_removed", Data: d, Broadcast: ws.Broadcast{UserID: "u1"}})
+	s.mu.Lock()
+	_, afterLeave := s.threadDrafts["D"]
+	s.mu.Unlock()
+	assert.False(t, afterLeave, "the left channel's thread draft is dropped with it")
+}
+
+func TestThreadHeldChecksChannelAndCache(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("H", 1)
+	openLoaded(t, s, root, replies)
+	assert.True(t, s.ThreadHeld("town", "H"), "the thread just opened is held")
+	assert.True(t, s.ThreadHeld("", "H"), "a channel-less check only needs the root")
+	assert.False(t, s.ThreadHeld("off", "H"), "wrong channel")
+	assert.False(t, s.ThreadHeld("town", "never-opened"), "a root never opened is not held")
+}
+
 func TestDeletedRootAndRepliesInTheThread(t *testing.T) {
 	s := crtFixture(true)
 	root, replies := seededThread("R", 3)

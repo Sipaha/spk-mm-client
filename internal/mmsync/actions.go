@@ -88,14 +88,34 @@ func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
 // sends it in the background: once every attachment is uploaded, the post
 // is created with their file ids. A text is needed only without files.
 func (w *Worker) Send(channelID, message string, files ...state.FileView) error {
+	return w.send(channelID, "", message, files...)
+}
+
+// SendReply is Send for a reply: rootID is CreatePost's root_id. The
+// caller (api.Service) checks that rootID is a thread this worker's
+// thread cache holds for channelID (state.Server.ThreadHeld) before
+// calling — SendReply itself does not, the same way Send does not check
+// that channelID is a channel we are in. The pending reply carries
+// RootID, so applyNewPostLocked (via AddPending/PostCreated) puts it in
+// the channel window (kept out of the CRT feed — Task 2) and the thread
+// cache in one place; nothing here is thread-specific beyond that.
+func (w *Worker) SendReply(channelID, rootID, message string, files ...state.FileView) error {
+	return w.send(channelID, rootID, message, files...)
+}
+
+func (w *Worker) send(channelID, rootID, message string, files ...state.FileView) error {
 	if strings.TrimSpace(message) == "" && len(files) == 0 {
 		return ErrEmptyMessage
 	}
 	if len(files) > 0 && w.cfg.Files == nil {
 		return ErrNoAttachments
 	}
-	p := w.st.AddPending(channelID, "", message, files...)
-	w.changed(state.Change{Channels: []string{channelID}})
+	p := w.st.AddPending(channelID, rootID, message, files...)
+	ch := state.Change{Channels: []string{channelID}}
+	if rootID != "" {
+		ch.Threads = []string{rootID}
+	}
+	w.changed(ch)
 	if len(files) > 0 {
 		// Sending is the user asking: an upload that failed in the
 		// composer is tried again.
@@ -138,9 +158,28 @@ func (w *Worker) create(ctx context.Context, p state.Pending) {
 		}
 		slog.Warn("send failed", "srv", w.srv.ID, "channel", p.ChannelID, "err", err)
 		w.changed(w.st.FailPending(p.ChannelID, p.ID))
+		if p.RootID != "" && isRootDeletedErr(err) {
+			// The root was deleted between the panel opening it and this
+			// reply reaching the server (server/channels/app/post.go
+			// createPost, api.post.create_post.root_id.app_error). The
+			// thread is not stuck "loading": FailThread's ThreadNotFound
+			// path marks it RootDeleted, same as a 404 on GET .../thread.
+			_, epoch, _ := w.st.ThreadFetch(p.RootID)
+			w.st.FailThread(p.RootID, epoch, state.ThreadNotFound)
+			w.changed(state.Change{Threads: []string{p.RootID}})
+		}
 		return
 	}
 	w.changed(w.st.PostCreated(post))
+}
+
+// isRootDeletedErr reports CreatePost's 400 for a reply whose root no
+// longer exists — checked against mm-10.11
+// server/channels/app/post.go:296,305 (also raised when the "root" is
+// itself a reply: the server refuses reply-to-reply the same way).
+func isRootDeletedErr(err error) bool {
+	var re *rest.Error
+	return errors.As(err, &re) && re.ID == "api.post.create_post.root_id.app_error"
 }
 
 // Retry resends a failed post with the same pending id: if the first

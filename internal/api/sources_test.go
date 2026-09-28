@@ -186,10 +186,10 @@ func TestClipboardFileListIsAttachedByPath(t *testing.T) {
 	}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	list, err := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, err := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"note.txt", "имя с пробелом.png"}, names(list))
 	assert.Equal(t, []string{"TARGETS", "text/uri-list"}, cb.requests())
@@ -207,10 +207,10 @@ func TestClipboardGnomeCopiedFilesWithoutURIList(t *testing.T) {
 	}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, []string{"cut.txt"}, names(list))
 }
 
@@ -242,10 +242,10 @@ func TestClipboardPNGIsSpooledAsAScreenshot(t *testing.T) {
 	}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	require.Len(t, list, 1)
 	assert.Regexp(t, screenshotName, list[0].Name)
 	assert.Equal(t, "image/png", list[0].Mime)
@@ -263,12 +263,12 @@ func TestClipboardOtherImageIsConvertedToPNG(t *testing.T) {
 	cb := &fakeClipboard{data: map[string][]byte{"image/jpeg": []byte("\xff\xd8\xff"), "text/html": []byte("<img>")}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Equal(t, "image/jpeg", cb.pngFrom)
 	assert.Equal(t, []string{"TARGETS", "image"}, cb.requests())
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	require.Len(t, list, 1)
 	assert.Regexp(t, screenshotName, list[0].Name)
 	assert.Equal(t, "image/png", list[0].Mime)
@@ -281,7 +281,7 @@ func TestClipboardTextAttachesNothing(t *testing.T) {
 	cb := &fakeClipboard{data: map[string][]byte{"UTF8_STRING": []byte("hi"), "text/plain": []byte("hi")}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Zero(t, n)
 	assert.Equal(t, []string{"TARGETS"}, cb.requests())
@@ -297,12 +297,12 @@ func TestClipboardFolderIsRefusedOthersAttached(t *testing.T) {
 	}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, 1, n)
 	var ce *CodedError
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeNotAFile, ce.Code)
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, []string{"ok.txt"}, names(list))
 }
 
@@ -317,7 +317,7 @@ func TestHungClipboardOwnerTimesOut(t *testing.T) {
 	f.svc.SetClipboard(&fakeClipboard{hang: true})
 
 	start := time.Now()
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	assert.Less(t, time.Since(start), 2*time.Second)
 	assert.Zero(t, n)
 	var ce *CodedError
@@ -329,8 +329,8 @@ func TestNoClipboardOrPickerIsUnsupported(t *testing.T) {
 	f := newChatFixture(t)
 	f.withAttachments()
 	id := f.live(startFake(t))
-	for _, fn := range []func(context.Context, int64, string) (int, error){f.svc.AttachFromClipboard, f.svc.PickAttachments} {
-		n, err := fn(context.Background(), id, "c-offtopic")
+	for _, fn := range []func(context.Context, int64, string, string) (int, error){f.svc.AttachFromClipboard, f.svc.PickAttachments} {
+		n, err := fn(context.Background(), id, "c-offtopic", "")
 		assert.Zero(t, n)
 		var ce *CodedError
 		require.ErrorAs(t, err, &ce)
@@ -358,14 +358,14 @@ func TestPickAttachmentsAttachesTheChosenFiles(t *testing.T) {
 	p := &fakePicker{paths: []string{a, b}}
 	f.svc.SetFilePicker(p)
 
-	n, err := f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	n, err := f.svc.PickAttachments(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, []string{"a.txt", "b.pdf"}, names(list))
 
 	p.paths = nil // cancelled
-	n, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	n, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -378,16 +378,16 @@ func TestPickAttachmentsChecksBeforeTheDialog(t *testing.T) {
 	p := &fakePicker{}
 	f.svc.SetFilePicker(p)
 
-	_, err := f.svc.PickAttachments(context.Background(), id, "c-nope")
+	_, err := f.svc.PickAttachments(context.Background(), id, "c-nope", "")
 	var ce *CodedError
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeNoChannel, ce.Code)
 
 	for i := range attach.MaxPerChannel {
-		_, err := f.svc.AddAttachmentBytes(context.Background(), id, "c-offtopic", "n.txt", "", strings.NewReader(strings.Repeat("x", i+1)), 0)
+		_, err := f.svc.AddAttachmentBytes(context.Background(), id, "c-offtopic", "", "n.txt", "", strings.NewReader(strings.Repeat("x", i+1)), 0)
 		require.NoError(t, err)
 	}
-	_, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	_, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic", "")
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeTooMany, ce.Code)
 	assert.Zero(t, p.calls)
@@ -399,14 +399,14 @@ func TestDroppedFilesAreAttachedAndRefusalsReported(t *testing.T) {
 	id := f.live(startFake(t))
 	a := writeFile(t, "dropped.txt", []byte("d"))
 
-	assert.Equal(t, 1, f.svc.AttachDropped(context.Background(), id, "c-offtopic", []string{a}))
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	assert.Equal(t, 1, f.svc.AttachDropped(context.Background(), id, "c-offtopic", "", []string{a}))
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, []string{"dropped.txt"}, names(list))
 
 	// A folder (or anything but a regular file) is refused with a message.
-	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", []string{t.TempDir()}))
+	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", "", []string{t.TempDir()}))
 	ev := f.nextEvent(EventAttachmentRefused)
-	assert.Equal(t, map[string]any{"server_id": id, "channel_id": "c-offtopic", "code": CodeNotAFile}, ev.Payload)
+	assert.Equal(t, map[string]any{"server_id": id, "channel_id": "c-offtopic", "root_id": "", "code": CodeNotAFile}, ev.Payload)
 }
 
 // Page script can call AttachFromClipboard at any time; only a paste key
@@ -418,7 +418,7 @@ func TestClipboardWithoutAPasteKeyReadsNothing(t *testing.T) {
 	cb := &fakeClipboard{noKey: true, data: map[string][]byte{"image/png": tinyPNG()}}
 	f.svc.SetClipboard(cb)
 
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	assert.Zero(t, n)
 	var ce *CodedError
 	require.ErrorAs(t, err, &ce)
@@ -440,7 +440,7 @@ func TestClipboardDeadlineCoversTheWholeCall(t *testing.T) {
 	}})
 
 	start := time.Now()
-	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	n, err := f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	assert.Less(t, time.Since(start), 300*time.Millisecond)
 	assert.Zero(t, n)
 	var ce *CodedError
@@ -472,34 +472,34 @@ func TestAppDataIsNeverStaged(t *testing.T) {
 	var ce *CodedError
 	p := &fakePicker{paths: []string{secret, spool, link, data}}
 	f.svc.SetFilePicker(p)
-	n, err := f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	n, err := f.svc.PickAttachments(context.Background(), id, "c-offtopic", "")
 	assert.Zero(t, n)
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeAppData, ce.Code)
 
-	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", []string{link}))
+	assert.Zero(t, f.svc.AttachDropped(context.Background(), id, "c-offtopic", "", []string{link}))
 	ev := f.nextEvent(EventAttachmentRefused)
 	assert.Equal(t, CodeAppData, ev.Payload["code"])
 
 	cb := &fakeClipboard{data: map[string][]byte{"text/uri-list": []byte(fileURI(secret) + "\r\n")}}
 	f.svc.SetClipboard(cb)
-	_, err = f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic")
+	_, err = f.svc.AttachFromClipboard(context.Background(), id, "c-offtopic", "")
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeAppData, ce.Code)
 
 	p.paths = []string{alias}
-	n, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic")
+	n, err = f.svc.PickAttachments(context.Background(), id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
-	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic")
+	list, _ := f.svc.Attachments(context.Background(), id, "c-offtopic", "")
 	assert.Equal(t, []string{"real-name.txt"}, names(list), "a symlink is staged as its target")
 }
 
 func TestDropRefusalIsReported(t *testing.T) {
 	f := newChatFixture(t)
-	f.svc.DropRefused(3, "c-town", CodeNotDropped)
+	f.svc.DropRefused(3, "c-town", "", CodeNotDropped)
 	ev := f.nextEvent(EventAttachmentRefused)
-	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town", "code": CodeNotDropped}, ev.Payload)
+	assert.Equal(t, map[string]any{"server_id": int64(3), "channel_id": "c-town", "root_id": "", "code": CodeNotDropped}, ev.Payload)
 }
 
 // The attachment sources take a server and a channel only: the UI has no
@@ -507,7 +507,7 @@ func TestDropRefusalIsReported(t *testing.T) {
 // reflection test cannot tell a path from another string).
 func TestAttachmentSourcesTakeNoPaths(t *testing.T) {
 	api := reflect.TypeFor[API]()
-	want := reflect.TypeFor[func(context.Context, int64, string) (int, error)]()
+	want := reflect.TypeFor[func(context.Context, int64, string, string) (int, error)]()
 	for _, name := range []string{"AttachFromClipboard", "PickAttachments"} {
 		m, ok := api.MethodByName(name)
 		require.True(t, ok, name)

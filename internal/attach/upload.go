@@ -62,7 +62,7 @@ func (s *Store) pump(srv int64) {
 	}
 	s.mu.Unlock()
 	for _, it := range started {
-		s.notify(it.Server, it.Channel)
+		s.notify(it.Server, it.Channel, it.Root)
 	}
 }
 
@@ -88,7 +88,7 @@ func (s *Store) run(ctx context.Context, q *queue, it *item, gen int, up Uploade
 	}
 	s.mu.Unlock()
 	if current {
-		s.notify(it.Server, it.Channel)
+		s.notify(it.Server, it.Channel, it.Root)
 	}
 	s.pump(it.Server)
 }
@@ -135,7 +135,7 @@ func (s *Store) progress(it *item, gen int, sent int64) {
 	}
 	s.mu.Unlock()
 	if due {
-		s.notify(it.Server, it.Channel)
+		s.notify(it.Server, it.Channel, it.Root)
 	}
 }
 

@@ -96,6 +96,7 @@ type Attachment struct {
 
 	Server  int64  `json:"-"`
 	Channel string `json:"-"`
+	Root    string `json:"-"` // "" — the channel's composer; else a thread's reply (Task 4)
 	FileID  string `json:"-"` // the server's file id once uploaded
 	Taken   bool   `json:"-"` // moved to a post being sent (Take): no longer in the composer
 }
@@ -121,10 +122,11 @@ type Backend interface {
 type Options struct {
 	Dir     string // spools; created when first needed
 	Backend Backend
-	// OnChange is called after the attachments of a channel changed (added,
-	// removed, state, progress); it must not block or call the Store
-	// synchronously.
-	OnChange      func(srv int64, ch string)
+	// OnChange is called after the attachments of (srv, ch, root) changed
+	// (added, removed, state, progress); it must not block or call the
+	// Store synchronously. root: "" the channel's composer, else a
+	// thread's reply — see AGENTS.md "Вложения".
+	OnChange      func(srv int64, ch, root string)
 	Parallel      int           // uploads at a time per server; 0 → 2
 	Stall         time.Duration // an upload sending no bytes this long fails; 0 → 60 s
 	ProgressEvery time.Duration // shortest gap between progress reports of one upload; 0 → 250 ms
@@ -133,9 +135,11 @@ type Options struct {
 	unknownMax int64  // tests: the size bound of an unknown config; 0 → DefaultMaxFileSize
 }
 
+// key is a composer: the channel's ("" root) or one reply's thread.
 type key struct {
-	srv int64
-	ch  string
+	srv  int64
+	ch   string
+	root string
 }
 
 type item struct {
@@ -257,7 +261,7 @@ func mimeOf(name string) string {
 // settings and the channel's count. It returns the size bound: the
 // server's MaxFileSize, or DefaultMaxFileSize while its config is unknown
 // (Enabled is then not held against it — the server decides).
-func (s *Store) admit(srv int64, ch string) (int64, error) {
+func (s *Store) admit(srv int64, ch, root string) (int64, error) {
 	lim, err := s.o.Backend.Limits(srv)
 	if err != nil {
 		return 0, err
@@ -270,23 +274,23 @@ func (s *Store) admit(srv int64, ch string) (int64, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return maxSize, s.roomLocked(srv, ch)
+	return maxSize, s.roomLocked(srv, ch, root)
 }
 
-func (s *Store) roomLocked(srv int64, ch string) error {
+func (s *Store) roomLocked(srv int64, ch, root string) error {
 	if s.closed {
 		return fail(CodeInternal, errors.New("attachments are closed"))
 	}
-	if len(s.lists[key{srv, ch}]) >= MaxPerChannel {
+	if len(s.lists[key{srv, ch, root}]) >= MaxPerChannel {
 		return fail(CodeTooMany, nil)
 	}
 	return nil
 }
 
-// AddPath attaches a file on disk (a drop, the file dialog, a copied file):
-// only its path, size and mtime are kept.
-func (s *Store) AddPath(srv int64, ch, path string) (Attachment, error) {
-	maxSize, err := s.admit(srv, ch)
+// AddPath attaches a file on disk (a drop, the file dialog, a copied file)
+// to (srv, ch, root)'s composer: only its path, size and mtime are kept.
+func (s *Store) AddPath(srv int64, ch, root, path string) (Attachment, error) {
+	maxSize, err := s.admit(srv, ch, root)
 	if err != nil {
 		return Attachment{}, err
 	}
@@ -311,7 +315,7 @@ func (s *Store) AddPath(srv int64, ch, path string) (Attachment, error) {
 		mt = mediaType(http.DetectContentType(head[:n]))
 	}
 	it := &item{Attachment: Attachment{ID: newID(), Name: cleanName(filepath.Base(path)), Size: fi.Size(), Mime: mt,
-		State: StateStaged, Server: srv, Channel: ch}, path: path, mtime: fi.ModTime()}
+		State: StateStaged, Server: srv, Channel: ch, Root: root}, path: path, mtime: fi.ModTime()}
 	return s.insert(it)
 }
 
@@ -343,20 +347,20 @@ func openRegular(path string) (*os.File, os.FileInfo, error) {
 // insert lists a new attachment and queues its upload.
 func (s *Store) insert(it *item) (Attachment, error) {
 	s.mu.Lock()
-	if err := s.roomLocked(it.Server, it.Channel); err != nil {
+	if err := s.roomLocked(it.Server, it.Channel, it.Root); err != nil {
 		s.mu.Unlock()
 		return Attachment{}, err
 	}
 	s.seq++
 	it.seq = s.seq
 	s.items[it.ID] = it
-	k := key{it.Server, it.Channel}
+	k := key{it.Server, it.Channel, it.Root}
 	s.lists[k] = append(s.lists[k], it)
 	s.enqueueLocked(it)
 	s.broadcastLocked()
 	a := it.Attachment
 	s.mu.Unlock()
-	s.notify(it.Server, it.Channel)
+	s.notify(it.Server, it.Channel, it.Root)
 	s.pump(it.Server)
 	return a, nil
 }
@@ -381,18 +385,18 @@ func (s *Store) broadcastLocked() {
 	s.changed = make(chan struct{})
 }
 
-func (s *Store) notify(srv int64, ch string) {
+func (s *Store) notify(srv int64, ch, root string) {
 	if s.o.OnChange != nil {
-		s.o.OnChange(srv, ch)
+		s.o.OnChange(srv, ch, root)
 	}
 }
 
-// List gives the attachments of a channel in the order they were added
-// (never nil).
-func (s *Store) List(srv int64, ch string) []Attachment {
+// List gives the attachments of (srv, ch, root)'s composer in the order
+// they were added (never nil).
+func (s *Store) List(srv int64, ch, root string) []Attachment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l := s.lists[key{srv, ch}]
+	l := s.lists[key{srv, ch, root}]
 	out := make([]Attachment, 0, len(l))
 	for _, it := range l {
 		out = append(out, it.Attachment)
@@ -425,7 +429,7 @@ func (s *Store) Remove(id string) error {
 	s.broadcastLocked()
 	s.mu.Unlock()
 	s.removeSpool(it.spool)
-	s.notify(it.Server, it.Channel)
+	s.notify(it.Server, it.Channel, it.Root)
 	return nil
 }
 
@@ -433,7 +437,7 @@ func (s *Store) Remove(id string) error {
 // deletes the spool after unlocking.
 func (s *Store) unlistLocked(it *item) {
 	delete(s.items, it.ID)
-	k := key{it.Server, it.Channel}
+	k := key{it.Server, it.Channel, it.Root}
 	l := s.lists[k]
 	for i, x := range l {
 		if x == it {
@@ -492,25 +496,26 @@ func (s *Store) Retry(id string) error {
 	s.enqueueLocked(it)
 	s.broadcastLocked()
 	s.mu.Unlock()
-	s.notify(it.Server, it.Channel)
+	s.notify(it.Server, it.Channel, it.Root)
 	s.pump(it.Server)
 	return nil
 }
 
-// Take moves attachments of a channel from its composer list to a post
-// being sent: they are no longer listed (nor counted against
-// MaxPerChannel), but stay alive — uploads go on, Wait, Retry and Remove
-// work — until the post removes them. All or nothing: an id that is not
-// in that channel's list (unknown, another server's or channel's, taken
-// already) fails the whole call with CodeNotFound. A repeated id is taken
-// once; the result keeps the order given.
-func (s *Store) Take(srv int64, ch string, ids []string) ([]Attachment, error) {
+// Take moves attachments of (srv, ch, root)'s composer to a post being
+// sent: they are no longer listed (nor counted against MaxPerChannel), but
+// stay alive — uploads go on, Wait, Retry and Remove work — until the post
+// removes them. All or nothing: an id that is not in that composer's list
+// (unknown, another server's, channel's or root's, taken already) fails
+// the whole call with CodeNotFound — a thread's attachments can never be
+// sent as the channel's (or the reverse). A repeated id is taken once; the
+// result keeps the order given.
+func (s *Store) Take(srv int64, ch, root string, ids []string) ([]Attachment, error) {
 	s.mu.Lock()
-	k := key{srv, ch}
+	k := key{srv, ch, root}
 	var take []*item
 	for _, id := range ids {
 		it := s.items[id]
-		if it == nil || it.Taken || it.Server != srv || it.Channel != ch {
+		if it == nil || it.Taken || it.Server != srv || it.Channel != ch || it.Root != root {
 			s.mu.Unlock()
 			return nil, fail(CodeNotFound, fmt.Errorf("attachment %s", id))
 		}
@@ -531,7 +536,7 @@ func (s *Store) Take(srv int64, ch string, ids []string) ([]Attachment, error) {
 	}
 	s.mu.Unlock()
 	if len(take) > 0 {
-		s.notify(srv, ch)
+		s.notify(srv, ch, root)
 	}
 	return out, nil
 }
@@ -592,13 +597,13 @@ func (s *Store) Pause(srv int64) {
 	q.paused = true
 	q.epoch++
 	var back []*item
-	chans := map[string]bool{}
+	chans := map[chanRoot]bool{}
 	for _, it := range s.items {
 		if it.Server == srv && it.State == StateUploading {
 			s.abandonLocked(it)
 			it.State, it.Sent = StateStaged, 0
 			back = append(back, it)
-			chans[it.Channel] = true
+			chans[chanRoot{it.Channel, it.Root}] = true
 		}
 	}
 	slices.SortFunc(back, func(a, b *item) int { return cmp.Compare(a.seq, b.seq) })
@@ -607,10 +612,14 @@ func (s *Store) Pause(srv int64) {
 		s.broadcastLocked()
 	}
 	s.mu.Unlock()
-	for ch := range chans {
-		s.notify(srv, ch)
+	for cr := range chans {
+		s.notify(srv, cr.ch, cr.root)
 	}
 }
+
+// chanRoot is a composer's (channel, root) half of key, used where the
+// server is already fixed (Pause, DropServer notify sets).
+type chanRoot struct{ ch, root string }
 
 // DropServer forgets every attachment of a server (signed out, removed).
 func (s *Store) DropServer(srv int64) {
@@ -629,13 +638,13 @@ func (s *Store) DropServer(srv int64) {
 		s.broadcastLocked()
 	}
 	s.mu.Unlock()
-	chans := map[string]bool{}
+	chans := map[chanRoot]bool{}
 	for _, it := range gone {
 		s.removeSpool(it.spool)
-		chans[it.Channel] = true
+		chans[chanRoot{it.Channel, it.Root}] = true
 	}
-	for ch := range chans {
-		s.notify(srv, ch)
+	for cr := range chans {
+		s.notify(srv, cr.ch, cr.root)
 	}
 }
 

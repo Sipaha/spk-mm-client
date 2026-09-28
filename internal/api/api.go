@@ -80,6 +80,16 @@ type API interface {
 	// SetPostSaved saves/unsaves a post for later (flagged_post preference).
 	SetPostSaved(ctx context.Context, id int64, postID string, saved bool) error
 	SaveDraft(ctx context.Context, id int64, channelID, text string) error
+	// SendReply is SendPost for a reply: rootID must be a thread this
+	// server's thread cache holds for channelID (open or recent — the
+	// panel that offers "reply" always has it open); otherwise no_post.
+	// Attachments move from the thread's composer (channelID, rootID), the
+	// same way SendPost's move from the channel's.
+	SendReply(ctx context.Context, id int64, channelID, rootID, message string, attachmentIDs []string) error
+	// SaveThreadDraft is SaveDraft for a reply, bounded to
+	// state.ThreadDraftCap entries; rootID must be held (ThreadHeld), else
+	// no_post.
+	SaveThreadDraft(ctx context.Context, id int64, rootID, text string) error
 	DownloadFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 	OpenFile(ctx context.Context, id int64, fileID string) (SavedFile, error)
 	AddReaction(ctx context.Context, id int64, postID, emoji string) error
@@ -105,10 +115,12 @@ type API interface {
 	RemoveDownload(ctx context.Context, id int64) error
 	ClearDownloads(ctx context.Context) error
 
-	// Attachments are the files attached to a channel's next message, in
-	// the order added (they come from Go: clipboard, drop, file dialog,
-	// browser upload — the UI never sends paths).
-	Attachments(ctx context.Context, id int64, channelID string) ([]AttachmentView, error)
+	// Attachments are the files attached to a message's composer, in the
+	// order added (they come from Go: clipboard, drop, file dialog,
+	// browser upload — the UI never sends paths). rootID: "" the channel's
+	// own composer, else a thread's reply composer (state.ThreadHeld) —
+	// see AGENTS.md "Вложения".
+	Attachments(ctx context.Context, id int64, channelID, rootID string) ([]AttachmentView, error)
 	// RemoveAttachment drops one (its upload is cancelled).
 	RemoveAttachment(ctx context.Context, id int64, attachmentID string) error
 	// RetryAttachment sends a failed one again (never done automatically).
@@ -116,10 +128,10 @@ type API interface {
 	// AttachFromClipboard attaches what the system clipboard holds: copied
 	// files by path, or a picture; it returns how many (desktop only — Go
 	// reads the clipboard itself; browser mode: unsupported).
-	AttachFromClipboard(ctx context.Context, id int64, channelID string) (int, error)
+	AttachFromClipboard(ctx context.Context, id int64, channelID, rootID string) (int, error)
 	// PickAttachments opens the file dialog and attaches the chosen files;
 	// it returns how many (desktop only; browser mode: unsupported).
-	PickAttachments(ctx context.Context, id int64, channelID string) (int, error)
+	PickAttachments(ctx context.Context, id int64, channelID, rootID string) (int, error)
 }
 
 // Event types pushed to the UI.
@@ -141,13 +153,16 @@ const (
 	// reloads the list then (and on events with neither field), and only
 	// patches the row in place on "received".
 	EventDownloadsChanged = "downloads_changed"
-	// EventAttachmentsChanged: the attachments of a channel changed (added,
-	// removed, state, upload progress — at most ~4 a second per upload).
-	// Payload: server_id, channel_id, items ([]AttachmentView, the whole list).
+	// EventAttachmentsChanged: the attachments of a (channel, root)
+	// composer changed (added, removed, state, upload progress — at most
+	// ~4 a second per upload). Payload: server_id, channel_id, root_id
+	// ("" the channel's own composer), items ([]AttachmentView, the whole
+	// list).
 	EventAttachmentsChanged = "attachments_changed"
-	// EventAttachmentRefused: files dropped onto a channel were (partly)
-	// refused — a drop has no caller to answer. Payload: server_id,
-	// channel_id, code (the first refusal: not_a_file, too_large, …).
+	// EventAttachmentRefused: files dropped onto a channel or thread panel
+	// were (partly) refused — a drop has no caller to answer. Payload:
+	// server_id, channel_id, root_id, code (the first refusal: not_a_file,
+	// too_large, …).
 	EventAttachmentRefused = "attachment_refused"
 )
 

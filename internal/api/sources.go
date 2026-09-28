@@ -109,7 +109,7 @@ const maxFileListSize = 1 << 20
 // else attaches nothing. It returns how many were attached (they arrive
 // with attachments_changed); an error says why (the first one) when some
 // or all were refused.
-func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID string) (int, error) {
+func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID, rootID string) (int, error) {
 	s.mu.Lock()
 	cb := s.clipboard
 	s.mu.Unlock()
@@ -119,7 +119,7 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	if !cb.TakePasteGesture() {
 		return 0, coded(CodeNoPasteGesture, nil)
 	}
-	if err := s.attachTarget(ctx, id, channelID); err != nil {
+	if err := s.attachTarget(ctx, id, channelID, rootID); err != nil {
 		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, clipboardTimeout)
@@ -145,7 +145,7 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	}
 	switch {
 	case len(paths) > 0:
-		return s.addPaths(id, channelID, paths)
+		return s.addPaths(id, channelID, rootID, paths)
 	case image == "":
 		return 0, nil
 	}
@@ -160,7 +160,7 @@ func (s *Service) AttachFromClipboard(ctx context.Context, id int64, channelID s
 	}
 	defer r.Close()
 	name := nextScreenshotName(time.Now())
-	if _, err := s.att.AddBytes(id, channelID, name, "image/png", r, 0); err != nil {
+	if _, err := s.att.AddBytes(id, channelID, rootID, name, "image/png", r, 0); err != nil {
 		return 0, attachError(err)
 	}
 	return 1, nil
@@ -220,29 +220,29 @@ func parseGnomeCopiedFiles(data string) []string {
 
 // PickAttachments implements API: the file dialog (only on the user's
 // click — never at startup), then the chosen files by path.
-func (s *Service) PickAttachments(ctx context.Context, id int64, channelID string) (int, error) {
+func (s *Service) PickAttachments(ctx context.Context, id int64, channelID, rootID string) (int, error) {
 	s.mu.Lock()
 	p := s.picker
 	s.mu.Unlock()
 	if p == nil {
 		return 0, coded(CodeUnsupported, nil)
 	}
-	if err := s.attachTarget(ctx, id, channelID); err != nil {
+	if err := s.attachTarget(ctx, id, channelID, rootID); err != nil {
 		return 0, err
 	}
-	if err := s.attachRoom(id, channelID); err != nil {
+	if err := s.attachRoom(id, channelID, rootID); err != nil {
 		return 0, err
 	}
 	paths, err := p.PickFiles(ctx)
 	if err != nil {
 		return 0, coded(CodeInternal, err)
 	}
-	return s.addPaths(id, channelID, paths)
+	return s.addPaths(id, channelID, rootID, paths)
 }
 
 // attachRoom refuses before a dialog opens what would be refused after
-// it: attachments off on the server, or the channel full.
-func (s *Service) attachRoom(id int64, channelID string) error {
+// it: attachments off on the server, or the composer full.
+func (s *Service) attachRoom(id int64, channelID, rootID string) error {
 	lim, err := attachBackend{s}.Limits(id)
 	if err != nil {
 		return err
@@ -250,7 +250,7 @@ func (s *Service) attachRoom(id int64, channelID string) error {
 	if lim.MaxFileSize > 0 && !lim.Enabled {
 		return coded(CodeAttachmentsDisabled, nil)
 	}
-	if len(s.att.List(id, channelID)) >= attach.MaxPerChannel {
+	if len(s.att.List(id, channelID, rootID)) >= attach.MaxPerChannel {
 		return coded(CodeTooMany, nil)
 	}
 	return nil
@@ -268,33 +268,33 @@ func (s *Service) attachRoom(id int64, channelID string) error {
 // upload at once and page script could also call SendPost, so what
 // remains is a file the user really dropped (or pasted, or picked) — the
 // app's own data is refused even then (addPaths).
-func (s *Service) AttachDropped(ctx context.Context, id int64, channelID string, paths []string) int {
-	if err := s.attachTarget(ctx, id, channelID); err != nil {
-		s.refused(id, channelID, err)
+func (s *Service) AttachDropped(ctx context.Context, id int64, channelID, rootID string, paths []string) int {
+	if err := s.attachTarget(ctx, id, channelID, rootID); err != nil {
+		s.refused(id, channelID, rootID, err)
 		return 0
 	}
-	n, err := s.addPaths(id, channelID, paths)
+	n, err := s.addPaths(id, channelID, rootID, paths)
 	if err != nil {
-		s.refused(id, channelID, err)
+		s.refused(id, channelID, rootID, err)
 	}
 	return n
 }
 
 // DropRefused reports files of a drop refused before AttachDropped (not
 // carried by the native drop, too many at once).
-func (s *Service) DropRefused(id int64, channelID, code string) {
+func (s *Service) DropRefused(id int64, channelID, rootID, code string) {
 	slog.Info("dropped files refused", "server", id, "code", code)
-	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "code": code})
+	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "root_id": rootID, "code": code})
 }
 
-func (s *Service) refused(id int64, channelID string, err error) {
+func (s *Service) refused(id int64, channelID, rootID string, err error) {
 	code := CodeInternal
 	var ce *CodedError
 	if errors.As(err, &ce) {
 		code = ce.Code
 	}
 	slog.Info("dropped files refused", "server", id, "code", code, "err", err)
-	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "code": code})
+	s.emit(EventAttachmentRefused, map[string]any{"server_id": id, "channel_id": channelID, "root_id": rootID, "code": code})
 }
 
 // ProtectDir sets the app's data directory (database with tokens, caches,
@@ -313,14 +313,14 @@ func (s *Service) ProtectDir(dir string) {
 // skipped; a refusal that holds for the rest too (the channel is full,
 // attachments are off) stops. It returns how many were attached and the
 // first refusal.
-func (s *Service) addPaths(id int64, channelID string, paths []string) (int, error) {
+func (s *Service) addPaths(id int64, channelID, rootID string, paths []string) (int, error) {
 	s.mu.Lock()
 	protected := s.protected
 	s.mu.Unlock()
 	n := 0
 	var first error
 	for _, p := range paths {
-		err := s.addPath(id, channelID, p, protected)
+		err := s.addPath(id, channelID, rootID, p, protected)
 		if err == nil {
 			n++
 			continue
@@ -336,7 +336,7 @@ func (s *Service) addPaths(id int64, channelID string, paths []string) (int, err
 	return n, first
 }
 
-func (s *Service) addPath(id int64, channelID, path, protected string) error {
+func (s *Service) addPath(id int64, channelID, rootID, path, protected string) error {
 	if !filepath.IsAbs(path) {
 		return coded(CodeNotAFile, fmt.Errorf("not an absolute path: %q", path))
 	}
@@ -347,7 +347,7 @@ func (s *Service) addPath(id int64, channelID, path, protected string) error {
 	if within(resolved, protected) {
 		return coded(CodeAppData, fmt.Errorf("%q is in the app's data directory", path))
 	}
-	_, err = s.att.AddPath(id, channelID, resolved)
+	_, err = s.att.AddPath(id, channelID, rootID, resolved)
 	return attachError(err)
 }
 

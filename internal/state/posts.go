@@ -822,6 +822,32 @@ func (s *Server) SetDraft(channelID, text string) {
 	}
 }
 
+// SetThreadDraft is SetDraft for a reply: keyed by root id instead of
+// channel, bounded to ThreadDraftCap entries (the oldest inserted is
+// dropped), never in the snapshot. The caller (api.Service) checks
+// ThreadHeld before calling — a draft for a root that is not held is
+// simply not reachable through ThreadView, so this itself does not check.
+func (s *Server) SetThreadDraft(rootID, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.threadDrafts[rootID] == text {
+		return
+	}
+	if text == "" {
+		s.dropThreadDraftLocked(rootID)
+		return
+	}
+	if _, exists := s.threadDrafts[rootID]; !exists {
+		s.threadDraftOrder = append(s.threadDraftOrder, rootID)
+	}
+	s.threadDrafts[rootID] = text
+	for len(s.threadDraftOrder) > ThreadDraftCap {
+		oldest := s.threadDraftOrder[0]
+		s.threadDraftOrder = s.threadDraftOrder[1:]
+		delete(s.threadDrafts, oldest)
+	}
+}
+
 // SetActive makes channelID the open channel and returns its "new messages"
 // boundary: last_viewed_at at the moment it was opened. Re-opening the same
 // channel keeps the boundary.

@@ -181,6 +181,15 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return nil, h.api.SendPost(ctx, r.ID, r.ChannelID, r.Message, r.AttachmentIDs)
 	}))
+	h.mux.HandleFunc("POST /api/SendReply", handle(func(ctx context.Context, r *struct {
+		ID            int64    `json:"id"`
+		ChannelID     string   `json:"channel_id"`
+		RootID        string   `json:"root_id"`
+		Message       string   `json:"message"`
+		AttachmentIDs []string `json:"attachment_ids"`
+	}) (any, error) {
+		return nil, h.api.SendReply(ctx, r.ID, r.ChannelID, r.RootID, r.Message, r.AttachmentIDs)
+	}))
 	h.mux.HandleFunc("POST /api/RetryPost", handle(func(ctx context.Context, r *struct {
 		ID        int64  `json:"id"`
 		ChannelID string `json:"channel_id"`
@@ -221,6 +230,13 @@ func (h *HTTP) routes() {
 		Text      string `json:"text"`
 	}) (any, error) {
 		return nil, h.api.SaveDraft(ctx, r.ID, r.ChannelID, r.Text)
+	}))
+	h.mux.HandleFunc("POST /api/SaveThreadDraft", handle(func(ctx context.Context, r *struct {
+		ID     int64  `json:"id"`
+		RootID string `json:"root_id"`
+		Text   string `json:"text"`
+	}) (any, error) {
+		return nil, h.api.SaveThreadDraft(ctx, r.ID, r.RootID, r.Text)
 	}))
 	type fileReq struct {
 		ID     int64  `json:"id"`
@@ -268,8 +284,8 @@ func (h *HTTP) routes() {
 		ID           int64  `json:"id"`
 		AttachmentID string `json:"attachment_id"`
 	}
-	h.mux.HandleFunc("POST /api/Attachments", handle(func(ctx context.Context, r *chanReq) (any, error) {
-		return h.api.Attachments(ctx, r.ID, r.ChannelID)
+	h.mux.HandleFunc("POST /api/Attachments", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return h.api.Attachments(ctx, r.ID, r.ChannelID, r.RootID)
 	}))
 	h.mux.HandleFunc("POST /api/RemoveAttachment", handle(func(ctx context.Context, r *attachmentReq) (any, error) {
 		return nil, h.api.RemoveAttachment(ctx, r.ID, r.AttachmentID)
@@ -277,11 +293,11 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/RetryAttachment", handle(func(ctx context.Context, r *attachmentReq) (any, error) {
 		return nil, h.api.RetryAttachment(ctx, r.ID, r.AttachmentID)
 	}))
-	h.mux.HandleFunc("POST /api/AttachFromClipboard", handle(func(ctx context.Context, r *chanReq) (any, error) {
-		return h.api.AttachFromClipboard(ctx, r.ID, r.ChannelID)
+	h.mux.HandleFunc("POST /api/AttachFromClipboard", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return h.api.AttachFromClipboard(ctx, r.ID, r.ChannelID, r.RootID)
 	}))
-	h.mux.HandleFunc("POST /api/PickAttachments", handle(func(ctx context.Context, r *chanReq) (any, error) {
-		return h.api.PickAttachments(ctx, r.ID, r.ChannelID)
+	h.mux.HandleFunc("POST /api/PickAttachments", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return h.api.PickAttachments(ctx, r.ID, r.ChannelID, r.RootID)
 	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }

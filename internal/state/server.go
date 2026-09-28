@@ -109,6 +109,9 @@ type Server struct {
 	openThread   string
 	threadEpoch  uint64
 	threadDrafts map[string]string
+	// threadDraftOrder: insertion order of threadDrafts (oldest first),
+	// for ThreadDraftCap eviction — see SetThreadDraft.
+	threadDraftOrder []string
 	// threadRedirect: the last thread opened by a reply's id → its root's
 	// (RedirectThread); ThreadView resolves the former to the latter.
 	threadRedirect [2]string

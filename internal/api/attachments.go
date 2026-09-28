@@ -66,18 +66,19 @@ func (u uploader) UploadFile(ctx context.Context, channelID, filename, clientID 
 
 func (u uploader) CheckAuth(err error) { u.w.CheckAuth(err) }
 
-// onAttachments pushes a channel's attachments to the UI, coalesced like
-// the other events; progress comes at most ~4 times a second per upload.
-// It also refreshes the progress/error shown on any pending post's staged
-// files of this channel (an attachment stays tracked, and keeps notifying,
-// after Take moves it from the composer to a post being sent) and, only
-// when that actually changed something, tells the UI through the same
-// channel_changed path a post/window update uses — cheap and coalesced
-// the same way.
-func (s *Service) onAttachments(srv int64, ch string) {
-	s.co.Schedule(fmt.Sprintf("attachments/%d/%s", srv, ch), func() {
+// onAttachments pushes a (channel, root) composer's attachments to the UI,
+// coalesced like the other events; progress comes at most ~4 times a
+// second per upload. It also refreshes the progress/error shown on any
+// pending post's staged files of this channel (an attachment stays
+// tracked, and keeps notifying, after Take moves it from the composer to
+// a post being sent) and, only when that actually changed something,
+// tells the UI: thread_changed for root != "" (a reply's files only ever
+// touch its own thread), channel_changed otherwise — the same coalesced
+// path a post/window update uses.
+func (s *Service) onAttachments(srv int64, ch, root string) {
+	s.co.Schedule(fmt.Sprintf("attachments/%d/%s/%s", srv, ch, root), func() {
 		if att := s.att; att != nil {
-			s.emit(EventAttachmentsChanged, map[string]any{"server_id": srv, "channel_id": ch, "items": att.List(srv, ch)})
+			s.emit(EventAttachmentsChanged, map[string]any{"server_id": srv, "channel_id": ch, "root_id": root, "items": att.List(srv, ch, root)})
 		}
 	})
 	m := s.manager()
@@ -95,11 +96,18 @@ func (s *Service) onAttachments(srv int64, ch string) {
 		}
 		return state.FileProgress{State: string(a.State), Sent: a.Sent, Error: a.Error}, true
 	})
-	if changed {
-		s.co.Schedule(fmt.Sprintf("channel/%d/%s", srv, ch), func() {
-			s.emit(EventChannelChanged, map[string]any{"server_id": srv, "channel_id": ch})
-		})
+	if !changed {
+		return
 	}
+	if root != "" {
+		s.co.Schedule(fmt.Sprintf("thread/%d/%s", srv, root), func() {
+			s.emit(EventThreadChanged, map[string]any{"server_id": srv, "root_id": root})
+		})
+		return
+	}
+	s.co.Schedule(fmt.Sprintf("channel/%d/%s", srv, ch), func() {
+		s.emit(EventChannelChanged, map[string]any{"server_id": srv, "channel_id": ch})
+	})
 }
 
 func attachError(err error) error {
@@ -116,9 +124,13 @@ func attachError(err error) error {
 	return coded(CodeInternal, err)
 }
 
-// attachTarget checks that attachments are on, the session can write and
-// the channel is known.
-func (s *Service) attachTarget(ctx context.Context, id int64, channelID string) error {
+// attachTarget checks that attachments are on, the session can write, the
+// channel is known and — for a reply's composer (rootID != "") — that
+// rootID is a thread this server's thread cache holds for channelID
+// (state.Server.ThreadHeld): an unknown root (never opened, evicted since)
+// is refused as no_post rather than silently attaching to nothing a panel
+// can show.
+func (s *Service) attachTarget(ctx context.Context, id int64, channelID, rootID string) error {
 	if s.att == nil {
 		return coded(CodeInternal, errors.New("attachments are not enabled"))
 	}
@@ -129,28 +141,31 @@ func (s *Service) attachTarget(ctx context.Context, id int64, channelID string) 
 	if _, ok := w.State().ChannelView(channelID); !ok {
 		return coded(CodeNoChannel, nil)
 	}
+	if rootID != "" && !w.State().ThreadHeld(channelID, rootID) {
+		return coded(CodeNoPost, nil)
+	}
 	return nil
 }
 
-// AddAttachmentPath attaches a file on disk to a channel's next message.
-// The path comes from Go only (a drop, the file dialog, the clipboard) —
-// never from the UI.
-func (s *Service) AddAttachmentPath(ctx context.Context, id int64, channelID, path string) (AttachmentView, error) {
-	if err := s.attachTarget(ctx, id, channelID); err != nil {
+// AddAttachmentPath attaches a file on disk to (channelID, rootID)'s
+// composer. The path comes from Go only (a drop, the file dialog, the
+// clipboard) — never from the UI.
+func (s *Service) AddAttachmentPath(ctx context.Context, id int64, channelID, rootID, path string) (AttachmentView, error) {
+	if err := s.attachTarget(ctx, id, channelID, rootID); err != nil {
 		return AttachmentView{}, err
 	}
-	a, err := s.att.AddPath(id, channelID, path)
+	a, err := s.att.AddPath(id, channelID, rootID, path)
 	return a, attachError(err)
 }
 
 // AddAttachmentBytes attaches bytes without a file (a pasted picture, a
-// browser upload), spooled to disk, at most limit bytes (≤ 0: the server's
-// MaxFileSize).
-func (s *Service) AddAttachmentBytes(ctx context.Context, id int64, channelID, name, mimeType string, r io.Reader, limit int64) (AttachmentView, error) {
-	if err := s.attachTarget(ctx, id, channelID); err != nil {
+// browser upload) to (channelID, rootID)'s composer, spooled to disk, at
+// most limit bytes (≤ 0: the server's MaxFileSize).
+func (s *Service) AddAttachmentBytes(ctx context.Context, id int64, channelID, rootID, name, mimeType string, r io.Reader, limit int64) (AttachmentView, error) {
+	if err := s.attachTarget(ctx, id, channelID, rootID); err != nil {
 		return AttachmentView{}, err
 	}
-	a, err := s.att.AddBytes(id, channelID, name, mimeType, r, limit)
+	a, err := s.att.AddBytes(id, channelID, rootID, name, mimeType, r, limit)
 	return a, attachError(err)
 }
 
@@ -164,11 +179,11 @@ func (s *Service) AttachmentSizeLimit(id int64) int64 {
 }
 
 // Attachments implements API.
-func (s *Service) Attachments(_ context.Context, id int64, channelID string) ([]AttachmentView, error) {
+func (s *Service) Attachments(_ context.Context, id int64, channelID, rootID string) ([]AttachmentView, error) {
 	if s.att == nil {
 		return []AttachmentView{}, nil
 	}
-	return s.att.List(id, channelID), nil
+	return s.att.List(id, channelID, rootID), nil
 }
 
 // attachmentOf is an attachment in a server's composer (one taken by a

@@ -53,6 +53,10 @@ export interface Client {
   markUnread(id: number, postId: string): Promise<void>
   setPostSaved(id: number, postId: string, saved: boolean): Promise<void>
   saveDraft(id: number, channelId: string, text: string): Promise<void>
+  /** SendPost for a reply: rootId must be a thread the panel has open or recently had open (state.ThreadHeld), else no_post. */
+  sendReply(id: number, channelId: string, rootId: string, message: string, attachmentIds?: string[]): Promise<void>
+  /** saveDraft for a reply, keyed by rootId alone (state.ThreadDraftCap-bounded); rootId must be held, else no_post. */
+  saveThreadDraft(id: number, rootId: string, text: string): Promise<void>
   downloadFile(id: number, fileId: string): Promise<SavedFile>
   openFile(id: number, fileId: string): Promise<SavedFile>
   addReaction(id: number, postId: string, emoji: string): Promise<void>
@@ -70,19 +74,21 @@ export interface Client {
   removeDownload(id: number): Promise<void>
   /** Drops every finished/failed entry. */
   clearDownloads(): Promise<void>
-  // Attachments: files attached to a channel's next message (a draft, in
-  // Go's memory — the UI never sends paths; see AGENTS.md "Вложения —
-  // модель угроз"). Not available in the transport itself: the desktop
-  // clipboard/dialog sources come from AttachFromClipboard/PickAttachments
-  // (unsupported in browser mode — Go answers "unsupported" there); a
-  // browser upload instead goes through uploadAttachmentBrowser below.
-  attachments(id: number, channelId: string): Promise<AttachmentView[]>
+  // Attachments: files attached to a message's composer (a draft, in Go's
+  // memory — the UI never sends paths; see AGENTS.md "Вложения — модель
+  // угроз"). rootId: '' the channel's own composer, else a thread's reply
+  // composer (state.ThreadHeld). Not available in the transport itself:
+  // the desktop clipboard/dialog sources come from
+  // AttachFromClipboard/PickAttachments (unsupported in browser mode — Go
+  // answers "unsupported" there); a browser upload instead goes through
+  // uploadAttachmentBrowser below.
+  attachments(id: number, channelId: string, rootId: string): Promise<AttachmentView[]>
   removeAttachment(id: number, attachmentId: string): Promise<void>
   retryAttachment(id: number, attachmentId: string): Promise<void>
   /** Desktop only: reads the system clipboard (a native paste just happened); returns how many were attached. */
-  attachFromClipboard(id: number, channelId: string): Promise<number>
+  attachFromClipboard(id: number, channelId: string, rootId: string): Promise<number>
   /** Desktop only: opens the native file dialog; returns how many were attached (none: cancelled). */
-  pickAttachments(id: number, channelId: string): Promise<number>
+  pickAttachments(id: number, channelId: string, rootId: string): Promise<number>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -139,6 +145,9 @@ export const httpClient: Client = {
   markUnread: (id, post_id) => done(post('MarkUnread', { id, post_id })),
   setPostSaved: (id, post_id, saved) => done(post('SetPostSaved', { id, post_id, saved })),
   saveDraft: (id, channel_id, text) => done(post('SaveDraft', { id, channel_id, text })),
+  sendReply: (id, channel_id, root_id, message, attachmentIds = []) =>
+    done(post('SendReply', { id, channel_id, root_id, message, attachment_ids: attachmentIds })),
+  saveThreadDraft: (id, root_id, text) => done(post('SaveThreadDraft', { id, root_id, text })),
   downloadFile: (id, file_id) => post('DownloadFile', { id, file_id }),
   openFile: (id, file_id) => post('OpenFile', { id, file_id }),
   addReaction: (id, post_id, emoji) => done(post('AddReaction', { id, post_id, emoji })),
@@ -150,11 +159,11 @@ export const httpClient: Client = {
   revealDownload: (id) => done(post('RevealDownload', { id })),
   removeDownload: (id) => done(post('RemoveDownload', { id })),
   clearDownloads: () => done(post('ClearDownloads', {})),
-  attachments: (id, channel_id) => post('Attachments', { id, channel_id }),
+  attachments: (id, channel_id, root_id) => post('Attachments', { id, channel_id, root_id }),
   removeAttachment: (id, attachment_id) => done(post('RemoveAttachment', { id, attachment_id })),
   retryAttachment: (id, attachment_id) => done(post('RetryAttachment', { id, attachment_id })),
-  attachFromClipboard: (id, channel_id) => post('AttachFromClipboard', { id, channel_id }),
-  pickAttachments: (id, channel_id) => post('PickAttachments', { id, channel_id }),
+  attachFromClipboard: (id, channel_id, root_id) => post('AttachFromClipboard', { id, channel_id, root_id }),
+  pickAttachments: (id, channel_id, root_id) => post('PickAttachments', { id, channel_id, root_id }),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -168,11 +177,11 @@ export const httpClient: Client = {
 // reads the clipboard/dialog/drop itself and never sees a Blob/File/
 // FormData body (that crashes the whole app against wails:// — AGENTS.md
 // "Things that bite"). Not part of Client: desktop has no equivalent.
-export async function uploadAttachmentBrowser(serverId: number, channelId: string, file: File): Promise<AttachmentView> {
+export async function uploadAttachmentBrowser(serverId: number, channelId: string, file: File, rootId: string): Promise<AttachmentView> {
   const headers: Record<string, string> = {}
   const token = tokenMeta()
   if (token) headers.Authorization = `Bearer ${token}`
-  const qs = new URLSearchParams({ name: file.name, mime: file.type || 'application/octet-stream' })
+  const qs = new URLSearchParams({ root: rootId, name: file.name, mime: file.type || 'application/octet-stream' })
   const r = await fetch(`/api/attachments/${serverId}/${encodeURIComponent(channelId)}?${qs}`, { method: 'POST', headers, body: file })
   const isJSON = r.headers.get('content-type')?.includes('application/json')
   if (!r.ok) {
@@ -243,6 +252,8 @@ export const wailsClient: Client = {
   markUnread: (id, postId) => wcall('MarkUnread', id, postId),
   setPostSaved: (id, postId, saved) => wcall('SetPostSaved', id, postId, saved),
   saveDraft: (id, channelId, text) => wcall('SaveDraft', id, channelId, text),
+  sendReply: (id, channelId, rootId, message, attachmentIds = []) => wcall('SendReply', id, channelId, rootId, message, attachmentIds),
+  saveThreadDraft: (id, rootId, text) => wcall('SaveThreadDraft', id, rootId, text),
   downloadFile: (id, fileId) => wcall('DownloadFile', id, fileId),
   openFile: (id, fileId) => wcall('OpenFile', id, fileId),
   addReaction: (id, postId, emoji) => wcall('AddReaction', id, postId, emoji),
@@ -254,11 +265,11 @@ export const wailsClient: Client = {
   revealDownload: (id) => wcall('RevealDownload', id),
   removeDownload: (id) => wcall('RemoveDownload', id),
   clearDownloads: () => wcall('ClearDownloads'),
-  attachments: (id, channelId) => wcall('Attachments', id, channelId),
+  attachments: (id, channelId, rootId) => wcall('Attachments', id, channelId, rootId),
   removeAttachment: (id, attachmentId) => wcall('RemoveAttachment', id, attachmentId),
   retryAttachment: (id, attachmentId) => wcall('RetryAttachment', id, attachmentId),
-  attachFromClipboard: (id, channelId) => wcall('AttachFromClipboard', id, channelId),
-  pickAttachments: (id, channelId) => wcall('PickAttachments', id, channelId),
+  attachFromClipboard: (id, channelId, rootId) => wcall('AttachFromClipboard', id, channelId, rootId),
+  pickAttachments: (id, channelId, rootId) => wcall('PickAttachments', id, channelId, rootId),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

@@ -91,8 +91,10 @@ test('subscribeEvents registers all event types and unwraps both payload shapes'
 
 test('attachment calls are addressed by FQN with positional args', async () => {
   vi.mocked(Call.ByName).mockResolvedValue([])
-  await wailsClient.attachments(1, 'c1')
-  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'Attachments', 1, 'c1')
+  await wailsClient.attachments(1, 'c1', '')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'Attachments', 1, 'c1', '')
+  await wailsClient.attachments(1, 'c1', 'r1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'Attachments', 1, 'c1', 'r1')
 
   vi.mocked(Call.ByName).mockResolvedValue(undefined)
   await wailsClient.removeAttachment(1, 'a1')
@@ -101,10 +103,24 @@ test('attachment calls are addressed by FQN with positional args', async () => {
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'RetryAttachment', 1, 'a1')
 
   vi.mocked(Call.ByName).mockResolvedValue(2)
-  await wailsClient.attachFromClipboard(1, 'c1')
-  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'AttachFromClipboard', 1, 'c1')
-  await wailsClient.pickAttachments(1, 'c1')
-  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'PickAttachments', 1, 'c1')
+  await wailsClient.attachFromClipboard(1, 'c1', '')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'AttachFromClipboard', 1, 'c1', '')
+  await wailsClient.pickAttachments(1, 'c1', '')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'PickAttachments', 1, 'c1', '')
+})
+
+// Task 4: SendReply/SaveThreadDraft are new bindings, and SendPost's
+// signature does not change alongside them.
+test('reply and thread-draft calls are addressed by FQN with positional args', async () => {
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.sendPost(1, 'c1', 'hi')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SendPost', 1, 'c1', 'hi', [])
+  await wailsClient.sendReply(1, 'c1', 'r1', 're')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SendReply', 1, 'c1', 'r1', 're', [])
+  await wailsClient.sendReply(1, 'c1', 'r1', '', ['a1'])
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SendReply', 1, 'c1', 'r1', '', ['a1'])
+  await wailsClient.saveThreadDraft(1, 'r1', 'draft text')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SaveThreadDraft', 1, 'r1', 'draft text')
 })
 
 test('thread calls are addressed by FQN with positional args', async () => {

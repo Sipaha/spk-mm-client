@@ -33,7 +33,7 @@ func TestCleanNameKeepsWhatAFileNameShows(t *testing.T) {
 func TestAddPathCleansTheName(t *testing.T) {
 	e := newEnv(t)
 	e.b.setLive(1, false)
-	a, err := e.s.AddPath(1, "c1", e.file("gpj\u202e.exe", "x"))
+	a, err := e.s.AddPath(1, "c1", "", e.file("gpj\u202e.exe", "x"))
 	require.NoError(t, err)
 	assert.Equal(t, "gpj.exe", a.Name)
 }

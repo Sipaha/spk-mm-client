@@ -62,6 +62,16 @@ func (f *fakeAPI) SendPost(_ context.Context, id int64, channelID, message strin
 	return nil
 }
 
+func (f *fakeAPI) SendReply(_ context.Context, id int64, channelID, rootID, message string, attachmentIDs []string) error {
+	f.sent = append(f.sent, fmt.Sprintf("%d/%s/%s/%s/%v", id, channelID, rootID, message, attachmentIDs))
+	return nil
+}
+
+func (f *fakeAPI) SaveThreadDraft(_ context.Context, id int64, rootID, text string) error {
+	f.dl = append(f.dl, fmt.Sprintf("draft %d/%s/%s", id, rootID, text))
+	return nil
+}
+
 func (f *fakeAPI) AddReaction(_ context.Context, id int64, postID, emoji string) error {
 	f.reacted = append(f.reacted, fmt.Sprintf("%d/%s/%s", id, postID, emoji))
 	return nil
@@ -228,7 +238,13 @@ func TestChatRoutes(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 	resp = call(t, h, ts.URL, "SendPost", `{"id":3,"channel_id":"c1","message":"","attachment_ids":["a1","a2"]}`)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, []string{"3/c1/hi/[]", "3/c1//[a1 a2]"}, f.sent)
+	resp = call(t, h, ts.URL, "SendReply", `{"id":3,"channel_id":"c1","root_id":"r1","message":"re"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"3/c1/hi/[]", "3/c1//[a1 a2]", "3/c1/r1/re/[]"}, f.sent)
+
+	resp = call(t, h, ts.URL, "SaveThreadDraft", `{"id":3,"root_id":"r1","text":"draft text"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, []string{"draft 3/r1/draft text"}, f.dl)
 
 	resp = call(t, h, ts.URL, "GetChannel", `{"id":3,"channel_id":"c1"}`)
 	var ch map[string]any
@@ -302,8 +318,8 @@ func TestDownloadRoutes(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode, "behind the same guard")
 }
 
-func (f *fakeAPI) Attachments(_ context.Context, id int64, channelID string) ([]api.AttachmentView, error) {
-	f.dl = append(f.dl, fmt.Sprintf("list %d/%s", id, channelID))
+func (f *fakeAPI) Attachments(_ context.Context, id int64, channelID, rootID string) ([]api.AttachmentView, error) {
+	f.dl = append(f.dl, fmt.Sprintf("list %d/%s/%s", id, channelID, rootID))
 	return []api.AttachmentView{{ID: "a1", Name: "x.png", Size: 3, Mime: "image/png", State: "uploading", Sent: 1, FileID: "secret"}}, nil
 }
 
@@ -323,7 +339,7 @@ func TestAttachmentRoutes(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp := call(t, h, ts.URL, "Attachments", `{"id":3,"channel_id":"c1"}`)
+	resp := call(t, h, ts.URL, "Attachments", `{"id":3,"channel_id":"c1","root_id":"r1"}`)
 	assert.Equal(t, 200, resp.StatusCode)
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -334,16 +350,16 @@ func TestAttachmentRoutes(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, "session_expired", body["code"])
-	assert.Equal(t, []string{"list 3/c1", "remove 3/a1", "retry 3/a1"}, f.dl)
+	assert.Equal(t, []string{"list 3/c1/r1", "remove 3/a1", "retry 3/a1"}, f.dl)
 }
 
-func (f *fakeAPI) AttachFromClipboard(_ context.Context, id int64, channelID string) (int, error) {
-	f.dl = append(f.dl, fmt.Sprintf("paste %d/%s", id, channelID))
+func (f *fakeAPI) AttachFromClipboard(_ context.Context, id int64, channelID, rootID string) (int, error) {
+	f.dl = append(f.dl, fmt.Sprintf("paste %d/%s/%s", id, channelID, rootID))
 	return 2, nil
 }
 
-func (f *fakeAPI) PickAttachments(_ context.Context, id int64, channelID string) (int, error) {
-	f.dl = append(f.dl, fmt.Sprintf("pick %d/%s", id, channelID))
+func (f *fakeAPI) PickAttachments(_ context.Context, id int64, channelID, rootID string) (int, error) {
+	f.dl = append(f.dl, fmt.Sprintf("pick %d/%s/%s", id, channelID, rootID))
 	return 0, &api.CodedError{Code: api.CodeUnsupported}
 }
 
@@ -353,7 +369,7 @@ func TestAttachmentSourceRoutes(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp := call(t, h, ts.URL, "AttachFromClipboard", `{"id":3,"channel_id":"c1"}`)
+	resp := call(t, h, ts.URL, "AttachFromClipboard", `{"id":3,"channel_id":"c1","root_id":"r1"}`)
 	assert.Equal(t, 200, resp.StatusCode)
 	var n int
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&n))
@@ -363,7 +379,7 @@ func TestAttachmentSourceRoutes(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, "unsupported", body["code"])
-	assert.Equal(t, []string{"paste 3/c1", "pick 3/c1"}, f.dl)
+	assert.Equal(t, []string{"paste 3/c1/r1", "pick 3/c1/"}, f.dl)
 }
 
 func (f *fakeAPI) OpenThread(_ context.Context, id int64, channelID, rootID string) (api.ThreadDTO, error) {

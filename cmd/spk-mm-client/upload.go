@@ -13,8 +13,9 @@ import (
 
 // uploadHandler takes one file from the page (browser mode: pasted,
 // dropped or picked) as the raw request body — no JSON, base64 or
-// multipart — and spools it as an attachment of the channel's next
-// message: POST /api/attachments/{srv}/{channel}?name=&mime=. At most the
+// multipart — and spools it as an attachment of the channel's (or, with
+// ?root=, a thread's reply) next message:
+// POST /api/attachments/{srv}/{channel}?root=&name=&mime=. At most the
 // server's MaxFileSize is read (413 over it); the store cleans the name
 // (last path element, no control/format characters, ≤ 200 runes). The desktop never sends
 // bytes: there Go reads the clipboard and the files itself.
@@ -32,7 +33,7 @@ func uploadHandler(svc *api.Service) http.Handler {
 		}
 		body := &limitedBody{r: http.MaxBytesReader(w, r.Body, limit)}
 		q := r.URL.Query()
-		a, err := svc.AddAttachmentBytes(r.Context(), srv, r.PathValue("channel"), q.Get("name"), uploadMime(q.Get("mime")), body, limit)
+		a, err := svc.AddAttachmentBytes(r.Context(), srv, r.PathValue("channel"), q.Get("root"), q.Get("name"), uploadMime(q.Get("mime")), body, limit)
 		if err != nil {
 			var ce *api.CodedError
 			if !errors.As(err, &ce) {

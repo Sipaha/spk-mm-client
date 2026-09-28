@@ -74,9 +74,9 @@ func TestSendPostWithAttachments(t *testing.T) {
 	ctx := context.Background()
 	f.offline(fake, id) // the pending post is seen before the uploads
 	pic := pngBytes(t, 64, 48)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "Screenshot.png", "image/png", bytes.NewReader(pic), 0)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "Screenshot.png", "image/png", bytes.NewReader(pic), 0)
 	require.NoError(t, err)
-	b, err := f.svc.AddAttachmentPath(ctx, id, "c-offtopic", writeFile(t, "Notes.TXT", []byte("hello")))
+	b, err := f.svc.AddAttachmentPath(ctx, id, "c-offtopic", "", writeFile(t, "Notes.TXT", []byte("hello")))
 	require.NoError(t, err)
 
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "look", []string{a.ID, b.ID}))
@@ -88,7 +88,7 @@ func TestSendPostWithAttachments(t *testing.T) {
 		{ID: a.ID, Name: "Screenshot.png", Ext: "png", Size: int64(len(pic)), Mime: "image/png", Width: 64, Height: 48, Staged: true, State: "staged"},
 		{ID: b.ID, Name: "Notes.TXT", Ext: "txt", Size: 5, Mime: "text/plain", Staged: true, State: "staged"},
 	}, p.Files, "the local files, previews from /media/<srv>/staged/<id>")
-	list, err := f.svc.Attachments(ctx, id, "c-offtopic")
+	list, err := f.svc.Attachments(ctx, id, "c-offtopic", "")
 	require.NoError(t, err)
 	assert.Empty(t, list, "gone from the composer")
 	for {
@@ -145,7 +145,7 @@ func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
 	fake.SetUploadThrottle(2000) // ~1s for 2000 bytes of body
 	t.Cleanup(func() { fake.SetUploadThrottle(0) })
 	data := bytes.Repeat([]byte{1}, 2000)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "big.bin", "application/octet-stream", bytes.NewReader(data), 0)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "big.bin", "application/octet-stream", bytes.NewReader(data), 0)
 	require.NoError(t, err)
 
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "", []string{a.ID}))
@@ -192,9 +192,9 @@ func TestSendPostWithOnlyAttachments(t *testing.T) {
 	fake := startFake(t)
 	id := f.live(fake)
 	ctx := context.Background()
-	a, err := f.svc.AddAttachmentPath(ctx, id, "c-offtopic", writeFile(t, "only.txt", []byte("x")))
+	a, err := f.svc.AddAttachmentPath(ctx, id, "c-offtopic", "", writeFile(t, "only.txt", []byte("x")))
 	require.NoError(t, err)
-	other, err := f.svc.AddAttachmentPath(ctx, id, "c-town", writeFile(t, "other.txt", []byte("x")))
+	other, err := f.svc.AddAttachmentPath(ctx, id, "c-town", "", writeFile(t, "other.txt", []byte("x")))
 	require.NoError(t, err)
 
 	assert.Equal(t, CodeEmptyMessage, codeOf(f.svc.SendPost(ctx, id, "c-offtopic", " ", nil)))
@@ -202,7 +202,7 @@ func TestSendPostWithOnlyAttachments(t *testing.T) {
 	assert.Equal(t, CodeNotFound, codeOf(f.svc.SendPost(ctx, id, "c-offtopic", "", []string{"nope"})))
 	_, pending := f.pendingPost(id, "c-offtopic")
 	assert.False(t, pending, "a refused send shows nothing")
-	list, _ := f.svc.Attachments(ctx, id, "c-offtopic")
+	list, _ := f.svc.Attachments(ctx, id, "c-offtopic", "")
 	require.Len(t, list, 1, "and keeps the composer")
 
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "", []string{a.ID}))
@@ -220,9 +220,9 @@ func TestFailedUploadFailsThePostAndRetryKeepsWhatWasUploaded(t *testing.T) {
 	id := f.live(fake)
 	ctx := context.Background()
 	f.offline(fake, id)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "a.bin", "", strings.NewReader("aaa"), 0)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "a.bin", "", strings.NewReader("aaa"), 0)
 	require.NoError(t, err)
-	b, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "b.bin", "", strings.NewReader("bbb"), 0)
+	b, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "b.bin", "", strings.NewReader("bbb"), 0)
 	require.NoError(t, err)
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "two files", []string{a.ID, b.ID}))
 	fake.FailUploads(1)
@@ -248,7 +248,7 @@ func TestDiscardPostDropsItsAttachments(t *testing.T) {
 	id := f.live(fake)
 	ctx := context.Background()
 	f.offline(fake, id)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "a.bin", "", strings.NewReader("aaa"), 0)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "a.bin", "", strings.NewReader("aaa"), 0)
 	require.NoError(t, err)
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "never mind", []string{a.ID}))
 	p, ok := f.pendingPost(id, "c-offtopic")
@@ -277,9 +277,9 @@ func TestSendPostWithAttachmentsAndAnExpiredSession(t *testing.T) {
 	id := f.live(fake)
 	ctx := context.Background()
 	f.offline(fake, id)
-	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "a.bin", "", strings.NewReader("aaa"), 0)
+	a, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "a.bin", "", strings.NewReader("aaa"), 0)
 	require.NoError(t, err)
-	b, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "b.bin", "", strings.NewReader("bbb"), 0)
+	b, err := f.svc.AddAttachmentBytes(ctx, id, "c-offtopic", "", "b.bin", "", strings.NewReader("bbb"), 0)
 	require.NoError(t, err)
 	require.NoError(t, f.svc.SendPost(ctx, id, "c-offtopic", "sent as the session dies", []string{a.ID}))
 	fake.SetFailure("/api/v4/files", 401)
@@ -290,7 +290,7 @@ func TestSendPostWithAttachmentsAndAnExpiredSession(t *testing.T) {
 	f.eventually(func() bool { return f.server(id).State == "needs_reauth" }, "the upload's 401 ends the session")
 	assert.Zero(t, fake.Hits("POST", "/api/v4/posts"))
 	assert.Equal(t, CodeSessionExpired, codeOf(f.svc.SendPost(ctx, id, "c-offtopic", "", []string{b.ID})), "fails fast")
-	list, _ := f.svc.Attachments(ctx, id, "c-offtopic")
+	list, _ := f.svc.Attachments(ctx, id, "c-offtopic", "")
 	require.Len(t, list, 1, "the refused attachment stays in the composer")
 	assert.Equal(t, b.ID, list[0].ID)
 

@@ -369,12 +369,34 @@
   после неё (`cancelFileDialogs` + emission hook на `map`), иначе выход из трея/SIGTERM висел бы до
   закрытия диалога (смоук Task 4). — `TestPickAttachmentsChecksBeforeTheDialog`,
   `TestNoClipboardOrPickerIsUnsupported`.
-- Browser-маршрут загрузки `POST /api/attachments/{srv}/{channel}` — те же защиты, что у `/api/`
-  (bearer только заголовком — не query-токен на POST, `OriginGuard`, `LoopbackHostGuard`), сырое тело через
-  `http.MaxBytesReader(MaxFileSize)` (413 `too_large` и по `Content-Length`, и по потоку), имя очищается:
-  как у всех вложений (`attach.cleanName`). — `TestBrowserUploadAttachesTheRawBody`,
-  `TestBrowserUploadNeedsTokenOriginAndLoopbackHost`, `TestBrowserUploadOverMaxFileSizeIs413`,
-  `TestBrowserUploadNameIsCleaned`, `TestBrowserUploadErrors`.
+- Browser-маршрут загрузки `POST /api/attachments/{srv}/{channel}?root=&name=&mime=` — те же защиты,
+  что у `/api/` (bearer только заголовком — не query-токен на POST, `OriginGuard`, `LoopbackHostGuard`),
+  сырое тело через `http.MaxBytesReader(MaxFileSize)` (413 `too_large` и по `Content-Length`, и по потоку),
+  имя очищается: как у всех вложений (`attach.cleanName`). `root` пустой — вложение в композер канала;
+  непустой — композер ответа, admitted только если `root` уже открыт в панели (см. следующий пункт). —
+  `TestBrowserUploadAttachesTheRawBody`, `TestBrowserUploadNeedsTokenOriginAndLoopbackHost`,
+  `TestBrowserUploadOverMaxFileSizeIs413`, `TestBrowserUploadNameIsCleaned`, `TestBrowserUploadErrors`,
+  `TestBrowserUploadWithRootGoesToTheThreadsComposer`.
+- Вложения и черновик ответа (Task 4) — по ключу (сервер, канал, корень): `attach.Store`'s `key{srv, ch,
+  root}` (`root=""` — композер канала). Все источники вложений (`Attachments`, `AttachFromClipboard`,
+  `PickAttachments`, `AttachDropped`, drop, browser-маршрут) и `SendReply`/`SaveThreadDraft` принимают
+  `rootID`; непустой `rootID` допускается только если это тред, который воркер держит в кэше тредов этого
+  канала (`state.Server.ThreadHeld` — открытый или недавний), иначе `no_post` — панель треда не может
+  прилететь раньше своего `OpenThread`. `attach.Store.Take` (её использует и `SendPost`, и `SendReply`) —
+  all-or-nothing по тому же ключу: вложение из ответа не уйдёт в пост канала, и наоборот. Загрузка файла
+  на сервер всё равно идёт с `channel_id` канала (сервер Mattermost не знает про "композер ответа") —
+  корень влияет только на локальный список и `Take`. Лимит 10 вложений — на ключ, а не на канал целиком:
+  у канала и у каждого его треда — свои десять. `api.Service.onAttachments(srv, ch, root)` шлёт
+  `thread_changed` для `root != ""`, иначе `channel_changed`; события `attachments_changed`/
+  `attachment_refused` несут `root_id`. Desktop drop: цель несёт `data-root` (нет атрибута — `""`),
+  `internal/desktop/drop.go` читает его как и `data-srv`/`data-channel`. Черновики треда — `state.Server.
+  SetThreadDraft`, отдельная от `s.drafts` карта `s.threadDrafts` (+ `s.threadDraftOrder` для вытеснения),
+  ограничена `ThreadDraftCap` = 50, только в памяти (не в снимке), удаляется с уходом из канала (вместе
+  с его тредами), пустой текст — как обычный `SetDraft`. — `TestThreadAttachmentsAreNotSentToTheChannel`,
+  `TestAttachToUnknownRootIsRefused`, `TestThreadDraftsAreBounded`, `TestReplyIsCreatedWithRootID`,
+  `TestRootDeletedBeforeSendFailsThePending` (400 `api.post.create_post.root_id.app_error` между
+  открытием треда и отправкой ответа → pending «не отправлен» + тред помечается `RootDeleted`, как 404 на
+  `GET .../thread`), `TestNativeDropOnAThreadPanelAttachesItsPaths`.
 - UI (Task 5): staged (pending, не отправленные) картинки превьюются с `/media/<srv>/staged/<id>`
   (`mediaURL(serverId, 'staged', id)`), **не** `feed`/`thumb` — те требуют настоящий id файла поста,
   которого у вложения ещё нет; `ImageTile` (`Attachments.tsx`) различает по `FileView.staged` и рендерит

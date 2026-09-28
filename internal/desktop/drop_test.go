@@ -16,15 +16,15 @@ type fakeDropTarget struct {
 	refused []string
 }
 
-func (f *fakeDropTarget) AttachDropped(_ context.Context, _ int64, channelID string, paths []string) int {
+func (f *fakeDropTarget) AttachDropped(_ context.Context, _ int64, channelID, rootID string, paths []string) int {
 	for _, p := range paths {
-		f.got = append(f.got, channelID+":"+p)
+		f.got = append(f.got, channelID+"/"+rootID+":"+p)
 	}
 	return len(paths)
 }
 
-func (f *fakeDropTarget) DropRefused(id int64, channelID, code string) {
-	f.refused = append(f.refused, fmt.Sprintf("%d/%s/%s", id, channelID, code))
+func (f *fakeDropTarget) DropRefused(id int64, channelID, rootID, code string) {
+	f.refused = append(f.refused, fmt.Sprintf("%d/%s/%s/%s", id, channelID, rootID, code))
 }
 
 func newTestDropGate(now *time.Time) *dropGate {
@@ -42,14 +42,40 @@ func TestNativeDropOnAChannelAttachesItsPaths(t *testing.T) {
 	g.record([]string{"/home/u/a.txt", "/home/u/имя с пробелом.png"})
 	now = now.Add(time.Second)
 	filesDropped(f, g, channelAttrs, []string{"/home/u/a.txt", "/home/u/имя с пробелом.png"})
-	assert.Equal(t, []string{"c-town:/home/u/a.txt", "c-town:/home/u/имя с пробелом.png"}, f.got)
+	assert.Equal(t, []string{"c-town/:/home/u/a.txt", "c-town/:/home/u/имя с пробелом.png"}, f.got)
 	assert.Empty(t, f.refused)
 
 	// Used up: the same paths "dropped" again by page script are refused.
 	f = &fakeDropTarget{}
 	filesDropped(f, g, channelAttrs, []string{"/home/u/a.txt"})
 	assert.Empty(t, f.got)
-	assert.Equal(t, []string{"3/c-town/not_dropped"}, f.refused)
+	assert.Equal(t, []string{"3/c-town//not_dropped"}, f.refused)
+}
+
+// Task 4: a drop over the thread panel carries the panel's data-root, so
+// its files go to that reply's composer, not the channel's.
+func TestNativeDropOnAThreadPanelAttachesItsPaths(t *testing.T) {
+	now := time.Unix(1000, 0)
+	g := newTestDropGate(&now)
+	f := &fakeDropTarget{}
+	threadAttrs := map[string]string{"data-file-drop-target": "", "data-srv": "3", "data-channel": "c-town", "data-root": "r1"}
+	g.record([]string{"/home/u/a.txt"})
+	filesDropped(f, g, threadAttrs, []string{"/home/u/a.txt"})
+	assert.Equal(t, []string{"c-town/r1:/home/u/a.txt"}, f.got)
+	assert.Empty(t, f.refused)
+
+	// A forged drop (nothing native to admit it) is refused with the
+	// thread's root too.
+	f = &fakeDropTarget{}
+	filesDropped(f, g, threadAttrs, []string{"/home/u/forged.txt"})
+	assert.Empty(t, f.got)
+	assert.Equal(t, []string{"3/c-town/r1/not_dropped"}, f.refused)
+
+	// No data-root at all (the channel's own drop target): "" as always.
+	f = &fakeDropTarget{}
+	g.record([]string{"/home/u/b.txt"})
+	filesDropped(f, g, channelAttrs, []string{"/home/u/b.txt"})
+	assert.Equal(t, []string{"c-town/:/home/u/b.txt"}, f.got)
 }
 
 // Page script can call Wails' FilesDropped with any path: only paths a
@@ -60,14 +86,14 @@ func TestForgedDropIsRefused(t *testing.T) {
 	f := &fakeDropTarget{}
 	filesDropped(f, g, channelAttrs, []string{"/home/u/.ssh/id_rsa"})
 	assert.Empty(t, f.got)
-	assert.Equal(t, []string{"3/c-town/" + api.CodeNotDropped}, f.refused)
+	assert.Equal(t, []string{"3/c-town//" + api.CodeNotDropped}, f.refused)
 
 	// A real drop of one file does not let a forged second path through.
 	f = &fakeDropTarget{}
 	g.record([]string{"/home/u/a.txt"})
 	filesDropped(f, g, channelAttrs, []string{"/home/u/a.txt", "/home/u/.ssh/id_rsa"})
-	assert.Equal(t, []string{"c-town:/home/u/a.txt"}, f.got)
-	assert.Equal(t, []string{"3/c-town/not_dropped"}, f.refused)
+	assert.Equal(t, []string{"c-town/:/home/u/a.txt"}, f.got)
+	assert.Equal(t, []string{"3/c-town//not_dropped"}, f.refused)
 
 	// Too late: a native drop counts for dropWindow only.
 	f = &fakeDropTarget{}
@@ -75,7 +101,7 @@ func TestForgedDropIsRefused(t *testing.T) {
 	now = now.Add(dropWindow + time.Millisecond)
 	filesDropped(f, g, channelAttrs, []string{"/home/u/b.txt"})
 	assert.Empty(t, f.got)
-	assert.Equal(t, []string{"3/c-town/not_dropped"}, f.refused)
+	assert.Equal(t, []string{"3/c-town//not_dropped"}, f.refused)
 }
 
 func TestHugeDropIsCapped(t *testing.T) {
@@ -89,7 +115,7 @@ func TestHugeDropIsCapped(t *testing.T) {
 	f := &fakeDropTarget{}
 	filesDropped(f, g, channelAttrs, paths)
 	assert.Len(t, f.got, maxDropPaths)
-	assert.Equal(t, []string{"3/c-town/too_many"}, f.refused)
+	assert.Equal(t, []string{"3/c-town//too_many"}, f.refused)
 }
 
 func TestDropGateStaysBounded(t *testing.T) {

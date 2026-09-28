@@ -57,6 +57,9 @@ func (w *API) LoadOlderReplies(id int64, rootID string) error {
 func (w *API) SendPost(id int64, channelID, message string, attachmentIDs []string) error {
 	return w.a.SendPost(context.Background(), id, channelID, message, attachmentIDs)
 }
+func (w *API) SendReply(id int64, channelID, rootID, message string, attachmentIDs []string) error {
+	return w.a.SendReply(context.Background(), id, channelID, rootID, message, attachmentIDs)
+}
 func (w *API) RetryPost(id int64, channelID, pendingID string) error {
 	return w.a.RetryPost(context.Background(), id, channelID, pendingID)
 }
@@ -77,6 +80,9 @@ func (w *API) SetPostSaved(id int64, postID string, saved bool) error {
 }
 func (w *API) SaveDraft(id int64, channelID, text string) error {
 	return w.a.SaveDraft(context.Background(), id, channelID, text)
+}
+func (w *API) SaveThreadDraft(id int64, rootID, text string) error {
+	return w.a.SaveThreadDraft(context.Background(), id, rootID, text)
 }
 
 func (w *API) DownloadFile(id int64, fileID string) (api.SavedFile, error) {
@@ -117,8 +123,8 @@ func (w *API) RemoveDownload(id int64) error { return w.a.RemoveDownload(context
 
 func (w *API) ClearDownloads() error { return w.a.ClearDownloads(context.Background()) }
 
-func (w *API) Attachments(id int64, channelID string) ([]api.AttachmentView, error) {
-	return w.a.Attachments(context.Background(), id, channelID)
+func (w *API) Attachments(id int64, channelID, rootID string) ([]api.AttachmentView, error) {
+	return w.a.Attachments(context.Background(), id, channelID, rootID)
 }
 
 func (w *API) RemoveAttachment(id int64, attachmentID string) error {
@@ -129,10 +135,10 @@ func (w *API) RetryAttachment(id int64, attachmentID string) error {
 	return w.a.RetryAttachment(context.Background(), id, attachmentID)
 }
 
-func (w *API) AttachFromClipboard(id int64, channelID string) (int, error) {
-	return w.a.AttachFromClipboard(context.Background(), id, channelID)
+func (w *API) AttachFromClipboard(id int64, channelID, rootID string) (int, error) {
+	return w.a.AttachFromClipboard(context.Background(), id, channelID, rootID)
 }
 
-func (w *API) PickAttachments(id int64, channelID string) (int, error) {
-	return w.a.PickAttachments(context.Background(), id, channelID)
+func (w *API) PickAttachments(id int64, channelID, rootID string) (int, error) {
+	return w.a.PickAttachments(context.Background(), id, channelID, rootID)
 }

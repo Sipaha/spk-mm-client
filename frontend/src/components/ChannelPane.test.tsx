@@ -67,6 +67,9 @@ test('the channel area (feed + composer) is the drop target, with data-srv/data-
   const target = container.querySelector('[data-file-drop-target]')!
   expect(target).toHaveAttribute('data-srv', '5')
   expect(target).toHaveAttribute('data-channel', 'c-town')
+  // '' (the channel's own composer, not a thread reply's) — Go's dropGate
+  // reads it as the target root (internal/desktop/drop.go, Task 4).
+  expect(target).toHaveAttribute('data-root', '')
   // Both the feed and the composer are inside it.
   expect(target.querySelector('[role="log"]')).not.toBeNull()
   expect(target.querySelector('textarea')).not.toBeNull()
@@ -98,7 +101,7 @@ test('dropping files uploads them (browser mode) and clears the overlay', () => 
   expect(target).toHaveClass('file-drop-target-active')
   fireEvent.drop(target, { dataTransfer: fileDrag([a, b]) })
   expect(target).not.toHaveClass('file-drop-target-active')
-  expect(uploadAttachments).toHaveBeenCalledWith(5, 'c-town', [a, b])
+  expect(uploadAttachments).toHaveBeenCalledWith(5, 'c-town', [a, b], '')
 })
 
 test('a drop that carries no files is a no-op', () => {

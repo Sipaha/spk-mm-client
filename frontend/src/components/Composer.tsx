@@ -124,14 +124,14 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
   // (the UI never sees a path — AGENTS.md "Вложения"); browser mode has no
   // such source, so 📎 opens a plain file input instead.
   const onAttachClick = () => {
-    if (isDesktop()) void attachAction(() => pickAttachments(serverId, channel.id))
+    if (isDesktop()) void attachAction(() => pickAttachments(serverId, channel.id, ''))
     else fileInputRef.current?.click()
   }
 
   const onFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = '' // selecting the same file again must still fire onChange
-    if (files.length > 0) void attachAction(() => uploadAttachments(serverId, channel.id, files))
+    if (files.length > 0) void attachAction(() => uploadAttachments(serverId, channel.id, files, ''))
   }
 
   // onPaste: desktop never gets pasted file contents from the page (spike
@@ -148,17 +148,17 @@ export function Composer({ channel, serverId, attachments, onSend, onDraft, onEd
       const hiddenFileList = types.includes('text/uri-list') && cd.getData('text/uri-list') === ''
       if (hiddenFileList) {
         e.preventDefault()
-        void attachAction(() => attachFromClipboard(serverId, channel.id))
+        void attachAction(() => attachFromClipboard(serverId, channel.id, ''))
       } else if (!types.includes('text/plain')) {
         // A bare image, or HTML with an image: let any default paste (the
         // HTML) proceed too — the image attaches alongside it.
-        void attachAction(() => attachFromClipboard(serverId, channel.id))
+        void attachAction(() => attachFromClipboard(serverId, channel.id, ''))
       }
       return
     }
     if (cd.files && cd.files.length > 0) {
       e.preventDefault()
-      void attachAction(() => uploadAttachments(serverId, channel.id, Array.from(cd.files)))
+      void attachAction(() => uploadAttachments(serverId, channel.id, Array.from(cd.files), ''))
     }
   }
 

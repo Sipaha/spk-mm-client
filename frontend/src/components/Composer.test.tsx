@@ -179,7 +179,7 @@ test('📎 in desktop mode calls pickAttachments; in browser mode it opens the h
   vi.mocked(isDesktop).mockReturnValue(true)
   const { unmount } = render(<Composer channel={channel()} serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
   await user.click(screen.getByRole('button', { name: 'Attach files' }))
-  expect(pickAttachments).toHaveBeenCalledWith(3, 'c1')
+  expect(pickAttachments).toHaveBeenCalledWith(3, 'c1', '')
   unmount()
 
   vi.mocked(isDesktop).mockReturnValue(false)
@@ -196,7 +196,7 @@ test('browser mode: choosing files in the hidden input uploads them', () => {
   const file = new File(['x'], 'x.png', { type: 'image/png' })
   vi.mocked(uploadAttachments).mockResolvedValue(undefined)
   fireEvent.change(input, { target: { files: [file] } })
-  expect(uploadAttachments).toHaveBeenCalledWith(3, 'c1', [file])
+  expect(uploadAttachments).toHaveBeenCalledWith(3, 'c1', [file], '')
 })
 
 test('desktop paste: a hidden file list (text/uri-list present but empty) attaches from the clipboard and prevents default', async () => {
@@ -206,7 +206,7 @@ test('desktop paste: a hidden file list (text/uri-list present but empty) attach
   const box = screen.getByRole('textbox', { name: 'Message' })
   const notPrevented = paste(box, { types: ['text/uri-list'], uriList: '' })
   expect(notPrevented).toBe(false) // preventDefault was called
-  expect(attachFromClipboard).toHaveBeenCalledWith(3, 'c1')
+  expect(attachFromClipboard).toHaveBeenCalledWith(3, 'c1', '')
 })
 
 test('desktop paste: a bare image (no text/plain) attaches from the clipboard without preventing default', () => {
@@ -216,7 +216,7 @@ test('desktop paste: a bare image (no text/plain) attaches from the clipboard wi
   const box = screen.getByRole('textbox', { name: 'Message' })
   const notPrevented = paste(box, { types: ['image/png'] })
   expect(notPrevented).toBe(true) // default paste still allowed to proceed
-  expect(attachFromClipboard).toHaveBeenCalledWith(3, 'c1')
+  expect(attachFromClipboard).toHaveBeenCalledWith(3, 'c1', '')
 })
 
 test('desktop paste: normal text/link paste is not intercepted', () => {
@@ -235,7 +235,7 @@ test('browser mode: pasted files upload each one and prevent default', () => {
   const file = new File(['x'], 'x.png', { type: 'image/png' })
   const notPrevented = paste(box, { types: ['Files'], files: [file] })
   expect(notPrevented).toBe(false)
-  expect(uploadAttachments).toHaveBeenCalledWith(3, 'c1', [file])
+  expect(uploadAttachments).toHaveBeenCalledWith(3, 'c1', [file], '')
 })
 
 test('an attach error is shown like a send error, quietly ignored for no_paste_gesture', async () => {
