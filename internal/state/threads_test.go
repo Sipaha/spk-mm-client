@@ -803,75 +803,111 @@ func TestOpeningAReplyOpensItsRoot(t *testing.T) {
 }
 
 // Review focus 4: a thread is read on the server only while CRT is on, its
-// panel is open (over its channel), the window is focused and we follow
-// it; a new reply by someone else asks for a read, ours does not; a read
-// covers every reply up to its ts.
+// panel is open (over its channel) and loaded, the window is focused and we
+// follow it; a new reply by someone else asks for a read, ours does not; a
+// read covers the replies held up to its ts — the newest held reply's
+// create_at (our clock only for a thread without replies), so a clock
+// running ahead never marks unseen replies read.
 func TestThreadReadTarget(t *testing.T) {
 	s := crtFixture(true)
 	root, replies := seededThread("root", 3)
 	s.SetActive("town")
-	openLoaded(t, s, root, replies)
+	epoch, _, ok := s.OpenThread("town", "root")
+	require.True(t, ok)
+	s.SetFocused(true)
+	_, ok = s.ThreadReadTarget("root")
+	assert.False(t, ok, "not loaded yet: what would be read is not on screen")
+	s.SetThreadPage("root", epoch, latestPage(root, replies))
 
-	_, _, ok := s.ThreadReadTarget("root")
+	s.SetFocused(false)
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok, "not focused")
 	s.SetFocused(true)
-	team, ts, ok := s.ThreadReadTarget("root")
+	r, ok := s.ThreadReadTarget("root")
 	require.True(t, ok)
-	assert.Equal(t, "t1", team)
-	assert.Equal(t, t0.UnixMilli(), ts, "ts = max(now, newest reply)")
-	_, _, ok = s.ThreadReadTarget("other")
+	assert.Equal(t, "t1", r.Team)
+	assert.Equal(t, int64(1003), r.TS, "ts = the newest held reply, not our (later) clock")
+	_, ok = s.ThreadReadTarget("other")
 	assert.False(t, ok, "only the open thread")
 
-	s.ThreadReadDone("root", ts)
-	_, _, ok = s.ThreadReadTarget("root")
+	s.ThreadReadDone("root", r.Opening, r.TS)
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok, "read: nothing new since")
 
 	// Our own reply: nothing to read (the server reads it for us).
-	mine := reply("mine", "root", "u1", 2_000_000, 4)
-	eff := s.ApplyEvent(postedEv(mine))
+	eff := s.ApplyEvent(postedEv(reply("mine", "root", "u1", 2_000_000, 4)))
 	assert.Empty(t, eff.ReadThread)
-	// Someone else's: read, with ts covering it.
-	theirs := reply("theirs", "root", "u2", 3_000_000, 5)
-	eff = s.ApplyEvent(postedEv(theirs))
+	// Someone else's: read, with ts covering it (ahead of our clock).
+	eff = s.ApplyEvent(postedEv(reply("theirs", "root", "u2", 3_000_000, 5)))
 	assert.Equal(t, "root", eff.ReadThread)
-	_, ts, ok = s.ThreadReadTarget("root")
+	r, ok = s.ThreadReadTarget("root")
 	require.True(t, ok)
-	assert.Equal(t, int64(3_000_000), ts, "a reply newer than the local clock is covered")
-	s.ThreadReadDone("root", ts)
-	_, _, ok = s.ThreadReadTarget("root")
+	assert.Equal(t, int64(3_000_000), r.TS)
+	s.ThreadReadDone("root", r.Opening, r.TS)
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok)
 
-	// thread_updated of the open thread with something unread asks again
-	// (e.g. a reply we got the event for first); covered ones do not.
-	eff = s.ApplyEvent(threadUpdatedEv("t1", "root", "town", 5, 3_000_000, 0, 0))
+	// thread_updated of the open thread asks the worker to check; a reply
+	// it names that is not held is not read (not on screen).
+	eff = s.ApplyEvent(threadUpdatedEv("t1", "root", "town", 6, 3_500_000, 0, 0))
 	assert.Equal(t, "root", eff.ReadThread)
-	_, _, ok = s.ThreadReadTarget("root")
-	assert.False(t, ok, "already covered by the last read")
-	s.ApplyEvent(threadUpdatedEv("t1", "root", "town", 6, 3_500_000, 0, 0))
-	_, ts, ok = s.ThreadReadTarget("root")
-	require.True(t, ok)
-	assert.Equal(t, int64(3_500_000), ts)
+	_, ok = s.ThreadReadTarget("root")
+	assert.False(t, ok, "nothing held newer than the last read")
 
 	// Unfocused, another channel active, closed, CRT off: nothing.
 	s.SetFocused(false)
 	assert.Empty(t, s.ApplyEvent(postedEv(reply("r-bg", "root", "u2", 3_600_000, 7))).ReadThread)
-	_, _, ok = s.ThreadReadTarget("root")
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok)
 	s.SetFocused(true)
 	s.SetActive("off")
-	_, _, ok = s.ThreadReadTarget("root")
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok, "its channel is not on screen")
 	s.SetActive("town")
 	s.CloseThread()
-	_, _, ok = s.ThreadReadTarget("root")
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok, "panel closed")
 
 	off := crtFixture(false)
 	off.SetActive("town")
 	off.SetFocused(true)
 	openLoaded(t, off, root, replies)
-	_, _, ok = off.ThreadReadTarget("root")
+	_, ok = off.ThreadReadTarget("root")
 	assert.False(t, ok, "without CRT the channel view reads threads")
+}
+
+// A thread without replies is read at our clock (nothing to cover).
+func TestThreadWithoutRepliesIsReadAtNow(t *testing.T) {
+	s := crtFixture(true)
+	root, _ := seededThread("root", 0)
+	s.SetActive("town")
+	s.SetFocused(true)
+	openLoaded(t, s, root, nil)
+	r, ok := s.ThreadReadTarget("root")
+	require.True(t, ok)
+	assert.Equal(t, t0.UnixMilli(), r.TS)
+}
+
+// A read (or 404) that lands after the panel was closed and opened again
+// belongs to the earlier opening: it does not count for this one.
+func TestThreadReadResultOfAnEarlierOpeningIsIgnored(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("root", 2)
+	s.SetActive("town")
+	s.SetFocused(true)
+	openLoaded(t, s, root, replies)
+	old, ok := s.ThreadReadTarget("root")
+	require.True(t, ok)
+	s.CloseThread()
+	s.OpenThread("town", "root")
+	s.ThreadReadDone("root", old.Opening, old.TS)
+	s.ThreadNotFollowing("root", old.Opening)
+	now, ok := s.ThreadReadTarget("root")
+	require.True(t, ok, "the new opening still reads")
+	assert.NotEqual(t, old.Opening, now.Opening)
+	s.ThreadReadDone("root", now.Opening, now.TS)
+	_, ok = s.ThreadReadTarget("root")
+	assert.False(t, ok, "its own result counts")
 }
 
 // A 404 (not following) stops the reads of this opening until our own
@@ -882,26 +918,27 @@ func TestThreadReadNotFollowingState(t *testing.T) {
 	s.SetActive("town")
 	s.SetFocused(true)
 	openLoaded(t, s, root, replies)
-	s.ThreadNotFollowing("root")
-	_, _, ok := s.ThreadReadTarget("root")
+	r, _ := s.ThreadReadTarget("root")
+	s.ThreadNotFollowing("root", r.Opening)
+	_, ok := s.ThreadReadTarget("root")
 	assert.False(t, ok)
 	assert.Empty(t, s.ApplyEvent(postedEv(reply("b1", "root", "u2", 2_000_000, 2))).ReadThread, "not following: no read per reply")
-	_, _, ok = s.ThreadReadTarget("root")
+	_, ok = s.ThreadReadTarget("root")
 	assert.False(t, ok)
 
 	s.ApplyEvent(postedEv(reply("mine", "root", "u1", 2_100_000, 3)))
-	_, _, ok = s.ThreadReadTarget("root")
+	r, ok = s.ThreadReadTarget("root")
 	assert.True(t, ok, "our reply subscribed us")
 
-	s.ThreadNotFollowing("root")
+	s.ThreadNotFollowing("root", r.Opening)
 	assert.Equal(t, "root", s.ApplyEvent(threadUpdatedEv("t1", "root", "town", 4, 2_200_000, 0, 0)).ReadThread)
-	_, _, ok = s.ThreadReadTarget("root")
+	r, ok = s.ThreadReadTarget("root")
 	assert.True(t, ok, "thread_updated: we follow it")
 
-	s.ThreadNotFollowing("root")
+	s.ThreadNotFollowing("root", r.Opening)
 	s.CloseThread()
 	s.OpenThread("town", "root")
-	_, _, ok = s.ThreadReadTarget("root")
+	_, ok = s.ThreadReadTarget("root")
 	assert.True(t, ok, "a new opening tries again")
 }
 
@@ -910,9 +947,11 @@ func TestDMThreadIsReadThroughTheCurrentTeam(t *testing.T) {
 	s := crtFixture(true)
 	s.SetActive("dm2")
 	s.SetFocused(true)
-	_, _, ok := s.OpenThread("dm2", "dmroot")
+	epoch, _, ok := s.OpenThread("dm2", "dmroot")
 	require.True(t, ok)
-	team, _, ok := s.ThreadReadTarget("dmroot")
+	root := mkPost("dmroot", "dm2", "u2", 1000)
+	s.SetThreadPage("dmroot", epoch, threadPage(root, nil, false))
+	r, ok := s.ThreadReadTarget("dmroot")
 	require.True(t, ok)
-	assert.Equal(t, "t1", team)
+	assert.Equal(t, "t1", r.Team)
 }

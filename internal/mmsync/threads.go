@@ -45,6 +45,14 @@ func (w *Worker) openThreads() []string {
 	return nil
 }
 
+// rereadDirtyThreadCounts reads the totals again once live if the last
+// read of them failed (state.ThreadCountsDirty).
+func (w *Worker) rereadDirtyThreadCounts() {
+	if w.st.ThreadCountsDirty() {
+		w.rereadThreadCounts()
+	}
+}
+
 // reloadOpenThread reads the open thread again if it needs it (after a
 // bootstrap: stale since the gap, or reset by a CRT switch).
 func (w *Worker) reloadOpenThread() {
@@ -197,7 +205,7 @@ const threadReadTries = 3
 // do not follow it) stops the reads of this opening, any other failure is
 // logged and waits for the next occasion.
 func (w *Worker) readThread(rootID string) {
-	if _, _, ok := w.st.ThreadReadTarget(rootID); !ok {
+	if _, ok := w.st.ThreadReadTarget(rootID); !ok {
 		return
 	}
 	if _, busy := w.threadReads.LoadOrStore(rootID, true); busy {
@@ -211,11 +219,11 @@ func (w *Worker) readThread(rootID string) {
 func (w *Worker) readThreadLoop(ctx context.Context, rootID string) {
 	for tries := 0; ; {
 		for ; tries < threadReadTries && ctx.Err() == nil; tries++ {
-			team, ts, ok := w.st.ThreadReadTarget(rootID)
+			r, ok := w.st.ThreadReadTarget(rootID)
 			if !ok {
 				break
 			}
-			if !w.markThreadRead(ctx, team, rootID, ts) {
+			if !w.markThreadRead(ctx, rootID, r) {
 				tries = threadReadTries
 			}
 		}
@@ -225,7 +233,7 @@ func (w *Worker) readThreadLoop(ctx context.Context, rootID string) {
 		if ctx.Err() != nil || tries >= threadReadTries {
 			return
 		}
-		if _, _, ok := w.st.ThreadReadTarget(rootID); !ok {
+		if _, ok := w.st.ThreadReadTarget(rootID); !ok {
 			return
 		}
 		if _, busy := w.threadReads.LoadOrStore(rootID, true); busy {
@@ -237,17 +245,17 @@ func (w *Worker) readThreadLoop(ctx context.Context, rootID string) {
 // markThreadRead sends one read; false: it failed (not retried). Its
 // answer does not touch the mention counts: the thread_read_changed it
 // causes does (counting both would count twice).
-func (w *Worker) markThreadRead(ctx context.Context, team, rootID string, ts int64) bool {
-	err := w.rc.MarkThreadRead(ctx, team, rootID, ts)
+func (w *Worker) markThreadRead(ctx context.Context, rootID string, r state.ThreadReadReq) bool {
+	err := w.rc.MarkThreadRead(ctx, r.Team, rootID, r.TS)
 	var re *rest.Error
 	switch {
 	case err == nil:
-		w.st.ThreadReadDone(rootID, ts)
+		w.st.ThreadReadDone(rootID, r.Opening, r.TS)
 		return true
 	case ctx.Err() != nil:
 	case errors.As(err, &re) && re.Status == http.StatusNotFound:
 		slog.Debug("thread not followed, not marking it read", "srv", w.srv.ID, "root", rootID)
-		w.st.ThreadNotFollowing(rootID)
+		w.st.ThreadNotFollowing(rootID, r.Opening)
 	default:
 		if sessionExpired(err) {
 			w.signalAuth()
@@ -305,7 +313,8 @@ func (w *Worker) fetchThreadCounts(ctx context.Context, team string) (map[string
 
 // rereadThreadCounts reads the thread mention totals again in the
 // background (not under the refresh guard) and installs them whole — one
-// reread at a time; one asked for meanwhile runs after it.
+// reread at a time; any number asked for meanwhile (a burst of events
+// under a long guard) coalesce into a single one after it.
 func (w *Worker) rereadThreadCounts() {
 	w.countsAgain.Store(true)
 	if !w.countsBusy.CompareAndSwap(false, true) {
@@ -348,7 +357,10 @@ func (w *Worker) rereadThreadCountsOnce(ctx context.Context) {
 			if sessionExpired(err) {
 				w.signalAuth()
 			}
-			slog.Warn("thread mentions not reread", "srv", w.srv.ID, "err", err)
+			slog.Warn("thread mentions not reread, again when live", "srv", w.srv.ID, "err", err)
+			// What it was to replace (an event under the guard, "all
+			// read"…) is not in the totals held: read again when live.
+			w.st.MarkThreadCountsDirty()
 			return
 		}
 		installed, retry := w.st.SetThreadMentions(m, tok, try == threadCountsTries)

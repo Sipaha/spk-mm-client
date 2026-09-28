@@ -45,6 +45,7 @@ func (s *Server) bootstrapThreadCountsLocked(b Bootstrap) {
 		s.threadMentions = nil
 	}
 	s.threadGuard = crt
+	s.threadCountsDirty = crt && b.ThreadMentionsFailed && b.ThreadMentions == nil
 }
 
 // threadMentionsLocked: the unread mentions in team's followed threads
@@ -60,7 +61,7 @@ func (s *Server) threadMentionsLocked(team string) int {
 // thread mention is left; on: the totals are read afresh.
 func (s *Server) crtSwitchedLocked(eff *Effects) {
 	s.threadCountsAt++
-	s.threadMentions, s.threadGuard = nil, false
+	s.threadMentions, s.threadGuard, s.threadCountsDirty = nil, false, false
 	if s.crtLocked() {
 		eff.RereadThreadCounts = true
 	}
@@ -121,14 +122,37 @@ func (s *Server) onThreadUpdatedLocked(ev ws.Event, eff *Effects) {
 	}
 	if th.PostID == s.openThread {
 		s.openRead.noFollow = false // the server says we follow it
-		if th.UnreadReplies > 0 || th.UnreadMentions > 0 {
-			s.openRead.pending = max(s.openRead.pending, last)
-		}
 		if s.focused && s.crtLocked() {
 			eff.ReadThread = th.PostID
 		}
 	}
+	if !d.HasPrevious {
+		// No previous value (MarkChannelAsUnreadFromPost sends the thread
+		// alone): no delta to take — read the totals again.
+		if s.chans[channelID] != nil {
+			s.threadCountsChangedLocked(eff)
+		}
+		return
+	}
 	s.threadMentionDeltaLocked(channelID, th.UnreadMentions-d.PreviousUnreadMentions, eff)
+}
+
+// threadCountsChangedLocked: the totals changed by an amount an event does
+// not tell (every thread read, a follow change, a thread_updated without
+// previous values): a reread in flight is unsettled, another is asked for.
+func (s *Server) threadCountsChangedLocked(eff *Effects) {
+	if !s.crtLocked() {
+		return
+	}
+	s.threadCountsN++
+	eff.RereadThreadCounts = true
+}
+
+// onThreadFollowChangedLocked: we followed or unfollowed a thread (here or
+// elsewhere — for an unfollow this is the only event, app/user.go
+// UpdateThreadFollowForUser): the totals cover followed threads only.
+func (s *Server) onThreadFollowChangedLocked(eff *Effects) {
+	s.threadCountsChangedLocked(eff)
 }
 
 // onThreadReadChangedLocked: a thread was read (here or elsewhere). Without
@@ -140,8 +164,7 @@ func (s *Server) onThreadReadChangedLocked(ev ws.Event, eff *Effects) {
 		return
 	}
 	if d.ThreadID == "" {
-		s.threadCountsN++
-		eff.RereadThreadCounts = true
+		s.threadCountsChangedLocked(eff)
 		return
 	}
 	s.threadMentionDeltaLocked(d.ChannelID, d.UnreadMentions-d.PreviousUnreadMentions, eff)
@@ -173,7 +196,24 @@ func (s *Server) SetThreadMentions(m map[string]int64, tok ThreadCountsToken, fo
 	if s.threadMentions == nil {
 		s.threadMentions = map[string]int64{}
 	}
+	s.threadCountsDirty = false
 	return true, false
+}
+
+// MarkThreadCountsDirty records that a reread of the totals failed: what it
+// was to replace (an event under the guard, "all read"…) is not in the
+// totals held. ThreadCountsDirty asks the worker to read them again when
+// it is live again; installing totals clears it.
+func (s *Server) MarkThreadCountsDirty() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threadCountsDirty = s.crtLocked()
+}
+
+func (s *Server) ThreadCountsDirty() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.threadCountsDirty && s.crtLocked()
 }
 
 // NavTeam is the team the user is on (the sidebar's), "" before any.

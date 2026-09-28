@@ -180,8 +180,8 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 	case "thread_read_changed":
 		s.onThreadReadChangedLocked(ev, &eff)
 	case "thread_follow_changed":
-		// No Follow button yet: nothing shows it. The counts follow from
-		// thread_updated/thread_read_changed.
+		// No Follow button yet: nothing shows it; the totals change.
+		s.onThreadFollowChangedLocked(&eff)
 	case "user_updated":
 		if u, err := ws.DecodeUser(ev); err == nil && u.ID != "" {
 			if u.ID == s.me.ID {

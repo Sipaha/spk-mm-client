@@ -266,3 +266,22 @@ func TestThreadCountsFailureKeepsThePreviousOnes(t *testing.T) {
 	h.eventually(func() bool { return h.view("c-extra").Loaded }, "the refresh still landed")
 	require.Never(t, func() bool { return h.badge() != base+1 }, 400*time.Millisecond, 20*time.Millisecond, "kept")
 }
+
+// A reread that fails ("all read" on another device while the server
+// errs) leaves the totals stale; the worker reads them again once live
+// again — a resumed stream included (no metadata refresh then).
+func TestFailedRereadIsRetriedWhenLiveAgain(t *testing.T) {
+	h := crtHarness(t)
+	root := h.fake.SeedThread("c-town", "alice", 1)
+	h.eventually(func() bool { return h.rootReplies("c-town", root) == 1 }, "seeded")
+	base := h.badge()
+	h.fake.ReplyAs("c-town", root, "bob", "@alice stale")
+	h.eventually(func() bool { return h.badge() == base+1 }, "a thread mention")
+	h.fake.SetFailure("/teams/unread", 500)
+	h.fake.MarkAllThreadsReadAs("alice", "t-fake")
+	h.eventually(func() bool { return h.w.State().ThreadCountsDirty() }, "the reread failed")
+	assert.Equal(t, base+1, h.badge())
+	h.fake.SetFailure("/teams/unread", 0)
+	h.fake.DropConnections(false) // a resume: no bootstrap
+	h.eventually(func() bool { return h.badge() == base }, "read again once live")
+}

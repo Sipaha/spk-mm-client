@@ -131,6 +131,11 @@ type Server struct {
 	threadGuard    bool   // set by Bootstrap until ClearGuard: events may be in the totals
 	threadCountsN  uint64 // bumped by every thread count event (a reread in flight is unsettled)
 	threadCountsAt uint64 // bumped by Bootstrap and CRT switches (a reread in flight is outdated)
+	// threadCountsDirty: the last read of the totals failed — they may miss
+	// what it was to replace; read again when live (MarkThreadCountsDirty).
+	threadCountsDirty bool
+	// openSeq numbers the openings of the thread panel (threadRead.opening).
+	openSeq uint64
 
 	liveAt int64    // Task 8: local ms of the last live WS moment
 	dirty  dirtySet // Task 8

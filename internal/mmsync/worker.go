@@ -448,6 +448,7 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 	w.setStatus(StatusLive)
 	w.requestStatuses()
 	w.retryReactionsNow()
+	w.rereadDirtyThreadCounts()
 	onLive()
 	var settle <-chan time.Time
 	if !w.live.proven() {

@@ -261,3 +261,63 @@ func TestThreadUpdatedMovesTheRootCount(t *testing.T) {
 	n, _ = rootCount(t, s, "town", "root")
 	assert.Equal(t, int64(3), n, "an older thread_updated does not lower it")
 }
+
+// thread_updated without previous_* (MarkChannelAsUnreadFromPost,
+// app/channel.go:3052: "mark unread" from a reply) has no delta to take:
+// counting its unread_mentions whole would drift the badge up. The totals
+// are read again instead (the webapp skips such an event too).
+func TestThreadUpdatedWithoutPreviousAsksForReread(t *testing.T) {
+	s := crtCounts(map[string]int64{"t1": 1})
+	before := s.Badge().Mentions
+	th := model.ThreadResponse{PostID: "r1", ReplyCount: 2, LastReplyAt: 2000, UnreadMentions: 3, UnreadReplies: 2,
+		Post: &model.Post{ID: "r1", ChannelID: "town"}}
+	tb, _ := json.Marshal(th)
+	db, _ := json.Marshal(map[string]any{"thread": string(tb)})
+	eff := s.ApplyEvent(ws.Event{Type: "thread_updated", Data: db, Broadcast: ws.Broadcast{TeamID: "t1", UserID: "u1"}})
+	assert.True(t, eff.RereadThreadCounts)
+	assert.Equal(t, before, s.Badge().Mentions, "no delta without the previous value")
+}
+
+// thread_follow_changed (app/user.go:2856: the only event of an unfollow
+// elsewhere) changes which threads the totals cover: read them again.
+func TestThreadFollowChangedRereads(t *testing.T) {
+	s := crtCounts(map[string]int64{"t1": 1})
+	before := s.Badge().Mentions
+	_, _, tok := s.ThreadCountsFetch()
+	fb, _ := json.Marshal(map[string]any{"thread_id": "r1", "state": false, "reply_count": 3})
+	ev := ws.Event{Type: "thread_follow_changed", Data: fb, Broadcast: ws.Broadcast{TeamID: "t1", UserID: "u1"}}
+	eff := s.ApplyEvent(ev)
+	assert.True(t, eff.RereadThreadCounts)
+	assert.Equal(t, before, s.Badge().Mentions)
+	_, retry := s.SetThreadMentions(map[string]int64{"t1": 9}, tok, false)
+	assert.True(t, retry, "a reread in flight before it is unsettled")
+
+	assert.False(t, crtFixture(false).ApplyEvent(ev).RereadThreadCounts, "no CRT: nothing to read")
+}
+
+// A failed reread (or a failed totals read in a metadata refresh) leaves
+// the totals possibly wrong — an event it was to replace was not counted:
+// they are marked dirty until totals are installed again.
+func TestThreadCountsDirtyUntilReadAgain(t *testing.T) {
+	s := crtCounts(map[string]int64{"t1": 1})
+	assert.False(t, s.ThreadCountsDirty())
+	s.MarkThreadCountsDirty()
+	assert.True(t, s.ThreadCountsDirty())
+	_, _, tok := s.ThreadCountsFetch()
+	installed, _ := s.SetThreadMentions(map[string]int64{"t1": 2}, tok, false)
+	require.True(t, installed)
+	assert.False(t, s.ThreadCountsDirty(), "installed: clean")
+
+	b := fixture()
+	b.Config.CollapsedThreads = "always_on"
+	b.ThreadMentionsFailed = true
+	s.Bootstrap(b)
+	assert.True(t, s.ThreadCountsDirty(), "a failed totals read in a refresh")
+	b.ThreadMentionsFailed, b.ThreadMentions = false, map[string]int64{"t1": 0}
+	s.Bootstrap(b)
+	assert.False(t, s.ThreadCountsDirty())
+
+	s.MarkThreadCountsDirty()
+	s.Bootstrap(fixture()) // CRT off: nothing to read
+	assert.False(t, s.ThreadCountsDirty())
+}

@@ -117,7 +117,11 @@ type ThreadUpdated struct {
 	Thread                 model.ThreadResponse
 	PreviousUnreadMentions int64
 	PreviousUnreadReplies  int64
-	TeamID                 string
+	// HasPrevious: the event carried previous_unread_mentions. Not every
+	// thread_updated does — MarkChannelAsUnreadFromPost (app/channel.go)
+	// sends the thread alone, and then there is no delta to take.
+	HasPrevious bool
+	TeamID      string
 }
 
 // DecodeThreadUpdated decodes thread_updated (data.thread is a JSON string).
@@ -127,11 +131,14 @@ func DecodeThreadUpdated(e Event) (ThreadUpdated, error) {
 		return ThreadUpdated{}, err
 	}
 	var d struct {
-		PreviousUnreadMentions int64 `json:"previous_unread_mentions"`
-		PreviousUnreadReplies  int64 `json:"previous_unread_replies"`
+		PreviousUnreadMentions *int64 `json:"previous_unread_mentions"`
+		PreviousUnreadReplies  int64  `json:"previous_unread_replies"`
 	}
 	_ = json.Unmarshal(e.Data, &d)
-	out.PreviousUnreadMentions, out.PreviousUnreadReplies = d.PreviousUnreadMentions, d.PreviousUnreadReplies
+	if d.PreviousUnreadMentions != nil {
+		out.PreviousUnreadMentions, out.HasPrevious = *d.PreviousUnreadMentions, true
+	}
+	out.PreviousUnreadReplies = d.PreviousUnreadReplies
 	out.TeamID = e.Broadcast.TeamID
 	return out, nil
 }

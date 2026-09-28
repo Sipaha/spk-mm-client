@@ -80,7 +80,13 @@ func TestDecodeThreadUpdated(t *testing.T) {
 	assert.Equal(t, int64(1), tu.Thread.UnreadMentions)
 	assert.Equal(t, int64(0), tu.PreviousUnreadMentions)
 	assert.Equal(t, int64(1), tu.PreviousUnreadReplies)
+	assert.True(t, tu.HasPrevious)
 	assert.Equal(t, "t1", tu.TeamID)
+
+	// MarkChannelAsUnreadFromPost sends the thread alone.
+	bare, err := DecodeThreadUpdated(ev("thread_updated", `{"thread":"{\"id\":\"r1\",\"unread_mentions\":2}"}`, Broadcast{TeamID: "t1"}))
+	require.NoError(t, err)
+	assert.False(t, bare.HasPrevious)
 }
 
 func TestDecodeThreadUpdatedRejectsGarbage(t *testing.T) {
