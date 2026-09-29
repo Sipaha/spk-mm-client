@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mmsync"
 )
 
@@ -99,10 +100,25 @@ func (s *Service) ExecuteCommand(ctx context.Context, id int64, channelID, rootI
 	defer cancel()
 	err = w.ExecuteCommand(rctx, channelID, rootID, cmd)
 	switch {
+	case err == nil:
 	case errors.Is(err, mmsync.ErrNoChannel):
 		return coded(CodeNoChannel, nil)
 	case errors.Is(err, mmsync.ErrCommandNotFound):
 		return coded(CodeCommandNotFound, nil)
+	case errors.Is(err, mmsync.ErrUnsupportedInThread):
+		return coded(CodeCommandUnsupportedInThread, nil)
+	case rest.IsNetwork(err):
+		// Never retried and never offered as if nothing had happened: the
+		// POST may have reached the server.
+		return coded(CodeCommandUncertain, err)
+	default:
+		return actionError(err)
 	}
-	return actionError(err)
+	// The server's /logout only answers "go to /login" (command_logout.go:
+	// "Actual logout is handled client side"): sign out the way the
+	// sidebar's "Sign out" does.
+	if mmsync.CommandTrigger(mmsync.NormalizeCommand(cmd)) == "/logout" {
+		return s.Logout(ctx, id)
+	}
+	return nil
 }

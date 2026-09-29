@@ -15,6 +15,11 @@ import (
 	"github.com/spk/spk-mm-client/internal/events"
 )
 
+// MaxAPIBody caps an /api/ JSON body: far above the largest legitimate one
+// (a slash command of 16383 runes, ≤ 64 KiB); browser uploads have their
+// own route and limit (MaxFileSize).
+const MaxAPIBody = 1 << 20
+
 const (
 	ssePing         = 25 * time.Second
 	sseWriteTimeout = 10 * time.Second
@@ -54,6 +59,7 @@ func (h *HTTP) authorized(r *http.Request) bool {
 func handle[Req any](fn func(ctx context.Context, req *Req) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
+		r.Body = http.MaxBytesReader(w, r.Body, MaxAPIBody)
 		if r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeErr(w, &api.CodedError{Code: api.CodeInternal, Detail: "bad request body: " + err.Error()})

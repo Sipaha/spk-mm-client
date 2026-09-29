@@ -79,6 +79,11 @@ type PostView struct {
 	// Ephemeral: only we see it (a slash command's answer) — never stored
 	// by the server; no actions apply to it.
 	Ephemeral bool `json:"ephemeral,omitempty"`
+	// SystemAuthor: the server's own ephemeral answer (not a bot's or a
+	// webhook's) — the UI shows "System", never the user who ran the
+	// command (webapp post_profile_picture / post_info.system); Author and
+	// Avatar are empty.
+	SystemAuthor bool `json:"system_author,omitempty"`
 	// RootAuthor/RootSnippet: a reply's context line in the channel feed
 	// without CRT ("reply to <author>: <snippet>") — the root's author and
 	// its text, collapsed and cut to rootSnippetRunes. Empty when the root
@@ -299,6 +304,10 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 	v.Avatar = s.avatarLocked(p.UserID)
 	if !v.Bot {
 		v.Status = s.presenceLocked(p.UserID)
+	}
+	if v.Ephemeral && !v.Bot {
+		v.SystemAuthor = true
+		v.Author, v.RealAuthor, v.Avatar, v.Status, v.Icon, v.IconVersion = "", "", "", "", "", ""
 	}
 	if p.Metadata != nil {
 		for _, f := range p.Metadata.Files {

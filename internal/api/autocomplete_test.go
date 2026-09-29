@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,4 +126,46 @@ func TestSignOutEndsTheAutocompleteSession(t *testing.T) {
 	_, err = f.svc.Autocomplete(ctx, id, "users", "c-town", "", "b")
 	require.NoError(t, err)
 	assert.Equal(t, hits+1, fake.Hits("GET", "/api/v4/users/autocomplete"), "a new session asks again")
+}
+
+func TestLeaveInAThreadIsACodedRefusal(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.loaded(id, "c-town") }, "prefetch")
+	root := fake.SeedThread("c-town", "alice", 1)
+	_, err := f.svc.OpenThread(ctx, id, "c-town", root)
+	require.NoError(t, err)
+	assert.Equal(t, CodeCommandUnsupportedInThread, codeOf(f.svc.ExecuteCommand(ctx, id, "c-town", root, "/leave")))
+	assert.Empty(t, fake.ExecutedCommands())
+}
+
+// Review I3: the server's /logout only answers "go to /login" — the client
+// signs out itself, through the same path as the sidebar's "Sign out".
+func TestLogoutCommandSignsTheServerOut(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.server(id).State == "live" }, "live")
+	assert.Equal(t, CodeCommandNotFound, codeOf(f.svc.ExecuteCommand(ctx, id, "c-town", "", "/logoutx")), "another trigger")
+	assert.True(t, f.server(id).SignedIn)
+	require.NoError(t, f.svc.ExecuteCommand(ctx, id, "c-town", "", "/LOGOUT"))
+	assert.False(t, f.server(id).SignedIn, "signed out")
+	assert.Equal(t, 0, fake.ActiveSessions(), "the session was revoked")
+}
+
+// Review M2: a command whose outcome is unknown (timeout, the connection
+// dropped after the POST went) is reported as such — the UI must not
+// offer it as if nothing had run.
+func TestExecuteCommandTimeoutIsUncertain(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	ctx := context.Background()
+	f.eventually(func() bool { return f.server(id).State == "live" }, "live")
+	f.svc.callTimeout = 200 * time.Millisecond
+	fake.SetLatency("/commands/execute", 2*time.Second)
+	assert.Equal(t, CodeCommandUncertain, codeOf(f.svc.ExecuteCommand(ctx, id, "c-town", "", "/echo slow")))
 }

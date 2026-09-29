@@ -19,16 +19,16 @@ func (s *Server) onEphemeralLocked(ev ws.Event, eff *Effects) {
 	if err != nil || p.ID == "" || s.chans[p.ChannelID] == nil {
 		return
 	}
+	if _, held := s.findPostLocked(p.ID); held {
+		return // never the same id twice in a feed
+	}
 	p.Type = model.PostTypeEphemeral
 	s.ephemeral = slices.DeleteFunc(s.ephemeral, func(q model.Post) bool { return q.ID == p.ID })
 	if len(s.ephemeral) >= maxEphemeral {
 		s.ephemeral = slices.Delete(s.ephemeral, 0, len(s.ephemeral)-maxEphemeral+1)
 	}
 	s.ephemeral = append(s.ephemeral, p)
-	eff.Channels = []string{p.ChannelID}
-	if p.RootID != "" && s.threads[p.RootID] != nil {
-		eff.Threads = []string{p.RootID}
-	}
+	s.ephemeralChangedLocked(p, eff)
 }
 
 // withEphemeralLocked merges the ephemeral posts that belong in a list —
@@ -36,7 +36,7 @@ func (s *Server) onEphemeralLocked(ev ws.Event, eff *Effects) {
 func (s *Server) withEphemeralLocked(posts []model.Post, keep func(model.Post) bool) []model.Post {
 	var add []model.Post
 	for _, p := range s.ephemeral {
-		if keep(p) {
+		if keep(p) && indexOf(posts, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
@@ -56,6 +56,38 @@ func (s *Server) withEphemeralLocked(posts []model.Post, keep func(model.Post) b
 		return 0
 	})
 	return out
+}
+
+// editEphemeralLocked applies post_edited to an ephemeral post (a plugin's
+// UpdateEphemeralPost): false when id is not one.
+func (s *Server) editEphemeralLocked(p model.Post, eff *Effects) bool {
+	i := slices.IndexFunc(s.ephemeral, func(q model.Post) bool { return q.ID == p.ID })
+	if i < 0 {
+		return false
+	}
+	p.Type, p.ChannelID = model.PostTypeEphemeral, s.ephemeral[i].ChannelID
+	s.ephemeral[i] = p
+	s.ephemeralChangedLocked(p, eff)
+	return true
+}
+
+// deleteEphemeralLocked applies post_deleted (DeleteEphemeralPost).
+func (s *Server) deleteEphemeralLocked(p model.Post, eff *Effects) bool {
+	i := slices.IndexFunc(s.ephemeral, func(q model.Post) bool { return q.ID == p.ID })
+	if i < 0 {
+		return false
+	}
+	gone := s.ephemeral[i]
+	s.ephemeral = slices.Delete(s.ephemeral, i, i+1)
+	s.ephemeralChangedLocked(gone, eff)
+	return true
+}
+
+func (s *Server) ephemeralChangedLocked(p model.Post, eff *Effects) {
+	eff.Channels = []string{p.ChannelID}
+	if p.RootID != "" && s.threads[p.RootID] != nil {
+		eff.Threads = []string{p.RootID}
+	}
 }
 
 func (s *Server) forgetEphemeralLocked(channelID string) {

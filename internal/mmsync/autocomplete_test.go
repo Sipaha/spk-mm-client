@@ -111,7 +111,7 @@ func TestAutocompleteCommandsFilterOneCachedList(t *testing.T) {
 	for _, c := range res.Commands {
 		triggers = append(triggers, c.Trigger)
 	}
-	assert.Equal(t, []string{"away", "echo", "shrug"}, triggers)
+	assert.Equal(t, []string{"away", "echo", "leave", "logout", "shrug"}, triggers)
 	res, err = h.w.Autocomplete(ctx, ACCommands, "c-town", "EC")
 	require.NoError(t, err)
 	require.Len(t, res.Commands, 1)
@@ -211,4 +211,55 @@ func TestEphemeralAnswerShowsInTheChannelAndTheThread(t *testing.T) {
 		v, _ := h.w.State().ThreadView(root.ID)
 		return hasEphemeral(v.Posts, "You are now away")
 	}, "the thread's ephemeral answer never showed in the panel")
+}
+
+// Review I1: the server's /leave ignores root_id and leaves the whole
+// channel; the webapp refuses it in a thread, so do we — nothing is sent.
+func TestLeaveInAThreadIsRefusedWithoutASend(t *testing.T) {
+	h := liveHarness(t, mmfake.Options{})
+	root := h.fake.PostAs("c-town", "bob", "a root")
+	for _, cmd := range []string{"/leave", "/LEAVE  now"} {
+		assert.ErrorIs(t, h.w.ExecuteCommand(context.Background(), "c-town", root.ID, cmd), ErrUnsupportedInThread)
+	}
+	assert.Empty(t, h.fake.ExecutedCommands())
+	assert.ErrorIs(t, h.w.ExecuteCommand(context.Background(), "c-town", root.ID, "/leaves"), ErrCommandNotFound, "only /leave itself is refused; this one reaches the server")
+}
+
+// Review M1: a request in flight when the worker stops (sign-out, removal,
+// a new sign-in) ends with it — it must not keep using the old session.
+func TestAutocompleteAndCommandsEndWithTheWorker(t *testing.T) {
+	h := liveHarness(t, mmfake.Options{})
+	h.fake.SetLatency("/users/autocomplete", 5*time.Second)
+	h.fake.SetLatency("/commands/execute", 5*time.Second)
+	errs := make(chan error, 2)
+	go func() {
+		_, err := h.w.Autocomplete(context.Background(), ACUsers, "c-town", "b")
+		errs <- err
+	}()
+	go func() { errs <- h.w.ExecuteCommand(context.Background(), "c-town", "", "/echo x") }()
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	h.stop()
+	for range 2 {
+		select {
+		case err := <-errs:
+			assert.Error(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("a request outlived its worker")
+		}
+	}
+	assert.Less(t, time.Since(start), 3*time.Second)
+	assert.Equal(t, 0, h.w.ac.len())
+}
+
+// Review M3: a DM's @ searches the team on screen; its cached answer is
+// per team, not reused after a team switch.
+func TestDMUsersCacheIsPerTeam(t *testing.T) {
+	h := liveHarness(t, mmfake.Options{})
+	ctx := context.Background()
+	_, err := h.w.Autocomplete(ctx, ACUsers, "c-dm-bob", "b")
+	require.NoError(t, err)
+	team, _ := h.w.State().AutocompleteScope("c-dm-bob")
+	assert.Contains(t, acUsersKey("c-dm-bob", team, "b"), team)
+	assert.NotEqual(t, acUsersKey("c-dm-bob", "t1", "b"), acUsersKey("c-dm-bob", "t2", "b"))
 }

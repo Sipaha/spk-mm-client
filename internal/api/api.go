@@ -220,6 +220,12 @@ const (
 	CodeTooManyReactions = "too_many_reactions"
 	CodeInvalidArgument  = "invalid_argument"
 	CodeCommandNotFound  = "command_not_found" // no slash command with that trigger (the UI offers to send it as text)
+	// CodeCommandUnsupportedInThread: /leave from a thread composer (the
+	// server would leave the whole channel) — refused, nothing sent.
+	CodeCommandUnsupportedInThread = "command_unsupported_in_thread"
+	// CodeCommandUncertain: the command's request timed out or its
+	// connection failed — it may or may not have run.
+	CodeCommandUncertain = "command_uncertain"
 
 	// Attachments (internal/attach codes).
 	CodeTooLarge            = attach.CodeTooLarge

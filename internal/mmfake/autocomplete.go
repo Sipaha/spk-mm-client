@@ -132,6 +132,8 @@ func (s *Server) emojiAutocomplete(w http.ResponseWriter, r *http.Request, _ Use
 // fakeCommands: the built-ins the fake runs, as the server lists them.
 var fakeCommands = []model.Command{
 	{Trigger: "away", AutoComplete: true, AutoCompleteDesc: "Set your status away", DisplayName: "away"},
+	{Trigger: "leave", AutoComplete: true, AutoCompleteDesc: "Leave the current channel", DisplayName: "leave"},
+	{Trigger: "logout", AutoComplete: true, AutoCompleteDesc: "Log out of Mattermost", DisplayName: "logout"},
 	{Trigger: "echo", AutoComplete: true, AutoCompleteHint: `"message" [delay in seconds]`, AutoCompleteDesc: "Echo back text from your account", DisplayName: "echo"},
 	{Trigger: "shrug", AutoComplete: true, AutoCompleteHint: "[message]", AutoCompleteDesc: `Adds ¯\_(ツ)_/¯ to your message`, DisplayName: "shrug"},
 }
@@ -183,6 +185,15 @@ func (s *Server) executeCommand(w http.ResponseWriter, r *http.Request, u User) 
 		s.publishLocked("status_change", map[string]any{"status": "away", "user_id": u.ID}, wsBroadcast{UserID: u.ID}, []string{u.ID}, nil, nil)
 		resp = model.CommandResponse{ResponseType: "ephemeral", Text: "You are now away"}
 		s.ephemeralLocked(u.ID, args.ChannelID, args.RootID, resp.Text)
+	case "leave":
+		// app/slashcommands/command_leave.go: root_id is ignored — the
+		// whole channel is left (the webapp refuses it in a thread).
+		delete(s.chat.members[args.ChannelID], u.ID)
+		s.publishLocked("user_removed", map[string]any{"channel_id": args.ChannelID, "remover_id": u.ID},
+			wsBroadcast{UserID: u.ID}, []string{u.ID}, nil, nil)
+	case "logout":
+		// command_logout.go: "Actual logout is handled client side".
+		resp.GotoLocation = "/login"
 	default:
 		appError(w, 404, "api.command.execute_command.not_found.app_error", "Command with a trigger of '/"+trigger+"' not found.")
 		return
@@ -210,4 +221,10 @@ func (s *Server) ExecutedCommands() []ExecutedCommand {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]ExecutedCommand(nil), s.chat.commands...)
+}
+
+func (s *Server) isMember(channelID, userID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isMemberLocked(channelID, userID)
 }

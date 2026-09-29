@@ -42,7 +42,29 @@ var (
 	// ErrCommandNotFound means the server has no command with that
 	// trigger — the webapp then offers to send the text as a message.
 	ErrCommandNotFound = errors.New("mmsync: command not found")
+	// ErrUnsupportedInThread refuses /leave from a thread composer: the
+	// server ignores root_id and leaves the whole channel; the webapp
+	// refuses it too (actions/command.ts). Nothing is sent.
+	ErrUnsupportedInThread = errors.New("mmsync: command not supported in a thread")
 )
+
+// withLife ties ctx to the worker's lifetime (like React): a request in
+// flight when the worker stops — sign-out, removal, a new sign-in — ends
+// with it instead of going on with the old session.
+func (w *Worker) withLife(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(w.life, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// acUsersKey: users of a channel's composer, per team — a DM searches the
+// team on screen, which changes with a team switch.
+func acUsersKey(channelID, team, prefix string) string {
+	return ACUsers + "\x00" + channelID + "\x00" + team + "\x00" + prefix
+}
 
 // ACUser is a user suggestion. Avatar is the picture version for
 // /media/<srv>/avatar/<id>; Status "" when unknown.
@@ -93,10 +115,12 @@ func (w *Worker) Autocomplete(ctx context.Context, kind, channelID, prefix strin
 		return Autocomplete{}, ErrNoChannel
 	}
 	prefix = strings.ToLower(prefix)
+	ctx, cancel := w.withLife(ctx)
+	defer cancel()
 	out := Autocomplete{Users: []ACUser{}, Others: []ACUser{}, Channels: []ACChannel{}, Emoji: []string{}, Commands: []ACCommand{}}
 	switch kind {
 	case ACUsers:
-		v, err := acFetch(ctx, w, kind+"\x00"+channelID+"\x00"+prefix, func(ctx context.Context) (acUsers, error) {
+		v, err := acFetch(ctx, w, acUsersKey(channelID, team, prefix), func(ctx context.Context) (acUsers, error) {
 			return w.fetchUsers(ctx, team, channelID, prefix)
 		})
 		if err != nil {
@@ -317,11 +341,12 @@ func (w *Worker) ExecuteCommand(ctx context.Context, channelID, rootID, command 
 	if !ok {
 		return ErrNoChannel
 	}
-	trigger, text, _ := strings.Cut(strings.TrimSpace(command), " ")
-	msg := strings.ToLower(trigger)
-	if r := strings.TrimSpace(text); r != "" {
-		msg += " " + r
+	msg := NormalizeCommand(command)
+	if rootID != "" && CommandTrigger(msg) == "/leave" {
+		return ErrUnsupportedInThread
 	}
+	ctx, cancel := w.withLife(ctx)
+	defer cancel()
 	_, err := w.rc.ExecuteCommand(ctx, model.CommandArgs{ChannelID: channelID, TeamID: team, RootID: rootID, Command: msg})
 	var re *rest.Error
 	switch {
@@ -331,4 +356,21 @@ func (w *Worker) ExecuteCommand(ctx context.Context, channelID, rootID, command 
 		w.signalAuth()
 	}
 	return err
+}
+
+// NormalizeCommand is the webapp's normalisation of a slash command: the
+// trigger lowercased, the rest trimmed.
+func NormalizeCommand(command string) string {
+	trigger, text, _ := strings.Cut(strings.TrimSpace(command), " ")
+	msg := strings.ToLower(trigger)
+	if r := strings.TrimSpace(text); r != "" {
+		msg += " " + r
+	}
+	return msg
+}
+
+// CommandTrigger is the "/word" a normalised command starts with.
+func CommandTrigger(msg string) string {
+	trigger, _, _ := strings.Cut(msg, " ")
+	return trigger
 }

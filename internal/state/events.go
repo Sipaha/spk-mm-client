@@ -84,10 +84,16 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 		s.onEphemeralLocked(ev, &eff)
 	case "post_edited":
 		if p, err := ws.DecodePost(ev); err == nil {
+			if s.editEphemeralLocked(p, &eff) {
+				break
+			}
 			eff.Change = s.updatePostLocked(p)
 		}
 	case "post_deleted":
 		if p, err := ws.DecodePost(ev); err == nil {
+			if s.deleteEphemeralLocked(p, &eff) {
+				break
+			}
 			if ch := s.chans[p.ChannelID]; ch != nil {
 				eff.Threads = s.threadsOfLocked(p)
 				if s.removeLocked(ch, p) {

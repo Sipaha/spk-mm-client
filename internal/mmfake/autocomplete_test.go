@@ -90,7 +90,7 @@ func TestCommandsAutocompleteListsBuiltIns(t *testing.T) {
 		triggers = append(triggers, c.Trigger)
 		assert.NotEmpty(t, c.AutoCompleteDesc)
 	}
-	assert.Equal(t, []string{"away", "echo", "shrug"}, triggers)
+	assert.Equal(t, []string{"away", "leave", "logout", "echo", "shrug"}, triggers)
 	assert.Equal(t, 403, a.call("GET", "/api/v4/teams/t-other/commands/autocomplete", nil, nil))
 }
 
@@ -165,4 +165,16 @@ func TestExecuteUnknownCommandIsNotFound(t *testing.T) {
 	b := loginAs(t, s, "carol")
 	status, _ = b.callErr("POST", "/api/v4/commands/execute", model.CommandArgs{ChannelID: "c-offtopic", Command: "/echo x"})
 	assert.Equal(t, 403, status, "not a member")
+}
+
+func TestExecuteLeaveAndLogoutLikeTheServer(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	var resp model.CommandResponse
+	require.Equal(t, 200, a.call("POST", "/api/v4/commands/execute", model.CommandArgs{ChannelID: "c-offtopic", Command: "/leave"}, &resp))
+	assert.False(t, s.isMember("c-offtopic", "u-alice"), "left the channel")
+	require.Equal(t, 200, a.call("POST", "/api/v4/commands/execute", model.CommandArgs{ChannelID: "c-town", Command: "/logout"}, &resp))
+	assert.Equal(t, "/login", resp.GotoLocation, "the server only answers; the client signs out")
+	assert.Equal(t, 1, s.ActiveSessions())
 }

@@ -518,3 +518,19 @@ func TestAbortedAutocompleteCancelsItsContext(t *testing.T) {
 		t.Fatal("the API call never saw the abort")
 	}
 }
+
+// Review M6: an /api/ body is capped (the largest legitimate one — a slash
+// command of 16383 runes — is far below it); uploads have their own route
+// and limit.
+func TestAPIBodyIsCapped(t *testing.T) {
+	f := &acAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	big := `{"id":3,"channel_id":"c1","command":"/echo ` + strings.Repeat("x", MaxAPIBody) + `"}`
+	resp := call(t, h, ts.URL, "ExecuteCommand", big)
+	assert.Equal(t, 400, resp.StatusCode)
+	assert.Empty(t, f.calls, "never reached the API")
+	ok := `{"id":3,"channel_id":"c1","command":"/echo ` + strings.Repeat("я", 16383) + `"}`
+	assert.Equal(t, 200, call(t, h, ts.URL, "ExecuteCommand", ok).StatusCode)
+}

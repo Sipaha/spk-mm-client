@@ -74,3 +74,47 @@ func TestLeavingAChannelDropsItsEphemeralPosts(t *testing.T) {
 	s.mu.Unlock()
 	assert.Zero(t, n)
 }
+
+// Review M5: plugins edit and delete their ephemeral posts (post_edited /
+// post_deleted with the ephemeral id); an id a real post already has is
+// never shown twice.
+func TestEphemeralPostsAreEditedDeletedAndDeduped(t *testing.T) {
+	s := newFixture()
+	s.ClearGuard()
+	s.SetWindow("town", []model.Post{mkPost("a", "town", "u2", 1000)}, true, 5, 0)
+	s.ApplyEvent(postEv("ephemeral_message", ephemeral("e1", "town", "", 2000)))
+	edited := ephemeral("e1", "town", "", 2000)
+	edited.Type, edited.Message = "", "edited text"
+	assert.Equal(t, []string{"town"}, s.ApplyEvent(postEv("post_edited", edited)).Channels)
+	v, _ := s.ChannelView("town")
+	require.Len(t, v.Posts, 2)
+	assert.Equal(t, "edited text", v.Posts[1].Message)
+	assert.True(t, v.Posts[1].Ephemeral, "still ephemeral")
+
+	assert.Equal(t, []string{"town"}, s.ApplyEvent(postEv("post_deleted", edited)).Channels)
+	v, _ = s.ChannelView("town")
+	assert.Equal(t, []string{"a"}, viewIDs(v.Posts))
+
+	s.ApplyEvent(postEv("ephemeral_message", ephemeral("a", "town", "", 2500)))
+	v, _ = s.ChannelView("town")
+	assert.Equal(t, []string{"a"}, viewIDs(v.Posts), "a real post's id is not shown twice")
+	assert.False(t, v.Posts[0].Ephemeral)
+}
+
+// Review I4: an ephemeral answer that is not from a bot or a webhook is
+// the server's own ("System", the webapp's post_info.system) — never shown
+// as written by the user.
+func TestEphemeralAuthorIsTheSystem(t *testing.T) {
+	s := newFixture()
+	s.ApplyEvent(postEv("ephemeral_message", ephemeral("e1", "town", "", 2000)))
+	hook := ephemeral("e2", "town", "", 2100)
+	hook.Props.FromWebhook, hook.Props.OverrideUsername = true, "jira"
+	s.ApplyEvent(postEv("ephemeral_message", hook))
+	v, _ := s.ChannelView("town")
+	require.Len(t, v.Posts, 2)
+	assert.True(t, v.Posts[0].SystemAuthor)
+	assert.Empty(t, v.Posts[0].Author)
+	assert.Empty(t, v.Posts[0].Avatar)
+	assert.False(t, v.Posts[1].SystemAuthor, "an integration keeps its own name")
+	assert.Equal(t, "jira", v.Posts[1].Author)
+}
