@@ -169,33 +169,59 @@ export function Composer({
   // pixel width, and the setter only fires when it actually changes — a
   // continuous drag-resize does not churn a React render for every pixel,
   // only for the (much rarer) frame where a button's fit flips.
+  // Fix round 1, item (c): the callback below used to run its measurement
+  // (and any resulting setState) synchronously inside the ResizeObserver
+  // notification itself. That could still change layout (the toolbar row's
+  // own content) within the same delivery cycle the virtualizer's scroller
+  // observer was *also* being notified in — Chromium occasionally reported
+  // "ResizeObserver loop completed with undelivered notifications" while
+  // typing in the composer (bisected: 0/16 with this observer's callback
+  // disabled). Deferring the actual measurement to the next animation
+  // frame moves it out of that notification cycle entirely; coalescing
+  // repeated notifications into a single pending rAF (rather than one per
+  // callback) is what actually avoids the loop, not just the existing
+  // "only setState when the count changes" guard on its own.
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [visibleCount, setVisibleCount] = useState(FORMAT_BUTTONS.length)
   useEffect(() => {
     const row = toolbarRef.current
     if (!row || typeof ResizeObserver === 'undefined') return
-    const update = () => {
+    let raf = 0
+    const measure = () => {
+      raf = 0
       const available = row.offsetWidth - TOOLBAR_RESERVED
       const next = fitCount(available, FORMAT_BUTTONS.length, GROUP_BREAK_INDICES)
       setVisibleCount((cur) => (cur === next ? cur : next))
     }
-    update()
-    const ro = new ResizeObserver(update)
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(measure)
+    }
+    schedule()
+    const ro = new ResizeObserver(schedule)
     ro.observe(row)
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
   }, [])
   const shownButtons = FORMAT_BUTTONS.slice(0, visibleCount)
   const hiddenButtons = FORMAT_BUTTONS.slice(visibleCount)
   const [moreAnchor, setMoreAnchor] = useState<HTMLButtonElement | null>(null)
 
-  // maxTextareaHeight: ~40% of the pane's height (the composer's own
-  // parent — ChannelPane's/ThreadPane's flex column, whose height does not
-  // itself change as the composer grows). typeof ResizeObserver check:
-  // jsdom has none (Feed.tsx uses the same guard) — tests fall back to no
-  // cap, which is harmless (no real layout to measure there anyway).
+  // maxTextareaHeight: ~40% of the pane's height — ChannelPane's/
+  // ThreadPane's own flex column, whose height does not itself change as
+  // the composer grows. boxRef is the bordered box; its parentElement is
+  // *this component's own root* (the `border-t … px-3 py-2` wrapper below),
+  // which does grow with the composer — that was the bug (fix round 1,
+  // item a): the cap chased its own box and topped out at ~3-4 lines
+  // instead of ~40% of the real pane. The pane is one level further up:
+  // boxRef -> composer root -> pane. typeof ResizeObserver check: jsdom has
+  // none (Feed.tsx uses the same guard) — tests fall back to no cap, which
+  // is harmless (no real layout to measure there anyway).
   const [maxTextareaHeight, setMaxTextareaHeight] = useState<number | undefined>(undefined)
   useEffect(() => {
-    const pane = boxRef.current?.parentElement
+    const pane = boxRef.current?.parentElement?.parentElement
     if (!pane || typeof ResizeObserver === 'undefined') return
     const update = () => setMaxTextareaHeight(Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * PANE_HEIGHT_RATIO)))
     update()

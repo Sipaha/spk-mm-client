@@ -19,11 +19,15 @@ test.afterEach(async ({ page }) => {
 // No "ResizeObserver loop completed with undelivered notifications" (review
 // M6: the bottom-stick first observed the rows' container, which the
 // virtualizer resizes from inside its own row observer's broadcast). The
-// browser reports it as a window error event. Not checked in the tests that
-// type into the composer: there Chromium reports it intermittently from the
-// composer's toolbar-fit observer together with the virtualizer's scroller
-// observer (bisected: either one disabled — 0 of 16 runs; the bottom-stick's
-// own observer disabled — still 4 of 16), which is not the feed's.
+// browser reports it as a window error event. Composer fix round 1 (item c)
+// fixed the other source Chromium intermittently reported this from while
+// typing — the composer's toolbar-fit observer measured synchronously
+// inside its own notification, which could still change layout within the
+// same delivery cycle as the virtualizer's scroller observer; it now defers
+// the measurement to a coalesced requestAnimationFrame instead — so the
+// check runs unconditionally in every test again (checkLoops used to be
+// turned off for the two tests that type into the composer; no longer
+// needed, docs/backlog.md's note about it is removed).
 let checkLoops = true
 test.beforeEach(async ({ page }) => {
   checkLoops = true
@@ -155,7 +159,6 @@ test('downloading the last post\'s attachment: feedback on the card, an error to
 })
 
 test('at the bottom, a composer growing with a multi-line draft keeps the last post fully visible', async ({ page }) => {
-  checkLoops = false // see the loop check above
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSecretAtBottom(page)
   const box = page.getByRole('textbox', { name: 'Message' })
@@ -185,7 +188,6 @@ test('at the bottom, a shorter window keeps the last post fully visible', async 
 })
 
 test('away from the bottom, a composer growing keeps the top visible post where it was', async ({ page }) => {
-  checkLoops = false // see the loop check above
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSecretAtBottom(page)
   const log = feed(page)

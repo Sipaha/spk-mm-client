@@ -62,7 +62,12 @@ test('the composer auto-grows with several lines, then scrolls internally past i
   const box = page.getByRole('textbox', { name: 'Message' })
   const before = (await box.boundingBox())!.height
 
-  const lines = Array.from({ length: 8 }, (_, i) => `line ${i}`)
+  // The cap is ~40% of the real pane (fix round 1, item a: it used to be
+  // measured from the composer's own box, which topped out after only
+  // 3-4 lines — a bug, not the real cap). At the default e2e viewport the
+  // real cap is well past a dozen lines, so this needs enough of them to
+  // actually reach it, not just "a few".
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`)
   for (const [i, line] of lines.entries()) {
     await box.type(line)
     if (i < lines.length - 1) await box.press('Shift+Enter')

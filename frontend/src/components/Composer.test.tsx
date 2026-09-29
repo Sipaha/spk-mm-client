@@ -86,11 +86,45 @@ function stubResizeObserver() {
     act(() => {
       for (const o of all) if (o.targets.has(el)) o.cb([{ target: el } as unknown as ResizeObserverEntry], o as unknown as ResizeObserver)
     })
-  return { fire, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
+  return { fire, all, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
 }
 
 function setOffsetWidth(el: Element, width: number) {
   Object.defineProperty(el, 'offsetWidth', { configurable: true, value: width })
+}
+
+function setClientHeight(el: Element, height: number) {
+  Object.defineProperty(el, 'clientHeight', { configurable: true, value: height })
+}
+
+// manualFrames: the toolbar-fit ResizeObserver (fix round 1, item c) defers
+// its actual measurement to requestAnimationFrame instead of running it
+// synchronously inside the notification — same technique/rig as
+// Feed.test.tsx's manualFrames, needed here for the same reason (jsdom's
+// real rAF only fires on a real animation tick, not deterministically).
+function manualFrames() {
+  const pending = new Map<number, FrameRequestCallback>()
+  let next = 1
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    pending.set(next, cb)
+    return next++
+  })
+  const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => void pending.delete(id))
+  const flush = async () => {
+    for (let i = 0; i < 10 && pending.size > 0; i++) {
+      const due = [...pending.values()]
+      pending.clear()
+      await act(async () => due.forEach((cb) => cb(performance.now())))
+    }
+    await act(async () => {})
+  }
+  return {
+    flush,
+    restore: () => {
+      raf.mockRestore()
+      caf.mockRestore()
+    },
+  }
 }
 
 beforeEach(() => {
@@ -481,13 +515,15 @@ test('a reply composer (rootId set) also has the formatting toolbar', () => {
 // Coordinator ruling 2026-09-29 (composer brief follow-up): the thread
 // panel is too narrow for all 9 formatting buttons — they must collapse
 // into a "more formatting" popover, not spill into a horizontal scrollbar.
-test('a narrow toolbar row collapses buttons into "More formatting options", with no scrollbar wrapper', () => {
+test('a narrow toolbar row collapses buttons into "More formatting options", with no scrollbar wrapper', async () => {
   const ro = stubResizeObserver()
+  const frames = manualFrames()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
     const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 200) // narrow: only "Bold" fits alongside the always-visible right group
     ro.fire(toolbar)
+    await frames.flush()
     expect(within(toolbar).queryByRole('button', { name: 'Numbered list' })).toBeNull()
     expect(within(toolbar).getByRole('button', { name: 'More formatting options' })).toBeInTheDocument()
     expect(toolbar.querySelector('.overflow-x-auto')).toBeNull()
@@ -495,31 +531,40 @@ test('a narrow toolbar row collapses buttons into "More formatting options", wit
     expect(within(toolbar).getByRole('button', { name: 'Send message' })).toBeInTheDocument()
   } finally {
     ro.restore()
+    frames.restore()
   }
 })
 
-test('a wide toolbar row shows every button with no "more" button', () => {
+test('a wide toolbar row shows every button with no "more" button', async () => {
   const ro = stubResizeObserver()
+  const frames = manualFrames()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
     const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 1000)
     ro.fire(toolbar)
+    await frames.flush()
     expect(screen.queryByRole('button', { name: 'More formatting options' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Numbered list' })).toBeInTheDocument()
   } finally {
     ro.restore()
+    frames.restore()
   }
 })
 
+// The rAF-deferred fit measurement (fix round 1, item c) does not settle
+// synchronously — flush the mocked frame queue before the first assertion,
+// same as the two tests above.
 test('the "more formatting" popover lists the collapsed buttons; picking one applies it, closes the popover and refocuses the textarea', async () => {
   const user = userEvent.setup()
   const ro = stubResizeObserver()
+  const frames = manualFrames()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
     const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 200)
     ro.fire(toolbar)
+    await frames.flush()
     const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
     await user.type(box, 'word')
     box.setSelectionRange(0, 4)
@@ -534,6 +579,7 @@ test('the "more formatting" popover lists the collapsed buttons; picking one app
     expect(box).toHaveFocus()
   } finally {
     ro.restore()
+    frames.restore()
   }
 })
 
@@ -565,5 +611,46 @@ test('auto-grow measures with the composer box\'s height held, then releases it'
   } finally {
     if (desc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', desc)
     else delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight
+  }
+})
+
+// Fix round 1, item (a): the auto-grow cap must track the real pane
+// (ChannelPane's/ThreadPane's own column), not the composer's own root —
+// boxRef's parent is this component's own `border-t … px-3 py-2` wrapper,
+// which grows right along with the composer; the pane is one level further
+// up. Found by the bottom-stick agent: capped at ~3-4 lines in practice
+// instead of ~40% of the real pane.
+test('the auto-grow height cap is observed on the pane (two levels above the box), not the composer\'s own root', () => {
+  const ro = stubResizeObserver()
+  try {
+    render(
+      <div data-testid="pane">
+        <Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />
+      </div>,
+    )
+    const pane = screen.getByTestId('pane')
+    expect(ro.all.some((o) => o.targets.has(pane))).toBe(true)
+    const composerRoot = pane.firstElementChild as HTMLElement
+    expect(ro.all.some((o) => o.targets.has(composerRoot))).toBe(false)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('the cap tracks ~40% of the pane\'s real height, not the composer\'s own box', () => {
+  const ro = stubResizeObserver()
+  try {
+    render(
+      <div data-testid="pane">
+        <Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />
+      </div>,
+    )
+    const pane = screen.getByTestId('pane')
+    setClientHeight(pane, 800)
+    ro.fire(pane)
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    expect(box.style.maxHeight).toBe('320px') // 800 * 0.4
+  } finally {
+    ro.restore()
   }
 })
