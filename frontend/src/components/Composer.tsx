@@ -11,9 +11,11 @@ import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { useStore } from '../store'
 import { AttachmentsTray } from './AttachmentsTray'
+import { AutocompletePopup } from './AutocompletePopup'
 import { IconBold, IconCode, IconHeading, IconItalic, IconListBulleted, IconListNumbered, IconMood, IconQuote, IconSend, IconStrikethrough } from './composerIcons'
 import { FormattingMenu } from './FormattingMenu'
 import { IconAttach, IconLink, IconMore } from './icons'
+import { useAutocomplete } from './useAutocomplete'
 
 const EmojiPicker = lazy(() => import('./EmojiPicker'))
 
@@ -142,6 +144,10 @@ export function Composer({
   const latest = useRef(draft)
   const saved = useRef(draft)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // The @ ~ : / popup (useAutocomplete.ts): the textarea keeps focus and
+  // the popup's keys (arrows, Enter/Tab, Esc) go through ac.onKeyDown first.
+  const ac = useAutocomplete({ serverId, channelId, rootId, textareaRef, emojiInfo })
+  const caretOf = (el: HTMLTextAreaElement) => (el.selectionStart === el.selectionEnd ? el.selectionStart : null)
 
   // The Aa toggle is app-wide (one ui_prefs row) — fetched once per app
   // session, not once per composer instance (see formattingBarFetchStarted).
@@ -292,6 +298,7 @@ export function Composer({
 
   const send = async () => {
     if (disabled) return
+    ac.close()
     const msg = text
     const attachmentIds = attachments.filter((a) => !pendingSendIds.current.has(a.id)).map((a) => a.id)
     if (!msg.trim() && attachmentIds.length === 0) return
@@ -335,6 +342,8 @@ export function Composer({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While the popup is open it owns Enter (never sends), Tab, arrows, Esc.
+    if (!disabled && ac.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       void send()
@@ -464,15 +473,32 @@ export function Composer({
         onRetry={(id) => retryAttachment(serverId, id)}
         onFocusTextarea={() => textareaRef.current?.focus()}
       />
-      <div className="flex flex-col rounded-lg border border-line bg-app focus-within:border-accent">
+      <div className="relative flex flex-col rounded-lg border border-line bg-app focus-within:border-accent">
+        {ac.state && (
+          <AutocompletePopup
+            serverId={serverId}
+            listId={ac.listId}
+            optionId={ac.optionId}
+            items={ac.state.items}
+            active={ac.state.active}
+            onPick={ac.pick}
+            onHover={ac.setActive}
+          />
+        )}
         <textarea
           ref={textareaRef}
           aria-label={t('composer.label')}
           placeholder={rootId ? t('composer.replyPlaceholder') : t('composer.placeholder', { name: channelName })}
           value={text}
           rows={1}
-          onChange={(e) => change(e.target.value)}
+          onChange={(e) => {
+            change(e.target.value)
+            ac.update(e.target.value, caretOf(e.target))
+          }}
+          onSelect={(e) => ac.update(e.currentTarget.value, caretOf(e.currentTarget))}
+          onBlur={() => ac.close()}
           onKeyDown={onKeyDown}
+          {...ac.textareaProps}
           onPaste={onPaste}
           disabled={disabled}
           autoFocus

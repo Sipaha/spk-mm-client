@@ -240,6 +240,20 @@ const ru = {
   'composer.emoji': 'Эмодзи',
   'composer.send': 'Отправить сообщение',
   'composer.moreFormatting': 'Другие параметры форматирования',
+  // Composer autocomplete (brief 2026-09-29): the webapp's own strings
+  // (suggestion.* in its ru.json/en.json).
+  'autocomplete.label': 'Подсказки',
+  'autocomplete.members': 'Участники канала',
+  'autocomplete.others': 'Не в канале',
+  'autocomplete.special': 'Особые упоминания',
+  'autocomplete.myChannels': 'Мои каналы',
+  'autocomplete.otherChannels': 'Другие каналы',
+  'autocomplete.emoji': 'Эмодзи',
+  'autocomplete.commands': 'Команды',
+  'autocomplete.here': 'Уведомляет всех кто онлайн на канале',
+  'autocomplete.channel': 'Уведомляет всех на канале',
+  'autocomplete.all': 'Уведомляет всех на канале',
+  'autocomplete.you': '(это вы)',
 } as const
 
 type Key = keyof typeof ru
@@ -474,6 +488,18 @@ const en: Record<Key, string> = {
   'composer.emoji': 'Emoji',
   'composer.send': 'Send message',
   'composer.moreFormatting': 'More formatting options',
+  'autocomplete.label': 'Suggestions',
+  'autocomplete.members': 'Channel Members',
+  'autocomplete.others': 'Not in Channel',
+  'autocomplete.special': 'Special Mentions',
+  'autocomplete.myChannels': 'My Channels',
+  'autocomplete.otherChannels': 'Other Channels',
+  'autocomplete.emoji': 'Emoji',
+  'autocomplete.commands': 'Commands',
+  'autocomplete.here': 'Notifies everyone online in this channel',
+  'autocomplete.channel': 'Notifies everyone in this channel',
+  'autocomplete.all': 'Notifies everyone in this channel',
+  'autocomplete.you': '(you)',
 }
 
 export const dict = { ru, en }
