@@ -780,6 +780,38 @@
   `ScrollShift` не откладывает компенсацию (см. «Компенсация ленты» выше) — она уходит сразу в
   `scrollTop`; ленту, стоящую внизу, держит внизу bottom-stick (правило выше). — `frontend/src/components/splitter.test.ts`, `Splitter.test.tsx`,
   `internal/store/uiprefs_test.go`, `internal/api/layout_test.go`, `tests/e2e/layout.spec.ts`.
+- Автодополнение композера `@ ~ : /` (brief 2026-09-29): все запросы к серверу — в Go
+  (`api.Autocomplete(srv, kind, channel, root, prefix)`, `mmsync.Worker.Autocomplete`); UI передаёт
+  только вид, id и слово после триггера. Проверки: вид из четырёх, id — `[A-Za-z0-9_-]{1,64}`, префикс
+  ≤ 64 рун без пробелов/управляющих (иначе пустой ответ без запроса), канал — наш. Запрос идёт под
+  контекстом вызова: UI дебаунсит 150 мс, у каждого запроса номер (поздний ответ отбрасывается) и
+  `AbortSignal` — более новое слово отменяет старый запрос и в Go (Wails-метод принимает
+  `context.Context`, отмена промиса отменяет его; HTTP — контекст запроса). Ответы — в LRU воркера
+  (50 записей, 60 с; очищается, когда воркер останавливается — выход, новый вход, удаление); офлайн —
+  без запросов (эмодзи — только из индекса); на старте ничего. Триггеры как у веб-клиента: `@`/`~` сразу
+  (не внутри слова/адреса — `a@b` не срабатывает), `:` с 2 символов в начале слова, `/` только в самом
+  начале сообщения; пока всплывашка открыта, Enter вставляет и **не** отправляет, Esc закрывает её
+  для этого слова и не доходит до панели треда. `/`-сообщение выполняется **только** явной отправкой
+  (`ExecuteCommand`, не ретраится, в треде — с `root_id`, корень должен быть в кэше тредов); неизвестная
+  команда оставляет текст и предлагает отправить его сообщением. Эфемерные посты (`ephemeral_message`)
+  живут отдельно от окон (не в снимке, ≤ 50 на сервер, уход из канала их убирает). `~имя` в сообщении —
+  ссылка на канал, если его знает сайдбар выбранного сервера (`ChannelItem.slug`). — `internal/mm/rest/
+  autocomplete_test.go`, `internal/mmfake/autocomplete_test.go`, `internal/mmsync/aclru_test.go`
+  (`TestAutocompleteCacheIsBoundedLRUWithTTL`), `internal/mmsync/autocomplete_test.go`
+  (`TestAutocompleteIsCachedPerPrefixForAMinute`, `TestAutocompleteRequestIsCancelledWithItsContext`,
+  `TestAutocompleteOfflineIsLocalOnly`, `TestAutocompleteCacheIsDroppedWhenTheWorkerStops`,
+  `TestExecuteCommandCarriesTeamAndThreadRoot`, `TestEphemeralAnswerShowsInTheChannelAndTheThread`),
+  `internal/api/autocomplete_test.go` (`TestAutocompleteValidatesItsInput`,
+  `TestExecuteCommandThroughService`, `TestSignOutEndsTheAutocompleteSession`),
+  `internal/api/transport/http_test.go` (`TestAbortedAutocompleteCancelsItsContext`),
+  `internal/state/ephemeral_test.go`, `frontend/src/autocomplete.test.ts`,
+  `frontend/src/components/ComposerAutocomplete.test.tsx`, `ComposerCommand.test.tsx`,
+  `ChannelMention.test.tsx`, `tests/e2e/autocomplete.spec.ts` (пишет только в «Secret» и возвращает
+  alice статус online после `/away`: фейк общий для всех спеков, а `chat.spec.ts` ждёт на экране
+  последние посты Town Square). Фейк: `/users/autocomplete`, `/teams/{id}/channels/autocomplete`,
+  `/emoji/autocomplete`, `/teams/{id}/commands/autocomplete`, `/commands/execute` (`/echo`, `/shrug`,
+  `/away` — эфемерный ответ; остальное — 404 `not_found`), `ExecutedCommands()`; публичный канал
+  «Offices», где alice нет. Поиск по сообщениям и Ctrl+K не согласованы (`docs/backlog.md`).
 
 ## Things that bite
 
