@@ -166,10 +166,19 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         </div>
       )}
       <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} toastHost={TOAST_HOST.channel} />
-      {/* pt-2: feed↔composer gap (density-brief 2026-09-29) — the official
-          client leaves visible air above the input box; kept here in the
-          pane wrapper rather than in Feed.tsx/Composer.tsx, both under
-          active edit by the composer-fix-round-2 agent. */}
+      {/* pt-2 (8px): feed↔composer gap (density-brief 2026-09-29) — the
+          official client leaves visible air above the input box. Unlike
+          ThreadPane's pt-3 (a real official number, .sidebar--right's
+          padding-top: 12px), this one is a reasoned approximation:
+          advanced_text_editor.scss's base .AdvancedTextEditor rule (the
+          main-channel selector) explicitly sets `padding: 0 24px` —
+          padding-top *is* 0 there, confirmed, not just "not found" — so the
+          official channel composer's real visible gap comes from some other
+          layout piece not present even in the full sass git history
+          (density-review 2026-09-29, Minor 1). 8px reuses the one other
+          confirmed official metric of the right order of magnitude for this
+          edge (.post's head-post top padding, PostItem.tsx's comment).
+          Kept here in the pane wrapper rather than in Feed.tsx/Composer.tsx. */}
       <div className="pt-2">
         <Composer
           key={`composer-${channel.id}`}

@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { vi } from 'vitest'
-import type { ChannelDTO, PostView } from '../api/types'
+import type { Attachment, ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
-import { anchorNudge, Feed, pickAnchor } from './Feed'
+import type { Row } from './feedRows'
+import { anchorNudge, CARD_CHROME, estimate, Feed, pickAnchor } from './Feed'
 import { Toast, TOAST_HOST } from './Toast'
 
 // jsdom has no layout: give the scroller and rows sizes so the virtualizer renders.
@@ -105,6 +106,47 @@ test('pickAnchor: the topmost post row still (partly) visible below the viewport
   expect(pickAnchor(boxes, viewTop)).toEqual({ key: 'b', offset: -16 })
   expect(pickAnchor([{ key: 'a', top: 20, bottom: 60 }], viewTop)).toBeNull() // nothing on screen
   expect(pickAnchor([], viewTop)).toBeNull()
+})
+
+// estimate: the virtualizer's pre-mount row-height guess (measureElement
+// corrects it after mount) — review of 96cdfc8, Important 1: a post with
+// message_attachments must add the new AttachmentView card's height
+// (chrome + a rough per-line term), not just the flat head/non-head base,
+// or the estimate-vs-real gap for exactly the Jenkins/CI webhook shape the
+// density brief targets grows ~8x (was ~4px of unaccounted overhead per
+// attachment, is now ~36px of card chrome alone).
+const postRow = (post: PostView, head = true): Row => ({ kind: 'post', key: post.id, post, head })
+const post = (o: Partial<PostView> = {}): PostView => ({ id: 'p1', user_id: 'u1', author: 'bob', message: 'hi', create_at: 0, ...o })
+
+test('estimate: a plain post (no attachments) is unchanged — flat head/non-head base', () => {
+  expect(estimate(postRow(post()))).toBe(64)
+  expect(estimate(postRow(post(), false))).toBe(28)
+  expect(estimate({ kind: 'day', key: 'd', ms: 0 })).toBe(36)
+  expect(estimate({ kind: 'new', key: 'new' })).toBe(36)
+  expect(estimate({ kind: 'gap', key: 'gap' })).toBe(36)
+  expect(estimate({ kind: 'more', key: 'more' })).toBe(36)
+})
+
+test('estimate: one attachment adds its card chrome plus a per-field/line term', () => {
+  const titleOnly: Attachment = { title: 'Build #6' }
+  // CARD_CHROME (36) + title (20) = 56
+  expect(estimate(postRow(post({ attachments: [titleOnly] })))).toBe(64 + CARD_CHROME + 20)
+
+  const jenkinsStyle: Attachment = {
+    color: '#00c100',
+    title: 'sample-app - build completed - 006',
+    text: 'Branch: **master**\nVersion: **1.1.2**', // 2 lines
+    fields: [{ title: 'Changes', value: '- one\n- two', short: false }],
+    footer: 'build #006',
+  }
+  // 36 (chrome) + 20 (title) + 40 (2 text lines * 20) + 36 (18 caption + 18*1 field) + 18 (footer) = 150
+  expect(estimate(postRow(post({ attachments: [jenkinsStyle] })))).toBe(64 + 36 + 20 + 40 + 36 + 18)
+})
+
+test('estimate: several attachments on one post sum their individual estimates', () => {
+  const a: Attachment = { title: 'one' } // 36 + 20 = 56
+  const b: Attachment = { title: 'two', footer: 'f' } // 36 + 20 + 18 = 74
+  expect(estimate(postRow(post({ attachments: [a, b] }), false))).toBe(28 + 56 + 74)
 })
 
 // ---- history loads that leave the feed at the very top ----

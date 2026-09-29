@@ -1,7 +1,7 @@
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { ChannelDTO } from '../api/types'
+import type { Attachment, ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
 import { buildRows, type FeedVariant, type Row } from './feedRows'
@@ -36,7 +36,31 @@ const NEAR_BOTTOM = 48
 const NEW_BADGE_CAP = 99
 const MAX_AUTO_LOADS = 2 // history loads the feed starts on its own (fillViewportIfShort) before it waits for the user
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
-const estimate = (r: Row) => (r.kind === 'post' ? (r.head ? 64 : 28) : 36)
+
+// attachmentEstimate: a message_attachment's rendered height before mount
+// (density-brief 2026-09-29's bordered card — PostItem.tsx's AttachmentView).
+// Deliberately as coarse as the rest of estimate() (no text-wrapping math —
+// measureElement corrects the real height after mount), but accounts for
+// the two things that dominate the gap the review flagged: the card's own
+// chrome (border + margin + padding, ~36px, independent of content) and a
+// rough per-line add-on so a title/text/fields/footer-heavy card (the
+// Jenkins/CI shape the brief itself uses) isn't estimated as if it were an
+// empty box.
+export const CARD_CHROME = 36
+function attachmentEstimate(a: Attachment): number {
+  let h = CARD_CHROME
+  if (a.pretext) h += 20
+  if (a.author_name) h += 16
+  if (a.title) h += 20
+  if (a.text) h += 20 * a.text.split('\n').length
+  if (a.fields && a.fields.length > 0) h += 18 + 18 * a.fields.length // "caption" line + ~1 line/field (short fields pack 2/row — an over-estimate there, evening out the under-estimate on multi-line values)
+  if (a.footer) h += 18
+  return h
+}
+export const estimate = (r: Row) =>
+  r.kind === 'post'
+    ? (r.head ? 64 : 28) + (r.post.attachments?.reduce((sum, a) => sum + attachmentEstimate(a), 0) ?? 0)
+    : 36
 
 // anchorNudge computes how far scrollTop must move to bring the anchor
 // row's measured on-screen position back to its target — the position it

@@ -216,9 +216,15 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           {t('thread.rootDeleted')}
         </div>
       )}
-      {/* pt-2: feed↔composer gap (density-brief 2026-09-29) — see
-          ChannelPane.tsx for why it lives in the pane wrapper. */}
-      <div className="pt-2">
+      {/* pt-3 (12px): feed↔composer gap — unlike ChannelPane's pt-2 (an
+          approximation, see its comment), this one has a real official
+          number: advanced_text_editor.scss:36-37's
+          `.sidebar--right & { padding-top: 12px; }` is exactly this app's
+          docked ThreadPane (the RHS panel), not `.ThreadViewer` (padding-top
+          0 there — the full-page thread view, a different layout this app
+          doesn't have) (density-review 2026-09-29, Minor 1). Kept in the
+          pane wrapper rather than Composer.tsx, per ChannelPane.tsx's note. */}
+      <div className="pt-3">
         <Composer
           key={`composer-${thread.channel_id}-${thread.root_id}`}
           channelId={thread.channel_id}
