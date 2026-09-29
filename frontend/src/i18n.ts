@@ -35,6 +35,18 @@ const ru = {
   'sidebar.menu': 'Меню сервера',
   'sidebar.teams': 'Команды',
   'sidebar.loading': 'Загрузка…',
+  // "More unreads"/"More mentions" overflow pills (sidebar-unread-brief.md
+  // ruling 2): shown when a countable unread/mentioned channel is scrolled
+  // out of view above or below the list. moreUnreads/moreMentions is the
+  // pill's visible text (webapp wording: "More unreads"); the *Above/*Below
+  // aria-labels add the direction for screen-reader users, since both pills
+  // can be visible at once with the same visible text.
+  'sidebar.moreUnreads': 'Ещё непрочитанные',
+  'sidebar.moreMentions': 'Ещё упоминания',
+  'sidebar.moreUnreadsAbove': 'Ещё непрочитанные выше',
+  'sidebar.moreUnreadsBelow': 'Ещё непрочитанные ниже',
+  'sidebar.moreMentionsAbove': 'Ещё упоминания выше',
+  'sidebar.moreMentionsBelow': 'Ещё упоминания ниже',
   'cat.favorites': 'Избранное',
   'cat.channels': 'Каналы',
   'cat.dms': 'Личные сообщения',
@@ -270,6 +282,12 @@ const en: Record<Key, string> = {
   'sidebar.menu': 'Server menu',
   'sidebar.teams': 'Teams',
   'sidebar.loading': 'Loading…',
+  'sidebar.moreUnreads': 'More unreads',
+  'sidebar.moreMentions': 'More mentions',
+  'sidebar.moreUnreadsAbove': 'More unreads above',
+  'sidebar.moreUnreadsBelow': 'More unreads below',
+  'sidebar.moreMentionsAbove': 'More mentions above',
+  'sidebar.moreMentionsBelow': 'More mentions below',
   'cat.favorites': 'Favorites',
   'cat.channels': 'Channels',
   'cat.dms': 'Direct messages',

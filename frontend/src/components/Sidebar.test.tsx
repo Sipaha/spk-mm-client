@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { ServerDTO, SidebarDTO } from '../api/types'
@@ -247,4 +247,109 @@ test('DM rows show the partner picture with presence; bots have no dot; groups k
   expect(ci.querySelector('[data-status]')).toBeNull()
   // The group DM's type marker is IconGroup (an svg icon), not emoji text.
   expect(screen.getByRole('button', { name: /alice, bob, carol/ }).querySelector('svg')).not.toBeNull()
+})
+
+test('muted channels stay dim whether read or unread (ruling 1: muted is the only grey tier)', () => {
+  const withMutedUnread: SidebarDTO = {
+    ...sb,
+    categories: (sb.categories ?? []).map((c) =>
+      c.id === 'ch'
+        ? { ...c, channels: (c.channels ?? []).map((ch) => (ch.id === 'c-off' ? { ...ch, muted: true } : ch)) }
+        : c,
+    ),
+  }
+  renderSidebar({ sidebar: withMutedUnread })
+  const mutedUnread = screen.getByRole('button', { name: /Off-Topic/ })
+  // Still bold/full-brightness-token like any other unread row (rowTone
+  // does not know about `muted`) — the dimming comes only from opacity-50.
+  expect(mutedUnread).toHaveClass('font-semibold', 'text-sidebar-fg-unread', 'opacity-50')
+})
+
+// "More unreads"/"More mentions" overflow pills (sidebar-unread-brief.md
+// ruling 2). jsdom has no IntersectionObserver, so these tests install a
+// minimal fake that records observe() calls and lets the test fire
+// synthetic entries through the captured callback.
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = []
+  callback: IntersectionObserverCallback
+  observed: Element[] = []
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    FakeIntersectionObserver.instances.push(this)
+  }
+  observe(el: Element) {
+    this.observed.push(el)
+  }
+  unobserve(el: Element) {
+    this.observed = this.observed.filter((e) => e !== el)
+  }
+  disconnect() {
+    this.observed = []
+  }
+  fire(entries: Partial<IntersectionObserverEntry>[]) {
+    act(() => this.callback(entries as IntersectionObserverEntry[], this as unknown as IntersectionObserver))
+  }
+}
+
+const rootBounds = { top: 0, bottom: 300, left: 0, right: 200, width: 200, height: 300 } as DOMRectReadOnly
+const aboveRect = { top: -50, bottom: -10 } as DOMRectReadOnly
+const belowRect = { top: 320, bottom: 350 } as DOMRectReadOnly
+
+let realIO: typeof IntersectionObserver | undefined
+
+beforeEach(() => {
+  FakeIntersectionObserver.instances = []
+  realIO = globalThis.IntersectionObserver
+  globalThis.IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver
+})
+
+afterEach(() => {
+  globalThis.IntersectionObserver = realIO as typeof IntersectionObserver
+})
+
+test('overflow pills: hidden by default, only countable (unread-or-mention, non-muted-unless-mentioned) rows are observed', () => {
+  renderSidebar()
+  // aria-hidden="true" by default: computeAccessibleName treats a hidden
+  // element's name as empty (same as a screen reader would), so a name-based
+  // getByRole query can't find it at all — same pattern as Feed.tsx's
+  // "Jump to latest" button (Feed.test.tsx queries its hidden state via
+  // queryByRole(...).not.toBeInTheDocument(), never getByRole).
+  expect(screen.queryByRole('button', { name: /More (unreads|mentions) above/ })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /More (unreads|mentions) below/ })).not.toBeInTheDocument()
+
+  const observer = FakeIntersectionObserver.instances.at(-1)!
+  const offTopic = screen.getByRole('button', { name: /Off-Topic/ }) // unread, not muted → countable
+  const busy = screen.getByRole('button', { name: 'Busy' }) // unread, in a collapsed category, shown because unread → countable
+  const noise = screen.getByRole('button', { name: 'Noise' }) // muted, read, no mention → not countable
+  const townSquare = screen.getByRole('button', { name: 'Town Square' }) // read, active → not countable
+  expect(observer.observed).toContain(offTopic)
+  expect(observer.observed).toContain(busy)
+  expect(observer.observed).not.toContain(noise)
+  expect(observer.observed).not.toContain(townSquare)
+})
+
+test('overflow pills: a hidden-above unread channel with a mention shows the top pill in its "mentions" style; clicking scrolls it into view', async () => {
+  renderSidebar()
+  const observer = FakeIntersectionObserver.instances.at(-1)!
+  const offTopic = screen.getByRole('button', { name: /Off-Topic/ }) // mentions: 1
+  offTopic.scrollIntoView = vi.fn()
+  observer.fire([{ target: offTopic, isIntersecting: false, rootBounds, boundingClientRect: aboveRect }])
+
+  const top = screen.getByRole('button', { name: 'More mentions above' })
+  expect(top).toHaveAttribute('aria-hidden', 'false')
+  await userEvent.click(top)
+  expect(offTopic.scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
+})
+
+test('overflow pills: a hidden-below unread channel without a mention shows the bottom pill in its plain "unreads" style', () => {
+  renderSidebar()
+  const observer = FakeIntersectionObserver.instances.at(-1)!
+  const busy = screen.getByRole('button', { name: 'Busy' }) // mentions: 0
+  busy.scrollIntoView = vi.fn()
+  observer.fire([{ target: busy, isIntersecting: false, rootBounds, boundingClientRect: belowRect }])
+
+  const bottom = screen.getByRole('button', { name: 'More unreads below' })
+  expect(bottom).toHaveAttribute('aria-hidden', 'false')
+  fireEvent.click(bottom)
+  expect(busy.scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
 })

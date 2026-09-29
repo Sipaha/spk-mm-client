@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { CategoryView, ChannelItem, ServerDTO, SidebarDTO } from '../api/types'
 import { t } from '../i18n'
 import { Avatar, presenceLabel } from './Avatar'
-import { ChannelTypeMarker, IconChevronDown, IconChevronRight, IconMore } from './icons'
+import { ChannelTypeMarker, IconArrowDown, IconChevronDown, IconChevronRight, IconMore } from './icons'
 import { useMenuA11y } from './menuA11y'
+import { useUnreadOverflow } from './unreadOverflow'
 
 interface Props {
   server: ServerDTO
@@ -52,7 +53,28 @@ function rowTone(active: boolean, unread: boolean): string {
   return 'border-l-[3px] border-transparent pl-[9px] text-sidebar-fg'
 }
 
-function ChannelRow({ serverId, item, active, onClick }: { serverId: number; item: ChannelItem; active: boolean; onClick(): void }) {
+// isCountableUnread: which channels count towards the "More unreads"/"More
+// mentions" overflow pills (ruling 1's last bullet + ruling 2's detection
+// scope) — unread or mentioned, and not muted unless it has a mention. Read,
+// non-mentioned, non-muted, and muted-without-a-mention channels are never
+// observed at all (ruling 2: "Observers only on unread rows").
+function isCountableUnread(c: ChannelItem): boolean {
+  return (c.unread || c.mentions > 0) && (!c.muted || c.mentions > 0)
+}
+
+function ChannelRow({
+  serverId,
+  item,
+  active,
+  onClick,
+  rowRef,
+}: {
+  serverId: number
+  item: ChannelItem
+  active: boolean
+  onClick(): void
+  rowRef?: (el: HTMLButtonElement | null) => void
+}) {
   const tone = rowTone(active, item.unread)
   const person = item.type === 'D' && item.user_id
   const status = item.bot ? '' : (item.status ?? '')
@@ -64,6 +86,7 @@ function ChannelRow({ serverId, item, active, onClick }: { serverId: number; ite
       : undefined
   return (
     <button
+      ref={rowRef}
       aria-current={active}
       aria-label={label}
       onClick={onClick}
@@ -78,6 +101,32 @@ function ChannelRow({ serverId, item, active, onClick }: { serverId: number; ite
       )}
       <span className="truncate">{item.name}</span>
       {item.mentions > 0 && <MentionPill n={item.mentions} />}
+    </button>
+  )
+}
+
+// OverflowPill: the "More unreads"/"More mentions" indicator (sidebar-
+// unread-brief.md ruling 2). Absolutely positioned over the (non-scrolling)
+// wrapper around the channel list — never in the scrolling element itself,
+// so it stays put instead of scrolling away (same reason as Feed.tsx's
+// jump-to-latest button). Always rendered, toggled via aria-hidden/opacity
+// (fade ≤150ms, no layout shift) so it's a real, stable, labelled button —
+// not conditionally mounted — for a11y and for the click handler to keep
+// working through the fade-out.
+function OverflowPill({ pos, visible, mention, onClick }: { pos: 'top' | 'bottom'; visible: boolean; mention: boolean; onClick(): void }) {
+  const text = t(mention ? 'sidebar.moreMentions' : 'sidebar.moreUnreads')
+  const label = t(mention ? (pos === 'top' ? 'sidebar.moreMentionsAbove' : 'sidebar.moreMentionsBelow') : pos === 'top' ? 'sidebar.moreUnreadsAbove' : 'sidebar.moreUnreadsBelow')
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-hidden={!visible}
+      aria-label={label}
+      tabIndex={visible ? 0 : -1}
+      className={`absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold shadow-lg ring-1 ring-line transition-opacity duration-150 ${pos === 'top' ? 'top-2' : 'bottom-2'} ${mention ? 'bg-mention-bg text-mention-fg' : 'bg-panel text-fg'} ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+    >
+      <IconArrowDown size={12} className={pos === 'top' ? 'rotate-180' : ''} />
+      {text}
     </button>
   )
 }
@@ -154,6 +203,7 @@ function ServerMenu({
 export function Sidebar(p: Props) {
   const [menu, setMenu] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null)
   const menuAnchor = useRef<HTMLButtonElement>(null)
   const teams = p.sidebar?.teams ?? []
 
@@ -164,6 +214,19 @@ export function Sidebar(p: Props) {
   useEffect(() => {
     setMenu(false)
   }, [p.server.id, p.activeChannelId])
+
+  // categoriesView: the same per-category "shown" filtering the render loop
+  // below uses (collapsed categories still show their own unread rows),
+  // computed once so the overflow pills' countable-row list (ruling 2) can't
+  // drift from what's actually rendered.
+  const categoriesView = (p.sidebar?.categories ?? []).map((cat) => {
+    const isCollapsed = collapsed[cat.id] ?? cat.collapsed
+    const all = cat.channels ?? []
+    const shown = isCollapsed ? all.filter((c) => c.unread || c.id === p.activeChannelId) : all
+    return { cat, isCollapsed, shown }
+  })
+  const overflowRows = categoriesView.flatMap(({ shown }) => shown.filter(isCountableUnread).map((c) => ({ id: c.id, mentions: c.mentions })))
+  const overflow = useUnreadOverflow(scrollerEl, overflowRows)
 
   return (
     <aside
@@ -209,13 +272,14 @@ export function Sidebar(p: Props) {
           ))}
         </nav>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-        {!p.sidebar && <p className="px-3 py-2 text-fg-muted">{t('sidebar.loading')}</p>}
-        {(p.sidebar?.categories ?? []).map((cat) => {
-          const isCollapsed = collapsed[cat.id] ?? cat.collapsed
-          const all = cat.channels ?? []
-          const shown = isCollapsed ? all.filter((c) => c.unread || c.id === p.activeChannelId) : all
-          return (
+      {/* relative, non-scrolling wrapper: the overflow pills are its
+          absolutely positioned children so they float over the visible area
+          instead of scrolling away with the list inside (same reasoning as
+          Feed.tsx's jump-to-latest button, which hit exactly this bug). */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={setScrollerEl} className="h-full overflow-y-auto pb-4">
+          {!p.sidebar && <p className="px-3 py-2 text-fg-muted">{t('sidebar.loading')}</p>}
+          {categoriesView.map(({ cat, isCollapsed, shown }) => (
             <section key={cat.id} className="mt-3">
               <button
                 aria-expanded={!isCollapsed}
@@ -228,13 +292,21 @@ export function Sidebar(p: Props) {
               <ul>
                 {shown.map((c) => (
                   <li key={c.id}>
-                    <ChannelRow serverId={p.server.id} item={c} active={c.id === p.activeChannelId} onClick={() => p.onChannel(c.id)} />
+                    <ChannelRow
+                      serverId={p.server.id}
+                      item={c}
+                      active={c.id === p.activeChannelId}
+                      onClick={() => p.onChannel(c.id)}
+                      rowRef={isCountableUnread(c) ? overflow.rowRef(c.id) : undefined}
+                    />
                   </li>
                 ))}
               </ul>
             </section>
-          )
-        })}
+          ))}
+        </div>
+        <OverflowPill pos="top" visible={overflow.above} mention={overflow.aboveMentions} onClick={overflow.scrollToAbove} />
+        <OverflowPill pos="bottom" visible={overflow.below} mention={overflow.belowMentions} onClick={overflow.scrollToBelow} />
       </div>
     </aside>
   )

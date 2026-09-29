@@ -37,13 +37,19 @@
   --color-away: #f5a97f;
   --color-dnd: #ed8796;
 
-  /* Sidebar tones (Mattermost-style, theme brief scope 2): read channels
-     sit at ~68% of the sidebar fg colour over --color-sidebar (dimmer than
-     body text, but not as dim as the old text-fg-subtle); unread channels
-     are the full sidebar fg colour, bold; the active channel is a subtle
-     accent-tinted background plus a 3px accent left border, replacing the
-     old solid bg-blue-700 fill. */
-  --color-sidebar-fg: #939ab6;
+  /* Sidebar tones (Mattermost-style, theme brief scope 2; brightened per
+     sidebar-unread-brief.md ruling 1, 2026-09-29 user correction). The
+     original #939ab6 read tone (5.78:1 contrast) read as "grey and
+     washed out" once actually rendered — the official webapp barely dims
+     read rows at all relative to unread ones, it just leaves unread bold.
+     --color-sidebar-fg now matches --color-fg-muted's value (8.93:1,
+     "normal and readable", same tone used for the aside's own base text
+     colour) so read rows look like ordinary sidebar text; unread channels
+     stay the full, bold --color-sidebar-fg-unread (10.85:1) so they still
+     clearly pop, just by a slighter margin than before. Muted channels
+     (ChannelRow's opacity-50, independent of this token) are the actually
+     dim/grey tier now, whether read or unread. */
+  --color-sidebar-fg: #b8c0e0;
   --color-sidebar-fg-unread: #cad3f5;
   --color-sidebar-active-bg: #2f374f;
   --color-sidebar-active-border: #8aadf4;
