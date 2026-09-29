@@ -234,14 +234,19 @@ func (s *Server) overrideNameLocked(p model.Post) (string, bool) {
 
 // iconOverrideLocked is PostView.Icon: webapp post_profile_picture — a
 // webhook post (not a system one), not asking for the account's picture
-// (use_user_icon), on a server with EnablePostIconOverride. An emoji icon
-// wins: the server also rewrites override_icon_url to that emoji's
-// picture, which the UI draws itself. Without either: "webhook", the UI's
-// generic webhook icon (the webapp's DEFAULT_WEBHOOK_LOGO) — never the
-// account's picture, which would read as if its owner had written the post.
+// (use_user_icon). With EnablePostIconOverride an emoji icon wins (the
+// server also rewrites override_icon_url to that emoji's picture, which the
+// UI draws itself), then the URL. Otherwise: "webhook", the UI's generic
+// webhook icon (the webapp's DEFAULT_WEBHOOK_LOGO) — never the account's
+// picture, which would read as if its owner had written the post. On
+// purpose unlike the webapp, that holds with the overrides off too (the
+// webapp shows the owner's picture there).
 func (s *Server) iconOverrideLocked(p model.Post) string {
-	if !bool(p.Props.FromWebhook) || p.IsSystem() || bool(p.Props.UseUserIcon) || !s.cfg.PostIconOverride {
+	if !bool(p.Props.FromWebhook) || p.IsSystem() || bool(p.Props.UseUserIcon) {
 		return ""
+	}
+	if !s.cfg.PostIconOverride {
+		return "webhook"
 	}
 	if name := strings.Trim(p.Props.OverrideIconEmoji, ":"); emojiNameRe.MatchString(name) {
 		return ":" + name + ":"

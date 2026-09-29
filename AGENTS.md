@@ -127,13 +127,14 @@
   `EnablePostUsernameOverride` и `from_webhook` (и в уведомлениях: `NotifyCandidate.SenderName` —
   `authorLocked`); такой пост всегда BOT и никогда не группируется с соседями. Аватар владельца
   webhook-пост **не показывает** (выглядело бы, будто написал владелец; webapp —
-  `DEFAULT_WEBHOOK_LOGO`): без своей иконки (`from_webhook`, не `use_user_icon`, при
-  `EnablePostIconOverride`) — `PostView.Icon == "webhook"`, в UI общая иконка webhook (`IconWebhook` на
+  `DEFAULT_WEBHOOK_LOGO`): без своей иконки (`from_webhook`, не `use_user_icon`) — `PostView.Icon == "webhook"`, в UI общая иконка webhook (`IconWebhook` на
   круглом фоне темы, `PostAvatar`); она же — пока своя картинка не загрузилась (у нового поста новый
   URL, первая загрузка с внешнего хоста или отказ — секунды пустого круга) и при отказе. Картинка, уже
-  лежащая в кэше WebView (`complete` при монтировании), показывается сразу, без подмены. Бот-аккаунт
-  без `from_webhook`, `use_user_icon` и сервер с выключенным `EnablePostIconOverride` — аватар аккаунта,
-  как в webapp. —
+  лежащая в кэше WebView (`complete` при монтировании), показывается сразу, без подмены. При выключенном
+  `EnablePostIconOverride` своя иконка/эмодзи игнорируются, но пост тоже получает общую иконку webhook —
+  **намеренное отличие от webapp** (там аватар владельца; решение пользователя: аватар автора сбивает с
+  толку). Аватар аккаунта остаётся только у бот-аккаунта без `from_webhook` и при `use_user_icon`
+  (интеграция сама его попросила). —
   `TestPostIconIsKeyedByPostID`, `TestRouteIcon`, `TestIconRedirectPolicy`,
   `TestPostIconServerRedirectsNeverCarryTheToken`, `TestPostIconServerRedirectToPlainHTTPIsRefused`,
   `TestPostIconUnauthorizedIsRememberedNotSignIn`, `TestPostIconExternalSendsNoCredentials`,

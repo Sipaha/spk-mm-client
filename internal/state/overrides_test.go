@@ -77,8 +77,12 @@ func TestPostViewWebhookOverridesOffInConfig(t *testing.T) {
 	gl := v.Posts[0]
 	assert.Equal(t, "bob", gl.Author, "EnablePostUsernameOverride=false: the account's name")
 	assert.Empty(t, gl.RealAuthor)
-	assert.Empty(t, gl.Icon, "EnablePostIconOverride=false: the account's picture")
-	assert.Empty(t, v.Posts[1].Icon)
+	// Deliberately unlike the webapp (which shows the owner's picture here):
+	// the owner's avatar would read as if the owner had written the post.
+	assert.Equal(t, "webhook", gl.Icon, "EnablePostIconOverride=false: its URL is ignored, the generic webhook icon")
+	assert.Equal(t, "webhook", v.Posts[1].Icon, "EnablePostIconOverride=false: its emoji is ignored too")
+	assert.Empty(t, v.Posts[2].Icon, "use_user_icon: the integration asked for the account's picture")
+	assert.Empty(t, v.Posts[3].Icon, "not from a webhook")
 	assert.True(t, gl.Bot, "still a webhook post")
 	_, ok = s.PostIconURL("w1")
 	assert.False(t, ok, "no icon override allowed: nothing to fetch")
@@ -87,9 +91,9 @@ func TestPostViewWebhookOverridesOffInConfig(t *testing.T) {
 // A webhook post without an icon of its own shows the generic webhook icon
 // ("webhook"), never the account's picture: it would look as if the owner
 // had written it (webapp post_profile_picture: DEFAULT_WEBHOOK_LOGO for
-// from_webhook without use_user_icon, with EnablePostIconOverride). A bot
-// account's own post, use_user_icon and a server with overrides off keep the
-// account's picture, as there.
+// from_webhook without use_user_icon, with EnablePostIconOverride; unlike
+// the webapp, with it off too). A bot account's own post and use_user_icon
+// keep the account's picture.
 func TestPostViewWebhookWithoutAnIconShowsTheGenericOne(t *testing.T) {
 	bare := mkPost("h1", "off", "u2", 1000)
 	bare.Props = model.PostProps{FromWebhook: true, OverrideUsername: "CI"}
@@ -118,7 +122,7 @@ func TestPostViewWebhookWithoutAnIconShowsTheGenericOne(t *testing.T) {
 	off.SetWindow("off", []model.Post{bare}, true, 1, 0)
 	v, ok = off.ChannelView("off")
 	require.True(t, ok)
-	assert.Empty(t, v.Posts[0].Icon, "EnablePostIconOverride=false: the account's picture, as in the webapp")
+	assert.Equal(t, "webhook", v.Posts[0].Icon, "EnablePostIconOverride=false: still the generic icon (unlike the webapp)")
 }
 
 func TestConfigCarriesPostOverrideFlags(t *testing.T) {
