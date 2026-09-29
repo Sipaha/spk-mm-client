@@ -78,8 +78,13 @@ test('zoom in/out change the percentage; Fit width returns to the original scale
   await channel(page, /Off-Topic/).click()
   await feed(page).getByRole('button', { name: 'View manual.pdf' }).click()
   const v = viewer(page)
+  // Wait for the real document first: before it loads, PdfView's toolbar
+  // shows the placeholder zoom state (100%, its initial `zoom` default,
+  // scaleFor() falls through to it while naturalSizes/base are still
+  // empty) — capturing that instead of the settled fit-width scale would
+  // race every click below against the async pdf.js load completing.
+  await expect(v.getByText(/^\d+ \/ 50$/)).toHaveText('1 / 50')
   const percent = v.getByText(/^\d+%$/)
-  await expect(percent).toBeVisible()
   const fitPercent = await percent.textContent()
 
   await v.getByRole('button', { name: 'Zoom in' }).click()
@@ -101,7 +106,11 @@ test('the PDF text layer is really selectable, not just decorative', async ({ pa
   await channel(page, /Off-Topic/).click()
   await feed(page).getByRole('button', { name: 'View manual.pdf' }).click()
   const v = viewer(page)
-  const heading = v.locator('.pdf-text-layer span', { hasText: 'spk-mm-client manual' })
+  // Page 2 (the seeded landscape page) is also within the KEEP=1 render
+  // window from the moment page 1 is current, and its own heading text
+  // ("… (landscape page)") contains this same substring — scope to page
+  // 1's own placeholder/canvas host so the locator resolves to one span.
+  const heading = v.locator('[data-page="1"] .pdf-text-layer span', { hasText: 'spk-mm-client manual' })
   await expect(heading).toBeVisible({ timeout: 15_000 })
 
   const box = (await heading.boundingBox())!
