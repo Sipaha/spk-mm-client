@@ -19,6 +19,8 @@ function renderSplitter(over: Partial<Parameters<typeof Splitter>[0]> = {}) {
 
 beforeEach(() => {
   document.documentElement.style.removeProperty(CSS_VAR)
+  document.documentElement.style.removeProperty('user-select')
+  window.getSelection()?.removeAllRanges()
   // Run rAF callbacks synchronously so a pointermove's live update is
   // observable without a real frame tick.
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
@@ -113,6 +115,70 @@ test('a non-primary pointer button does not start a drag', () => {
   expect(onCommit).not.toHaveBeenCalled()
 })
 
+test('a drag disables text selection document-wide and restores it on pointerup (coordinator report 2026-09-29)', () => {
+  renderSplitter()
+  const sep = screen.getByRole('separator')
+  expect(document.documentElement.style.userSelect).toBe('')
+
+  fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1 })
+  expect(document.documentElement.style.userSelect).toBe('none')
+
+  fireEvent.pointerMove(sep, { clientX: 540, pointerId: 1 })
+  expect(document.documentElement.style.userSelect).toBe('none') // still disabled mid-drag
+
+  fireEvent.pointerUp(sep, { clientX: 560, pointerId: 1 })
+  expect(document.documentElement.style.userSelect).toBe('')
+})
+
+test('a drag that started a text selection anyway clears it on pointerup', () => {
+  renderSplitter()
+  const sep = screen.getByRole('separator')
+  const text = document.createElement('p')
+  text.textContent = 'some feed message text'
+  document.body.appendChild(text)
+
+  fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1 })
+  // A drag can still leave a stray selection behind even with user-select:
+  // none applied after the fact (e.g. a selection that started a frame
+  // earlier) -- the drag must clear it regardless, not just prevent new ones.
+  const range = document.createRange()
+  range.selectNodeContents(text)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  expect(window.getSelection()!.toString()).not.toBe('')
+
+  fireEvent.pointerMove(sep, { clientX: 540, pointerId: 1 })
+  fireEvent.pointerUp(sep, { clientX: 560, pointerId: 1 })
+
+  expect(window.getSelection()!.toString()).toBe('')
+  text.remove()
+})
+
+test('pointerdown on the separator prevents the default action (so a drag never starts a text selection in the first place)', () => {
+  renderSplitter()
+  const sep = screen.getByRole('separator')
+  // dispatchEvent (which fireEvent wraps) returns false when the event was
+  // canceled via preventDefault — a listener added directly on `sep` would
+  // run in the DOM's target phase, before React's own handler further up
+  // the tree even fires, so it can't observe the eventual defaultPrevented
+  // flag; the dispatch's own return value can.
+  const notCanceled = fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1, cancelable: true })
+  expect(notCanceled).toBe(false)
+})
+
+test('a drag still focuses the separator, same as a plain click would (preventDefault on pointerdown would otherwise silently suppress it)', () => {
+  renderSplitter()
+  const sep = screen.getByRole('separator')
+  expect(document.activeElement).not.toBe(sep)
+
+  fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1 })
+  expect(document.activeElement).toBe(sep)
+
+  fireEvent.pointerMove(sep, { clientX: 540, pointerId: 1 })
+  fireEvent.pointerUp(sep, { clientX: 560, pointerId: 1 })
+  expect(document.activeElement).toBe(sep) // still focused once the drag ends
+})
+
 test('a pending rAF frame from an in-progress drag is canceled on unmount (review follow-up)', () => {
   // Override the module-wide synchronous rAF mock: this test needs the frame
   // to stay pending (never auto-invoked) so there's still something to cancel.
@@ -127,4 +193,15 @@ test('a pending rAF frame from an in-progress drag is canceled on unmount (revie
   unmount()
 
   expect(cancelSpy).toHaveBeenCalledWith(42)
+})
+
+test('unmounting mid-drag restores text selection too, not just the rAF frame', () => {
+  const { unmount } = renderSplitter()
+  const sep = screen.getByRole('separator')
+  fireEvent.pointerDown(sep, { clientX: 500, button: 0, pointerId: 1 })
+  expect(document.documentElement.style.userSelect).toBe('none')
+
+  unmount()
+
+  expect(document.documentElement.style.userSelect).toBe('')
 })

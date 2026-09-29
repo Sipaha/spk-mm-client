@@ -51,17 +51,64 @@ export function Splitter({ value, min, max, defaultValue, sign, cssVar, label, o
     pending.current = null
   }
 
+  // prevUserSelect: document.documentElement's user-select before the drag
+  // started, restored on pointerup/cancel/unmount instead of just clearing
+  // it outright — in case something outside this component ever sets its
+  // own value there too.
+  const prevUserSelect = useRef<string | null>(null)
+
+  // disableSelection/restoreSelection: pointer capture only affects which
+  // element pointer *events* target, not the browser's own text-selection
+  // behaviour, which tracks the cursor over whatever it's really over — a
+  // drag that crosses the feed was selecting its messages (coordinator
+  // report 2026-09-29, seen in the fix's own after-screenshot). Applying
+  // user-select:none document-wide for the duration of the drag is the
+  // standard fix for exactly this class of bug in resizable-pane widgets.
+  const disableSelection = () => {
+    prevUserSelect.current = document.documentElement.style.userSelect
+    document.documentElement.style.userSelect = 'none'
+  }
+  const restoreSelection = () => {
+    if (prevUserSelect.current != null) {
+      document.documentElement.style.userSelect = prevUserSelect.current
+      prevUserSelect.current = null
+    }
+    // preventDefault on pointerdown (below) stops a *new* selection from
+    // starting, but a selection already in progress from an earlier event
+    // is cleared explicitly — belt and braces, and it's what the
+    // coordinator asked to verify.
+    window.getSelection()?.removeAllRanges()
+  }
+
   // Unmounting mid-drag (e.g. the thread panel closes, or the server/channel
   // switches under it) must not leave a scheduled frame behind — it would
   // fire after this Splitter instance is gone and write a stale width into
   // the (still-live, document-level) CSS var, with no pointerup left to
-  // correct it (review follow-up 2026-09-29).
-  useEffect(() => cancelFrame, [])
+  // correct it (review follow-up 2026-09-29) — nor leave user-select:none
+  // stuck on the whole document with no pointerup left to lift it.
+  useEffect(
+    () => () => {
+      cancelFrame()
+      if (drag.current) restoreSelection()
+    },
+    [],
+  )
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
+    // Stops the browser from starting its own text selection right from
+    // this event, on top of the document-wide user-select:none below (which
+    // covers the rest of the drag, since preventDefault here only concerns
+    // this one event). Side effect: preventDefault on pointerdown also
+    // suppresses the implicit mousedown focus a click would otherwise give
+    // this (tabIndex=0) element, so it's restored explicitly right after —
+    // a drag must keep the usual keyboard-focus behaviour (arrow-key nudges
+    // right after releasing the pointer, same as before this fix).
+    e.preventDefault()
+    e.currentTarget.focus()
     drag.current = { startX: e.clientX, startWidth: valueRef.current }
     setDragging(true)
+    disableSelection()
     try {
       e.currentTarget.setPointerCapture(e.pointerId)
     } catch {
@@ -81,6 +128,7 @@ export function Splitter({ value, min, max, defaultValue, sign, cssVar, label, o
     drag.current = null
     setDragging(false)
     cancelFrame()
+    restoreSelection()
     setLive(w)
     onCommit(w)
     try {
