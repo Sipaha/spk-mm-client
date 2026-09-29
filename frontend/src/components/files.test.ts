@@ -1,7 +1,24 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import type { FileView } from '../api/types'
 import { fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
 
 const F = (o: Partial<FileView>): FileView => ({ id: 'f', name: 'x', size: 100, mime: '', ...o })
+
+// M8 (final review): PDF_MAX and Go's PDFMax agreed only by comment, with
+// nothing tying them together — reads internal/media/media.go's own source
+// (the cheapest way to cross-check two constants across languages without a
+// shared file/generator) and fails if either side's expression changes
+// without the other. process.cwd() is `frontend/` — vitest is always run
+// from there (`pnpm test`, `make test-front`).
+test('PDF_MAX matches internal/media.PDFMax exactly, not just by comment (M8)', () => {
+  const goPath = path.resolve(process.cwd(), '..', 'internal/media/media.go')
+  const goSrc = readFileSync(goPath, 'utf8')
+  const m = goSrc.match(/\bPDFMax\s*=\s*(\d+)\s*<<\s*(\d+)/)
+  expect(m).not.toBeNull()
+  const goValue = Number(m![1]) << Number(m![2])
+  expect(PDF_MAX).toBe(goValue)
+})
 
 test('what kind of preview a file gets', () => {
   expect(fileKind(F({ name: 'a.png', ext: 'png', mime: 'image/png', has_preview: true }))).toBe('image')
