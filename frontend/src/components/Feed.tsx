@@ -53,7 +53,14 @@ function attachmentEstimate(a: Attachment): number {
   if (a.author_name) h += 16
   if (a.title) h += 20
   if (a.text) h += 20 * a.text.split('\n').length
-  if (a.fields && a.fields.length > 0) h += 18 + 18 * a.fields.length // "caption" line + ~1 line/field (short fields pack 2/row — an over-estimate there, evening out the under-estimate on multi-line values)
+  if (a.fields && a.fields.length > 0) {
+    // Each field renders a title line + a value line (~40px together,
+    // review's own measurement) as one grid row; a full-width field
+    // (short: false) takes a row to itself, short fields pack two per row.
+    const fullWidth = a.fields.filter((f) => !f.short).length
+    const shortCount = a.fields.length - fullWidth
+    h += fullWidth * 40 + Math.ceil(shortCount / 2) * 40
+  }
   if (a.footer) h += 18
   return h
 }

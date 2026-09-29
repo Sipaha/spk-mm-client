@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { vi } from 'vitest'
-import type { Attachment, ChannelDTO, PostView } from '../api/types'
+import type { Attachment, AttachmentField, ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
 import type { Row } from './feedRows'
 import { anchorNudge, CARD_CHROME, estimate, Feed, pickAnchor } from './Feed'
@@ -136,11 +136,29 @@ test('estimate: one attachment adds its card chrome plus a per-field/line term',
     color: '#00c100',
     title: 'sample-app - build completed - 006',
     text: 'Branch: **master**\nVersion: **1.1.2**', // 2 lines
-    fields: [{ title: 'Changes', value: '- one\n- two', short: false }],
+    fields: [{ title: 'Changes', value: '- one\n- two', short: false }], // 1 full-width field row
     footer: 'build #006',
   }
-  // 36 (chrome) + 20 (title) + 40 (2 text lines * 20) + 36 (18 caption + 18*1 field) + 18 (footer) = 150
-  expect(estimate(postRow(post({ attachments: [jenkinsStyle] })))).toBe(64 + 36 + 20 + 40 + 36 + 18)
+  // 36 (chrome) + 20 (title) + 40 (2 text lines * 20) + 40 (1 full-width field row) + 18 (footer) = 154
+  expect(estimate(postRow(post({ attachments: [jenkinsStyle] })))).toBe(64 + 36 + 20 + 40 + 40 + 18)
+})
+
+test('estimate: fields — a full-width field costs its own row, short fields pack two per row (re-review of fix round 1, Minor 2)', () => {
+  const short = (n: string): AttachmentField => ({ title: n, value: n, short: true })
+  const fullWidth = (n: string): AttachmentField => ({ title: n, value: n, short: false })
+
+  // 3 short fields → ceil(3/2) = 2 rows of 40px.
+  const threeShort: Attachment = { fields: [short('a'), short('b'), short('c')] }
+  expect(estimate(postRow(post({ attachments: [threeShort] })))).toBe(64 + CARD_CHROME + 2 * 40)
+
+  // 5 full-width fields → 5 rows of 40px each (the re-review's own worst case
+  // for the old formula, which under-counted this by 114px).
+  const fiveFullWidth: Attachment = { fields: [1, 2, 3, 4, 5].map((n) => fullWidth(String(n))) }
+  expect(estimate(postRow(post({ attachments: [fiveFullWidth] })))).toBe(64 + CARD_CHROME + 5 * 40)
+
+  // A mix: 1 full-width row + 2 short fields packed into 1 row.
+  const mixed: Attachment = { fields: [fullWidth('x'), short('a'), short('b')] }
+  expect(estimate(postRow(post({ attachments: [mixed] })))).toBe(64 + CARD_CHROME + 40 + 40)
 })
 
 test('estimate: several attachments on one post sum their individual estimates', () => {

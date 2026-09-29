@@ -216,15 +216,24 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           {t('thread.rootDeleted')}
         </div>
       )}
-      {/* pt-3 (12px): feed↔composer gap — unlike ChannelPane's pt-2 (an
-          approximation, see its comment), this one has a real official
-          number: advanced_text_editor.scss:36-37's
-          `.sidebar--right & { padding-top: 12px; }` is exactly this app's
-          docked ThreadPane (the RHS panel), not `.ThreadViewer` (padding-top
-          0 there — the full-page thread view, a different layout this app
-          doesn't have) (density-review 2026-09-29, Minor 1). Kept in the
-          pane wrapper rather than Composer.tsx, per ChannelPane.tsx's note. */}
-      <div className="pt-3">
+      {/* pt-2 (8px): feed↔composer gap, same value as ChannelPane's — see
+          its comment for the full reasoning. Correction (density-review
+          2026-09-29, re-review of fix round 1): a prior version of this
+          comment claimed `.sidebar--right & { padding-top: 12px }`
+          (advanced_text_editor.scss) was the real official number for this
+          panel. Wrong — in mm-10.11 the docked RHS thread *is*
+          `ThreadViewer` (rhs_thread.tsx renders <ThreadViewer>, which sets
+          className="ThreadViewer" on its own root), so `.ThreadViewer
+          .AdvancedTextEditor { padding-top: 0 }` also matches there and,
+          same specificity, wins by source order — the official RHS
+          composer's padding-top is 0, same as the main channel. Its visible
+          gap instead comes from `.ThreadViewer .post-list__dynamic--RHS {
+          padding-bottom: 8px }`, i.e. the *feed's own* bottom padding — our
+          Feed scroller's `pb-2` already provides exactly that. This pt-2 is
+          therefore the same approximation as ChannelPane's, not a distinct
+          "real" number — kept equal to it for consistency. Kept in the pane
+          wrapper rather than Composer.tsx, per ChannelPane.tsx's note. */}
+      <div className="pt-2">
         <Composer
           key={`composer-${thread.channel_id}-${thread.root_id}`}
           channelId={thread.channel_id}
