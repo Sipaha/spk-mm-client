@@ -473,3 +473,18 @@
   and `@`-mention autocomplete in the textarea — the latter still needs the
   user's explicit approval before any implementer picks it up (not just an
   ordinary backlog item).
+- Композер (78daeed/d75b14a), найдено при фиксе bottom-stick (раунд 1, 2026-09-29):
+  (1) «~40% высоты панели» для `textarea` меряется от **собственного корня композера**
+  (`boxRef.current.parentElement` — это обёртка `border-t … px-3 py-2`, а не колонка панели), так что
+  потолок растёт вместе с композером и на деле ≈ 3–4 строки (смоук WebKitGTK: лента 665→613 px и
+  дальше не меняется); правильная цель — `parentElement.parentElement`, но `tests/e2e/composer.spec.ts`
+  («auto-grows … past its cap») подогнан под нынешний потолок (8 строк уже «упираются») и упадёт.
+  (2) При наборе в композере Chromium изредка (1 из 12 … 3 из 5 прогонов «away» в
+  `stick-bottom.spec.ts`) сообщает «ResizeObserver loop completed with undelivered notifications»:
+  бисекция отключением наблюдателей — без наблюдателя «влезания» панели форматирования (`toolbarRef`)
+  или без наблюдателя прямоугольника скроллера у виртуализатора — 0 из 16, без наблюдателя
+  bottom-stick — всё ещё 4 из 16. В смоуке WebKitGTK ошибок в консоли нет. (3) `threads.spec.ts`
+  «a long thread … without gaps» падает с 78daeed (на 517287a проходит, на 78daeed и с откатом
+  bottom-stick — нет): при приземлении страницы истории якорь восстанавливается в `scrollTo(12)`/`0`
+  вместо позиции якоря, середина треда пропускается (видно 77 из 150 ответов).
+
