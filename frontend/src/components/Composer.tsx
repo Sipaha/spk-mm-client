@@ -389,16 +389,24 @@ export function Composer({
           className="w-full resize-none overflow-y-auto rounded-t-lg bg-transparent px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none disabled:opacity-50"
         />
         <div role="toolbar" aria-label={t('composer.formatToolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
-          {!formattingBarHidden &&
-            FORMAT_BUTTONS.map(({ mode, label, Icon, groupBreak }) => (
-              <span key={mode} className="flex items-center gap-0.5">
-                {groupBreak && <span aria-hidden className="mx-1 h-4 w-px bg-line" />}
-                <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled}>
-                  <Icon size={18} />
-                </ToolbarButton>
-              </span>
-            ))}
-          <div className="ml-auto flex items-center gap-0.5">
+          {/* min-w-0 + overflow-x-auto: the thread panel (as narrow as 320px)
+              cannot fit all 9 formatting buttons plus the right-hand group —
+              this group scrolls instead of clipping/pushing the send button
+              out of the box (shrink-0 below keeps that group always fully
+              visible). */}
+          {!formattingBarHidden && (
+            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+              {FORMAT_BUTTONS.map(({ mode, label, Icon, groupBreak }) => (
+                <span key={mode} className="flex shrink-0 items-center gap-0.5">
+                  {groupBreak && <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-line" />}
+                  <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled}>
+                    <Icon size={18} />
+                  </ToolbarButton>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <ToolbarButton
               label={formattingBarHidden ? t('composer.formatShow') : t('composer.formatHide')}
               pressed={!formattingBarHidden}
