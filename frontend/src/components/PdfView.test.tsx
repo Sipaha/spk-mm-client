@@ -406,3 +406,64 @@ test('page boxes have no box-shadow or filter (WebKitGTK repaints them on every 
     expect(b.style.filter).toBe('')
   }
 })
+
+// Review M2 (pdf-lag fix): a resize that leaves the scale alone — the
+// default zoom capped at 175% on a wide pane — must not move the scroll
+// position (it used to jump to the top of the current page).
+test('default zoom: resizing a wide pane (scale unchanged) keeps the scroll position', async () => {
+  stubClientWidth = 548
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  await screen.findByText('175%')
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  // Page 3 starts at 2 * (175 + 12) = 374; 26 px into it.
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 400 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await screen.findByText('3 / 5')
+  scrollToSpy.mockClear()
+
+  stubClientWidth = 748 // the window was maximised: still capped at 175%
+  await act(async () => {
+    roCallback?.()
+  })
+  expect(screen.getByText('175%')).toBeInTheDocument()
+  expect(scrollToSpy).not.toHaveBeenCalled()
+})
+
+test('a resize that does rescale keeps the same place within the current page, not just the page top', async () => {
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  fireEvent.click(screen.getByRole('button', { name: 'Fit width' })) // 100%: 100 px pages
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  // Page 3 starts at 2 * (100 + 12) = 224; half-way into it.
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 274 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  await screen.findByText('3 / 5')
+  scrollToSpy.mockClear()
+
+  stubClientWidth = 248 // fit: 200%, 200 px pages; page 3 at 2 * 212 = 424
+  await act(async () => {
+    roCallback?.()
+  })
+  await screen.findByText('200%')
+  expect(scrollToSpy).toHaveBeenCalledWith({ top: 524 }) // 424 + 0.5 * 200
+})
+
+// Review M3: "Fit width" is an aria-pressed toggle — pressed again, it goes
+// back to the default zoom (Ctrl+0 alone was undiscoverable).
+test('Fit width pressed again returns to the default zoom', async () => {
+  stubClientWidth = 348
+  render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('175%')
+  const fitButton = screen.getByRole('button', { name: 'Fit width' })
+  fireEvent.click(fitButton)
+  expect(await screen.findByText('300%')).toBeInTheDocument()
+  expect(fitButton).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(fitButton)
+  expect(await screen.findByText('175%')).toBeInTheDocument()
+  expect(fitButton).toHaveAttribute('aria-pressed', 'false')
+})

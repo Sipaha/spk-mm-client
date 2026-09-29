@@ -99,6 +99,9 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   // (already zeroed) when their page scrolls out of the visible window, and
   // are handed back out before a new one is ever created.
   const pool = useRef<HTMLCanvasElement[]>([])
+  // The scroll anchor's reading position (page + fraction of it scrolled
+  // past) — see the scroll-anchor effect below.
+  const anchor = useRef({ page: 1, frac: 0 })
   const onFailRef = useRef(onFail)
   onFailRef.current = onFail
 
@@ -238,7 +241,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   useEffect(() => {
     const el = scroller.current
     if (!el || !n) return
-    const update = () => {
+    const update = (e?: Event) => {
       const top = el.scrollTop
       const bottom = top + el.clientHeight
       let first = 1
@@ -246,6 +249,13 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       let last = first
       for (let i = 1; i <= n; i++) if (layout.offsets[i] <= bottom) last = i
       setCurrent(first)
+      // The reading position within the page, for the scroll anchor below.
+      // Only from real scroll events: on a layout change this effect's own
+      // first call pairs the *new* layout with the *old* scrollTop.
+      if (e) {
+        const h = layout.heights[first] || 1
+        anchor.current = { page: first, frac: Math.min(1, Math.max(0, (top - layout.offsets[first]) / h)) }
+      }
       const s = new Set<number>()
       for (let i = Math.max(1, first - KEEP); i <= Math.min(n, last + KEEP); i++) s.add(i)
       setVisible((old) => (old.size === s.size && [...s].every((i) => old.has(i)) ? old : s))
@@ -278,16 +288,23 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
 
   // Scroll anchor (fix round 2): whenever the scale actually on screen
   // changes — zoom mode switched, manual zoom changed, or the pane resized (which
-  // re-fits every page) — keep the same page under the top of the
-  // scroller, rather than leaving scrollTop at its old pixel value (which
-  // would land on a different page once every page's height has changed).
-  // Skipped on mount (prevAnchorKey starts null): nothing to anchor to yet.
+  // re-fits every page) — keep the same place of the same page under the
+  // top of the scroller (the page plus the fraction of it scrolled past,
+  // from the last scroll event), rather than leaving scrollTop at its old
+  // pixel value (which would land on a different page once every page's
+  // height has changed). Only when that place actually moved (review M2 of
+  // the pdf-lag fix): a resize that leaves the scale alone — the default
+  // zoom capped at 175% on a wide pane — must not touch scrollTop at all
+  // (it used to jump to the page's top). Skipped on mount (prevAnchorKey
+  // starts null): nothing to anchor to yet.
   const prevAnchorKey = useRef<string | null>(null)
   useEffect(() => {
     const key = `${mode}|${zoom}|${width}`
     const el = scroller.current
     if (el && n && prevAnchorKey.current !== null && prevAnchorKey.current !== key) {
-      el.scrollTo({ top: layout.offsets[current] ?? 0 })
+      const { page, frac } = anchor.current
+      const top = Math.round((layout.offsets[page] ?? 0) + frac * (layout.heights[page] ?? 0))
+      if (Math.abs(top - el.scrollTop) > 1) el.scrollTo({ top })
     }
     prevAnchorKey.current = key
   }, [mode, zoom, width])
@@ -352,7 +369,8 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
         <button type="button" aria-label={t('pdf.zoomIn')} className={btn} onClick={() => zoomBy(ZOOM_STEP)}>
           +
         </button>
-        <button type="button" aria-pressed={mode === 'fit'} className={btn} onClick={() => setMode('fit')}>
+        {/* A toggle (review M3): pressed again, it returns to the default zoom. */}
+        <button type="button" aria-pressed={mode === 'fit'} className={btn} onClick={() => setMode((m) => (m === 'fit' ? 'auto' : 'fit'))}>
           {t('pdf.fitWidth')}
         </button>
       </div>
