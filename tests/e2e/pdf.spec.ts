@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { channel, feed, removeServerFromMenu, serverId, signInAlice, testPost } from './helpers'
+import { channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost } from './helpers'
 
 // A failed test must not leave its server behind (chat.spec.ts rule); every
 // test below also closes the viewer (Escape) before it ends, so the modal
@@ -148,10 +148,20 @@ test('Download in the viewer header still downloads the file', async ({ page }) 
   const v = viewer(page)
   await expect(v.getByText(/^\d+ \/ 50$/)).toBeVisible()
 
+  // Download feedback is on the button itself, not a banner above the feed
+  // (commit 517287a): a ring while saving, then a "Show in folder" button
+  // next to it that stays for the session. The viewer header's DownloadButton
+  // is the `text` variant, so its reveal button is the plain "Show in
+  // folder" (no filename) — the icon variant elsewhere (e.g. the feed card)
+  // uses "Show <name> in folder" instead.
   await v.getByRole('button', { name: 'Download', exact: true }).click()
-  const savedNotice = page.getByText(/Saved to .*manual\.pdf/)
-  await expect(savedNotice).toBeVisible()
-  const savedPath = (await savedNotice.textContent())!.replace(/^Saved to /, '')
+  const reveal = v.getByRole('button', { name: 'Show in folder', exact: true })
+  await expect(reveal).toBeVisible()
+  await reveal.click()
+  let savedPath = ''
+  await expect
+    .poll(async () => (savedPath = ((await testGet(page, 'revealed-files')) as string[]).find((p) => p.endsWith('manual.pdf')) ?? ''))
+    .not.toBe('')
   expect(existsSync(savedPath), `downloaded file missing on disk: ${savedPath}`).toBe(true)
 
   await page.keyboard.press('Escape')
