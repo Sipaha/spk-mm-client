@@ -35,8 +35,11 @@ function categoryName(c: CategoryView): string {
 }
 
 function MentionPill({ n }: { n: number }) {
+  // text-[11px] (Addendum 2, metrics parity): the official webapp's
+  // #SidebarContainer .badge is 11px (sass/components/_badge.scss);
+  // shape/colour stay ours (rounded-full + danger, an earlier decision).
   return (
-    <span aria-label={t('rail.mentions', { n: String(n) })} className="ml-auto rounded-full bg-danger px-1.5 text-[10px] font-bold leading-4 text-danger-fg">
+    <span aria-label={t('rail.mentions', { n: String(n) })} className="ml-auto rounded-full bg-danger px-1.5 text-[11px] font-bold leading-4 text-danger-fg">
       {n > 99 ? '99+' : n}
     </span>
   )
@@ -47,10 +50,14 @@ function MentionPill({ n }: { n: number }) {
 // unread; the active channel gets a 3px accent left border plus a tinted
 // background instead of a solid fill — border-transparent on the other two
 // tones keeps the same 3px reserved so switching tones never shifts layout.
+// pl-[16px] (+ the 3px border) totals 19px, the official webapp's
+// `.SidebarChannel .SidebarLink` padding-left (sidebar-unread-brief.md
+// Addendum 2 — metrics parity; source: webapp 10.11
+// sass/layout/_sidebar-left.scss).
 function rowTone(active: boolean, unread: boolean): string {
-  if (active) return 'border-l-[3px] border-sidebar-active-border bg-sidebar-active-bg pl-[9px] text-sidebar-fg-unread'
-  if (unread) return 'border-l-[3px] border-transparent pl-[9px] font-semibold text-sidebar-fg-unread'
-  return 'border-l-[3px] border-transparent pl-[9px] text-sidebar-fg'
+  if (active) return 'border-l-[3px] border-sidebar-active-border bg-sidebar-active-bg pl-[16px] text-sidebar-fg-unread'
+  if (unread) return 'border-l-[3px] border-transparent pl-[16px] font-semibold text-sidebar-fg-unread'
+  return 'border-l-[3px] border-transparent pl-[16px] text-sidebar-fg'
 }
 
 // isCountableUnread: which channels count towards the "More unreads"/"More
@@ -90,13 +97,19 @@ function ChannelRow({
       aria-current={active}
       aria-label={label}
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded py-1 pr-3 text-left hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tone} ${item.muted ? 'opacity-50' : ''}`}
+      // gap-1.5/py-1.5/pr-4 (Addendum 2, metrics parity): 6px icon↔text gap,
+      // 32px row height (py-1.5's 6px top+bottom around the 20px avatar/
+      // text-sm line-height), 16px right padding — the official webapp's
+      // numbers (icon margin 0 6px 0 -2px, `.SidebarChannel .SidebarLink`
+      // height:32px/padding:7px 16px 7px 19px — the left 19px comes from
+      // rowTone's border+pl-[16px] above).
+      className={`flex w-full items-center gap-1.5 rounded py-1.5 pr-4 text-left hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tone} ${item.muted ? 'opacity-50' : ''}`}
     >
       {person ? (
         <Avatar serverId={serverId} userId={item.user_id!} version={item.avatar} name={item.name} status={status} size={20} surface="sidebar" />
       ) : (
         <span className="flex w-4 shrink-0 items-center justify-center text-xs opacity-70">
-          <ChannelTypeMarker type={item.type} size={14} />
+          <ChannelTypeMarker type={item.type} size={16} />
         </span>
       )}
       <span className="truncate">{item.name}</span>
@@ -237,7 +250,9 @@ export function Sidebar(p: Props) {
       style={{ width: 'var(--spk-sidebar-width, 256px)' }}
       className="flex shrink-0 flex-col bg-sidebar text-sm text-fg-muted"
     >
-      <header className="relative flex items-center justify-between gap-2 px-3 py-2">
+      {/* px-4 (Addendum 2, metrics parity): the official webapp's
+          .sidebarHeaderContainer is `padding: 0 16px` (sidebar_header.scss). */}
+      <header className="relative flex items-center justify-between gap-2 px-4 py-2">
         <div className="min-w-0">
           <div className="truncate font-semibold text-fg">{p.server.name}</div>
           <div className="truncate text-xs text-fg-subtle">@{p.server.username}</div>
@@ -280,13 +295,19 @@ export function Sidebar(p: Props) {
         <div ref={setScrollerEl} className="h-full overflow-y-auto pb-4">
           {!p.sidebar && <p className="px-3 py-2 text-fg-muted">{t('sidebar.loading')}</p>}
           {categoriesView.map(({ cat, isCollapsed, shown }) => (
-            <section key={cat.id} className="mt-3">
+            // mt-1.5 (Addendum 2, metrics parity): the official webapp's
+            // .SidebarChannelGroup_content margin-bottom is 6px.
+            <section key={cat.id} className="mt-1.5">
               <button
                 aria-expanded={!isCollapsed}
                 onClick={() => setCollapsed({ ...collapsed, [cat.id]: !isCollapsed })}
-                className="flex w-full items-center gap-1 px-3 py-0.5 text-left text-xs font-semibold uppercase tracking-wide text-fg-muted hover:text-fg"
+                // pl-[19px] (left-aligned with the 19px channel-row content
+                // start above) + tracking-wider (0.05em, the official
+                // .SidebarChannelGroupHeader_groupButton's letter-spacing) +
+                // a 16px chevron column (w-4), both Addendum 2 numbers.
+                className="flex w-full items-center gap-1 py-0.5 pl-[19px] pr-3 text-left text-xs font-semibold uppercase tracking-wider text-fg-muted hover:text-fg"
               >
-                <span className="flex w-3 items-center">{isCollapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}</span>
+                <span className="flex w-4 items-center">{isCollapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}</span>
                 {categoryName(cat)}
               </button>
               <ul>
