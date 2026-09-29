@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { channel, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+import { channel, removeServerFromMenu, serverId, signInAlice, testPost, unique } from './helpers'
 
 // sidebar-unread-brief.md ruling 2: "More unreads"/"More mentions" overflow
 // pills. Only 3 real channels + a couple of DMs exist in the seed, so a
@@ -119,6 +119,31 @@ test('Unreads: an unread channel appears there and leaves its own category; open
   // Switch away: it returns to Channels and leaves Unreads for good.
   await channel(page, 'Town Square').click()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+})
+
+// Fix round 1 (sidebar-sections-review.md): the held-channel capture used to
+// live only in Sidebar.tsx's own row onClick, so opening an unread channel
+// any other way — a notification click, a ~channel link — never held it: it
+// would drop out of Unreads the instant it was marked read instead of
+// staying until the user switched away. Moved to chat.ts's openChannel, the
+// single gateway every origin funnels through. This covers the notification
+// origin end to end; the ~channel link origin is covered at the unit level
+// in Markdown.test.tsx (clicking it drives the real chat.ts openChannel,
+// not a mock).
+test('Unreads: opening an unread channel via a notification click holds it too, not just a sidebar click', async ({ page }) => {
+  await signInAlice(page)
+  const channelsSection = page.getByRole('button', { name: 'Channels' }).locator('xpath=ancestor::section')
+  await testPost(page, 'fake/post', { channel_id: 'c-offtopic', username: 'bob', message: unique('via notification') })
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+
+  await testPost(page, 'notification-click', { server_id: await serverId(page), channel_id: 'c-offtopic' })
+  await expect(page.getByRole('heading', { name: /Off-Topic/ })).toBeVisible()
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
+
+  await channel(page, 'Town Square').click()
   await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
   await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toBeVisible()
 })
