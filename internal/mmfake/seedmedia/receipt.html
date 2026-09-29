@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@page { size: letter; margin: 0.6in 0.6in; }
+@font-face { font-family: R; src: url(file:///usr/share/fonts/truetype/dejavu/DejaVuSans.ttf); }
+@font-face { font-family: B; src: url(file:///usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf); }
+@font-face { font-family: C; src: url(file:///usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf); }
+body { font-family: R; font-size: 9.5pt; color: #1a1a1a; margin: 0; }
+h1 { font-family: B; font-size: 20pt; margin: 0 0 12pt; }
+.b { font-family: B; } .m { font-family: C; color: #555; }
+table.kv td { padding: 1pt 18pt 1pt 0; }
+.cols { display: flex; gap: 60pt; margin: 22pt 0; } .cols div { line-height: 1.45; }
+.big { font-family: B; font-size: 14pt; margin: 18pt 0 4pt; }
+table.items { width: 100%; border-collapse: collapse; margin-top: 16pt; }
+table.items th { text-align: left; font-family: C; color: #555; font-weight: normal; border-bottom: 1px solid #ccc; padding: 4pt 0; }
+table.items td { padding: 5pt 0; border-bottom: 1px solid #eee; }
+.r { text-align: right; } .tot td { border: none; padding: 2pt 0; }
+.logo { position: absolute; right: 0; top: 0; width: 36pt; height: 36pt; }
+.foot { position: absolute; bottom: 0; right: 0; } a { color: #635bff; }
+</style></head><body><div style="position:relative;height:9.6in">
+<img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAA8klEQVR42s3XaQrCMBCG4fee/vSKHsJbqSCItGmW2b5ASrPMwENp0wnPx+vQ7jdl4wzSmtogoekSpDL1QBLTAFRv4nNtZeJ728fEr7eJif/BDiYOY7mJ85TWRHNWaOJqQWWisyYx0V+uNzGMKDYxE1RpYjKuzMR8aI2JpegCE6sJ2SYMOakmbGl5JsyZSSY8jzfDhPMdDDfh/1BjTYTsZoEmorb8KBOB/8UQE7HFg99EeIXlNJFRhnpMJNXqZhN5BxqbidRTn8FE9tF41ZQOWjVVgJZMRaB5Ux1o0lQKmjFVg4YmAahv0oA6JhnoyqQENU1vWTYXnIkshU4AAAAASUVORK5CYII=">
+<h1>Receipt</h1>
+<table class="kv">
+<tr><td>Invoice number</td><td>FAKE0001-0001</td></tr>
+<tr><td>Receipt number</td><td>1234-5678-9012</td></tr>
+<tr><td>Date paid</td><td>January 5, 2026</td></tr>
+<tr><td>VAT Registration</td><td>EU VAT: EU000000000</td></tr>
+</table>
+<div class="cols">
+<div><span class="b">Example Software, Inc.</span><br>100 Sample Street<br>Suite 42<br>Springfield, Example State 00000<br>United States<br><a href="mailto:billing@example.com">billing@example.com</a></div>
+<div><span class="b">Bill to</span><br>Alice Example<br>Office 1, Sample Tower, Sample District<br>Sample City<br>Exampleland<br><a href="mailto:alice@example.org">alice@example.org</a><br>Customer ID C-000000</div>
+</div>
+<div class="big">$42.00 paid on January 5, 2026</div>
+<div class="m">Thank you for your purchase. This amount was charged to the card on file for the subscription below.</div>
+<table class="items">
+<tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Tax</th><th class="r">Amount</th></tr>
+<tr><td>Pro plan — monthly<br><span class="m">Jan 5–Feb 5, 2026</span></td><td class="r">1</td><td class="r">$32.00</td><td class="r">0%</td><td class="r">$32.00</td></tr>
+<tr><td>Extra seats<br><span class="m">Jan 5–Feb 5, 2026</span></td><td class="r">2</td><td class="r">$5.00</td><td class="r">0%</td><td class="r">$10.00</td></tr>
+<tr class="tot"><td></td><td></td><td colspan="2">Subtotal</td><td class="r">$42.00</td></tr>
+<tr class="tot"><td></td><td></td><td colspan="2">Total</td><td class="r">$42.00</td></tr>
+<tr class="tot"><td></td><td></td><td colspan="2" class="b">Amount paid</td><td class="r b">$42.00</td></tr>
+</table>
+<div class="big" style="font-size:11pt">Payment history</div>
+<table class="items">
+<tr><th>Payment method</th><th>Date</th><th class="r">Amount paid</th><th class="r">Receipt number</th></tr>
+<tr><td>Visa - 4242</td><td>January 5, 2026</td><td class="r">$42.00</td><td class="r">1234-5678-9012</td></tr>
+</table>
+<p class="m" style="margin-top:22pt">Questions? Visit <a href="https://example.com/support">example.com/support</a>. This receipt is a test fixture for spk-mm-client and describes no real payment.</p>
+<div class="foot m">Page 1 of 1</div>
+</div></body></html>

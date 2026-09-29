@@ -149,3 +149,41 @@ func TestSeededPDFIsBuiltOncePerProcess(t *testing.T) {
 	require.NotEmpty(t, da)
 	assert.Same(t, &da[0], &db[0])
 }
+
+// The seeded receipt is the everyday one-page PDF (ReceiptFileID): bob's DM
+// carries it, it is a real one-page Letter document with vector text in
+// embedded CID TrueType fonts and a small raster logo — the shape of the
+// receipts the viewer's scroll/default-zoom fix was measured on — and it
+// stays small.
+func TestSeededReceiptIsAOnePageVectorPDF(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	var info model.FileInfo
+	require.Equal(t, 200, a.call("GET", "/api/v4/files/"+ReceiptFileID+"/info", nil, &info))
+	assert.Equal(t, ReceiptName, info.Name)
+	assert.Equal(t, "application/pdf", info.MimeType)
+	var posts model.PostList
+	require.Equal(t, 200, a.call("GET", "/api/v4/channels/c-dm-bob/posts?page=0&per_page=60", nil, &posts))
+	var inDM []string
+	for _, p := range posts.Ascending() {
+		if p.Metadata != nil {
+			for _, f := range p.Metadata.Files {
+				inDM = append(inDM, f.ID)
+			}
+		}
+	}
+	assert.Equal(t, []string{ReceiptFileID}, inDM, "bob's DM carries the receipt")
+	resp, doc := a.raw("GET", "/api/v4/files/"+ReceiptFileID, nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, info.Size, int64(len(doc)))
+	assert.Less(t, len(doc), 64<<10, "a receipt-sized file")
+
+	require.True(t, bytes.HasPrefix(doc, []byte("%PDF-")))
+	assert.Regexp(t, `/Type /Pages\s*/Count 1\b`, string(doc), "one page")
+	assert.Contains(t, string(doc), "/MediaBox [0 0 612 792]", "US Letter")
+	assert.GreaterOrEqual(t, bytes.Count(doc, []byte("/Subtype /CIDFontType2")), 2, "embedded CID TrueType fonts")
+	assert.Contains(t, string(doc), "/FontFile2", "the fonts are embedded")
+	assert.Contains(t, string(doc), "/Subtype /Image", "a raster logo")
+	assert.Contains(t, string(doc), "/Subtype /Link", "link annotations")
+}

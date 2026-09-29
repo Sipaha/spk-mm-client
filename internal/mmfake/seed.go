@@ -117,6 +117,8 @@ func (s *Server) seed() {
 	}
 	s.chat.status["u-alice"], s.chat.status["u-bob"], s.chat.status["u-carol"] = "online", "online", "away"
 	s.seedPostLocked("c-dm-bob", "u-bob", "Hi Alice, this is Bob")
+	s.seedFilePostLocked("c-dm-bob", "u-bob", "Here is the receipt",
+		s.newFileLocked(ReceiptFileID, "c-dm-bob", ReceiptName, "application/pdf", seedMedia("receipt.pdf")))
 	for i := 1; i <= o.ExtraChannels; i++ {
 		for j := 1; j <= loadPosts; j++ {
 			s.seedPostLocked(fmt.Sprintf("c-load-%03d", i), "u-bob", fmt.Sprintf("Load message %d with **some** markdown and a [link](https://example.com)", j))

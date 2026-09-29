@@ -16,6 +16,19 @@ const (
 	PDFFileID     = "f-manual" // manual.pdf: a real PDFPages-page document
 	PDFPages      = 50
 	JunkPDFFileID = "f-spec" // spec.pdf: a PDF header and nothing a reader can open
+	// ReceiptFileID is ReceiptName in bob's DM: a one-page Letter receipt
+	// like the ones users actually get (Stripe-style invoices/receipts,
+	// ~34-50 KB): vector text in embedded, subsetted CID TrueType fonts
+	// (Identity-H), a small raster logo, link annotations and table rules.
+	// manual.pdf is image-heavy and many-paged; this is the common case the
+	// viewer's scrolling/default zoom was tuned against (pdf-lag report,
+	// 2026-09-30). Generated once with headless Chrome (Skia/PDF, the same
+	// font embedding as the real receipts) from seedmedia/receipt.html:
+	//
+	//	google-chrome --headless=new --no-pdf-header-footer \
+	//	  --print-to-pdf=receipt.pdf file://$PWD/receipt.html
+	ReceiptFileID = "f-receipt"
+	ReceiptName   = "Receipt-1234-5678-9012.pdf"
 	// LandscapePage is the one page of manual.pdf turned sideways (A4
 	// landscape instead of portrait) — real PDFs mix page sizes/orientations
 	// (a scanned cover, an embedded slide, an appendix), and PdfView.tsx (fix
