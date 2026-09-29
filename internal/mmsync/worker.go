@@ -201,6 +201,7 @@ type Worker struct {
 	missMu      sync.Mutex
 	emojiMiss   map[string]time.Time // custom emoji names the server does not have
 	usersMu     sync.Mutex
+	ac          *acCache // composer autocomplete answers (aclru.go); cleared when Run ends
 	bg          sync.WaitGroup
 	live        liveMark
 
@@ -241,6 +242,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		reactPairs: map[string]*reactPair{},
 		reactPoke:  make(chan struct{}, 1),
 		reactNow:   make(chan struct{}, 1),
+		ac:         newACCache(cfg.Now),
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)
@@ -361,6 +363,9 @@ func (w *Worker) Run(ctx context.Context) {
 	// The thread cache is memory only: nothing of it outlives the worker.
 	w.st.CloseThread()
 	w.st.ResetThreads()
+	// Autocomplete answers belong to this session (sign-out, a new
+	// sign-in and removal all stop the worker).
+	w.ac.clear()
 	// Pending posts live only in this worker's memory: their attachments
 	// go with them.
 	w.releaseFiles()

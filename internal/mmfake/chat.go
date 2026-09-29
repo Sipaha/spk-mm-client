@@ -47,6 +47,8 @@ type chatData struct {
 	threadMembers map[string]map[string]*threadMembership // root id → user → membership
 	threadReads   []ThreadRead                            // every PUT .../threads/{id}/read/{ts} call
 	threadTries   int                                     // those calls, 404s included
+
+	commands []ExecutedCommand // every accepted POST /commands/execute (autocomplete.go)
 }
 
 type RecordedEvent struct {

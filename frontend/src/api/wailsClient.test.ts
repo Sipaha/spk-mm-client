@@ -136,3 +136,21 @@ test('thread calls are addressed by FQN with positional args', async () => {
   await wailsClient.loadOlderReplies(1, 'r1')
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'LoadOlderReplies', 1, 'r1')
 })
+
+test('autocomplete: an abort cancels the Wails call (its Go context)', async () => {
+  let resolve!: (v: unknown) => void
+  const cancel = vi.fn()
+  const p = Object.assign(new Promise((r) => (resolve = r)), { cancel })
+  vi.mocked(Call.ByName).mockReturnValue(p as never)
+  const ctl = new AbortController()
+  const res = wailsClient.autocomplete(3, 'users', 'c1', '', 'bo', ctl.signal)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'Autocomplete', 3, 'users', 'c1', '', 'bo')
+  ctl.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  resolve({ users: [], others: [], channels: [], emoji: [], commands: [] })
+  await expect(res).resolves.toBeDefined()
+
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.executeCommand(3, 'c1', 'r1', '/away')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'ExecuteCommand', 3, 'c1', 'r1', '/away')
+})

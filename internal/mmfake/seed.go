@@ -67,6 +67,8 @@ func (s *Server) seed() {
 	add("c-town", model.ChannelOpen, "Town Square", "town-square", townUsers...)
 	add("c-offtopic", model.ChannelOpen, "Off-Topic", "off-topic", "u-alice", "u-bob")
 	add("c-secret", model.ChannelPrivate, "Secret", "secret", "u-alice")
+	// A public channel alice is not in: "Other Channels" of ~ autocomplete.
+	add("c-offices", model.ChannelOpen, "Offices", "offices", "u-bob")
 	add("c-dm-bob", model.ChannelDirect, "", "u-alice__u-bob", "u-alice", "u-bob")
 	add("c-gm", model.ChannelGroup, "alice, bob, carol", "gm-alice-bob-carol", "u-alice", "u-bob", "u-carol")
 	for i := 1; i <= o.ExtraChannels; i++ {

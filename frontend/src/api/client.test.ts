@@ -152,3 +152,26 @@ test('uploadAttachmentBrowser turns a JSON {code} error response into ApiError',
   )
   await expect(uploadAttachmentBrowser(3, 'c1', new File(['x'], 'x.bin'), '')).rejects.toEqual(new ApiError('too_large', ''))
 })
+
+test('autocomplete posts its query and an abort cancels the fetch', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ users: [{ id: 'u1', username: 'bob' }], others: [], channels: [], emoji: [], commands: [] }), {
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  const ctl = new AbortController()
+  const r = await httpClient.autocomplete(3, 'users', 'c1', 'r1', 'bo', ctl.signal)
+  expect(r.users?.[0].username).toBe('bob')
+  const [path, init] = fetchMock.mock.calls[0]
+  expect(path).toBe('/api/Autocomplete')
+  expect(JSON.parse(init!.body as string)).toEqual({ id: 3, kind: 'users', channel_id: 'c1', root_id: 'r1', prefix: 'bo' })
+  expect(init!.signal).toBe(ctl.signal)
+})
+
+test('executeCommand posts the command', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { headers: { 'content-type': 'application/json' } }))
+  await httpClient.executeCommand(3, 'c1', '', '/echo hi')
+  const [path, init] = fetchMock.mock.calls[0]
+  expect(path).toBe('/api/ExecuteCommand')
+  expect(JSON.parse(init!.body as string)).toEqual({ id: 3, channel_id: 'c1', root_id: '', command: '/echo hi' })
+})

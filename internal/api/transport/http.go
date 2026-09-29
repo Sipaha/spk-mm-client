@@ -323,6 +323,25 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/PickAttachments", handle(func(ctx context.Context, r *threadReq) (any, error) {
 		return h.api.PickAttachments(ctx, r.ID, r.ChannelID, r.RootID)
 	}))
+	// Autocomplete runs under the request's context: the UI aborts a stale
+	// request, which cancels its server call.
+	h.mux.HandleFunc("POST /api/Autocomplete", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		Kind      string `json:"kind"`
+		ChannelID string `json:"channel_id"`
+		RootID    string `json:"root_id"`
+		Prefix    string `json:"prefix"`
+	}) (any, error) {
+		return h.api.Autocomplete(ctx, r.ID, r.Kind, r.ChannelID, r.RootID, r.Prefix)
+	}))
+	h.mux.HandleFunc("POST /api/ExecuteCommand", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		RootID    string `json:"root_id"`
+		Command   string `json:"command"`
+	}) (any, error) {
+		return nil, h.api.ExecuteCommand(ctx, r.ID, r.ChannelID, r.RootID, r.Command)
+	}))
 	h.mux.HandleFunc("GET /api/events", h.serveEvents)
 }
 

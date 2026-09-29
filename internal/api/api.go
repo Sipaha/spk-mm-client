@@ -150,6 +150,19 @@ type API interface {
 	// PickAttachments opens the file dialog and attaches the chosen files;
 	// it returns how many (desktop only; browser mode: unsupported).
 	PickAttachments(ctx context.Context, id int64, channelID, rootID string) (int, error)
+
+	// Autocomplete answers the composer's popup: kind users | channels |
+	// emoji | commands, for the composer of channelID (rootID: a thread's
+	// composer — its shape is checked, the channel scopes the search) and
+	// the word typed after the trigger. Asked only as the user types (the
+	// UI debounces and cancels stale calls through ctx); answers are cached
+	// briefly per server; offline: empty (emoji: custom ones from the
+	// index). invalid_argument for a bad kind or id.
+	Autocomplete(ctx context.Context, id int64, kind, channelID, rootID, prefix string) (AutocompleteDTO, error)
+	// ExecuteCommand runs a slash command the user sent from a composer
+	// (rootID: a held thread's, else no_post); command_not_found when the
+	// server has no such trigger. Never called but on an explicit send.
+	ExecuteCommand(ctx context.Context, id int64, channelID, rootID, command string) error
 }
 
 // Event types pushed to the UI.
@@ -205,6 +218,8 @@ const (
 	CodeNoFile           = "no_file"
 	CodeNoPost           = "no_post"
 	CodeTooManyReactions = "too_many_reactions"
+	CodeInvalidArgument  = "invalid_argument"
+	CodeCommandNotFound  = "command_not_found" // no slash command with that trigger (the UI offers to send it as text)
 
 	// Attachments (internal/attach codes).
 	CodeTooLarge            = attach.CodeTooLarge

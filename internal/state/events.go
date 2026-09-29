@@ -80,6 +80,8 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 	switch ev.Type {
 	case "posted":
 		s.onPostedLocked(ev, &eff)
+	case "ephemeral_message":
+		s.onEphemeralLocked(ev, &eff)
 	case "post_edited":
 		if p, err := ws.DecodePost(ev); err == nil {
 			eff.Change = s.updatePostLocked(p)

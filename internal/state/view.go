@@ -76,6 +76,9 @@ type PostView struct {
 	Reactions     []ReactionView     `json:"reactions,omitempty"`
 	// Saved: a flagged_post preference for this post — see SetPostSaved.
 	Saved bool `json:"saved,omitempty"`
+	// Ephemeral: only we see it (a slash command's answer) — never stored
+	// by the server; no actions apply to it.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 	// RootAuthor/RootSnippet: a reply's context line in the channel feed
 	// without CRT ("reply to <author>: <snippet>") — the root's author and
 	// its text, collapsed and cut to rootSnippetRunes. Empty when the root
@@ -131,6 +134,9 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		posts = append(posts, s.older...)
 	}
 	posts = append(posts, ch.Win.Posts...)
+	posts = s.withEphemeralLocked(posts, func(p model.Post) bool {
+		return p.ChannelID == channelID && (p.RootID == "" || !v.CRT)
+	})
 	if channelID == s.active && (s.olderComplete || len(s.older) > 0) {
 		v.HasMore = !s.olderComplete
 	} else {
@@ -275,7 +281,8 @@ func (s *Server) PostIconURL(postID string) (string, bool) {
 func (s *Server) postViewLocked(p model.Post) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
 		EditAt: p.EditAt, ReplyCount: p.ReplyCount, LastReplyAt: p.LastReplyAt, System: p.IsSystem(), Attachments: p.Props.Attachments,
-		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), Webhook: bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID}
+		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), Webhook: bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID,
+		Ephemeral: p.Type == model.PostTypeEphemeral}
 	v.Saved = s.prefs[prefKey{flaggedPostCategory, p.ID}] == "true"
 	v.Author = s.authorLocked(p)
 	if _, ok := s.overrideNameLocked(p); ok {

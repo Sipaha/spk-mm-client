@@ -123,8 +123,8 @@ func Start(o Options) *Server {
 	if o.Users == nil {
 		o.Users = []User{
 			{ID: "u-alice", Username: "alice", Password: "secret"},
-			{ID: "u-bob", Username: "bob", Password: "secret"},
-			{ID: "u-carol", Username: "carol", Password: "secret"},
+			{ID: "u-bob", Username: "bob", Password: "secret", FirstName: "Bob", LastName: "Brown"},
+			{ID: "u-carol", Username: "carol", Password: "secret", FirstName: "Carol", LastName: "Clark"},
 		}
 	}
 	for i := 0; i < o.ExtraUsers && i < len(ExtraUserNames); i++ {
@@ -160,6 +160,7 @@ func Start(o Options) *Server {
 	s.reactionRoutes(mux)
 	s.threadRoutes(mux)
 	s.webhookRoutes(mux)
+	s.autocompleteRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }

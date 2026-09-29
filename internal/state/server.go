@@ -113,6 +113,7 @@ type Server struct {
 	gone          seenSet           // deleted replies already taken off their root's count
 	winGen        uint64            // bumped by ResetWindows, see FetchMode
 	orphans       []orphan          // posted events for channels not known yet
+	ephemeral     []model.Post      // ephemeral_message posts, oldest first (ephemeral.go)
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
 	// Threads (see threads.go): the cache by root id, its LRU (most recent
@@ -246,6 +247,7 @@ func (s *Server) forgetChannelLocked(id string) {
 	// sent from — see TakeForgottenComposers.
 	s.forgotten = append(s.forgotten, ComposerKey{Channel: id})
 	s.forgetThreadsLocked(id)
+	s.forgetEphemeralLocked(id)
 	s.dirty.dropChan(id)
 }
 

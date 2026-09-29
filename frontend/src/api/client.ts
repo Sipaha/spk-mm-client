@@ -1,6 +1,8 @@
 import { Call, Events } from '@wailsio/runtime'
 import type {
   ApiEvent,
+  AutocompleteDTO,
+  AutocompleteKind,
   AppInfo,
   AttachmentView,
   ChannelDTO,
@@ -103,17 +105,26 @@ export interface Client {
   attachFromClipboard(id: number, channelId: string, rootId: string): Promise<number>
   /** Desktop only: opens the native file dialog; returns how many were attached (none: cancelled). */
   pickAttachments(id: number, channelId: string, rootId: string): Promise<number>
+  /**
+   * The composer's popup: suggestions of a kind for the word typed after its
+   * trigger. Aborting `signal` cancels the call in Go too (a stale request).
+   */
+  autocomplete(id: number, kind: AutocompleteKind, channelId: string, rootId: string, prefix: string, signal?: AbortSignal): Promise<AutocompleteDTO>
+  /** Runs a slash command the user sent (rootId: a held thread's composer); command_not_found for an unknown trigger. */
+  executeCommand(id: number, channelId: string, rootId: string, command: string): Promise<void>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
 const tokenMeta = () =>
   document.querySelector('meta[name="spk-mm-client-api-token"]')?.getAttribute('content') ?? ''
 
-async function post<T>(method: string, body: unknown): Promise<T> {
+async function post<T>(method: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   const token = tokenMeta()
   if (token) headers.Authorization = `Bearer ${token}`
-  const r = await fetch(`/api/${method}`, { method: 'POST', headers, body: JSON.stringify(body ?? {}) })
+  const init: RequestInit = { method: 'POST', headers, body: JSON.stringify(body ?? {}) }
+  if (signal) init.signal = signal
+  const r = await fetch(`/api/${method}`, init)
   const isJSON = r.headers.get('content-type')?.includes('application/json')
   if (!r.ok) {
     if (isJSON) {
@@ -184,6 +195,9 @@ export const httpClient: Client = {
   retryAttachment: (id, attachment_id) => done(post('RetryAttachment', { id, attachment_id })),
   attachFromClipboard: (id, channel_id, root_id) => post('AttachFromClipboard', { id, channel_id, root_id }),
   pickAttachments: (id, channel_id, root_id) => post('PickAttachments', { id, channel_id, root_id }),
+  autocomplete: (id, kind, channel_id, root_id, prefix, signal) =>
+    post('Autocomplete', { id, kind, channel_id, root_id, prefix }, signal),
+  executeCommand: (id, channel_id, root_id, command) => done(post('ExecuteCommand', { id, channel_id, root_id, command })),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -296,6 +310,21 @@ export const wailsClient: Client = {
   retryAttachment: (id, attachmentId) => wcall('RetryAttachment', id, attachmentId),
   attachFromClipboard: (id, channelId, rootId) => wcall('AttachFromClipboard', id, channelId, rootId),
   pickAttachments: (id, channelId, rootId) => wcall('PickAttachments', id, channelId, rootId),
+  async autocomplete(id, kind, channelId, rootId, prefix, signal) {
+    // Call.ByName's promise is a CancellablePromise: cancel() cancels the
+    // Go method's context (it takes a context.Context — transport/wails.go).
+    const p = Call.ByName(FQN + 'Autocomplete', id, kind, channelId, rootId, prefix)
+    const onAbort = () => void (p as { cancel?: () => unknown }).cancel?.()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      return (await p) as AutocompleteDTO
+    } catch (e) {
+      throw parseWailsError(e)
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+    }
+  },
+  executeCommand: (id, channelId, rootId, command) => wcall('ExecuteCommand', id, channelId, rootId, command),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

@@ -696,7 +696,8 @@ func (s *Server) ThreadView(rootID string) (ThreadView, bool) {
 	if t.root.ID != "" {
 		v.Posts = append(v.Posts, s.postViewLocked(t.root))
 	}
-	for _, p := range t.replies {
+	replies := s.withEphemeralLocked(t.replies, func(p model.Post) bool { return p.RootID == rootID })
+	for _, p := range replies {
 		v.Posts = append(v.Posts, s.postViewLocked(p))
 	}
 	pend := slices.Clone(s.pending[t.channelID])

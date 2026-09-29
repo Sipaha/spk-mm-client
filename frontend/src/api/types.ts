@@ -255,3 +255,43 @@ export interface ApiEvent {
   type: EventType
   payload?: Record<string, unknown>
 }
+
+// Composer autocomplete (Go's mmsync.Autocomplete): only the kind asked for
+// is filled. users: the channel's members, others: the team's other
+// members; channels: joined ones first; emoji: custom names only (the
+// UI adds the standard set); commands: slash commands.
+export type AutocompleteKind = 'users' | 'channels' | 'emoji' | 'commands'
+
+export interface ACUser {
+  id: string
+  username: string
+  full_name?: string
+  nickname?: string
+  avatar?: string // picture version for /media avatars
+  status?: string
+  bot?: boolean
+  me?: boolean
+}
+
+export interface ACChannel {
+  id: string
+  name: string // what ~ inserts
+  display_name: string
+  type: string // O | P
+  joined?: boolean
+}
+
+export interface ACCommand {
+  trigger: string
+  hint?: string
+  description?: string
+}
+
+// Go nil slices arrive as null.
+export interface AutocompleteDTO {
+  users: ACUser[] | null
+  others: ACUser[] | null
+  channels: ACChannel[] | null
+  emoji: string[] | null
+  commands: ACCommand[] | null
+}

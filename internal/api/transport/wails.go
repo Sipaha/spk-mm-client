@@ -159,3 +159,15 @@ func (w *API) AttachFromClipboard(id int64, channelID, rootID string) (int, erro
 func (w *API) PickAttachments(id int64, channelID, rootID string) (int, error) {
 	return w.a.PickAttachments(context.Background(), id, channelID, rootID)
 }
+
+// Autocomplete takes Wails' call context: cancelling the JS promise (a
+// stale request) cancels the server call.
+func (w *API) Autocomplete(ctx context.Context, id int64, kind, channelID, rootID, prefix string) (api.AutocompleteDTO, error) {
+	return w.a.Autocomplete(ctx, id, kind, channelID, rootID, prefix)
+}
+
+// ExecuteCommand is not cancelled with its promise: a command, once sent,
+// runs to its end (like SendPost).
+func (w *API) ExecuteCommand(id int64, channelID, rootID, command string) error {
+	return w.a.ExecuteCommand(context.Background(), id, channelID, rootID, command)
+}

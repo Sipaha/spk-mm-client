@@ -263,3 +263,43 @@ type ThreadTotals struct {
 	TotalUnreadUrgentMentions int64            `json:"total_unread_urgent_mentions"`
 	Threads                   []ThreadResponse `json:"threads,omitempty"`
 }
+
+// PostTypeEphemeral is a post only its recipient sees, never stored by the
+// server: a slash command's answer, delivered by the ephemeral_message
+// event (app/post.go SendEphemeralPost).
+const PostTypeEphemeral = "system_ephemeral"
+
+// UserAutocomplete is GET /users/autocomplete with in_channel: members of
+// the channel and, apart, team members outside it.
+type UserAutocomplete struct {
+	Users        []User `json:"users"`
+	OutOfChannel []User `json:"out_of_channel,omitempty"`
+}
+
+// Command is a slash command of GET /teams/{id}/commands/autocomplete
+// (built-in ones included; the server lists only auto_complete ones).
+type Command struct {
+	Trigger          string `json:"trigger"`
+	AutoComplete     bool   `json:"auto_complete"`
+	AutoCompleteDesc string `json:"auto_complete_desc,omitempty"`
+	AutoCompleteHint string `json:"auto_complete_hint,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Description      string `json:"description,omitempty"`
+	DeleteAt         int64  `json:"delete_at,omitempty"`
+}
+
+// CommandArgs is the body of POST /commands/execute.
+type CommandArgs struct {
+	ChannelID string `json:"channel_id"`
+	TeamID    string `json:"team_id,omitempty"`
+	RootID    string `json:"root_id,omitempty"`
+	Command   string `json:"command"`
+}
+
+// CommandResponse is what POST /commands/execute answers. An ephemeral
+// text arrives separately as an ephemeral_message event.
+type CommandResponse struct {
+	ResponseType string `json:"response_type,omitempty"` // in_channel | ephemeral
+	Text         string `json:"text,omitempty"`
+	GotoLocation string `json:"goto_location,omitempty"`
+}

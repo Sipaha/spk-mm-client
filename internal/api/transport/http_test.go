@@ -444,3 +444,77 @@ func TestThreadRoutes(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, []string{"open 3/c1/r1", "get 3/r1", "get 3/nope", "older 3/r1", "close 3"}, f.threads)
 }
+
+type acAPI struct {
+	api.API
+	calls   []string
+	blocked chan struct{} // Autocomplete waits for its ctx to end when set
+	ended   chan error
+}
+
+func (f *acAPI) Autocomplete(ctx context.Context, id int64, kind, channelID, rootID, prefix string) (api.AutocompleteDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("ac %d/%s/%s/%s/%s", id, kind, channelID, rootID, prefix))
+	if f.blocked != nil {
+		close(f.blocked)
+		<-ctx.Done()
+		f.ended <- ctx.Err()
+		return api.AutocompleteDTO{}, ctx.Err()
+	}
+	return api.AutocompleteDTO{Users: []api.ACUser{{ID: "u1", Username: "bob"}}}, nil
+}
+
+func (f *acAPI) ExecuteCommand(_ context.Context, id int64, channelID, rootID, command string) error {
+	f.calls = append(f.calls, fmt.Sprintf("exec %d/%s/%s/%s", id, channelID, rootID, command))
+	if command == "/nope" {
+		return &api.CodedError{Code: api.CodeCommandNotFound}
+	}
+	return nil
+}
+
+func TestAutocompleteAndCommandRoutes(t *testing.T) {
+	f := &acAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "Autocomplete", `{"id":3,"kind":"users","channel_id":"c1","root_id":"r1","prefix":"bo"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var v struct {
+		Users []api.ACUser `json:"users"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&v))
+	assert.Equal(t, "bob", v.Users[0].Username)
+	assert.Equal(t, 200, call(t, h, ts.URL, "ExecuteCommand", `{"id":3,"channel_id":"c1","root_id":"r1","command":"/echo hi"}`).StatusCode)
+	resp = call(t, h, ts.URL, "ExecuteCommand", `{"id":3,"channel_id":"c1","command":"/nope"}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	var e map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&e))
+	assert.Equal(t, "command_not_found", e["code"])
+	assert.Equal(t, []string{"ac 3/users/c1/r1/bo", "exec 3/c1/r1//echo hi", "exec 3/c1///nope"}, f.calls)
+}
+
+// An aborted fetch (the UI dropped a stale autocomplete request) cancels
+// the request context the API method runs under.
+func TestAbortedAutocompleteCancelsItsContext(t *testing.T) {
+	f := &acAPI{blocked: make(chan struct{}), ended: make(chan error, 1)}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/Autocomplete",
+		strings.NewReader(`{"id":3,"kind":"users","channel_id":"c1","prefix":"b"}`))
+	req.Header.Set("Authorization", "Bearer "+h.AuthToken())
+	req.Header.Set("Origin", ts.URL)
+	go func() {
+		<-f.blocked
+		cancel()
+	}()
+	_, err := http.DefaultClient.Do(req)
+	require.Error(t, err)
+	select {
+	case err := <-f.ended:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the API call never saw the abort")
+	}
+}
