@@ -30,6 +30,12 @@ type Options struct {
 	IconMentionPNG []byte
 	DevActions     []DevAction  // dev builds: extra tray items (fake server controls)
 	Media          http.Handler // /media/ (internal/media); nil: pictures are not served
+	// DevDriver (dev runs such as the PDF memory gate; nil otherwise) runs
+	// once the app has started, with a way to run a script in the page;
+	// DevMessage receives the page's raw messages (window._wails.invoke) —
+	// without it Wails gets no raw message handler at all.
+	DevDriver  func(ctx context.Context, exec func(js string))
+	DevMessage func(msg string)
 }
 
 // Run starts the Wails loop. Closing the window hides it (tray brings it
@@ -150,8 +156,9 @@ func Run(ctx context.Context, o Options) error {
 		// nil on Linux when the D-Bus probe failed or timed out: Wails'
 		// SingleInstance there dials the bus with no timeout and os.Exit(1)s
 		// inside application.New() on failure (see busprobe_linux.go).
-		SingleInstance: single,
-		OnShutdown:     onShutdown,
+		SingleInstance:    single,
+		OnShutdown:        onShutdown,
+		RawMessageHandler: rawMessages(o.DevMessage),
 	})
 
 	started := make(chan struct{})
@@ -257,6 +264,16 @@ func Run(ctx context.Context, o Options) error {
 		show()
 	}
 
+	if o.DevDriver != nil {
+		go func() {
+			select {
+			case <-started:
+				o.DevDriver(ctx, w.ExecJS)
+			case <-ctx.Done():
+			}
+		}()
+	}
+
 	toggle := func() {
 		winMu.Lock()
 		defer winMu.Unlock()
@@ -283,6 +300,15 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}()
 	return app.Run()
+}
+
+// rawMessages: the page's raw messages go to f (dev runs only); nil leaves
+// Wails without a raw message handler.
+func rawMessages(f func(string)) func(application.Window, string, *application.OriginInfo) {
+	if f == nil {
+		return nil
+	}
+	return func(_ application.Window, msg string, _ *application.OriginInfo) { f(msg) }
 }
 
 // nativeDrops are the paths of native file drops (observe_gtk.go).

@@ -4,12 +4,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -25,9 +25,11 @@ import (
 )
 
 func runDesktop(ctx context.Context, o desktopOpts) error {
-	if o.MMFake && !desktop.DevBuild {
-		return errors.New("--mm-fake is available in development builds only")
+	if err := checkDevFlags(o, desktop.DevBuild); err != nil {
+		return err
 	}
+	ctx, quit := context.WithCancel(ctx) // a dev driver quits the app when done
+	defer quit()
 	p, err := paths.Resolve()
 	if err != nil {
 		return err
@@ -73,6 +75,8 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	}
 
 	var dev []desktop.DevAction
+	var driver func(ctx context.Context, exec func(js string))
+	var devMessage func(msg string)
 	if o.MMFake {
 		fakes := make([]*mmfake.Server, max(o.FakeServers, 1))
 		urls := make([]string, len(fakes))
@@ -102,6 +106,27 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 				open: svc.NotificationClicked,
 			})
 		}
+		if o.FakePDFCycles > 0 {
+			marks := make(chan string, 16)
+			devMessage = func(m string) {
+				if mark, ok := strings.CutPrefix(m, pdfMarkPrefix); ok {
+					select {
+					case marks <- mark:
+					default:
+					}
+				}
+			}
+			driver = func(ctx context.Context, exec func(js string)) {
+				defer quit()
+				_, err := runPDFCycles(ctx, pdfCycles{
+					n: o.FakePDFCycles, exec: exec, marks: marks, sample: webProcessSampler(), pace: defaultPDFPace,
+					openChannel: func() { svc.NotificationClicked(ids[0], "c-offtopic", "") },
+				})
+				if err != nil {
+					slog.Error("pdf gate did not finish", "err", err)
+				}
+			}
+		}
 	}
 
 	return desktop.Run(ctx, desktop.Options{
@@ -113,5 +138,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		IconMentionPNG: appfiles.IconMentionPNG,
 		DevActions:     dev,
 		Media:          mediaH,
+		DevDriver:      driver,
+		DevMessage:     devMessage,
 	})
 }
