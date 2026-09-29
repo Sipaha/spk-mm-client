@@ -193,6 +193,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           emojiInfo={() => emojiInfo(server.id)}
           onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
           onCommand={(cmd) => executeCommand(server.id, channel.id, '', cmd)}
+          channelType={channel.type}
           onDraft={(text) => saveDraft(server.id, channel.id, text)}
           onEditLast={() => editLastOwn(channel)}
         />

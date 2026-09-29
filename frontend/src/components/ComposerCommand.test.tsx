@@ -25,12 +25,12 @@ vi.mock('../chat', () => ({
 
 beforeEach(() => setLocale('en'))
 
-function setup(attachments: AttachmentView[] = []) {
+function setup(attachments: AttachmentView[] = [], extra: { channelType?: string; rootId?: string } = {}) {
   const onSend = vi.fn().mockResolvedValue(undefined)
   const onCommand = vi.fn().mockResolvedValue(undefined)
   const onDraft = vi.fn()
   render(
-    <Composer channelId="c1" channelName="Town Square" draft="" serverId={1} attachments={attachments}
+    <Composer channelId="c1" channelName="Town Square" draft="" serverId={1} attachments={attachments} {...extra}
       onSend={onSend} onCommand={onCommand} onDraft={onDraft} onEditLast={() => {}} />,
   )
   return { box: screen.getByLabelText('Message') as HTMLTextAreaElement, onSend, onCommand }
@@ -75,4 +75,43 @@ test('an edited text runs as a command again; another failure keeps the text wit
   expect(onCommand).toHaveBeenLastCalledWith('/nopex')
   expect(box.value).toBe('/nopex')
   expect(await screen.findByRole('alert')).not.toHaveTextContent('Command with a trigger')
+})
+
+test('/leave in a private channel asks first; only "Yes, leave channel" runs it', async () => {
+  const { box, onCommand } = setup([], { channelType: 'P' })
+  await userEvent.type(box, '/leave{Escape}{Enter}')
+  expect(onCommand).not.toHaveBeenCalled()
+  expect(box.value).toBe('/leave')
+  expect(screen.getByRole('alert')).toHaveTextContent('Are you sure you wish to leave the private channel Town Square?')
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(onCommand).not.toHaveBeenCalled()
+  await userEvent.click(box)
+  await userEvent.keyboard('{Enter}')
+  await userEvent.click(screen.getByRole('button', { name: 'Yes, leave channel' }))
+  expect(onCommand).toHaveBeenCalledWith('/leave')
+  expect(box.value).toBe('')
+})
+
+test('/leave in a public channel or another command in a private one runs at once', async () => {
+  const { box, onCommand } = setup([], { channelType: 'O' })
+  await userEvent.type(box, '/leave{Escape}{Enter}')
+  expect(onCommand).toHaveBeenCalledWith('/leave')
+})
+
+test('/leave refused in a thread keeps the text with the webapp\'s message', async () => {
+  const { box, onCommand } = setup([], { channelType: 'P', rootId: 'r1' })
+  onCommand.mockRejectedValueOnce(new ApiError('command_unsupported_in_thread', ''))
+  await userEvent.type(box, '/leave{Escape}{Enter}')
+  expect(onCommand).toHaveBeenCalledWith('/leave') // no confirmation in a thread: Go refuses it, nothing is sent
+  expect(box.value).toBe('/leave')
+  expect(await screen.findByRole('alert')).toHaveTextContent('/leave is not supported in reply threads. Use it in the center channel instead.')
+})
+
+test('a command that may have run (timeout) says so and keeps the text', async () => {
+  const { box, onCommand } = setup()
+  onCommand.mockRejectedValueOnce(new ApiError('command_uncertain', 'timeout'))
+  await userEvent.type(box, '/echo slow{Escape}{Enter}')
+  expect(box.value).toBe('/echo slow')
+  expect(await screen.findByRole('alert')).toHaveTextContent('The command may have run')
 })

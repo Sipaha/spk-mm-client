@@ -183,6 +183,9 @@ export interface PostView {
   // ephemeral: only I see it (a slash command's answer), never stored by
   // the server — no actions apply to it.
   ephemeral?: boolean
+  // system_author: the server's own ephemeral answer — shown from "System",
+  // never from the user who ran the command (author/avatar are empty).
+  system_author?: boolean
   bot?: boolean
   pending?: boolean
   failed?: boolean

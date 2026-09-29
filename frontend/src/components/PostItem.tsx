@@ -432,7 +432,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           // (density-brief 2026-09-29).
           <header className="mb-0.5 flex items-baseline gap-2">
             <span className="font-semibold" title={post.real_author}>
-              {post.author}
+              {post.system_author ? t('post.system') : post.author}
             </span>
             {post.bot && <span className="rounded bg-hover px-1 text-[10px] font-semibold text-fg-muted">BOT</span>}
             <time className="text-xs text-fg-muted">{time}</time>

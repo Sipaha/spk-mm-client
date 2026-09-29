@@ -3,11 +3,11 @@ import type { PostView } from '../api/types'
 import { mediaURL, useLoadFailure } from '../media'
 import { Avatar } from './Avatar'
 import { EmojiGlyph } from './EmojiGlyph'
-import { IconWebhook } from './icons'
+import { IconInfo, IconWebhook } from './icons'
 
 interface Props {
   serverId: number
-  post: Pick<PostView, 'id' | 'user_id' | 'author' | 'avatar' | 'status' | 'icon' | 'icon_version'>
+  post: Pick<PostView, 'id' | 'user_id' | 'author' | 'avatar' | 'status' | 'icon' | 'icon_version' | 'system_author'>
   size: number
 }
 
@@ -44,6 +44,19 @@ export function PostAvatar({ serverId, post, size }: Props) {
     [src, loaded],
   )
   const icon = post.icon ?? ''
+  // The server's own ephemeral answer: "System", never the user's picture.
+  if (post.system_author) {
+    return (
+      <span
+        data-testid="system-avatar"
+        aria-hidden="true"
+        className="flex shrink-0 items-center justify-center rounded-full bg-hover text-fg-muted"
+        style={{ width: size, height: size }}
+      >
+        <IconInfo size={Math.round(size * 0.7)} />
+      </span>
+    )
+  }
   const emoji = icon.length > 2 && icon.startsWith(':') && icon.endsWith(':') ? icon.slice(1, -1) : ''
   if (emoji) {
     return (

@@ -102,9 +102,11 @@ export function useAutocomplete({ serverId, channelId, rootId, textareaRef, emoj
             (dto) => (e.dto = dto),
             () => null,
           ),
-      ]).then(() => {
-        if (id === seq.current) show(id, t, rowsFor(t, answered ? answer : null))
-      })
+      ])
+        .then(() => {
+          if (id === seq.current) show(id, t, rowsFor(t, answered ? answer : null))
+        })
+        .catch(() => {}) // the set's chunk failed to load: the rows so far stay
     }
     timer.current = setTimeout(() => {
       const c = new AbortController()

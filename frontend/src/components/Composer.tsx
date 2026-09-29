@@ -119,6 +119,8 @@ interface Props {
   // onCommand: a message starting with "/" is a slash command — executed
   // (Go ExecuteCommand), never posted as text; absent: sent as text.
   onCommand?(command: string): Promise<void>
+  // channelType: O | P | D | G — /leave in a private channel asks first.
+  channelType?: string
   onDraft(text: string): void
   onEditLast(): void
 }
@@ -129,7 +131,7 @@ const emptyEmojiInfo = (): Promise<EmojiDTO> => Promise.resolve({ recent: [], cu
 // channel's or one thread's composer.
 export function Composer({
   channelId, channelName, draft, rootId = '', disabled = false, serverId, attachments,
-  emojiInfo = emptyEmojiInfo, onSend, onCommand, onDraft, onEditLast,
+  emojiInfo = emptyEmojiInfo, onSend, onCommand, channelType = '', onDraft, onEditLast,
 }: Props) {
   const [text, setText] = useState(draft)
   const [error, setError] = useState<string | null>(null)
@@ -137,6 +139,10 @@ export function Composer({
   // message_submit_error): the text stays; sending that same text again —
   // Enter or the button — posts it as a message instead.
   const [commandError, setCommandError] = useState<{ message: string; trigger: string } | null>(null)
+  // confirmLeave: /leave typed in a private channel waits for this inline
+  // confirmation (the webapp's LeaveChannelModal: leaving is only undone
+  // by a new invitation); only its button runs the command.
+  const [confirmLeave, setConfirmLeave] = useState<string | null>(null)
   const attachError = useStore((s) => (rootId ? s.threadAttachError : s.attachError))
   const setAttachError = (msg: string | null) => {
     const s = useStore.getState()
@@ -297,6 +303,7 @@ export function Composer({
   const change = (v: string) => {
     setText(v)
     if (commandError && v !== commandError.message) setCommandError(null)
+    if (confirmLeave !== null && v !== confirmLeave) setConfirmLeave(null)
     latest.current = v
     clearTimeout(timer.current)
     timer.current = setTimeout(flush, DRAFT_DELAY)
@@ -321,6 +328,7 @@ export function Composer({
     flush()
     setError(null)
     setCommandError(null)
+    setConfirmLeave(null)
     try {
       await onCommand!(msg)
     } catch (e) {
@@ -336,6 +344,11 @@ export function Composer({
     ac.close()
     const msg = text
     if (!asText && onCommand && msg.startsWith('/') && msg.trim().length > 1 && commandError?.message !== msg) {
+      const trigger = msg.trim().split(/\s/)[0].toLowerCase()
+      if (trigger === '/leave' && channelType === 'P' && !rootId) {
+        setConfirmLeave(msg)
+        return
+      }
       await runCommand(msg)
       return
     }
@@ -500,6 +513,24 @@ export function Composer({
         <p role="alert" className="pb-1 text-xs text-danger">
           {error}
         </p>
+      )}
+      {confirmLeave !== null && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 pb-1 text-xs text-danger">
+          <span>{t('composer.leavePrivate', { channel: channelName })}</span>
+          <button type="button" className="rounded bg-danger px-2 py-0.5 font-semibold text-danger-fg" onClick={() => void runCommand(confirmLeave)}>
+            {t('composer.leaveConfirm')}
+          </button>
+          <button
+            type="button"
+            className="underline"
+            onClick={() => {
+              setConfirmLeave(null)
+              textareaRef.current?.focus()
+            }}
+          >
+            {t('post.cancel')}
+          </button>
+        </div>
       )}
       {commandError && (
         <p role="alert" className="pb-1 text-xs text-danger">

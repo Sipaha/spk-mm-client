@@ -802,3 +802,10 @@ test('an ephemeral post (a command answer) says only I see it and offers no acti
   await hover(screen.getByText('You are now away'))
   expect(screen.queryByTestId('post-toolbar')).toBeNull()
 })
+
+test('the server\'s own ephemeral answer is from "System", never from me', () => {
+  render(<PostItem serverId={1} post={post({ ephemeral: true, system: true, system_author: true, user_id: 'u-alice', author: '', message: 'You are now away' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.getByText('System')).toBeInTheDocument()
+  expect(screen.queryByText('alice')).toBeNull()
+  expect(screen.getByTestId('system-avatar')).toBeInTheDocument()
+})
