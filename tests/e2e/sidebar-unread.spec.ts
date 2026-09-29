@@ -12,17 +12,27 @@ test.afterEach(async ({ page }) => {
 
 test('bottom pill: a DM below the fold shows the "more mentions" variant (every DM counts as a mention); clicking scrolls it into view and reading it clears both', async ({ page }) => {
   await signInAlice(page)
-  // Short enough that, scrolled to the top (the default), the last row
-  // (bob's DM, at the bottom of the list — Favorites/Channels/Direct
-  // messages in that order) is below the fold.
-  await page.setViewportSize({ width: 1280, height: 190 })
+  // Short enough that, scrolled to the top (the default), a second Unreads
+  // row is below the fold (measured: header 52px, so a 53px-tall scroller
+  // shows only the Unreads header + its first row, each 32px).
+  await page.setViewportSize({ width: 1280, height: 105 })
   const bottomPill = page.getByRole('button', { name: /More (unreads|mentions) below/ })
   await expect(bottomPill).toBeHidden()
 
+  // With the Unreads section (sidebar-sections-brief.md) sitting above every
+  // other category, a lone newly-unread channel lands as Unreads' very
+  // first — and so already-visible — row; posting an explicit "@alice"
+  // mention to the group DM *after* bob's DM sorts it above bob's DM
+  // (mentions first, then most-recently-active), pushing bob's row below
+  // the fold instead. (A plain, "@"-less group message would not mention
+  // alice at all — only a DM auto-mentions the other member regardless of
+  // "@"; internal/mmfake/chat.go mentionsLocked.)
+  //
   // A plain DM message (no "@") still carries a mention count of 1 — a real
   // Mattermost DM notifies like a mention regardless of "@" — so this pill
   // is expected to come up in its "mentions" style/wording, not "unreads".
   await testPost(page, 'fake/post', { channel_id: 'c-dm-bob', username: 'bob', message: unique('below the fold') })
+  await testPost(page, 'fake/post', { channel_id: 'c-gm', username: 'carol', message: unique('@alice keeps the group on top') })
   await expect(page.getByRole('button', { name: 'More mentions below' })).toBeVisible()
 
   await bottomPill.click()
@@ -30,7 +40,7 @@ test('bottom pill: a DM below the fold shows the "more mentions" variant (every 
   await expect(bobDm).toBeInViewport()
   await expect(bottomPill).toBeHidden()
 
-  // Read it: the fake server is shared across the whole e2e run, and an
+  // Read both: the fake server is shared across the whole e2e run, and an
   // unread mention left on alice's account here would otherwise leak into a
   // later, unrelated test's mention-count assertion (same rule as
   // chat.spec.ts's "a mention from someone else... reading clears it" test —
@@ -38,6 +48,9 @@ test('bottom pill: a DM below the fold shows the "more mentions" variant (every 
   // server-side unread/mention state).
   await bobDm.click()
   await expect(bobDm).not.toHaveAccessibleName(/Mentions:/)
+  const gm = channel(page, /alice, bob, carol/)
+  await gm.click()
+  await expect(gm).not.toHaveAccessibleName(/Mentions:/)
 })
 
 test('top pill: a plain unread channel above the fold shows the "more unreads" variant; clicking scrolls the channel into view and reading it clears both', async ({ page }) => {
