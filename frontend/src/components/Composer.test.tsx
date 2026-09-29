@@ -380,7 +380,7 @@ function select(box: HTMLTextAreaElement, start: number, end: number) {
 
 test('the formatting toolbar renders bold/italic/strike/heading/link/code/quote/list buttons by default', () => {
   render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
-  const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+  const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
   for (const name of ['Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Strikethrough', 'Heading', 'Link (Ctrl+Alt+K)', 'Code', 'Quote', 'Bulleted list', 'Numbered list']) {
     expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument()
   }
@@ -485,7 +485,7 @@ test('a narrow toolbar row collapses buttons into "More formatting options", wit
   const ro = stubResizeObserver()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
-    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 200) // narrow: only "Bold" fits alongside the always-visible right group
     ro.fire(toolbar)
     expect(within(toolbar).queryByRole('button', { name: 'Numbered list' })).toBeNull()
@@ -502,7 +502,7 @@ test('a wide toolbar row shows every button with no "more" button', () => {
   const ro = stubResizeObserver()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
-    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 1000)
     ro.fire(toolbar)
     expect(screen.queryByRole('button', { name: 'More formatting options' })).toBeNull()
@@ -517,7 +517,7 @@ test('the "more formatting" popover lists the collapsed buttons; picking one app
   const ro = stubResizeObserver()
   try {
     render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
-    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
     setOffsetWidth(toolbar, 200)
     ro.fire(toolbar)
     const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement

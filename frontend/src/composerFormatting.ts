@@ -40,6 +40,42 @@ function toggleWrap(message: string, start: number, end: number, delimiterStart:
   }
 }
 
+const BOLD_DELIM = '**'
+const ITALIC_DELIM = '*'
+
+// applyBoldOrItalic: bold and italic share a delimiter character ('*'),
+// which a plain toggleWrap cannot handle — '*' is a prefix of '**', so
+// asking "does the selection already have my delimiter" for italic matches
+// text that is only bold. Review fix round 1 (I1), reimplementing the
+// webapp's own guard against this (apply_markdown.ts's
+// applyBoldItalicMarkdown/isItalicFollowedByBold, not copied): italic
+// right next to bold markers adds italic on top (**word** -> ***word***)
+// instead of mistaking them for its own; toggling either mode off a
+// bold+italic selection removes only that one layer.
+function applyBoldOrItalic(mode: 'bold' | 'italic', message: string, start: number, end: number): MarkdownResult {
+  const before = message.slice(0, start)
+  const selected = message.slice(start, end)
+  const after = message.slice(end)
+  const delimiter = mode === 'bold' ? BOLD_DELIM : ITALIC_DELIM
+  // Only italic can be confused with bold's markers (not the reverse: '**'
+  // is not a prefix relationship problem for bold's own check).
+  const italicFollowedByBold = mode === 'italic' && before.endsWith(BOLD_DELIM) && after.startsWith(BOLD_DELIM)
+  const alreadyBoldAndItalic = before.endsWith(BOLD_DELIM + ITALIC_DELIM) && after.startsWith(BOLD_DELIM + ITALIC_DELIM)
+  const hasThisMarkdown = before.endsWith(delimiter) && after.startsWith(delimiter)
+  if (alreadyBoldAndItalic || (hasThisMarkdown && !italicFollowedByBold)) {
+    return {
+      message: before.slice(0, before.length - delimiter.length) + selected + after.slice(delimiter.length),
+      selectionStart: start - delimiter.length,
+      selectionEnd: end - delimiter.length,
+    }
+  }
+  return {
+    message: before + delimiter + selected + delimiter + after,
+    selectionStart: start + delimiter.length,
+    selectionEnd: end + delimiter.length,
+  }
+}
+
 function countChar(text: string, ch: string): number {
   let n = 0
   for (const c of text) if (c === ch) n++
@@ -57,21 +93,35 @@ function lineBounds(message: string, start: number, end: number) {
 }
 
 // applyLinePrefix: heading ("### "), quote ("> "), bulleted list ("- ") —
-// a fixed-length prefix on every touched line, toggled off when every one
-// of those lines already carries it.
+// a fixed-length prefix on every touched line. Review fix round 1 (I2),
+// reimplementing the webapp's own normalization (apply_markdown.ts's
+// applyMarkdownToSelectedLines, not copied): only when *every* touched
+// line already has the prefix does the action remove it from all of them;
+// otherwise the prefix is added only to the lines missing it — a mixed
+// selection (some lines already prefixed) never doubles the prefix on the
+// ones that had it. Caret math tracks each line's own length delta (0 for
+// a line left alone) rather than assuming a uniform per-line shift, the
+// same technique applyOl below uses for its variable-width markers.
 function applyLinePrefix(message: string, start: number, end: number, prefix: string): MarkdownResult {
   const { blockStart, blockEnd } = lineBounds(message, start, end)
   const block = message.slice(blockStart, blockEnd)
   const lines = block.split('\n')
-  const applied = lines.every((l) => l.startsWith(prefix))
-  const newLines = applied ? lines.map((l) => l.slice(prefix.length)) : lines.map((l) => prefix + l)
+  const allHavePrefix = lines.every((l) => l.startsWith(prefix))
+  const newLines = allHavePrefix
+    ? lines.map((l) => l.slice(prefix.length))
+    : lines.map((l) => (l.startsWith(prefix) ? l : prefix + l))
   const newMessage = message.slice(0, blockStart) + newLines.join('\n') + message.slice(blockEnd)
-  const sign = applied ? -1 : 1
-  const linesBefore = (pos: number) => countChar(message.slice(blockStart, pos), '\n') + 1
+  const deltas = lines.map((l, i) => newLines[i].length - l.length)
+  const shiftUpTo = (pos: number) => {
+    const idx = countChar(message.slice(blockStart, pos), '\n')
+    let sum = 0
+    for (let i = 0; i <= idx && i < deltas.length; i++) sum += deltas[i]
+    return sum
+  }
   return {
     message: newMessage,
-    selectionStart: Math.max(blockStart, start + sign * prefix.length * linesBefore(start)),
-    selectionEnd: Math.max(blockStart, end + sign * prefix.length * linesBefore(end)),
+    selectionStart: Math.max(blockStart, start + shiftUpTo(start)),
+    selectionEnd: Math.max(blockStart, end + shiftUpTo(end)),
   }
 }
 
@@ -133,9 +183,9 @@ function applyLink(message: string, start: number, end: number): MarkdownResult 
 export function applyMarkdown(mode: MarkdownMode, message: string, start: number, end: number): MarkdownResult {
   switch (mode) {
     case 'bold':
-      return toggleWrap(message, start, end, '**')
+      return applyBoldOrItalic('bold', message, start, end)
     case 'italic':
-      return toggleWrap(message, start, end, '*')
+      return applyBoldOrItalic('italic', message, start, end)
     case 'strike':
       return toggleWrap(message, start, end, '~~')
     case 'code':

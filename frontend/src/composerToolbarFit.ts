@@ -11,9 +11,19 @@
 // live "available width" (its own ResizeObserver reading, minus the
 // always-visible right-hand group) and calls fitCount with it.
 
-// TOOLBAR_ITEM_WIDTH: one ToolbarButton's footprint (h-7 w-7 = 28px) plus
-// the row's gap-0.5 (2px) to its neighbour.
-export const TOOLBAR_ITEM_WIDTH = 30
+// TOOLBAR_BUTTON_SIZE / TOOLBAR_GAP: a ToolbarButton's own footprint
+// (h-7 w-7 = 28px) and the row's gap-0.5 (2px) between consecutive flex
+// children — exported separately (not just pre-summed) so Composer.tsx can
+// size its always-visible right-hand group without re-deriving or
+// double-counting either number itself (review fix round 1, Minor: the
+// previous TOOLBAR_RESERVED counted one trailing gap too many).
+export const TOOLBAR_BUTTON_SIZE = 28
+export const TOOLBAR_GAP = 2
+// TOOLBAR_ITEM_WIDTH: one button *plus* its own trailing gap to the next
+// flex child — correct for the left group's buttons, every one of which is
+// always followed by something (another button, a separator, the "more"
+// button, or the right-hand group).
+export const TOOLBAR_ITEM_WIDTH = TOOLBAR_BUTTON_SIZE + TOOLBAR_GAP
 // TOOLBAR_SEPARATOR_WIDTH: a group-break divider's footprint (mx-1 = 8px of
 // margin plus its own w-px = 1px).
 export const TOOLBAR_SEPARATOR_WIDTH = 9

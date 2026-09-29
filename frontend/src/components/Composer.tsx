@@ -5,7 +5,7 @@ import type { AttachmentView, EmojiDTO } from '../api/types'
 import { attachFromClipboard, pickAttachments, removeAttachment, retryAttachment, uploadAttachments } from '../chat'
 import type { MarkdownMode } from '../composerFormatting'
 import { applyMarkdown, insertAtCaret, replaceTextareaValue } from '../composerFormatting'
-import { fitCount, TOOLBAR_ITEM_WIDTH } from '../composerToolbarFit'
+import { fitCount, TOOLBAR_BUTTON_SIZE, TOOLBAR_GAP } from '../composerToolbarFit'
 import { errorMessage } from '../errors'
 import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
@@ -57,11 +57,16 @@ const GROUP_BREAK_INDICES = FORMAT_BUTTONS.reduce<number[]>((acc, b, i) => {
 
 // RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, attach, emoji,
 // send) is always exactly these 4 fixed-size buttons — a constant is exact
-// and needs no extra ResizeObserver/ref of its own. TOOLBAR_RESERVED adds
-// the row's own horizontal padding (px-1.5 = 6px each side) and the one
-// flex `gap` between the left and right groups.
-const RIGHT_GROUP_WIDTH = 4 * TOOLBAR_ITEM_WIDTH
-const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + 12 + 2
+// and needs no extra ResizeObserver/ref of its own. 4 buttons have only 3
+// gaps *between* them (review fix round 1, Minor: counting a 4th, trailing
+// one here as well as the row's own px-1.5 padding — 6px each side — plus
+// the one gap *before* this group double-counted about 2px). TOOLBAR_RESERVED
+// is exactly those three things: the right group itself, the row's padding,
+// and that one gap before it.
+const RIGHT_GROUP_BUTTON_COUNT = 4
+const RIGHT_GROUP_WIDTH = RIGHT_GROUP_BUTTON_COUNT * TOOLBAR_BUTTON_SIZE + (RIGHT_GROUP_BUTTON_COUNT - 1) * TOOLBAR_GAP
+const TOOLBAR_ROW_PADDING = 12 // px-1.5, both sides
+const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + TOOLBAR_ROW_PADDING + TOOLBAR_GAP
 
 function ToolbarButton({
   label, onClick, children, pressed, disabled, haspopup, expanded, className = 'text-fg-muted',
@@ -436,7 +441,7 @@ export function Composer({
           style={{ maxHeight: maxTextareaHeight ? `${maxTextareaHeight}px` : undefined }}
           className="w-full resize-none overflow-y-auto rounded-t-lg bg-transparent px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none disabled:opacity-50"
         />
-        <div ref={toolbarRef} role="toolbar" aria-label={t('composer.formatToolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
+        <div ref={toolbarRef} role="toolbar" aria-label={t('composer.toolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
           {/* No horizontal scrollbar here (coordinator ruling 2026-09-29):
               the thread panel (as narrow as 320px) cannot fit all 9
               formatting buttons plus the right-hand group, so the ones

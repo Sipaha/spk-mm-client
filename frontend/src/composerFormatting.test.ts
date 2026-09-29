@@ -18,6 +18,37 @@ describe('applyMarkdown', () => {
     expect(r).toEqual({ message: 'a *word*', selectionStart: 3, selectionEnd: 7 })
   })
 
+  // Review fix round 1, I1: '*' is a prefix of '**', so a naive "already
+  // wrapped" check for italic matches text that is only bold — italic on
+  // **word** must add italic on top (***word***), not mistake the bold
+  // markers for its own and strip one off each side (webapp's
+  // isItalicFollowedByBold in apply_markdown.ts guards exactly this).
+  test('italic next to existing bold adds italic on top instead of colliding with the bold markers', () => {
+    const r1 = applyMarkdown('italic', '**word**', 2, 6)
+    expect(r1).toEqual({ message: '***word***', selectionStart: 3, selectionEnd: 7 })
+  })
+
+  test('toggling italic off a bold+italic selection removes only the italic layer, leaving bold', () => {
+    const r1 = applyMarkdown('italic', '**word**', 2, 6)
+    const r2 = applyMarkdown('italic', r1.message, r1.selectionStart, r1.selectionEnd)
+    expect(r2).toEqual({ message: '**word**', selectionStart: 2, selectionEnd: 6 })
+  })
+
+  test('toggling bold off a bold+italic selection removes only the bold layer, leaving italic', () => {
+    const r1 = applyMarkdown('italic', '**word**', 2, 6) // '***word***'
+    const r2 = applyMarkdown('bold', r1.message, r1.selectionStart, r1.selectionEnd)
+    expect(r2).toEqual({ message: '*word*', selectionStart: 1, selectionEnd: 5 })
+  })
+
+  test('bold next to existing italic adds bold on top (order-independent: same result as italic-then-bold)', () => {
+    const r1 = applyMarkdown('italic', 'word', 0, 4) // '*word*'
+    const r2 = applyMarkdown('bold', r1.message, r1.selectionStart, r1.selectionEnd)
+    expect(r2.message).toBe('***word***')
+    // Round-trips back to italic-only.
+    const r3 = applyMarkdown('bold', r2.message, r2.selectionStart, r2.selectionEnd)
+    expect(r3).toEqual({ message: '*word*', selectionStart: 1, selectionEnd: 5 })
+  })
+
   test('strikethrough wraps with ~~', () => {
     const r = applyMarkdown('strike', 'oops', 0, 4)
     expect(r).toEqual({ message: '~~oops~~', selectionStart: 2, selectionEnd: 6 })
@@ -50,6 +81,44 @@ describe('applyMarkdown', () => {
     expect(r1.message).toBe('- one\n- two')
     const r2 = applyMarkdown('ul', r1.message, r1.selectionStart, r1.selectionEnd)
     expect(r2.message).toBe('one\ntwo')
+  })
+
+  // Review fix round 1, I2: a mixed-state multi-line selection (some lines
+  // already prefixed, some not) must normalize like the webapp's
+  // applyMarkdownToSelectedLines — add the prefix only where it's missing,
+  // never double it up on a line that already has it. Only when *every*
+  // touched line already has the prefix does the action remove it.
+  test('heading on a mixed selection (one line already a heading, one not) adds it only where missing, never doubles it', () => {
+    const r = applyMarkdown('heading', '### heading\ntext', 0, 16)
+    expect(r.message).toBe('### heading\n### text')
+  })
+
+  test('quote on a mixed selection adds the prefix only where missing', () => {
+    const r = applyMarkdown('quote', '> one\ntwo\n> three', 0, 17)
+    expect(r.message).toBe('> one\n> two\n> three')
+  })
+
+  test('bulleted list on a mixed selection adds the prefix only where missing, and removing it later removes only its own marker', () => {
+    const r1 = applyMarkdown('ul', '- one\ntwo', 0, 9)
+    expect(r1.message).toBe('- one\n- two')
+    // Every line now has it — a second pass removes it from all.
+    const r2 = applyMarkdown('ul', r1.message, 0, r1.message.length)
+    expect(r2.message).toBe('one\ntwo')
+  })
+
+  test('a fully-prefixed multi-line selection still toggles off from every line (unchanged behaviour)', () => {
+    const r = applyMarkdown('heading', '### one\n### two', 0, 15)
+    expect(r.message).toBe('one\ntwo')
+  })
+
+  test('mixed selection: caret ends up on the boundary of the actually-inserted text, not shifted by lines that were left alone', () => {
+    // Only the second line gets "> " (4 chars); the first line is untouched,
+    // so the selection covering both must grow by exactly 2 chars (one
+    // prefix), not 4 (two prefixes) or 0.
+    const before = '> one\ntwo'
+    const r = applyMarkdown('quote', before, 0, before.length)
+    expect(r.message).toBe('> one\n> two')
+    expect(r.selectionEnd - r.selectionStart).toBe(before.length - 0 + 2)
   })
 
   test('numbered list numbers every selected line and toggles off', () => {
