@@ -73,9 +73,10 @@ func Run(ctx context.Context, o Options) error {
 	// atomic critical sections under the same lock removes that gap: they
 	// can never interleave.
 	//
-	// The mutex also serializes Show()/Hide()/Focus() themselves: Wails v3
-	// beta.25's Show() and Hide() (pkg/application/webview_window.go) both
-	// write w.options.Hidden with no locking of their own, and our usage
+	// The mutex also serializes Show()/Hide()/Focus() themselves (raiseWindow
+	// included): Wails v3 beta.25's Show() and Hide()
+	// (pkg/application/webview_window.go) both write w.options.Hidden with
+	// no locking of their own, and our usage
 	// pattern — SingleInstance's OnSecondInstanceLaunch calling Show() from
 	// one goroutine while the WindowClosing hook calls Hide() from another
 	// — hits that unsynchronized field concurrently (confirmed with `go
@@ -95,8 +96,7 @@ func Run(ctx context.Context, o Options) error {
 			pending = true
 			return
 		}
-		win.Show()
-		win.Focus()
+		raiseWindow(win)
 	}
 	deliver := func(raw string) {
 		// HandleDeepLink reports failures to the UI via login_failed.
@@ -280,11 +280,16 @@ func Run(ctx context.Context, o Options) error {
 		if win == nil {
 			return
 		}
-		if win.IsVisible() {
+		// Focus and minimized state are only asked of a shown window: Wails
+		// reads them off the GTK window with no guard for one not created yet.
+		visible, active, minimized := win.IsVisible(), false, false
+		if visible {
+			active, minimized = win.IsFocused(), win.IsMinimised()
+		}
+		if trayClickHides(visible, active, minimized) {
 			win.Hide()
 		} else {
-			win.Show()
-			win.Focus()
+			raiseWindow(win)
 		}
 	}
 	if feat.tray {
@@ -300,6 +305,26 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}()
 	return app.Run()
+}
+
+// raiseWindow shows w, un-minimized, in front of every other window and
+// focused — for a tray click, a second instance, a deep link or a
+// notification click. Wails' Show+Focus is a plain gtk_window_present, which
+// on X11 carries the time of the window's last input: the WM's
+// focus-stealing prevention then keeps it behind the window the user is
+// working in and only flags it "demands attention" (the taskbar entry
+// blinks). nativeRaise (raise_gtk.go) stamps it with the X server's current
+// time instead, all in one main-thread call. The caller holds winMu.
+func raiseWindow(w *application.WebviewWindow) {
+	raised := false
+	application.InvokeSync(func() {
+		raised = nativeRaise(w.NativeWindow(), func() { w.Show() })
+	})
+	if !raised {
+		w.Show()
+		w.UnMinimise()
+		w.Focus()
+	}
 }
 
 // rawMessages: the page's raw messages go to f (dev runs only); nil leaves
