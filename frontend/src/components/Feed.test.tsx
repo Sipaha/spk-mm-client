@@ -735,3 +735,40 @@ test('a real scroll up (scrollTop decreased) still leaves the bottom', () => {
     ro.restore()
   }
 })
+
+// "ResizeObserver loop completed with undelivered notifications" while typing
+// in the composer (stick-bottom.spec "away from the bottom, a composer
+// growing…", 5–11 of 16 runs in Chromium, composer fix round 1): the
+// scroller got shorter, the virtualizer's rect observer recomputed the range
+// and — mid-scroll, when its notify is a flushSync — unmounted the row that
+// left it right inside the observer delivery. The removed row is still
+// observed by the virtualizer's row observer; detached, it sits shallower
+// than the scroller, so the browser had to skip its notification (probe: 28
+// rows before that callback, 27 after it, the error at the end of the same
+// delivery). The rect is taken in the next frame instead, outside delivery.
+test('a shorter scroller changes the rendered rows in the next frame, not inside the resize observer delivery', async () => {
+  const frames = manualFrames()
+  const ro = recordResizeObservers()
+  try {
+    const posts = Array.from({ length: 60 }, (_, i) => P(`m${i}`, i % 2 ? 'carol' : 'bob', 60 - i))
+    render(<Feed {...props({ posts, new_since: 0 })} />)
+    await frames.flush()
+    const log = screen.getByRole('log')
+    geometry(log, { scrollHeight: 2400, clientHeight: 600, scrollTop: 1000 })
+    fireEvent.scroll(log) // the virtualizer is "scrolling": its notify is a flushSync
+    await frames.flush()
+    fireEvent.scroll(log)
+    const rendered = () => log.querySelectorAll('[data-index]').length
+    const before = rendered()
+    const rect = ro.watching(log).filter((o) => o !== ro.watching(log)[0]) // [0] is the bottom-stick's (see above)
+    expect(rect).toHaveLength(1)
+    // Not inside act(): what the callback itself does to the DOM is the point.
+    rect[0].cb([{ target: log, borderBoxSize: [{ blockSize: 200, inlineSize: 800 }] } as unknown as ResizeObserverEntry], rect[0].self)
+    expect(rendered()).toBe(before)
+    await frames.flush()
+    expect(rendered()).toBeLessThan(before) // the next frame takes the new size
+  } finally {
+    ro.restore()
+    frames.restore()
+  }
+})

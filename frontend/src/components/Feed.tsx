@@ -1,4 +1,4 @@
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
@@ -223,6 +223,26 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     estimateSize: (i) => estimate(rows[i]),
     getItemKey: (i) => rows[i].key,
     overscan: 8,
+    // The scroller's new size is taken in the next frame, not inside the
+    // ResizeObserver delivery: mid-scroll the virtualizer's notify is a
+    // flushSync, and a shorter scroller (the composer growing) unmounted the
+    // row that left the range right there. That row is still observed by the
+    // virtualizer's row observer and, detached, sits shallower than the
+    // scroller, so Chromium skipped it: "ResizeObserver loop completed with
+    // undelivered notifications" (stick-bottom.spec, composer fix round 1).
+    // The first measurement (not from an observer) passes straight through;
+    // overscan covers the frame, and the bottom-stick has its own observer.
+    observeElementRect: (instance, cb) => {
+      let sync = true
+      let latest: Parameters<typeof cb>[0] | null = null
+      const off = observeElementRect(instance, (rect) => {
+        if (sync) return cb(rect)
+        latest = rect
+        frame('rect', () => latest && cb(latest))
+      })
+      sync = false
+      return off
+    },
     observeElementOffset: shift.observeOffset,
     scrollToFn: shift.scrollTo,
   })

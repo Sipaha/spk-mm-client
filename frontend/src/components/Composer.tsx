@@ -180,7 +180,9 @@ export function Composer({
   // frame moves it out of that notification cycle entirely; coalescing
   // repeated notifications into a single pending rAF (rather than one per
   // callback) is what actually avoids the loop, not just the existing
-  // "only setState when the count changes" guard on its own.
+  // "only setState when the count changes" guard on its own. It was not the
+  // source the e2e kept catching, though: that was the virtualizer's rect
+  // observer (Feed.tsx, observeElementRect; round 1, item b follow-up).
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [visibleCount, setVisibleCount] = useState(FORMAT_BUTTONS.length)
   useEffect(() => {

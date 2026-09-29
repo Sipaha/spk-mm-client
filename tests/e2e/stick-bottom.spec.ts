@@ -19,15 +19,13 @@ test.afterEach(async ({ page }) => {
 // No "ResizeObserver loop completed with undelivered notifications" (review
 // M6: the bottom-stick first observed the rows' container, which the
 // virtualizer resizes from inside its own row observer's broadcast). The
-// browser reports it as a window error event. Composer fix round 1 (item c)
-// fixed the other source Chromium intermittently reported this from while
-// typing — the composer's toolbar-fit observer measured synchronously
-// inside its own notification, which could still change layout within the
-// same delivery cycle as the virtualizer's scroller observer; it now defers
-// the measurement to a coalesced requestAnimationFrame instead — so the
-// check runs unconditionally in every test again (checkLoops used to be
-// turned off for the two tests that type into the composer; no longer
-// needed, docs/backlog.md's note about it is removed).
+// browser reports it as a window error event. The tests that type into the
+// composer caught a second source (composer fix round 1): a shorter scroller
+// made the virtualizer's rect observer unmount a row inside the delivery
+// (mid-scroll its notify is a flushSync); the detached row, still observed by
+// the row observer, was skipped. The virtualizer now takes the scroller's
+// size in the next frame (Feed.tsx, observeElementRect), and the check runs
+// in every test.
 let checkLoops = true
 test.beforeEach(async ({ page }) => {
   checkLoops = true
@@ -169,6 +167,10 @@ test('at the bottom, a composer growing with a multi-line draft keeps the last p
     await page.keyboard.press('Shift+Enter')
   }
   await expect.poll(async () => (await box.boundingBox())!.height).toBeGreaterThan(before + 40)
+  // The pin lands in the rendering step after the keystroke's commit (the
+  // scroller's ResizeObserver, before paint); a read between the two saw the
+  // last line's 20 px still below (1 in 30 runs). Read after that step.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))))
   if (shots) await page.screenshot({ path: `${shots}/stick-composer.png` })
   const o = await lastPostOverflow(page)
   expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
