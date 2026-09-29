@@ -252,6 +252,39 @@ test('hidden on blur (focus leaving both the chip and the tooltip)', async () =>
   expect(screen.queryByRole('tooltip')).toBeNull()
 })
 
+// e2e-bisected regression (2026-09-29, density-review.md "media.spec
+// failure" + coordinator follow-up): a stuck tooltip anchored to a chip
+// that unmounted before its hover delay fired stayed open forever (no
+// mouseleave/blur can fire for a detached node) and, once the sidebar
+// server-rail fix shifted other UI underneath its {0,0}-anchored position,
+// ate a click meant for an unrelated button.
+test('a chip removed before its hover delay elapses never shows an orphaned tooltip', async () => {
+  const loadReactors = vi.fn().mockResolvedValue(dto([{ id: 'u-bob', name: 'bob', avatar: '' }]))
+  const user = setupHover()
+  const { rerender } = render(
+    <Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 1, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />,
+  )
+  const chip = screen.getByRole('button', { name: '👍 1, you reacted' })
+  await user.hover(chip) // schedules show() after HOVER_DELAY — not fired yet
+  rerender(<Reactions serverId={1} postId="p1" me={me} reactions={[]} onToggle={vi.fn()} loadReactors={loadReactors} />) // the chip's reaction is gone — it unmounts
+  await act(async () => vi.advanceTimersByTime(300)) // the pending timer now fires with a detached anchor
+  expect(screen.queryByRole('tooltip')).toBeNull()
+})
+
+test('a chip removed while its tooltip is already open closes the tooltip', async () => {
+  const loadReactors = vi.fn().mockResolvedValue(dto([{ id: 'u-bob', name: 'bob', avatar: '' }]))
+  const user = setupHover()
+  const { rerender } = render(
+    <Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 1, mine: true }]} onToggle={vi.fn()} loadReactors={loadReactors} />,
+  )
+  const chip = screen.getByRole('button', { name: '👍 1, you reacted' })
+  await user.hover(chip)
+  await act(async () => vi.advanceTimersByTime(300))
+  await screen.findByRole('tooltip')
+  rerender(<Reactions serverId={1} postId="p1" me={me} reactions={[]} onToggle={vi.fn()} loadReactors={loadReactors} />)
+  expect(screen.queryByRole('tooltip')).toBeNull()
+})
+
 // ---- the full-list modal ----
 
 test('the "and N others" button opens the modal with the full list, "You" first', async () => {

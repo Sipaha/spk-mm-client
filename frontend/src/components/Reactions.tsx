@@ -84,8 +84,30 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
     }
   }, [hover])
 
+  // If the reaction behind an already-open (or loading) tooltip disappears
+  // — the user's own click removed their last reaction, or it arrived
+  // removed over the wire while shown — its chip unmounts too, and (same
+  // reasoning as the isConnected guard in show() below) nothing else would
+  // ever close the tooltip: the chip's own mouseleave/blur can't fire for
+  // an element that's no longer in the document.
+  useEffect(() => {
+    if (hover && !reactions.some((r) => r.emoji === hover.r.emoji)) hide()
+  }, [reactions, hover])
+
   const show = (r: ReactionView, anchor: HTMLElement) => {
     clearTimers()
+    // The chip can vanish between scheduling a hover/focus show and the
+    // delayed timer firing — e.g. the user clicks it to toggle off their
+    // only reaction, the count reaches zero, and the whole chip unmounts
+    // before HOVER_DELAY elapses. Showing anyway would anchor the tooltip
+    // to a detached node: getBoundingClientRect() on a node with no layout
+    // box is always {0,0,0,0}, so placeBelow lands it at the viewport's
+    // top-left corner — and nothing would ever close it, since its own
+    // mouseleave/blur can't fire for an element no longer in the document
+    // (e2e-bisected regression, 2026-09-29: this exact stuck tooltip ate a
+    // click meant for the sidebar's "Server menu" button once the rail's
+    // hiding shifted the button under the tooltip's fixed position).
+    if (!anchor.isConnected) return
     setHover({ r, anchor })
     const cached = getCachedReactors(serverId, postId, r.emoji, r.count)
     if (cached) {
