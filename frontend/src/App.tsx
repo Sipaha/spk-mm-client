@@ -12,7 +12,7 @@ import { ServerRail } from './components/ServerRail'
 import { Sidebar } from './components/Sidebar'
 import { Splitter } from './components/Splitter'
 import {
-  SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
+  RAIL_WIDTH, SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
 } from './components/splitter'
 import { ThreadPane } from './components/ThreadPane'
 import { Announcer, Toast } from './components/Toast'
@@ -57,26 +57,44 @@ export function App() {
   const narrow = useNarrow()
   const threadOpen = Boolean(thread) && !narrow
 
+  const selected = servers.find((s) => s.id === selectedId)
+  const chat = selected && selected.signed_in && signInFor !== selected.id
+
+  // Sidebar-menu-brief addendum (2026-09-29): the server rail (ServerRail
+  // below) is redundant clutter while actually chatting with exactly one
+  // server — there's nothing to pick between — so it's hidden then and the
+  // sidebar/thread panel get its 64px back. It stays visible outside chat
+  // (0 servers: today's add-server screen; not-yet-signed-in ServerPanel;
+  // or right after "Add server" deselects the one server, selectedId turns
+  // null and chat turns false) — those screens have no menu of their own to
+  // reach the rail's "+"/other servers from, so hiding it there would be a
+  // dead end. With 2+ servers it shows as before, everywhere.
+  const showRail = servers.length !== 1 || !chat
+  const railWidth = showRail ? RAIL_WIDTH : 0
+
   useEffect(() => {
     client
       .getLayout()
       .then((l) => {
-        if (l.sidebar_width > 0) setSidebarWidthState((w) => clampSidebarWidth(l.sidebar_width, window.innerWidth, l.thread_width || w))
-        if (l.thread_width > 0) setThreadWidthState((w) => clampThreadWidth(l.thread_width, window.innerWidth, l.sidebar_width || w))
+        if (l.sidebar_width > 0) setSidebarWidthState((w) => clampSidebarWidth(l.sidebar_width, window.innerWidth, l.thread_width || w, railWidth))
+        if (l.thread_width > 0) setThreadWidthState((w) => clampThreadWidth(l.thread_width, window.innerWidth, l.sidebar_width || w, railWidth))
       })
       .catch(() => {})
   }, [])
 
   // Keep both widths inside their (window-size-dependent) bounds as the
   // window resizes — the floor always wins, so on a very narrow window the
-  // feed is what gives, not either pane going below its own minimum.
+  // feed is what gives, not either pane going below its own minimum. The
+  // rail appearing/disappearing (railWidth) reclamps them too, so crossing
+  // the one-server boundary doesn't leave a stale width outside the new
+  // bounds.
   useEffect(() => {
-    setSidebarWidthState((w) => clampSidebarWidth(w, windowWidth, threadOpen ? threadWidth : 0))
-  }, [windowWidth, threadOpen, threadWidth])
+    setSidebarWidthState((w) => clampSidebarWidth(w, windowWidth, threadOpen ? threadWidth : 0, railWidth))
+  }, [windowWidth, threadOpen, threadWidth, railWidth])
   useEffect(() => {
     if (!threadOpen) return
-    setThreadWidthState((w) => clampThreadWidth(w, windowWidth, sidebarWidth))
-  }, [windowWidth, threadOpen, sidebarWidth])
+    setThreadWidthState((w) => clampThreadWidth(w, windowWidth, sidebarWidth, railWidth))
+  }, [windowWidth, threadOpen, sidebarWidth, railWidth])
 
   // The CSS vars Sidebar.tsx/ThreadPane.tsx read (var(--spk-…, default)):
   // committed here so a resize-driven clamp (above) or the initial load
@@ -163,8 +181,6 @@ export function App() {
     }
   }, [])
 
-  const selected = servers.find((s) => s.id === selectedId)
-  const chat = selected && selected.signed_in && signInFor !== selected.id
   const signOut = (s: ServerDTO) => client.logout(s.id).catch(report)
   const remove = (s: ServerDTO) => {
     if (confirm(t('server.removeConfirm', { name: s.name }))) client.removeServer(s.id).catch(report)
@@ -180,7 +196,7 @@ export function App() {
 
   return (
     <div className="flex h-screen bg-app text-sm text-fg">
-      <ServerRail servers={servers} selectedId={selectedId} onSelect={selectServer} />
+      {showRail && <ServerRail servers={servers} selectedId={selectedId} onSelect={selectServer} />}
       {chat ? (
         <>
           <Sidebar
@@ -192,10 +208,11 @@ export function App() {
             onSignOut={() => void signOut(selected)}
             onRemove={() => remove(selected)}
             onReauth={() => showSignIn(selected.id)}
+            onAddServer={() => selectServer(null)}
           />
           <Splitter
             value={sidebarWidth}
-            {...sidebarBounds(windowWidth, threadOpen ? threadWidth : 0)}
+            {...sidebarBounds(windowWidth, threadOpen ? threadWidth : 0, railWidth)}
             defaultValue={SIDEBAR_DEFAULT}
             sign={1}
             cssVar="--spk-sidebar-width"
@@ -211,7 +228,7 @@ export function App() {
                   {!narrow && (
                     <Splitter
                       value={threadWidth}
-                      {...threadBounds(windowWidth, sidebarWidth)}
+                      {...threadBounds(windowWidth, sidebarWidth, railWidth)}
                       defaultValue={THREAD_DEFAULT}
                       sign={-1}
                       cssVar="--spk-thread-width"

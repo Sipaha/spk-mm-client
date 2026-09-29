@@ -38,27 +38,30 @@ export interface Bounds {
 // ceiling so the feed keeps at least MIN_FEED_WIDTH once the rail and (if
 // open) the thread panel are accounted for. The floor (SIDEBAR_MIN) always
 // wins over the feed reservation — a very narrow window makes the feed the
-// one that's actually cramped, not the sidebar.
-export function sidebarBounds(windowWidth: number, threadWidth: number): Bounds {
-  const room = windowWidth - RAIL_WIDTH - MIN_FEED_WIDTH - threadWidth
+// one that's actually cramped, not the sidebar. railWidth defaults to
+// RAIL_WIDTH; App.tsx passes 0 when the server rail is hidden (sidebar-menu
+// brief addendum 2026-09-29: the rail disappears with exactly one server),
+// giving the sidebar/thread panel that space back.
+export function sidebarBounds(windowWidth: number, threadWidth: number, railWidth = RAIL_WIDTH): Bounds {
+  const room = windowWidth - railWidth - MIN_FEED_WIDTH - threadWidth
   return { min: SIDEBAR_MIN, max: Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, room)) }
 }
 
 // threadBounds is sidebarBounds's counterpart: [THREAD_MIN,
 // threadMax(window)], shrunk so the feed keeps MIN_FEED_WIDTH given the
 // rail and the current sidebar width.
-export function threadBounds(windowWidth: number, sidebarWidth: number): Bounds {
-  const room = windowWidth - RAIL_WIDTH - sidebarWidth - MIN_FEED_WIDTH
+export function threadBounds(windowWidth: number, sidebarWidth: number, railWidth = RAIL_WIDTH): Bounds {
+  const room = windowWidth - railWidth - sidebarWidth - MIN_FEED_WIDTH
   return { min: THREAD_MIN, max: Math.min(threadMax(windowWidth), Math.max(THREAD_MIN, room)) }
 }
 
-export function clampSidebarWidth(width: number, windowWidth: number, threadWidth: number): number {
-  const b = sidebarBounds(windowWidth, threadWidth)
+export function clampSidebarWidth(width: number, windowWidth: number, threadWidth: number, railWidth = RAIL_WIDTH): number {
+  const b = sidebarBounds(windowWidth, threadWidth, railWidth)
   return clamp(width, b.min, b.max)
 }
 
-export function clampThreadWidth(width: number, windowWidth: number, sidebarWidth: number): number {
-  const b = threadBounds(windowWidth, sidebarWidth)
+export function clampThreadWidth(width: number, windowWidth: number, sidebarWidth: number, railWidth = RAIL_WIDTH): number {
+  const b = threadBounds(windowWidth, sidebarWidth, railWidth)
   return clamp(width, b.min, b.max)
 }
 

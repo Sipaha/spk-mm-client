@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { ApiEvent, ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
 import { setLocale } from './i18n'
@@ -74,7 +75,9 @@ test('a login error survives status updates and clears when the sign-in state ch
   // clears lastError) settle before a login_failed arrives — a real
   // login_failed can never race the mount-time load in practice, since it
   // only fires after the user has selected a server and attempted a sign-in.
-  await screen.findByRole('button', { name: 'Acme' })
+  // The rail itself is hidden here (sidebar-menu brief addendum: exactly one
+  // server), so wait on ServerPanel's own heading instead of the rail tile.
+  await screen.findByRole('heading', { name: 'Acme' })
   await act(async () => h.emit!({ type: 'login_failed', payload: { code: 'no_pending_login' } }))
   expect(screen.getByRole('alert')).toBeInTheDocument()
   await act(async () => h.emit!({ type: 'servers_changed' }))
@@ -149,6 +152,57 @@ test('open_channel with a root_id opens the channel then its thread panel; threa
   vi.mocked(client.getThread).mockResolvedValueOnce({ ...aThread, syncing: false, error: 'internal' })
   await act(async () => h.emit!({ type: 'thread_changed', payload: { server_id: 1, root_id: 'r1' } }))
   expect(client.getThread).toHaveBeenCalledWith(1, 'r1')
+})
+
+// Sidebar-menu-brief addendum (2026-09-29): the server rail is redundant
+// clutter with only one server (its per-server picker has nothing to pick
+// between) — hidden then, shown again as soon as a second server exists.
+// ServerPanel (the sign-in form) has no menu of its own to reach "Add
+// server"/other servers from — unlike the chat view — so the rail stays
+// visible here even with a single, not-yet-signed-in server.
+test('a single not-yet-signed-in server keeps the rail visible (ServerPanel has no menu of its own)', async () => {
+  h.list = [srv()]
+  render(<App />)
+  expect(await screen.findByRole('heading', { name: 'Acme' })).toBeInTheDocument() // ServerPanel's own heading
+  expect(screen.getByRole('button', { name: 'Acme' })).toBeInTheDocument() // the rail tile
+})
+
+test('the server rail shows with two or more servers and hides with exactly one, without disturbing the sidebar', async () => {
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' }), srv({ id: 2, name: 'Beta', signed_in: false })]
+  render(<App />)
+  expect(await screen.findByRole('button', { name: 'Acme' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Beta' })).toBeInTheDocument()
+
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  await act(async () => h.emit!({ type: 'servers_changed' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Acme' })).toBeNull())
+  expect(screen.getByRole('heading', { name: /Town Square/ })).toBeInTheDocument() // the sidebar itself is unaffected
+
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' }), srv({ id: 2, name: 'Beta', signed_in: false })]
+  await act(async () => h.emit!({ type: 'servers_changed' }))
+  expect(await screen.findByRole('button', { name: 'Acme' })).toBeInTheDocument() // rail comes back
+})
+
+// With the rail hidden, its "+" tile is unreachable — "Add server" moves
+// into the sidebar's "⋯" menu (same flow: selecting no server shows the
+// add-server form, exactly like the rail's "+" does today).
+// The rail is hidden only *while actually chatting* with exactly one server
+// (see the `showRail` comment in App.tsx): with no menu of its own,
+// ServerPanel and AddServerForm would otherwise be a dead end (no way back
+// to the one existing server) if the rail vanished there too. Picking "Add
+// server" deselects the current one, chat turns false, and the rail — with
+// that one server's own tile — comes right back, so the user isn't stuck.
+test('with a single server (rail hidden), the sidebar "⋯" menu\'s Add server opens the add-server form, and the rail reappears there (no dead end)', async () => {
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  expect(screen.queryByRole('button', { name: 'Acme' })).toBeNull() // rail hidden while chatting
+  await userEvent.click(screen.getByRole('button', { name: 'Server menu' }))
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Add server' }))
+  expect(await screen.findByRole('heading', { name: 'Add a Mattermost server' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Acme' })).toBeInTheDocument() // rail back: a way to return to it
+  await userEvent.click(screen.getByRole('button', { name: 'Acme' }))
+  expect(await screen.findByRole('heading', { name: /Town Square/ })).toBeInTheDocument() // back in chat
 })
 
 test('a downloads_changed event refreshes the list and the header badge shows the active count', async () => {

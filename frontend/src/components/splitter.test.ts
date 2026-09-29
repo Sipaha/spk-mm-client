@@ -11,7 +11,9 @@ import {
   clampSidebarWidth,
   clampThreadWidth,
   dragValue,
+  sidebarBounds,
   stepValue,
+  threadBounds,
   threadMax,
 } from './splitter'
 
@@ -44,6 +46,24 @@ describe('clampSidebarWidth', () => {
     const w = clampSidebarWidth(300, 900, 420)
     expect(w).toBe(SIDEBAR_MIN) // clamps to its floor rather than going below it
   })
+  test('accepts an optional railWidth override, passed through to sidebarBounds', () => {
+    expect(clampSidebarWidth(2000, 760, 0)).toBe(336)
+    expect(clampSidebarWidth(2000, 760, 0, 0)).toBe(336 + RAIL_WIDTH)
+  })
+})
+
+// Sidebar-menu-brief addendum (2026-09-29): the server rail disappears with
+// exactly one server, so App.tsx passes railWidth 0 into these instead of
+// the default RAIL_WIDTH — the sidebar/thread panel get that 64px back.
+describe('sidebarBounds/threadBounds: optional railWidth (default RAIL_WIDTH, App.tsx passes 0 when the rail is hidden)', () => {
+  test('sidebarBounds: a hidden rail (railWidth 0) gives exactly RAIL_WIDTH more room', () => {
+    expect(sidebarBounds(760, 0).max).toBe(336)
+    expect(sidebarBounds(760, 0, 0).max).toBe(336 + RAIL_WIDTH)
+  })
+  test('threadBounds: a hidden rail (railWidth 0) gives exactly RAIL_WIDTH more room', () => {
+    expect(threadBounds(1200, 400).max).toBe(376)
+    expect(threadBounds(1200, 400, 0).max).toBe(376 + RAIL_WIDTH)
+  })
 })
 
 describe('clampThreadWidth', () => {
@@ -56,6 +76,10 @@ describe('clampThreadWidth', () => {
     // window 900: rail 64 + sidebar 256 + feed 360 = 680, leaving 220 for the thread panel.
     const w = clampThreadWidth(420, 900, 256)
     expect(w).toBe(THREAD_MIN) // floors rather than going below it
+  })
+  test('accepts an optional railWidth override, passed through to threadBounds', () => {
+    expect(clampThreadWidth(2000, 1200, 400)).toBe(376)
+    expect(clampThreadWidth(2000, 1200, 400, 0)).toBe(376 + RAIL_WIDTH)
   })
 })
 

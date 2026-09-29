@@ -206,17 +206,19 @@ test('a mention in a thread reply notifies with its root; the click opens the ch
     .poll(async () => ((await testGet(page, 'notifications')) as { body: string; root_id?: string; channel_id: string }[])
       .filter((n) => n.body.includes(text)).map((n) => [n.channel_id, n.root_id]))
     .toEqual([['c-town', rootId]])
-  // exact: true — the ServerRail button's own name also contains "Mentions: 1" (AGENTS.md).
-  const badge = page.getByRole('navigation').getByLabel('Mentions: 1', { exact: true })
-  await expect(badge).toBeVisible()
+  // The server-level aggregate badge used to live on the ServerRail tile,
+  // hidden with only this one fake server configured (sidebar-menu brief
+  // addendum 2026-09-29) — ListServers is what's left to check it against
+  // (the desktop tray badge is the other place, Go-only).
+  const mentions = async () => ((await apiCall(page, 'ListServers')) as { id: number; mentions: number }[]).find((s) => s.id === id)?.mentions
+  await expect.poll(mentions).toBe(1)
   await page.screenshot({ path: `${shots}/threads-7-mention-badge.png` })
 
   await testPost(page, 'notification-click', { server_id: id, channel_id: 'c-town', root_id: rootId })
   // level 1: the channel's own heading — the open panel's is "Thread · Town Square".
   await expect(page.getByRole('heading', { level: 1, name: /Town Square/ })).toBeVisible()
   await expect(threadFeed(page).getByText(text)).toBeVisible()
-  await expect(badge).toHaveCount(0)
-  await expect(page.getByRole('navigation').getByLabel(/Mentions:/)).toHaveCount(0)
+  await expect.poll(mentions).toBe(0)
   await page.screenshot({ path: `${shots}/threads-7-opened-from-notification.png` })
 })
 

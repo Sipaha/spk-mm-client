@@ -14,6 +14,10 @@ interface Props {
   onSignOut(): void
   onRemove(): void
   onReauth(): void
+  // onAddServer: the "⋯" menu's "Add server" item (sidebar-menu brief
+  // addendum 2026-09-29) — opens the same add-server flow as the (now
+  // possibly hidden, single-server) rail's "+" tile.
+  onAddServer(): void
 }
 
 function categoryName(c: CategoryView): string {
@@ -105,11 +109,13 @@ function StatusLine({ state, onReauth }: { state: ServerDTO['state']; onReauth()
 // effect in Sidebar below).
 function ServerMenu({
   anchorEl,
+  onAddServer,
   onSignOut,
   onRemove,
   onClose,
 }: {
   anchorEl: HTMLElement
+  onAddServer(): void
   onSignOut(): void
   onRemove(): void
   onClose(): void
@@ -130,6 +136,11 @@ function ServerMenu({
       onKeyDown={onMenuKey}
       onBlur={onMenuBlur}
     >
+      {/* Add server: reachable here regardless of server count (brief addendum) —
+          the rail's own "+" tile disappears when exactly one server is configured. */}
+      <button type="button" role="menuitem" className="px-3 py-1.5 text-left text-fg hover:bg-hover" onClick={() => { closeAndFocusAnchor(); onAddServer() }}>
+        {t('rail.add')}
+      </button>
       <button type="button" role="menuitem" className="px-3 py-1.5 text-left text-fg hover:bg-hover" onClick={() => { closeAndFocusAnchor(); onSignOut() }}>
         {t('server.signOut')}
       </button>
@@ -179,7 +190,7 @@ export function Sidebar(p: Props) {
           <IconMore />
         </button>
         {menu && menuAnchor.current && (
-          <ServerMenu anchorEl={menuAnchor.current} onSignOut={p.onSignOut} onRemove={p.onRemove} onClose={() => setMenu(false)} />
+          <ServerMenu anchorEl={menuAnchor.current} onAddServer={p.onAddServer} onSignOut={p.onSignOut} onRemove={p.onRemove} onClose={() => setMenu(false)} />
         )}
       </header>
       <StatusLine state={p.server.state} onReauth={p.onReauth} />

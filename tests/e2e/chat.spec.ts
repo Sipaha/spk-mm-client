@@ -61,9 +61,12 @@ test('a mention from someone else: badges, notification, reading clears it', asy
   const id = await serverId(page)
   const text = unique('@alice look')
   await testPost(page, 'fake/post', { channel_id: 'c-offtopic', username: 'bob', message: text })
-  // exact: true — the ServerRail button's own accessible name is "Fake MM — Mentions: 1"
-  // (Task 12 fix), a substring match on "Mentions: 1" would also hit it, not just the badge.
-  await expect(page.getByRole('navigation').getByLabel('Mentions: 1', { exact: true })).toBeVisible()
+  // The server-level aggregate badge used to live on the ServerRail tile,
+  // but the rail is hidden with only this one fake server configured
+  // (sidebar-menu brief addendum 2026-09-29) — ListServers is what's left to
+  // check it against (the desktop tray badge is the other place, Go-only).
+  const mentions = async () => ((await apiCall(page, 'ListServers')) as { id: number; mentions: number }[]).find((s) => s.id === id)?.mentions
+  await expect.poll(mentions).toBe(1)
   await expect(channel(page, /Off-Topic/).getByLabel('Mentions: 1')).toBeVisible()
   await expect
     .poll(async () => ((await testGet(page, 'notifications')) as { body: string }[]).map((n) => n.body))
@@ -73,7 +76,7 @@ test('a mention from someone else: badges, notification, reading clears it', asy
 
   await channel(page, /Off-Topic/).click()
   await expect(feed(page).getByText(text)).toBeVisible()
-  await expect(page.getByRole('navigation').getByLabel('Mentions: 1', { exact: true })).toHaveCount(0)
+  await expect.poll(mentions).toBe(0)
   await expect(channel(page, /Off-Topic/).getByLabel('Mentions: 1')).toHaveCount(0)
   await removeServerFromMenu(page)
 })
@@ -125,10 +128,11 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
   await post.hover()
   await post.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: 'Mark as unread' }).click()
-  // exact: true — same substring clash as above ("Fake MM — Unread messages" on the button).
-  await expect(page.getByRole('navigation').getByLabel('Unread messages', { exact: true })).toBeVisible()
+  // The server-level dot used to live on the ServerRail tile, hidden with
+  // only this one fake server configured (sidebar-menu brief addendum
+  // 2026-09-29) — ListServers (the `unread` helper above) is the check now.
+  await expect.poll(unread).toBe(true)
   await page.waitForTimeout(1000) // the open, focused channel must NOT auto-read it again
-  await expect(page.getByRole('navigation').getByLabel('Unread messages', { exact: true })).toBeVisible()
   expect(await unread()).toBe(true)
   await removeServerFromMenu(page)
 })
@@ -199,5 +203,30 @@ test('server menu closes when clicking elsewhere in the app', async ({ page }) =
   await page.screenshot({ path: `${SIDEBAR_SHOTS}/menu-open.png` }) // behavioural fix; not asserted, just a visual check nothing moved
   await feed(page).click()
   await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0)
+  await removeServerFromMenu(page)
+})
+
+// Sidebar-menu brief addendum (2026-09-29): with exactly one server, the
+// rail is hidden and "Add server" moves into the "⋯" menu so the rail's own
+// "+" tile stays reachable.
+test('a single server hides the rail; "⋯" → Add server reaches the add-server form', async ({ page }) => {
+  await signInAlice(page)
+  await expect(page.getByRole('button', { name: 'Fake MM' })).toHaveCount(0) // no rail tile — nothing to pick between with one server
+  await page.screenshot({ path: `${SIDEBAR_SHOTS}/single-server-layout.png` })
+
+  await page.getByRole('button', { name: 'Server menu' }).click()
+  const items = await page.getByRole('menuitem').allTextContents()
+  expect(items).toEqual(['Add server', 'Sign out', 'Remove server'])
+  await page.screenshot({ path: `${SIDEBAR_SHOTS}/menu-open-single-server.png` })
+  await page.getByRole('menuitem', { name: 'Add server' }).click()
+  await expect(page.getByRole('heading', { name: 'Add a Mattermost server' })).toBeVisible()
+
+  // No dead end: deselecting the one server for the add-server screen brings
+  // the rail back (App.tsx's showRail — the add screen has no menu of its
+  // own to reach the rail's "+"/other servers from), so the original server
+  // is still reachable to back out without adding a second one.
+  await expect(page.getByRole('button', { name: 'Fake MM' })).toBeVisible()
+  await page.getByRole('button', { name: 'Fake MM' }).click()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await removeServerFromMenu(page)
 })

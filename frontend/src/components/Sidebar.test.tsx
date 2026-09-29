@@ -38,7 +38,7 @@ const sb: SidebarDTO = {
 function renderSidebar(over: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const props = {
     server, sidebar: sb, activeChannelId: 'c-town',
-    onTeam: vi.fn(), onChannel: vi.fn(), onSignOut: vi.fn(), onRemove: vi.fn(), onReauth: vi.fn(),
+    onTeam: vi.fn(), onChannel: vi.fn(), onSignOut: vi.fn(), onRemove: vi.fn(), onReauth: vi.fn(), onAddServer: vi.fn(),
     ...over,
   }
   const { rerender } = render(<Sidebar {...props} />)
@@ -105,6 +105,19 @@ test('server menu signs out and removes', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Server menu' }))
   await userEvent.click(screen.getByRole('menuitem', { name: 'Remove server' }))
   expect(p.onRemove).toHaveBeenCalled()
+})
+
+// Sidebar-menu-brief addendum (2026-09-29): with the server rail hidden
+// (single server), its "+" tile is unreachable — "Add server" moves into
+// this menu instead, above Sign out/Remove server, opening the same flow.
+test('server menu: "Add server" sits above Sign out/Remove server and closes the menu', async () => {
+  const p = renderSidebar()
+  await userEvent.click(screen.getByRole('button', { name: 'Server menu' }))
+  const items = screen.getAllByRole('menuitem').map((b) => b.textContent)
+  expect(items).toEqual(['Add server', 'Sign out', 'Remove server'])
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Add server' }))
+  expect(p.onAddServer).toHaveBeenCalledTimes(1)
+  expect(screen.queryByRole('menu')).toBeNull()
 })
 
 // The bug (user report 2026-09-29): the menu had no outside-click/Escape
