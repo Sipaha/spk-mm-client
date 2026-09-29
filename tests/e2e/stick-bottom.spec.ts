@@ -10,6 +10,12 @@ import { channel, fakeURL, feed, removeServerFromMenu, signInAlice, testGet } fr
 // shrinking the scroller keeps scrollTop, fires no scroll event, and the last
 // post slid under the composer.
 
+// A failed test must not leave its server behind (chat.spec.ts rule): the
+// next test's sign-in would time out on the missing "Add server" form.
+test.afterEach(async ({ page }) => {
+  if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
+})
+
 let seeded = false // the fake lives for the whole run (workers: 1)
 const shots = process.env.STICK_SHOT_DIR // optional: where to write the screenshots
 
