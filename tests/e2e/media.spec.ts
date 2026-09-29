@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { channel, fakePost, feed, removeServerFromMenu, signInAlice, testGet, testPost, unique } from './helpers'
+import { channel, fakePost, fakeURL, feed, removeServerFromMenu, signInAlice, testGet, testPost, unique } from './helpers'
 
 const naturalWidth = (img: import('@playwright/test').Locator) => img.evaluate((i: HTMLImageElement) => i.naturalWidth)
 
@@ -67,6 +67,61 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await expect
     .poll(async () => ((await testGet(page, 'opened-files')) as string[]).some((p) => p.endsWith('server.log')))
     .toBe(true)
+  await removeServerFromMenu(page)
+})
+
+// file-cards brief (2026-09-30): the card's own name/icon area is now the
+// primary action — "View <name>" for a previewable kind (a click opens the
+// in-app viewer, same as clicking the old dedicated Preview icon button
+// used to), or a bare-name-labelled download for everything else (a click
+// downloads directly, no separate click on the small download icon
+// needed). The bare-name label is deliberate, not an oversight: it must
+// never collide with the secondary DownloadButton's own "Download <name>"
+// accessible name right next to it (a strict-mode Playwright lookup for
+// exactly that name — see this file's other tests, e.g. "Download
+// spec.pdf" — must keep matching exactly one button).
+test('a card\'s own name/icon area: pdf opens the viewer, a non-previewable kind (zip) downloads directly', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+
+  // spec.pdf: previewable — the primary action is "View", not a download.
+  const pdfCard = feed(page).getByRole('button', { name: 'View spec.pdf' })
+  await expect(pdfCard).toBeVisible()
+  // Only the secondary button is named "Download spec.pdf" — the strict-mode
+  // lookup below fails outright if the primary card ever regains that label.
+  await expect(feed(page).getByRole('button', { name: 'Download spec.pdf' })).toBeVisible()
+
+  // A fresh zip (not stuck-report/quarterly-report — other specs' own files,
+  // and this fake's downloads dir is shared for the whole run): non-previewable,
+  // so its card has no "View" action at all, and its own name/icon area is
+  // labelled by the bare file name — clicking it downloads directly.
+  const fake = await fakeURL(page)
+  const login = await page.request.post(`${fake}/api/v4/users/login`, { data: { login_id: 'alice', password: 'secret' } })
+  expect(login.ok(), await login.text()).toBeTruthy()
+  const auth = { Authorization: `Bearer ${login.headers()['token']}` }
+  const up = await page.request.post(`${fake}/api/v4/files?channel_id=c-offtopic&filename=card-click-archive.zip`, {
+    headers: { ...auth, 'Content-Type': 'application/zip' },
+    data: Buffer.alloc(4096, 7),
+  })
+  expect(up.ok(), await up.text()).toBeTruthy()
+  const fileId = ((await up.json()).file_infos[0] as { id: string }).id
+  const post = await page.request.post(`${fake}/api/v4/posts`, {
+    headers: auth,
+    data: { channel_id: 'c-offtopic', message: 'card click zip test', file_ids: [fileId] },
+  })
+  expect(post.ok(), await post.text()).toBeTruthy()
+
+  // A card's own name button is never ALSO labelled "View" for a
+  // non-previewable kind — exact:true above already proves its accessible
+  // name is exactly the bare file name, nothing more.
+  const zipCard = feed(page).getByRole('button', { name: 'card-click-archive.zip', exact: true })
+  await expect(zipCard).toBeVisible()
+  await zipCard.click()
+  const reveal = feed(page).getByRole('button', { name: 'Show card-click-archive.zip in folder' })
+  await expect(reveal).toBeVisible()
+  // Clicking the card only downloads — "Show in folder" is a separate,
+  // user-driven action, never auto-triggered by the download completing.
+  expect(((await testGet(page, 'revealed-files')) as string[]).some((p) => p.endsWith('card-click-archive.zip'))).toBe(false)
   await removeServerFromMenu(page)
 })
 
