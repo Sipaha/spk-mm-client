@@ -98,6 +98,7 @@ test('/echo executes the command (the fake posts its text), /away answers with a
   await box.press('Enter')
   const eph = feed(page).locator('article', { hasText: 'You are now away' }).last()
   await expect(eph).toContainText('(Only visible to you)')
+  await expect(eph).toContainText('System') // the server's answer, not alice's
 })
 
 test('an unknown command keeps the text and can be sent as a message', async ({ page }) => {
@@ -136,4 +137,49 @@ test('the thread composer: @ suggestions and a command with the thread root', as
   await box.press('Enter')
   await expect(box).toHaveValue('')
   await expect(threadFeed(page).locator('article', { hasText: 'You are now away' })).toContainText('(Only visible to you)')
+})
+
+// Fix round 1 (security review): /leave never leaves by accident — a
+// private channel asks first, a thread refuses it — and /logout signs out.
+test('/leave: a private channel asks first, a thread refuses it', async ({ page }) => {
+  await signInToSecret(page)
+  const box = composer(page)
+  await box.fill('/leave')
+  await expect(popup(page)).toBeVisible()
+  await box.press('Escape')
+  await box.press('Enter')
+  const ask = page.getByRole('alert')
+  await expect(ask).toContainText('Are you sure you wish to leave the private channel Secret?')
+  await ask.getByRole('button', { name: 'Cancel' }).click()
+  await expect(ask).toBeHidden()
+  await expect(box).toHaveValue('/leave')
+  await box.fill('')
+
+  const root = unique('leave root')
+  await fakePost(page, 'c-secret', 'alice', root)
+  await rootRow(page, root).hover()
+  await rootRow(page, root).getByRole('button', { name: 'Reply in thread' }).click()
+  const reply = threadComposer(page)
+  await reply.fill('/leave')
+  await expect(page.getByRole('listbox', { name: 'Suggestions' })).toBeVisible()
+  await reply.press('Escape')
+  await reply.press('Enter')
+  await expect(page.getByRole('alert')).toContainText('/leave is not supported in reply threads')
+  await expect(reply).toHaveValue('/leave')
+  await expect(channel(page, /Secret/)).toBeVisible()
+})
+
+test('/logout signs the server out', async ({ page }) => {
+  await signInToSecret(page)
+  const box = composer(page)
+  await box.fill('/logout')
+  await expect(popup(page)).toBeVisible()
+  await box.press('Escape')
+  await box.press('Enter')
+  await expect(page.getByLabel('Login or email')).toBeVisible()
+  // Sign back in so afterEach removes the server the usual way.
+  await page.getByLabel('Login or email').fill('alice')
+  await page.getByLabel('Password').fill('secret')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('heading', { name: /Town Square|Secret/ })).toBeVisible()
 })

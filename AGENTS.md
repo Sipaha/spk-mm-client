@@ -793,14 +793,26 @@
   начале сообщения; пока всплывашка открыта, Enter вставляет и **не** отправляет, Esc закрывает её
   для этого слова и не доходит до панели треда. `/`-сообщение выполняется **только** явной отправкой
   (`ExecuteCommand`, не ретраится, в треде — с `root_id`, корень должен быть в кэше тредов); неизвестная
-  команда оставляет текст и предлагает отправить его сообщением. Эфемерные посты (`ephemeral_message`)
-  живут отдельно от окон (не в снимке, ≤ 50 на сервер, уход из канала их убирает). `~имя` в сообщении —
+  команда оставляет текст и предлагает отправить его сообщением. Команды, опасные в обход веб-клиента
+  (fix round 1 ревью безопасности): `/leave` с `root_id` — отказ `command_unsupported_in_thread` без
+  запроса (сервер игнорирует `root_id` и выходит из всего канала); `/leave` в закрытом канале — только
+  после встроенного подтверждения; успешный `/logout` — `Service.Logout` (сервер лишь отвечает
+  `goto_location`); сетевая ошибка/таймаут выполнения — `command_uncertain` («команда могла
+  выполниться»), не повтор. Запросы автодополнения и команд привязаны и к жизни воркера
+  (`Worker.withLife`), ключ кэша `@` содержит команду. Тела `/api/*` ограничены `MaxAPIBody` = 1 МиБ
+  (загрузки — свой маршрут). Эфемерные посты (`ephemeral_message`) живут отдельно от окон (не в снимке,
+  ≤ 50 на сервер, уход из канала их убирает; правка/удаление по id применяются, id настоящего поста не
+  показывается дважды); ответ самого сервера (не бота/webhook) — автор «Система» (`system_author`). `~имя` в сообщении —
   ссылка на канал, если его знает сайдбар выбранного сервера (`ChannelItem.slug`). — `internal/mm/rest/
   autocomplete_test.go`, `internal/mmfake/autocomplete_test.go`, `internal/mmsync/aclru_test.go`
   (`TestAutocompleteCacheIsBoundedLRUWithTTL`), `internal/mmsync/autocomplete_test.go`
   (`TestAutocompleteIsCachedPerPrefixForAMinute`, `TestAutocompleteRequestIsCancelledWithItsContext`,
   `TestAutocompleteOfflineIsLocalOnly`, `TestAutocompleteCacheIsDroppedWhenTheWorkerStops`,
-  `TestExecuteCommandCarriesTeamAndThreadRoot`, `TestEphemeralAnswerShowsInTheChannelAndTheThread`),
+  `TestExecuteCommandCarriesTeamAndThreadRoot`, `TestEphemeralAnswerShowsInTheChannelAndTheThread`,
+  `TestLeaveInAThreadIsRefusedWithoutASend`, `TestAutocompleteAndCommandsEndWithTheWorker`,
+  `TestDMUsersCacheIsPerTeam`), `TestLeaveInAThreadIsACodedRefusal`, `TestLogoutCommandSignsTheServerOut`,
+  `TestExecuteCommandTimeoutIsUncertain`, `TestAPIBodyIsCapped`, `TestEphemeralPostsAreEditedDeletedAndDeduped`,
+  `TestEphemeralAuthorIsTheSystem`,
   `internal/api/autocomplete_test.go` (`TestAutocompleteValidatesItsInput`,
   `TestExecuteCommandThroughService`, `TestSignOutEndsTheAutocompleteSession`),
   `internal/api/transport/http_test.go` (`TestAbortedAutocompleteCancelsItsContext`),
