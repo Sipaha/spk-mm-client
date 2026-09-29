@@ -221,6 +221,7 @@ const ru = {
   'composer.formatToolbar': 'Панель форматирования',
   'composer.emoji': 'Эмодзи',
   'composer.send': 'Отправить сообщение',
+  'composer.moreFormatting': 'Другие параметры форматирования',
 } as const
 
 type Key = keyof typeof ru
@@ -445,6 +446,7 @@ const en: Record<Key, string> = {
   'composer.formatToolbar': 'Formatting toolbar',
   'composer.emoji': 'Emoji',
   'composer.send': 'Send message',
+  'composer.moreFormatting': 'More formatting options',
 }
 
 export const dict = { ru, en }

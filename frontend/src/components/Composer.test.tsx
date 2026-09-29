@@ -56,6 +56,43 @@ function paste(box: HTMLElement, opts: { types: string[]; uriList?: string; file
   return fireEvent.paste(box, { clipboardData })
 }
 
+// stubResizeObserver / setOffsetWidth: jsdom has no ResizeObserver and never
+// computes real layout (same gotcha Feed.test.tsx documents) — the toolbar's
+// fit-to-width logic is driven by hand: install a stub that records which
+// elements are observed, fake the toolbar row's offsetWidth, then fire its
+// observer to trigger a recompute.
+type Observed = { cb: ResizeObserverCallback; targets: Set<Element> }
+function stubResizeObserver() {
+  const all: Observed[] = []
+  const saved = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+  class Stub {
+    rec: Observed = { cb: () => {}, targets: new Set() }
+    constructor(cb: ResizeObserverCallback) {
+      this.rec.cb = cb
+      all.push(this.rec)
+    }
+    observe(el: Element) {
+      this.rec.targets.add(el)
+    }
+    unobserve(el: Element) {
+      this.rec.targets.delete(el)
+    }
+    disconnect() {
+      this.rec.targets.clear()
+    }
+  }
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = Stub
+  const fire = (el: Element) =>
+    act(() => {
+      for (const o of all) if (o.targets.has(el)) o.cb([{ target: el } as unknown as ResizeObserverEntry], o as unknown as ResizeObserver)
+    })
+  return { fire, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
+}
+
+function setOffsetWidth(el: Element, width: number) {
+  Object.defineProperty(el, 'offsetWidth', { configurable: true, value: width })
+}
+
 beforeEach(() => {
   setLocale('en')
   vi.mocked(isDesktop).mockReset().mockReturnValue(false)
@@ -439,4 +476,63 @@ test('a reply composer (rootId set) also has the formatting toolbar', () => {
   )
   expect(screen.getByRole('button', { name: 'Bold (Ctrl+B)' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument()
+})
+
+// Coordinator ruling 2026-09-29 (composer brief follow-up): the thread
+// panel is too narrow for all 9 formatting buttons — they must collapse
+// into a "more formatting" popover, not spill into a horizontal scrollbar.
+test('a narrow toolbar row collapses buttons into "More formatting options", with no scrollbar wrapper', () => {
+  const ro = stubResizeObserver()
+  try {
+    render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    setOffsetWidth(toolbar, 200) // narrow: only "Bold" fits alongside the always-visible right group
+    ro.fire(toolbar)
+    expect(within(toolbar).queryByRole('button', { name: 'Numbered list' })).toBeNull()
+    expect(within(toolbar).getByRole('button', { name: 'More formatting options' })).toBeInTheDocument()
+    expect(toolbar.querySelector('.overflow-x-auto')).toBeNull()
+    // The right group is never the one that gives way.
+    expect(within(toolbar).getByRole('button', { name: 'Send message' })).toBeInTheDocument()
+  } finally {
+    ro.restore()
+  }
+})
+
+test('a wide toolbar row shows every button with no "more" button', () => {
+  const ro = stubResizeObserver()
+  try {
+    render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    setOffsetWidth(toolbar, 1000)
+    ro.fire(toolbar)
+    expect(screen.queryByRole('button', { name: 'More formatting options' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Numbered list' })).toBeInTheDocument()
+  } finally {
+    ro.restore()
+  }
+})
+
+test('the "more formatting" popover lists the collapsed buttons; picking one applies it, closes the popover and refocuses the textarea', async () => {
+  const user = userEvent.setup()
+  const ro = stubResizeObserver()
+  try {
+    render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+    const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+    setOffsetWidth(toolbar, 200)
+    ro.fire(toolbar)
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    await user.type(box, 'word')
+    box.setSelectionRange(0, 4)
+    await user.click(screen.getByRole('button', { name: 'More formatting options' }))
+    const menu = await screen.findByRole('menu', { name: 'More formatting options' })
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual([
+      'Italic (Ctrl+I)', 'Strikethrough', 'Heading', 'Link (Ctrl+Alt+K)', 'Code', 'Quote', 'Bulleted list', 'Numbered list',
+    ])
+    await user.click(within(menu).getByRole('menuitem', { name: 'Quote' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(box).toHaveValue('> word')
+    expect(box).toHaveFocus()
+  } finally {
+    ro.restore()
+  }
 })

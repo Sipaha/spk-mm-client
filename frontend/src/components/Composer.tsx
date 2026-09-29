@@ -5,13 +5,15 @@ import type { AttachmentView, EmojiDTO } from '../api/types'
 import { attachFromClipboard, pickAttachments, removeAttachment, retryAttachment, uploadAttachments } from '../chat'
 import type { MarkdownMode } from '../composerFormatting'
 import { applyMarkdown, insertAtCaret, replaceTextareaValue } from '../composerFormatting'
+import { fitCount, TOOLBAR_ITEM_WIDTH } from '../composerToolbarFit'
 import { errorMessage } from '../errors'
 import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { useStore } from '../store'
 import { AttachmentsTray } from './AttachmentsTray'
 import { IconBold, IconCode, IconHeading, IconItalic, IconListBulleted, IconListNumbered, IconMood, IconQuote, IconSend, IconStrikethrough } from './composerIcons'
-import { IconAttach, IconLink } from './icons'
+import { FormattingMenu } from './FormattingMenu'
+import { IconAttach, IconLink, IconMore } from './icons'
 
 const EmojiPicker = lazy(() => import('./EmojiPicker'))
 
@@ -46,14 +48,31 @@ const FORMAT_BUTTONS: { mode: MarkdownMode; label: Parameters<typeof t>[0]; Icon
   { mode: 'ol', label: 'composer.numberedList', Icon: IconListNumbered },
 ]
 
+// GROUP_BREAK_INDICES: FORMAT_BUTTONS' own separator positions, precomputed
+// once — fed straight to composerToolbarFit's fitCount/widthForCount.
+const GROUP_BREAK_INDICES = FORMAT_BUTTONS.reduce<number[]>((acc, b, i) => {
+  if (b.groupBreak) acc.push(i)
+  return acc
+}, [])
+
+// RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, attach, emoji,
+// send) is always exactly these 4 fixed-size buttons — a constant is exact
+// and needs no extra ResizeObserver/ref of its own. TOOLBAR_RESERVED adds
+// the row's own horizontal padding (px-1.5 = 6px each side) and the one
+// flex `gap` between the left and right groups.
+const RIGHT_GROUP_WIDTH = 4 * TOOLBAR_ITEM_WIDTH
+const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + 12 + 2
+
 function ToolbarButton({
-  label, onClick, children, pressed, disabled, className = 'text-fg-muted',
+  label, onClick, children, pressed, disabled, haspopup, expanded, className = 'text-fg-muted',
 }: {
   label: string
   onClick(e: React.MouseEvent<HTMLButtonElement>): void
   children: React.ReactNode
   pressed?: boolean
   disabled?: boolean
+  haspopup?: 'menu'
+  expanded?: boolean
   className?: string
 }) {
   return (
@@ -62,6 +81,8 @@ function ToolbarButton({
       aria-label={label}
       title={label}
       aria-pressed={pressed}
+      aria-haspopup={haspopup}
+      aria-expanded={haspopup ? expanded : undefined}
       onClick={onClick}
       disabled={disabled}
       className={`flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent ${pressed ? 'bg-hover text-fg' : className}`}
@@ -134,6 +155,33 @@ export function Composer({
     useStore.getState().setFormattingBarHidden(next)
     void client.setFormattingBarHidden(next).catch(() => {})
   }
+
+  // Responsive formatting buttons (coordinator ruling 2026-09-29, composer
+  // brief follow-up): the thread panel can be as narrow as 320px, too
+  // narrow for all 9 buttons plus the always-visible right group — they
+  // collapse into a "more formatting" popover (FormattingMenu) instead of
+  // a horizontal scrollbar. visibleCount is an integer (0..9), not the raw
+  // pixel width, and the setter only fires when it actually changes — a
+  // continuous drag-resize does not churn a React render for every pixel,
+  // only for the (much rarer) frame where a button's fit flips.
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [visibleCount, setVisibleCount] = useState(FORMAT_BUTTONS.length)
+  useEffect(() => {
+    const row = toolbarRef.current
+    if (!row || typeof ResizeObserver === 'undefined') return
+    const update = () => {
+      const available = row.offsetWidth - TOOLBAR_RESERVED
+      const next = fitCount(available, FORMAT_BUTTONS.length, GROUP_BREAK_INDICES)
+      setVisibleCount((cur) => (cur === next ? cur : next))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(row)
+    return () => ro.disconnect()
+  }, [])
+  const shownButtons = FORMAT_BUTTONS.slice(0, visibleCount)
+  const hiddenButtons = FORMAT_BUTTONS.slice(visibleCount)
+  const [moreAnchor, setMoreAnchor] = useState<HTMLButtonElement | null>(null)
 
   // maxTextareaHeight: ~40% of the pane's height (the composer's own
   // parent — ChannelPane's/ThreadPane's flex column, whose height does not
@@ -388,15 +436,16 @@ export function Composer({
           style={{ maxHeight: maxTextareaHeight ? `${maxTextareaHeight}px` : undefined }}
           className="w-full resize-none overflow-y-auto rounded-t-lg bg-transparent px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none disabled:opacity-50"
         />
-        <div role="toolbar" aria-label={t('composer.formatToolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
-          {/* min-w-0 + overflow-x-auto: the thread panel (as narrow as 320px)
-              cannot fit all 9 formatting buttons plus the right-hand group —
-              this group scrolls instead of clipping/pushing the send button
-              out of the box (shrink-0 below keeps that group always fully
-              visible). */}
+        <div ref={toolbarRef} role="toolbar" aria-label={t('composer.formatToolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
+          {/* No horizontal scrollbar here (coordinator ruling 2026-09-29):
+              the thread panel (as narrow as 320px) cannot fit all 9
+              formatting buttons plus the right-hand group, so the ones
+              that don't fit collapse behind "More formatting options"
+              (FormattingMenu) instead — shrink-0 below keeps the right
+              group always fully visible. */}
           {!formattingBarHidden && (
-            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-              {FORMAT_BUTTONS.map(({ mode, label, Icon, groupBreak }) => (
+            <>
+              {shownButtons.map(({ mode, label, Icon, groupBreak }) => (
                 <span key={mode} className="flex shrink-0 items-center gap-0.5">
                   {groupBreak && <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-line" />}
                   <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled}>
@@ -404,7 +453,25 @@ export function Composer({
                   </ToolbarButton>
                 </span>
               ))}
-            </div>
+              {hiddenButtons.length > 0 && (
+                <ToolbarButton
+                  label={t('composer.moreFormatting')}
+                  haspopup="menu"
+                  expanded={moreAnchor !== null}
+                  disabled={disabled}
+                  onClick={(e) => {
+                    // Capture currentTarget synchronously: React nulls it out
+                    // on the pooled event by the time a functional setState
+                    // updater actually runs, which is not guaranteed to be
+                    // within this same synchronous dispatch.
+                    const btn = e.currentTarget
+                    setMoreAnchor((cur) => (cur ? null : btn))
+                  }}
+                >
+                  <IconMore size={18} />
+                </ToolbarButton>
+              )}
+            </>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <ToolbarButton
@@ -447,6 +514,20 @@ export function Composer({
               onClose={closePicker}
             />
           </Suspense>,
+          document.body,
+        )}
+      {moreAnchor &&
+        hiddenButtons.length > 0 &&
+        createPortal(
+          <FormattingMenu
+            anchorEl={moreAnchor}
+            items={hiddenButtons.map(({ mode, label, Icon }) => ({ mode, label: t(label), Icon }))}
+            onPick={(mode) => {
+              setMoreAnchor(null)
+              runFormat(mode)
+            }}
+            onClose={() => setMoreAnchor(null)}
+          />,
           document.body,
         )}
     </div>
