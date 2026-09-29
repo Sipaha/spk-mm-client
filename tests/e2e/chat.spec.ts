@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
 // Sidebar-menu fix/addendum screenshots (2026-09-29): a fixed absolute path
@@ -228,5 +228,66 @@ test('a single server hides the rail; "⋯" → Add server reaches the add-serve
   await expect(page.getByRole('button', { name: 'Fake MM' })).toBeVisible()
   await page.getByRole('button', { name: 'Fake MM' }).click()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  await removeServerFromMenu(page)
+})
+
+// Density-brief addendum + "smart placement" update (2026-09-29): the hover
+// toolbar sits inside the hovered post's own box by default; it only
+// overhangs above (the pre-addendum look) when staying inside would cover
+// the post's own rendered content. Both outcomes assert the toolbar's
+// bounding box is where expected relative to the article's, not just that
+// it renders (a class-only assertion wouldn't catch a real geometry bug).
+const DENSITY_SHOTS = '/home/spk/.spk/sawe/ss/Mattermost/.agents/tmp/density-shots'
+
+test('post toolbar: a short post keeps it inside the post; a long wrapping post or an attachment card overhangs above', async ({ page }) => {
+  await signInAlice(page)
+  const short = unique('short toolbar test post')
+  const long = unique('a very long wrapping toolbar test message') +
+    ' padded out with enough extra words that it wraps across more than one line and its own last line of text reaches under the top-right corner where the hover toolbar would otherwise sit, forcing it to move above the post instead of covering that text.'
+  await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: short })
+  await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: long })
+  await testPost(page, 'fake/webhook', {
+    channel_id: 'c-town', username: 'bob', message: '', override_username: 'jenkins',
+    override_icon_url: '/static/images/webhook-icon.png',
+    attachments: [{ color: '#00c100', title: unique('toolbar-test-attachment'), text: 'Branch: **master**', footer: 'build #1' }],
+  })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+
+  const box = (loc: Locator) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right } })
+
+  const shortPost = feed(page).locator('article', { hasText: short })
+  await shortPost.hover()
+  const shortToolbar = shortPost.getByTestId('post-toolbar')
+  await expect(shortToolbar).toBeVisible()
+  await expect(shortToolbar).toHaveAttribute('data-placement', 'inside-top')
+  const shortArticleBox = await box(shortPost)
+  const shortToolbarBox = await box(shortToolbar)
+  expect(shortToolbarBox.top).toBeGreaterThanOrEqual(shortArticleBox.top - 1) // inside: never above the article's own top
+  expect(shortToolbarBox.bottom).toBeLessThanOrEqual(shortArticleBox.bottom + 1)
+  await page.screenshot({ path: `${DENSITY_SHOTS}/toolbar-e2e-1-short-inside.png` })
+  await page.mouse.move(5, 5)
+
+  const longPost = feed(page).locator('article', { hasText: 'a very long wrapping toolbar test message' })
+  await longPost.hover()
+  const longToolbar = longPost.getByTestId('post-toolbar')
+  await expect(longToolbar).toBeVisible()
+  await expect(longToolbar).toHaveAttribute('data-placement', 'overhang')
+  const longArticleBox = await box(longPost)
+  const longToolbarBox = await box(longToolbar)
+  expect(longToolbarBox.top).toBeLessThan(longArticleBox.top) // overhangs above the article's own top
+  await page.screenshot({ path: `${DENSITY_SHOTS}/toolbar-e2e-2-wrapping-overhang.png` })
+  await page.mouse.move(5, 5)
+
+  const attachmentPost = feed(page).locator('article', { hasText: 'toolbar-test-attachment' })
+  await attachmentPost.hover()
+  const attachmentToolbar = attachmentPost.getByTestId('post-toolbar')
+  await expect(attachmentToolbar).toBeVisible()
+  await expect(attachmentToolbar).toHaveAttribute('data-placement', 'overhang')
+  const attachmentArticleBox = await box(attachmentPost)
+  const attachmentToolbarBox = await box(attachmentToolbar)
+  expect(attachmentToolbarBox.top).toBeLessThan(attachmentArticleBox.top)
+  await page.screenshot({ path: `${DENSITY_SHOTS}/toolbar-e2e-3-attachment-overhang.png` })
+
   await removeServerFromMenu(page)
 })

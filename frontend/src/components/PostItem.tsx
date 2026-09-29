@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Attachment, EmojiDTO, FileView, PostView, ReactionUsersDTO } from '../api/types'
 import { invalidateRecent, useQuickReactions } from '../emoji/recent'
@@ -69,6 +69,65 @@ interface Props {
 
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
 const barColor = (c?: string) => (c && (NAMED_COLORS[c] ?? (/^#[0-9a-f]{3,8}$/i.test(c) ? c : undefined))) || '#d4d4d4'
+
+// Toolbar placement (density-brief 2026-09-29 addendum + "smart placement"
+// update): default is INSIDE the hovered post's own box (top-right, a few
+// px inset — 'inside-top'; vertically centred instead — 'inside-center' —
+// when the row itself is shorter than the toolbar, e.g. a one-line
+// continuation post, so the unavoidable overflow is split evenly above and
+// below rather than dumped entirely into the next row). If that inside
+// position would cover the post's own rendered content (any top-level
+// content child's rect intersects the toolbar's band), it overhangs
+// upward instead (the pre-addendum look) — unless doing so would push it
+// above the feed scroller's own top edge (the first post / right after a
+// date separator has no room above), in which case it stays inside
+// despite the overlap: covering the post's own text beats being clipped
+// by the scroller.
+export type ToolbarPlacement = 'inside-top' | 'inside-center' | 'overhang'
+
+interface Rect {
+  top: number
+  left: number
+  right: number
+  bottom: number
+}
+
+// decideToolbarPlacement is a pure function of already-measured rects —
+// PostItem's useLayoutEffect does the one real layout read (getBoundingClientRect
+// ×N) and hands the plain numbers here, so this rule itself is unit-testable
+// with stubbed rects, no DOM/mounting required.
+export function decideToolbarPlacement(input: {
+  article: { top: number; height: number }
+  toolbarInside: Rect & { height: number }
+  // contentChildren: the content column's rendered rects — real
+  // glyph-level line rects for text (see the caller: a Range per text node,
+  // not the column's top-level element boxes, which stretch to the full
+  // column width regardless of how little of it their text actually uses)
+  // plus the bounding box of self-sized visual blocks (attachment cards,
+  // images, buttons).
+  contentChildren: Rect[]
+  // scrollerTop: the feed scroller's own getBoundingClientRect().top, or
+  // null if no [role="log"] ancestor was found (e.g. in isolation/tests) —
+  // treated as "no clamp" (matches there being nothing to clip against).
+  scrollerTop: number | null
+}): ToolbarPlacement {
+  const { article, toolbarInside, contentChildren, scrollerTop } = input
+  const base: ToolbarPlacement = article.height < toolbarInside.height + 8 ? 'inside-center' : 'inside-top'
+  const overlapsContent = contentChildren.some(
+    (r) => r.right > toolbarInside.left && r.left < toolbarInside.right && r.bottom > toolbarInside.top && r.top < toolbarInside.bottom,
+  )
+  if (!overlapsContent) return base
+  const OVERHANG_OFFSET = 16 // -top-4 (Tailwind) = -1rem = -16px above the article's own top
+  const overhangTop = article.top - OVERHANG_OFFSET
+  if (scrollerTop !== null && overhangTop < scrollerTop) return base // would be clipped by the scroller's own top edge — stay inside instead
+  return 'overhang'
+}
+
+const TOOLBAR_PLACEMENT_CLASS: Record<ToolbarPlacement, string> = {
+  'inside-top': 'top-1',
+  'inside-center': 'top-1/2 -translate-y-1/2',
+  overhang: '-top-4',
+}
 
 function AttachmentView({
   serverId,
@@ -286,6 +345,66 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     setMenuOpen(true)
   }
   const closeMenu = () => setMenuOpen(false)
+  // Toolbar placement: one layout read per show (see decideToolbarPlacement
+  // above) — reset to the 'inside-top' baseline whenever the toolbar isn't
+  // rendered, so the next show always starts from the same measured
+  // candidate rather than carrying over a stale decision. No ResizeObserver,
+  // no scroll/pointermove listener, no per-frame work: this effect runs
+  // exactly once per visible:false→true transition.
+  const contentRef = useRef<HTMLDivElement>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState<ToolbarPlacement>('inside-top')
+  useLayoutEffect(() => {
+    if (!visible) {
+      setPlacement('inside-top')
+      return
+    }
+    const toolbar = toolbarRef.current
+    const article = articleRef.current
+    if (!toolbar || !article) return
+    const toolbarRect = toolbar.getBoundingClientRect()
+    const articleRect = article.getBoundingClientRect()
+    // contentRef.current.children[*].getBoundingClientRect() doesn't work
+    // here: the wrapper <div>s around the message text (and, it turns out,
+    // Range.getClientRects() over the whole column too — a Range that
+    // fully contains a block element also yields a rect for *that
+    // element's own box*, not just its text) all stretch to the column's
+    // full width by default regardless of how little of it their actual
+    // text uses, so even a one-word message would measure as "reaches the
+    // right edge". Two kinds of rects instead: a Range per individual TEXT
+    // NODE (a range whose start/end sit inside the same text node yields
+    // real glyph-level line rects, immune to the ancestor-box problem —
+    // this is what actually answers "does the rendered text reach under
+    // the toolbar"), plus the bounding box of any genuinely self-sized
+    // visual block that isn't just a text wrapper: the attachment card
+    // (`.rounded-r`, its own real width per the density brief), images and
+    // buttons (file tiles, reaction chips) — these size to their own
+    // content already (explicit dimensions or inline-level), so their
+    // plain bounding rect is accurate.
+    const contentRects: Rect[] = []
+    if (contentRef.current) {
+      const walker = document.createTreeWalker(contentRef.current, NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.trim()) continue
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        // getClientRects is unimplemented in jsdom (throws) — every real
+        // browser this app runs in (Chromium/WebKitGTK) supports it; guard
+        // rather than crash the layout effect where it doesn't.
+        if (typeof range.getClientRects === 'function') contentRects.push(...Array.from(range.getClientRects()))
+      }
+      for (const el of contentRef.current.querySelectorAll('.rounded-r, img, button')) contentRects.push(el.getBoundingClientRect())
+    }
+    const scrollerEl = article.closest('[role="log"]')
+    setPlacement(
+      decideToolbarPlacement({
+        article: { top: articleRect.top, height: articleRect.height },
+        toolbarInside: toolbarRect,
+        contentChildren: contentRects,
+        scrollerTop: scrollerEl ? scrollerEl.getBoundingClientRect().top : null,
+      }),
+    )
+  }, [visible])
   return (
     <article
       ref={articleRef}
@@ -346,7 +465,11 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             here). Pure CSS throughout: no extra measurement, and these
             classes are horizontal-or-cancelling-vertical only, so the
             virtualizer's measured row height is unaffected. */}
-        <div className={isInlineReply ? '-my-0.5 border-l-[3px] border-line/70 py-0.5 pl-2' : undefined} data-testid={isInlineReply ? 'reply-bar' : undefined}>
+        <div
+          ref={contentRef}
+          className={isInlineReply ? '-my-0.5 border-l-[3px] border-line/70 py-0.5 pl-2' : undefined}
+          data-testid={isInlineReply ? 'reply-bar' : undefined}
+        >
           {editing ? (
             <EditBox post={post} actions={actions} />
           ) : (
@@ -410,10 +533,12 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
       </div>
       {!post.pending && !post.failed && !editing && visible && (
         <div
+          ref={toolbarRef}
           data-testid="post-toolbar"
+          data-placement={placement}
           role="toolbar"
           aria-label={t('post.actions')}
-          className="absolute -top-4 right-3 flex gap-0.5 rounded border border-line bg-panel px-1 shadow-sm"
+          className={`absolute right-3 flex gap-0.5 rounded border border-line bg-panel px-1 shadow-sm ${TOOLBAR_PLACEMENT_CLASS[placement]}`}
         >
           {canReact && <QuickReactions serverId={serverId} post={post} load={actions.emojiInfo} react={react} />}
           {canReact && (

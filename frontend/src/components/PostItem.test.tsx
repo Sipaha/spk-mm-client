@@ -5,7 +5,7 @@ import { ApiError } from '../api/client'
 import type { EmojiDTO, PostView } from '../api/types'
 import { forgetRecent } from '../emoji/recent'
 import { setLocale } from '../i18n'
-import { PostItem, type PostActions } from './PostItem'
+import { decideToolbarPlacement, PostItem, type PostActions } from './PostItem'
 
 const post = (o: Partial<PostView> = {}): PostView => ({
   id: 'p1', user_id: 'u-bob', author: 'bob', message: 'hello', create_at: new Date(2026, 8, 24, 13, 5).getTime(), ...o,
@@ -673,4 +673,125 @@ test('without an override the account avatar and a plain name are shown', () => 
   const { container } = render(<PostItem serverId={1} post={post({ avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
   expect(container.querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-bob?v=5')
   expect(screen.getByText('bob')).not.toHaveAttribute('title')
+})
+
+// ---- toolbar placement (density-brief 2026-09-29 addendum + "smart
+// placement" update): default inside the post's own box; overhang only
+// when that would cover the post's own content, clamped by the scroller's
+// top edge. decideToolbarPlacement is a pure function of measured rects —
+// tested directly with stubbed numbers first (no DOM needed), then the
+// wiring is checked against the real component with a stubbed
+// getBoundingClientRect.
+
+const TOOLBAR_RECT = { top: 104, left: 700, right: 750, bottom: 140, height: 36 }
+
+test('decideToolbarPlacement: content clear of the toolbar band stays inside, top-right', () => {
+  expect(
+    decideToolbarPlacement({
+      article: { top: 100, height: 80 },
+      toolbarInside: TOOLBAR_RECT,
+      contentChildren: [{ top: 110, left: 0, right: 200, bottom: 130 }], // short text, well clear of x=700
+      scrollerTop: null,
+    }),
+  ).toBe('inside-top')
+})
+
+test('decideToolbarPlacement: a row shorter than the toolbar (one-line continuation post) centres it instead of top-anchoring', () => {
+  expect(
+    decideToolbarPlacement({
+      article: { top: 100, height: 24 }, // shorter than toolbarInside.height (36) + 8
+      toolbarInside: TOOLBAR_RECT,
+      contentChildren: [{ top: 100, left: 0, right: 60, bottom: 120 }],
+      scrollerTop: null,
+    }),
+  ).toBe('inside-center')
+})
+
+test('decideToolbarPlacement: content reaching under the toolbar (wrapping text or an attachment card) overhangs upward instead', () => {
+  expect(
+    decideToolbarPlacement({
+      article: { top: 100, height: 80 },
+      toolbarInside: TOOLBAR_RECT,
+      contentChildren: [{ top: 105, left: 0, right: 900, bottom: 200 }], // full width, reaches under the toolbar
+      scrollerTop: null,
+    }),
+  ).toBe('overhang')
+})
+
+test('decideToolbarPlacement: enough room above the scroller top lets it overhang', () => {
+  expect(
+    decideToolbarPlacement({
+      article: { top: 100, height: 80 },
+      toolbarInside: TOOLBAR_RECT,
+      contentChildren: [{ top: 105, left: 0, right: 900, bottom: 200 }],
+      scrollerTop: 0, // article.top - 16 = 84, well below scrollerTop
+    }),
+  ).toBe('overhang')
+})
+
+test("decideToolbarPlacement: overhanging above the scroller's own top edge is refused — stays inside despite covering content", () => {
+  // article.top (100) - 16 = 84, which is *above* scrollerTop (90): would be clipped.
+  expect(
+    decideToolbarPlacement({
+      article: { top: 100, height: 80 },
+      toolbarInside: TOOLBAR_RECT,
+      contentChildren: [{ top: 105, left: 0, right: 900, bottom: 200 }],
+      scrollerTop: 90,
+    }),
+  ).toBe('inside-top')
+})
+
+// domRect: a DOMRect-shaped plain object for stubbing getBoundingClientRect.
+function domRect(top: number, left: number, right: number, bottom: number): DOMRect {
+  return { top, left, right, bottom, x: left, y: top, width: right - left, height: bottom - top, toJSON: () => '' }
+}
+
+// jsdom has no layout engine, so Range.prototype.getClientRects doesn't
+// exist at all (PostItem.tsx feature-detects it for exactly this reason) —
+// stub it in per-test rather than spyOn (there's nothing to spy on) and
+// delete it afterward so other tests keep seeing "unsupported", matching
+// every environment but a real browser.
+function stubContentRects(rects: DOMRect[]) {
+  ;(Range.prototype as unknown as { getClientRects(): DOMRect[] }).getClientRects = () => rects
+  return () => {
+    delete (Range.prototype as unknown as { getClientRects?(): DOMRect[] }).getClientRects
+  }
+}
+
+test('integration: a short post whose text does not reach the right edge keeps the toolbar inside the post', async () => {
+  const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.getAttribute('data-testid') === 'post-toolbar') return domRect(10, 700, 750, 46)
+    if (this.hasAttribute('data-post-id')) return domRect(0, 0, 800, 100) // a tall (head) row
+    return domRect(0, 0, 0, 0)
+  })
+  const unstub = stubContentRects([domRect(5, 0, 100, 25)]) // the rendered text: short, well clear of the toolbar's x=700..750
+  try {
+    const { container } = render(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+    await hover(container.querySelector('[data-post-id]')!)
+    const toolbar = await screen.findByTestId('post-toolbar')
+    expect(toolbar).toHaveAttribute('data-placement', 'inside-top')
+  } finally {
+    rectSpy.mockRestore()
+    unstub()
+  }
+})
+
+test('integration: a wrapping post/attachment card that would sit under the toolbar makes it overhang above instead', async () => {
+  const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.getAttribute('data-testid') === 'post-toolbar') return domRect(10, 700, 750, 46)
+    if (this.hasAttribute('data-post-id')) return domRect(0, 0, 800, 100)
+    return domRect(0, 0, 0, 0)
+  })
+  const unstub = stubContentRects([domRect(5, 0, 780, 60)]) // the rendered text/attachment card: full width, reaches under the toolbar
+  try {
+    const { container } = render(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+    await hover(container.querySelector('[data-post-id]')!)
+    const toolbar = await screen.findByTestId('post-toolbar')
+    expect(toolbar).toHaveAttribute('data-placement', 'overhang')
+    // Not clipped by anything above it in this test (no [role="log"] ancestor,
+    // so decideToolbarPlacement treats it as "no clamp" — see its own doc).
+  } finally {
+    rectSpy.mockRestore()
+    unstub()
+  }
 })
