@@ -28,3 +28,11 @@ func TestJoinedAndPresences(t *testing.T) {
 	s.SetPresence([]model.Status{{UserID: "u2", Status: "online"}})
 	assert.Equal(t, map[string]string{"u2": "online"}, s.Presences([]string{"u2", "u3"}), "only known statuses")
 }
+
+// A ~channel link in a message resolves by the channel's URL name: the
+// sidebar carries it for team channels (not DMs/GMs, whose names are ids).
+func TestSidebarItemsCarryTheChannelSlug(t *testing.T) {
+	s := newFixture()
+	assert.Equal(t, "town-square", sidebarItem(s, "town").Slug)
+	assert.Empty(t, sidebarItem(s, "dm2").Slug)
+}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FileView, ServerDTO, ThreadDTO } from '../api/types'
 import { errorMessage } from '../errors'
 import {
-  copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, loadOlderReplies, markUnread,
+  copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, markUnread,
   openFile, openLink, openThread, react, reactionUsers, retryPost, saveThreadDraft, sendReply, setPostSaved, uploadAttachments,
 } from '../chat'
 import { formatLocale } from '../format'
@@ -245,6 +245,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           attachments={threadAttachments}
           emojiInfo={() => emojiInfo(server.id)}
           onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
+          onCommand={(cmd) => executeCommand(server.id, thread.channel_id, thread.root_id, cmd)}
           onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
           onEditLast={() => editLastOwn(thread)}
         />

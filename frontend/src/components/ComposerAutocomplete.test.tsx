@@ -46,6 +46,7 @@ afterEach(() => vi.useRealTimers())
 
 function setup(rootId = '') {
   const onSend = vi.fn().mockResolvedValue(undefined)
+  const onCommand = vi.fn().mockResolvedValue(undefined)
   render(
     <Composer
       channelId="c1"
@@ -56,12 +57,13 @@ function setup(rootId = '') {
       attachments={[]}
       emojiInfo={() => Promise.resolve({ recent: [], custom: ['partyparrot'], custom_enabled: true })}
       onSend={onSend}
+      onCommand={onCommand}
       onDraft={() => {}}
       onEditLast={() => {}}
     />,
   )
   const box = screen.getByLabelText('Message') as HTMLTextAreaElement
-  return { box, onSend }
+  return { box, onSend, onCommand }
 }
 
 test('@b opens the user list after a debounce; the textarea points at the active option', async () => {
@@ -212,7 +214,7 @@ test('~ lists my channels first and inserts the channel name', async () => {
 
 test('/ at the start lists commands with their hint and description; the thread composer passes its root', async () => {
   ac.mockResolvedValue(dto({ commands: [{ trigger: 'echo', hint: '"message"', description: 'Echo back text' }] }))
-  const { box, onSend } = setup('r1')
+  const { box, onSend, onCommand } = setup('r1')
   await userEvent.type(box, '/ec')
   const list = await screen.findByRole('listbox')
   expect(ac.mock.calls.at(-1)!.slice(0, 5)).toEqual([1, 'commands', 'c1', 'r1', 'ec'])
@@ -220,6 +222,7 @@ test('/ at the start lists commands with their hint and description; the thread 
   await userEvent.keyboard('{Enter}')
   expect(box.value).toBe('/echo ')
   expect(onSend).not.toHaveBeenCalled()
+  expect(onCommand).not.toHaveBeenCalled() // picking a command only inserts it
   expect(screen.queryByRole('listbox')).toBeNull()
 })
 

@@ -23,6 +23,9 @@ type ChannelItem struct {
 	Unread   bool   `json:"unread"`
 	Mentions int    `json:"mentions"`
 	Muted    bool   `json:"muted"`
+	// Slug: a team channel's URL name — what a ~channel link in a message
+	// says ("" for DMs/GMs).
+	Slug string `json:"slug,omitempty"`
 	// DMs only: the partner, their picture version and presence.
 	UserID string `json:"user_id,omitempty"`
 	Avatar string `json:"avatar,omitempty"`
@@ -178,6 +181,9 @@ func (s *Server) categoriesLocked(teamID string) []CategoryView {
 			u, m := s.unreadLocked(ch)
 			it := ChannelItem{ID: id, Name: s.channelNameLocked(ch), Type: ch.Info.Type,
 				Unread: u, Mentions: m, Muted: ch.Member.Muted()}
+			if !ch.Info.IsDM() && !ch.Info.IsGroup() {
+				it.Slug = ch.Info.Name
+			}
 			if ch.Info.IsDM() {
 				partner := ch.Info.DMPartner(s.me.ID)
 				it.UserID, it.Avatar = partner, s.avatarLocked(partner)

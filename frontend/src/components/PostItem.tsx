@@ -476,6 +476,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             <div className={post.system ? 'italic text-fg-muted' : ''}>
               {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
               {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
+              {post.ephemeral ? <span className="text-xs not-italic text-fg-subtle">{t('post.onlyVisibleToYou')}</span> : null}
             </div>
           )}
           {post.attachments?.map((a, i) => (
@@ -531,7 +532,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           )}
         </div>
       </div>
-      {!post.pending && !post.failed && !editing && visible && (
+      {!post.pending && !post.failed && !post.ephemeral && !editing && visible && (
         <div
           ref={toolbarRef}
           data-testid="post-toolbar"

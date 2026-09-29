@@ -116,6 +116,9 @@ interface Props {
   // always pass the real one.
   emojiInfo?(): Promise<EmojiDTO>
   onSend(message: string, attachmentIds: string[]): Promise<void>
+  // onCommand: a message starting with "/" is a slash command — executed
+  // (Go ExecuteCommand), never posted as text; absent: sent as text.
+  onCommand?(command: string): Promise<void>
   onDraft(text: string): void
   onEditLast(): void
 }
@@ -126,10 +129,14 @@ const emptyEmojiInfo = (): Promise<EmojiDTO> => Promise.resolve({ recent: [], cu
 // channel's or one thread's composer.
 export function Composer({
   channelId, channelName, draft, rootId = '', disabled = false, serverId, attachments,
-  emojiInfo = emptyEmojiInfo, onSend, onDraft, onEditLast,
+  emojiInfo = emptyEmojiInfo, onSend, onCommand, onDraft, onEditLast,
 }: Props) {
   const [text, setText] = useState(draft)
   const [error, setError] = useState<string | null>(null)
+  // commandError: the server has no command with this trigger (webapp
+  // message_submit_error): the text stays; sending that same text again —
+  // Enter or the button — posts it as a message instead.
+  const [commandError, setCommandError] = useState<{ message: string; trigger: string } | null>(null)
   const attachError = useStore((s) => (rootId ? s.threadAttachError : s.attachError))
   const setAttachError = (msg: string | null) => {
     const s = useStore.getState()
@@ -289,6 +296,7 @@ export function Composer({
 
   const change = (v: string) => {
     setText(v)
+    if (commandError && v !== commandError.message) setCommandError(null)
     latest.current = v
     clearTimeout(timer.current)
     timer.current = setTimeout(flush, DRAFT_DELAY)
@@ -296,10 +304,42 @@ export function Composer({
 
   const canSend = text.trim().length > 0 || attachments.length > 0
 
-  const send = async () => {
+  // restore puts a message that failed to go back into the composer (and
+  // the draft, which the pre-send flush had emptied).
+  const restore = (msg: string) => {
+    setText(msg)
+    latest.current = msg
+    saved.current = msg
+    onDraft(msg)
+  }
+
+  // runCommand: the explicit send of a "/..." message — the only way a
+  // slash command ever runs. Attachments stay in the tray.
+  const runCommand = async (msg: string) => {
+    setText('')
+    latest.current = ''
+    flush()
+    setError(null)
+    setCommandError(null)
+    try {
+      await onCommand!(msg)
+    } catch (e) {
+      restore(msg)
+      if (e instanceof ApiError && e.code === 'command_not_found') setCommandError({ message: msg, trigger: msg.split(/\s/)[0] })
+      else setError(errorMessage(e))
+    }
+  }
+
+  // send: asText posts even a "/..." message as text ("send as a message").
+  const send = async (asText = false) => {
     if (disabled) return
     ac.close()
     const msg = text
+    if (!asText && onCommand && msg.startsWith('/') && msg.trim().length > 1 && commandError?.message !== msg) {
+      await runCommand(msg)
+      return
+    }
+    setCommandError(null)
     const attachmentIds = attachments.filter((a) => !pendingSendIds.current.has(a.id)).map((a) => a.id)
     if (!msg.trim() && attachmentIds.length === 0) return
     setText('')
@@ -459,6 +499,14 @@ export function Composer({
       {error && (
         <p role="alert" className="pb-1 text-xs text-danger">
           {error}
+        </p>
+      )}
+      {commandError && (
+        <p role="alert" className="pb-1 text-xs text-danger">
+          {t('composer.commandNotFound', { command: commandError.trigger })}{' '}
+          <button type="button" className="underline" onClick={() => void send(true)}>
+            {t('composer.sendAsMessage')}
+          </button>
         </p>
       )}
       {attachError && (

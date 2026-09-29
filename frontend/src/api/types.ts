@@ -42,6 +42,7 @@ export interface ChannelItem {
   avatar?: string // DMs: picture version ('' / absent: profile not loaded)
   status?: string // DMs: presence
   bot?: boolean
+  slug?: string // team channels: the URL name a ~channel link uses
 }
 
 // Go nil slices arrive as null.
@@ -179,6 +180,9 @@ export interface PostView {
   reply_count?: number
   last_reply_at?: number // the root's newest reply's create_at; 0 = unknown (a non-CRT page carries none)
   system?: boolean
+  // ephemeral: only I see it (a slash command's answer), never stored by
+  // the server — no actions apply to it.
+  ephemeral?: boolean
   bot?: boolean
   pending?: boolean
   failed?: boolean

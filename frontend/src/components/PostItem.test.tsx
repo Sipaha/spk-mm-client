@@ -795,3 +795,10 @@ test('integration: a wrapping post/attachment card that would sit under the tool
     unstub()
   }
 })
+
+test('an ephemeral post (a command answer) says only I see it and offers no actions', async () => {
+  render(<PostItem serverId={1} post={post({ ephemeral: true, system: true, user_id: 'u-alice', author: 'alice', message: 'You are now away' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.getByText('(Only visible to you)')).toBeInTheDocument()
+  await hover(screen.getByText('You are now away'))
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+})

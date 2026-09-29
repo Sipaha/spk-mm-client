@@ -343,6 +343,12 @@ export const discardPost = (serverId: number, channelId: string, pendingId: stri
 export const sendPost = (serverId: number, channelId: string, message: string, attachmentIds: string[] = []) =>
   client.sendPost(serverId, channelId, message, attachmentIds)
 
+// executeCommand runs a slash command sent from a composer (rootId '' for
+// the channel's own); its answer shows as posts (an ephemeral_message one
+// only I see).
+export const executeCommand = (serverId: number, channelId: string, rootId: string, command: string) =>
+  client.executeCommand(serverId, channelId, rootId, command)
+
 export const saveDraft = (serverId: number, channelId: string, text: string) => {
   client.saveDraft(serverId, channelId, text).catch(() => {}) // a lost draft is not worth an error banner
 }

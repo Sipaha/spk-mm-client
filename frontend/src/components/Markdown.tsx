@@ -8,9 +8,37 @@ import { useEmojiInfo } from '../emoji/recent'
 import { EmojiGlyph } from './EmojiGlyph'
 import { IconImage } from './icons'
 import { emojiNames, isEmojiOnlyText, remarkEmoji } from './remarkEmoji'
+import { openChannel } from '../chat'
+import { useStore } from '../store'
+import { remarkChannelMentions } from './remarkChannelMentions'
 import { remarkMentions } from './remarkMentions'
 
-const plugins = [remarkGfm, remarkBreaks, remarkMentions, remarkEmoji]
+const plugins = [remarkGfm, remarkBreaks, remarkMentions, remarkChannelMentions, remarkEmoji]
+
+// ChannelMention: a ~name the selected server's sidebar knows (the team on
+// screen, like the webapp's current-team lookup) links to that channel by
+// its display name; any other stays the text it was.
+function ChannelMention({ serverId, name, children }: { serverId: number; name: string; children?: React.ReactNode }) {
+  const ch = useStore((s) => {
+    if (s.selectedId !== serverId) return null
+    for (const c of s.sidebar?.categories ?? []) for (const it of c.channels ?? []) if (it.slug === name) return it
+    return null
+  })
+  if (!ch) return <>{children}</>
+  return (
+    <a
+      href={`#~${name}`}
+      data-channel={name}
+      className="text-accent hover:underline"
+      onClick={(e) => {
+        e.preventDefault()
+        void openChannel(serverId, ch.id)
+      }}
+    >
+      ~{ch.name}
+    </a>
+  )
+}
 const SPECIAL = new Set(['channel', 'here', 'all'])
 
 // standardChar: a ":name:" shortcode resolves to a standard emoji
@@ -133,6 +161,14 @@ export const Markdown = memo(function Markdown({
           <MarkdownEmojiNode serverId={serverId} name={emojiName} jumbo={jumbo} emojiInfo={emojiInfo}>
             {props.children}
           </MarkdownEmojiNode>
+        )
+      }
+      const channel = p['data-channel']
+      if (typeof channel === 'string') {
+        return (
+          <ChannelMention serverId={serverId} name={channel}>
+            {props.children}
+          </ChannelMention>
         )
       }
       const name = p['data-mention']
