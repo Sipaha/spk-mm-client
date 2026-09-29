@@ -26,7 +26,7 @@ test('hovering a reaction chip shows who reacted; "and N others" opens the full 
 
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
-  await expect(tooltip).toHaveText('bob and carol reacted with :+1:')
+  await expect(tooltip).toHaveText('bob and carol')
   await expect(chip).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id') ?? '')
   await page.screenshot({ path: 'test-results/reactions-tooltip.png' })
 

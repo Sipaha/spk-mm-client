@@ -173,7 +173,6 @@ const ru = {
   'reaction.quick': 'Реакция {emoji}',
   'reaction.you': 'Вы',
   'reaction.and': 'и',
-  'reaction.reacted': 'отреагировал с',
   // The overflow tail's noun, split by CLDR plural category (Intl.PluralRules
   // selects the suffix — reactorText.ts): "otherUser*" follows a shown name
   // list ("bob, carol и {N} других пользователя"), "users*" stands alone
@@ -411,7 +410,6 @@ const en: Record<Key, string> = {
   'reaction.quick': 'React with {emoji}',
   'reaction.you': 'You',
   'reaction.and': 'and',
-  'reaction.reacted': 'reacted with',
   // See the ru dict for the CLDR-category rationale. English only ever
   // selects One/Other (Intl.PluralRules('en')); Few/Many exist for key
   // parity and mirror Other's wording.

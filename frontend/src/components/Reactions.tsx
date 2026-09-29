@@ -258,7 +258,6 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
               <TooltipBody
                 dto={result}
                 mine={hover.r.mine}
-                emoji={hover.r.emoji}
                 onShowMore={openModal}
                 onButtonKeyDown={onOverflowKeyDown}
                 buttonRef={overflowBtn}
@@ -286,20 +285,25 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
   )
 }
 
-// TooltipBody renders "You, bob and carol reacted :emoji:", with the
-// overflow tail ("and N others" / "и ещё N") as a real <button> — the rest
-// stays plain text.
+// TooltipBody renders just the reactor names — "You, bob and carol" — with
+// the overflow tail ("and N others" / "и N других") as a real <button>; the
+// rest stays plain text. No "reacted with :emoji:" suffix (UI ruling,
+// 2026-09-29, user request: the user already hovered/focused this specific
+// chip to get here, so which emoji it is is redundant — they just want the
+// list of people). Accessibility is preserved elsewhere: the chip's own
+// aria-label (reaction.chip/reaction.chipMine — "{emoji} {n}[, you
+// reacted]") is the one place that still names the emoji for assistive
+// tech, and this tooltip stays wired to the chip via aria-describedby, so
+// nothing is lost by dropping the emoji from the tooltip's own text.
 function TooltipBody({
   dto,
   mine,
-  emoji,
   onShowMore,
   onButtonKeyDown,
   buttonRef,
 }: {
   dto: ReactionUsersDTO
   mine: boolean
-  emoji: string
   onShowMore(): void
   onButtonKeyDown(e: React.KeyboardEvent<HTMLButtonElement>): void
   buttonRef: React.RefObject<HTMLButtonElement | null>
@@ -325,8 +329,7 @@ function TooltipBody({
             it.text
           )}
         </span>
-      ))}{' '}
-      {t('reaction.reacted')} :{emoji}:
+      ))}
     </>
   )
 }

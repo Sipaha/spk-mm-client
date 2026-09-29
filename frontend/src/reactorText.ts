@@ -30,51 +30,23 @@ export interface ReactorTextInput {
   unknown: number // reactors whose profile could not be resolved
 }
 
-// listify: "A" | "A and B" | "A, B and C" — comma-joins every item but the
-// last, "and"/"и" before the last one (also how the truncated tail reads:
-// the overflow phrase is just the list's last item).
-function listify(items: string[]): string {
-  if (items.length <= 1) return items[0] ?? ''
-  return `${items.slice(0, -1).join(', ')} ${t('reaction.and')} ${items[items.length - 1]}`
-}
-
 export interface ReactorWhoParts {
   shown: string[] // display names to show, "You" first when mine — at most MAX_SHOWN
   overflowLabel: string | null // the tail's label (overflowLabelFor), or null: nothing left out
 }
 
 // reactorWhoParts splits the "who reacted" list into the names to show and
-// the overflow tail's label (if any) — kept separate from reactorWhoText so
-// the interactive tooltip can render the overflow as a real <button> (the
-// UI ruling on 2026-09-28: clicking "and N others" opens the full-list
-// modal) while everything else stays plain text.
+// the overflow tail's label (if any) — kept separate so the interactive
+// tooltip (Reactions.tsx's TooltipBody) can render the overflow as a real
+// <button> (the UI ruling on 2026-09-28: clicking "and N others" opens the
+// full-list modal) while everything else stays plain text. The tooltip
+// renders only these names — no trailing "reacted with :emoji:" (UI ruling,
+// 2026-09-29, user request: hovering/focusing a specific chip already tells
+// you which emoji it is, so repeating it in the tooltip text is redundant).
 export function reactorWhoParts({ mine, names, unknown }: ReactorTextInput): ReactorWhoParts {
   const known = mine ? [t('reaction.you'), ...names] : names
   const shown = known.slice(0, MAX_SHOWN)
   const overflow = known.length - shown.length + unknown
   if (overflow <= 0) return { shown, overflowLabel: null }
   return { shown, overflowLabel: overflowLabelFor(overflow, shown.length > 0) }
-}
-
-// reactorWhoText builds "You, bob and carol reacted with" / "bob, carol and
-// 3 others reacted with" (no trailing emoji) — see reactorTooltipText for
-// the full tooltip string. 'reaction.reacted' bakes in the verb *and* the
-// preposition before the emoji ("reacted with" / "отреагировал с") to
-// match the webapp's own reaction tooltip exactly — read verbatim from the
-// sparse-checked reference at webapp/channels/src/i18n/{en,ru}.json, key
-// "reaction.reacted": en "{users} {reactionVerb} with {emoji}" (reactionVerb
-// is always "reacted"); ru "{users} {reactionVerb} с {emoji}" (reactionVerb
-// is always the singular "отреагировал", not pluralized by the webapp
-// either — controller finding, fix round 1, 2026-09-28).
-export function reactorWhoText(input: ReactorTextInput): string {
-  const { shown, overflowLabel } = reactorWhoParts(input)
-  const parts = overflowLabel ? [...shown, overflowLabel] : shown
-  return `${listify(parts)} ${t('reaction.reacted')}`
-}
-
-// reactorTooltipText is the full tooltip content: who reacted, then the
-// emoji name in colons (matching the webapp's own reaction tooltip, which
-// also renders ":name:" as text there rather than an image).
-export function reactorTooltipText(input: ReactorTextInput, emoji: string): string {
-  return `${reactorWhoText(input)} :${emoji}:`
 }
