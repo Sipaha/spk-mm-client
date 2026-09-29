@@ -136,6 +136,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // negative margin on the rows' container, not into scrollTop (which cancels
   // WebKit's wheel animation) — see ScrollShift.
   const sizer = useRef<HTMLDivElement>(null)
+  const afterGesture = useRef(() => {}) // the bottom-stick's re-pin deferred past a wheel/touch gesture (below)
   const [, bump] = useReducer((x: number) => x + 1, 0)
   const [shift] = useState(() => {
     let queued = false
@@ -150,10 +151,58 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
         flushSync(bump)
       })
     }
-    return new ScrollShift(() => scroller.current, () => sizer.current, rerender)
+    return new ScrollShift(() => scroller.current, () => sizer.current, rerender, () => afterGesture.current())
   })
   useEffect(() => () => shift.dispose(), [shift])
   useLayoutEffect(() => shift.apply()) // every commit: rows and shift reach the screen together
+
+  // Bottom-stick on a size change. The rows effect below follows the bottom
+  // only when rows change; the feed's own height also changes without a new
+  // row — a banner or status bar above it, the composer growing with a
+  // multi-line draft or attachment chips, the window or a splitter resized,
+  // the thread panel reflowing the rows — and so does the content's (the
+  // last row re-measured taller). A shorter scroller keeps its scrollTop and
+  // fires no scroll event, so the last post slid below the fold and stayed
+  // there (user report 2026-09-29: a download's banner pushed the last post
+  // under the composer). A ResizeObserver on the scroller and on the rows'
+  // container re-pins a feed that was at its bottom (atBottom, as of the
+  // last scroll event) in the same frame: its callback runs after layout,
+  // before paint. Away from the bottom nothing is written: the viewport's
+  // top edge keeps its scrollTop, so the rows on screen stay put, and rows
+  // re-measured above the fold are the virtualizer's (and ScrollShift's).
+  // Mid-gesture (wheel/touch) nothing is written either — a script write to
+  // scrollTop cancels WebKitGTK's wheel animation (see ScrollShift); the pin
+  // waits for the gesture to go idle and applies only if the feed is still
+  // at its bottom then. The jump-to-latest button needs nothing here: the
+  // pin's own scroll event runs onScroll, which hides it within NEAR_BOTTOM.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    const content = sizer.current
+    if (!el || !content || typeof ResizeObserver === 'undefined') return
+    let deferred = false
+    const pin = () => {
+      if (!ready.current || !atBottom.current) return
+      if (shift.gesturing) {
+        deferred = true
+        return
+      }
+      shift.flush()
+      const end = el.scrollHeight - el.clientHeight
+      if (end - el.scrollTop > 0.5) el.scrollTop = end
+    }
+    afterGesture.current = () => {
+      if (!deferred) return
+      deferred = false
+      pin()
+    }
+    const ro = new ResizeObserver(pin)
+    ro.observe(el)
+    ro.observe(content)
+    return () => {
+      ro.disconnect()
+      afterGesture.current = () => {}
+    }
+  }, [shift])
   const v = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,

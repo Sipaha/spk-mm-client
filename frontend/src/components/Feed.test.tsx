@@ -438,3 +438,142 @@ test('StrictMode keeps the rows of a feed that stays mounted', async () => {
   await Promise.resolve()
   expect(screen.getByText('text c')).toBeInTheDocument()
 })
+
+// ---- bottom-stick on size changes ----
+//
+// The feed's own height changes without a new row — a banner above it, the
+// composer growing with a multi-line draft, the window shrinking. Shrinking
+// the scroller keeps scrollTop and fires no scroll event, so before the fix
+// the last post slid below the fold (user report 2026-09-29: a download's
+// banner pushed the last post under the composer). jsdom has neither layout
+// nor ResizeObserver: the scroller's geometry is set by hand and every
+// ResizeObserver created (Feed's and the virtualizer's own) is recorded, so
+// a test can fire the ones watching a given element.
+
+type Observed = { cb: ResizeObserverCallback; targets: Set<Element>; self: ResizeObserver }
+function recordResizeObservers() {
+  const all: Observed[] = []
+  const saved = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+  class Stub {
+    rec: Observed
+    constructor(cb: ResizeObserverCallback) {
+      this.rec = { cb, targets: new Set(), self: this as unknown as ResizeObserver }
+      all.push(this.rec)
+    }
+    observe(el: Element) {
+      this.rec.targets.add(el)
+    }
+    unobserve(el: Element) {
+      this.rec.targets.delete(el)
+    }
+    disconnect() {
+      this.rec.targets.clear()
+    }
+  }
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = Stub
+  const fire = (el: Element) =>
+    act(() => {
+      for (const o of all) if (o.targets.has(el)) o.cb([{ target: el } as unknown as ResizeObserverEntry], o.self)
+    })
+  return { fire, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
+}
+
+// A scroller with a settable geometry: scrollTop is clamped to the range,
+// like a real one.
+function geometry(log: HTMLElement, g: { scrollHeight: number; clientHeight: number; scrollTop: number }) {
+  Object.defineProperties(log, {
+    scrollHeight: { configurable: true, get: () => g.scrollHeight },
+    clientHeight: { configurable: true, get: () => g.clientHeight },
+    scrollTop: {
+      configurable: true,
+      get: () => g.scrollTop,
+      set: (v: number) => void (g.scrollTop = Math.max(0, Math.min(v, g.scrollHeight - g.clientHeight))),
+    },
+  })
+  return g
+}
+
+function stickFeed() {
+  const ro = recordResizeObservers()
+  const view = render(<Feed {...props({ new_since: 0 })} />)
+  const log = screen.getByRole('log')
+  const g = geometry(log, { scrollHeight: 2000, clientHeight: 600, scrollTop: 1400 })
+  fireEvent.scroll(log) // at the bottom
+  const sizer = log.lastElementChild as HTMLElement
+  return { ...view, ro, log, g, sizer }
+}
+
+test('at the bottom, a shorter viewport (banner above, composer growing) keeps the feed at the bottom', () => {
+  const { ro, log, g } = stickFeed()
+  try {
+    g.clientHeight = 500 // scrollTop stays 1400: 100px of the last post now below the fold
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1500)
+    g.clientHeight = 640 // and back: the range shrank, scrollTop clamps, still the bottom
+    g.scrollTop = Math.min(g.scrollTop, g.scrollHeight - g.clientHeight)
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1360)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('at the bottom, taller content with no new row (the last row re-measured) keeps the feed at the bottom', () => {
+  const { ro, g, sizer } = stickFeed()
+  try {
+    g.scrollHeight = 2120
+    ro.fire(sizer)
+    expect(g.scrollTop).toBe(1520)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('away from the bottom, a viewport resize leaves scrollTop alone (the rows on screen stay put)', () => {
+  const { ro, log, g } = stickFeed()
+  try {
+    g.scrollTop = 700
+    fireEvent.scroll(log) // the user scrolled up
+    g.clientHeight = 500
+    ro.fire(log)
+    expect(g.scrollTop).toBe(700)
+    g.scrollHeight = 2300
+    ro.fire(log.lastElementChild as HTMLElement)
+    expect(g.scrollTop).toBe(700)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('during a wheel gesture a resize does not pin; once the gesture is idle the feed goes back to the bottom if it is still there', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const { ro, log, g } = stickFeed()
+  try {
+    fireEvent.wheel(log, { deltaY: 40 }) // wheeling down at the bottom: nothing moves
+    g.clientHeight = 500
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1400) // no script write mid-gesture (WebKitGTK cancels its wheel animation on one)
+    act(() => void vi.advanceTimersByTime(200)) // SCROLL_IDLE_MS
+    expect(g.scrollTop).toBe(1500)
+  } finally {
+    ro.restore()
+    vi.useRealTimers()
+  }
+})
+
+test('a wheel gesture that leaves the bottom is not pulled back when it ends', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const { ro, log, g } = stickFeed()
+  try {
+    fireEvent.wheel(log, { deltaY: -200 })
+    g.clientHeight = 500
+    ro.fire(log)
+    g.scrollTop = 1100
+    fireEvent.scroll(log) // the wheel scrolled up
+    act(() => void vi.advanceTimersByTime(200))
+    expect(g.scrollTop).toBe(1100)
+  } finally {
+    ro.restore()
+    vi.useRealTimers()
+  }
+})

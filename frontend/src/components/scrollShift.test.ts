@@ -167,3 +167,18 @@ test('the reported offset includes the pending shift', () => {
   if (typeof stop === 'function') stop()
   shift.dispose()
 })
+
+test('the idle hook runs once a user gesture has gone idle, not after a programmatic scroll ended it', () => {
+  vi.useFakeTimers()
+  const scroller = document.createElement('div')
+  const idle = vi.fn()
+  const shift = new ScrollShift(() => scroller, () => null, vi.fn(), idle)
+  shift.onUserInput()
+  expect(shift.gesturing).toBe(true)
+  vi.advanceTimersByTime(SCROLL_IDLE_MS)
+  expect(shift.gesturing).toBe(false)
+  expect(idle).toHaveBeenCalledTimes(1)
+  shift.onScroll() // a scroll with no gesture: no second call
+  vi.advanceTimersByTime(SCROLL_IDLE_MS)
+  expect(idle).toHaveBeenCalledTimes(1)
+})

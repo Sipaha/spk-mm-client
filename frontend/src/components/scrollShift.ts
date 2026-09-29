@@ -45,13 +45,24 @@ export class ScrollShift {
   private scroller: () => HTMLElement | null
   private sizer: () => HTMLElement | null
   private rerender: () => void
+  private idle: () => void
 
   // rerender must commit the virtualizer's new row positions before the next
-  // paint (the shift is applied in the same commit, see apply).
-  constructor(scroller: () => HTMLElement | null, sizer: () => HTMLElement | null, rerender: () => void) {
+  // paint (the shift is applied in the same commit, see apply). idle runs
+  // once a user's gesture has ended (scrolling idle for SCROLL_IDLE_MS, the
+  // shift landed) — the feed re-pins its bottom there if a resize came
+  // mid-gesture.
+  constructor(scroller: () => HTMLElement | null, sizer: () => HTMLElement | null, rerender: () => void, idle: () => void = () => {}) {
     this.scroller = scroller
     this.sizer = sizer
     this.rerender = rerender
+    this.idle = idle
+  }
+
+  // A user's wheel/touch gesture is in progress: no script write to
+  // scrollTop now (it would cancel WebKitGTK's wheel animation).
+  get gesturing() {
+    return this.gesture
   }
 
   // For the virtualizer's observeElementOffset option.
@@ -131,8 +142,10 @@ export class ScrollShift {
   private landWhenIdle() {
     clearTimeout(this.timer)
     this.timer = setTimeout(() => {
+      const ended = this.gesture
       this.gesture = false
       this.flush()
+      if (ended) this.idle()
     }, SCROLL_IDLE_MS)
   }
 }
