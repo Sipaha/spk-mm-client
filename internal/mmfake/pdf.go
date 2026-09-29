@@ -3,7 +3,12 @@ package mmfake
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"math/rand/v2"
 	"strings"
+	"sync"
 )
 
 // Seeded PDFs in c-offtopic (for the viewer's PDF preview).
@@ -20,12 +25,25 @@ const (
 	LandscapePage = 2
 )
 
+// The seeded manual's pictures: one photo-like JPEG per page, so the PDF
+// memory gate (docs/spikes/2026-09-24-stage1-spikes.md S4) loads a document
+// like the spike's 4.3 MB test50.pdf — pdf.js decodes a picture per page.
+const (
+	manualImageW = 480
+	manualImageH = 360
+)
+
+// seededManual: manual.pdf is ~4 MB, and a soak run starts several fakes in
+// the client's own process — it is generated once per process, on first
+// use, and every fake serves the same (read-only) bytes.
+var seededManual = sync.OnceValue(func() []byte { return manualPDF(PDFPages) })
+
 // manualPDF is a well-formed PDF 1.4 of pages A4 pages (all portrait except
 // LandscapePage, which is landscape): selectable text in Helvetica (a
-// standard font, not embedded) and a few vector shapes per page,
-// uncompressed — about 1.5 KB a page, since every in-process fake keeps it
-// in memory. Object 1 is the catalog, 2 the page tree, 3 the font, then a
-// page and its content stream per page.
+// standard font, not embedded), a few vector shapes and a 480x360 JPEG of
+// its own per page (~80 KB each), text uncompressed. Object 1 is the
+// catalog, 2 the page tree, 3 the font, then a page, its content stream
+// and its picture per page.
 func manualPDF(pages int) []byte {
 	var b bytes.Buffer
 	b.WriteString("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
@@ -36,7 +54,7 @@ func manualPDF(pages int) []byte {
 	}
 	kids := make([]string, pages)
 	for i := range kids {
-		kids[i] = fmt.Sprintf("%d 0 R", 4+2*i)
+		kids[i] = fmt.Sprintf("%d 0 R", 4+3*i)
 	}
 	obj("<< /Type /Catalog /Pages 2 0 R >>")
 	obj(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pages))
@@ -46,8 +64,12 @@ func manualPDF(pages int) []byte {
 		if p == LandscapePage {
 			w, h, content = 842, 595, manualLandscapePage(p, pages)
 		}
-		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>", w, h, 5+2*(p-1)))
+		first := 4 + 3*(p-1)
+		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 %d 0 R >> >> /Contents %d 0 R >>", w, h, first+2, first+1))
 		obj(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+		pic := manualImage(p)
+		obj(fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream",
+			manualImageW, manualImageH, len(pic), pic))
 	}
 	xref := b.Len()
 	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)
@@ -55,6 +77,27 @@ func manualPDF(pages int) []byte {
 		fmt.Fprintf(&b, "%010d 00000 n \n", off)
 	}
 	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets)+1, xref)
+	return b.Bytes()
+}
+
+// manualImage is page p's picture: a diagonal colour gradient under strong
+// per-page noise, JPEG quality 85 — photo-like, so it neither compresses to
+// nothing nor repeats between pages.
+func manualImage(p int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, manualImageW, manualImageH))
+	rng := rand.New(rand.NewPCG(uint64(p), 0x5eed))
+	for y := range manualImageH {
+		for x := range manualImageW {
+			g := (x + y + p*29) * 255 / (manualImageW + manualImageH)
+			d := rng.IntN(129) - 64 // the same grain on every channel: JPEG keeps luma, drops chroma
+			c := func(v int) uint8 { return uint8(max(0, min(255, v+d))) }
+			img.SetRGBA(x, y, color.RGBA{R: c(g), G: c(255 - g/2), B: c(128 + g/4), A: 255})
+		}
+	}
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, img, &jpeg.Options{Quality: 85}); err != nil {
+		panic(err) // encoding into memory does not fail
+	}
 	return b.Bytes()
 }
 
@@ -73,7 +116,8 @@ func manualPage(p, pages int) string {
 	}
 	s.WriteString("ET\n")
 	fmt.Fprintf(&s, "0.1 0.1 0.1 RG 2 w 50 150 495 300 re S\n")
-	fmt.Fprintf(&s, "%.2f 0.6 0.3 rg %d 200 120 120 re f", 0.9-0.6*hue, 60+(p*37)%300)
+	fmt.Fprintf(&s, "%.2f 0.6 0.3 rg %d 200 120 120 re f\n", 0.9-0.6*hue, 60+(p*37)%300)
+	fmt.Fprintf(&s, "q %d 0 0 %d 57 40 cm /Im1 Do Q", 480, 360) // the page's picture, over the box's lower half
 	return s.String()
 }
 
@@ -92,5 +136,6 @@ func manualLandscapePage(p, pages int) string {
 	}
 	s.WriteString("ET\n")
 	s.WriteString("0.1 0.1 0.1 RG 2 w 50 100 742 220 re S\n") // below the 5 text lines (they end around y=386)
+	s.WriteString("q 280 0 0 210 500 105 cm /Im1 Do Q")       // the page's picture, inside the box
 	return s.String()
 }

@@ -94,7 +94,7 @@ func (s *Server) seed() {
 	s.seedFilePostLocked("c-offtopic", "u-carol", "Spec draft",
 		s.newFileLocked(JunkPDFFileID, "c-offtopic", "spec.pdf", "application/pdf", []byte("%PDF-1.4\n% fake pdf for spk-mattermost tests\n")))
 	s.seedFilePostLocked("c-offtopic", "u-bob", "The manual, for the PDF preview",
-		s.newFileLocked(PDFFileID, "c-offtopic", "manual.pdf", "application/pdf", manualPDF(PDFPages)))
+		s.newFileLocked(PDFFileID, "c-offtopic", "manual.pdf", "application/pdf", seededManual()))
 	s.seedFilePostLocked("c-offtopic", "u-bob", "Full log, for the viewer's ?full=1",
 		s.newFileLocked("f-biglog", "c-offtopic", "big.log", "text/plain", bigLogText(22000))) // ~1.2 MiB: over TextFullLimit (1 MiB)
 	s.seedFilePostLocked("c-offtopic", "u-carol", "Project README",
