@@ -136,10 +136,26 @@ function OverflowPill({ pos, visible, mention, onClick }: { pos: 'top' | 'bottom
       aria-hidden={!visible}
       aria-label={label}
       tabIndex={visible ? 0 : -1}
-      className={`absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold shadow-lg ring-1 ring-line transition-opacity duration-150 ${pos === 'top' ? 'top-2' : 'bottom-2'} ${mention ? 'bg-mention-bg text-mention-fg' : 'bg-panel text-fg'} ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+      // inset-x-2/mx-auto/w-fit (fix round 1, review 2026-09-29): centering
+      // via `left-1/2 -translate-x-1/2` on a width:auto absolutely
+      // positioned element makes the browser's shrink-to-fit algorithm
+      // compute the *available* width as containing-block width minus
+      // `left` (the transform is paint-time-only, not part of layout) —
+      // roughly half the sidebar's width — which wrapped "More mentions"
+      // onto two lines, overlapping the row beneath it, at the sidebar's
+      // own default 256px width (not just a narrow demo window). inset-x-2
+      // constrains both edges equally instead, so shrink-to-fit never
+      // enters the picture; whitespace-nowrap guarantees no wrap even if
+      // that budget is ever tight; max-w-[calc(100%-1rem)] + the inner
+      // span's truncate are a defensive fallback for a sidebar narrower
+      // than the splitter's own 180px floor (theme-brief.md 3a). Together
+      // these also keep the pill from ever reaching the scroller's
+      // scrollbar, since its box can no longer grow past inset-x-2's
+      // symmetric 8px margins.
+      className={`absolute inset-x-2 z-10 mx-auto flex w-fit max-w-[calc(100%-1rem)] items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold shadow-lg ring-1 ring-line transition-opacity duration-150 ${pos === 'top' ? 'top-2' : 'bottom-2'} ${mention ? 'bg-mention-bg text-mention-fg' : 'bg-panel text-fg'} ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
     >
-      <IconArrowDown size={12} className={pos === 'top' ? 'rotate-180' : ''} />
-      {text}
+      <IconArrowDown size={12} className={`shrink-0 ${pos === 'top' ? 'rotate-180' : ''}`} />
+      <span className="min-w-0 truncate">{text}</span>
     </button>
   )
 }
