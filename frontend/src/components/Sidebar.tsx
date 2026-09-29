@@ -379,13 +379,21 @@ export function Sidebar(p: Props) {
               <button
                 aria-expanded={!isCollapsed}
                 onClick={() => setCollapsed({ ...collapsed, [cat.id]: !isCollapsed })}
-                // pl-[19px] (left-aligned with the 19px channel-row content
-                // start above) + tracking-wider (0.05em, the official
-                // .SidebarChannelGroupHeader_groupButton's letter-spacing) +
-                // a 16px chevron column (w-4), both Addendum 2 numbers.
-                className="flex w-full items-center gap-1 py-0.5 pl-[19px] pr-3 text-left text-xs font-semibold uppercase tracking-wider text-fg-muted hover:text-fg"
+                // h-8 (32px, the official .SidebarChannelGroupHeader height)
+                // and flush against the sidebar's left edge — no left
+                // padding, no gap: the official webapp's
+                // .SidebarChannelGroupHeader_groupButton has padding:0, its
+                // chevron a max-width:16px column (w-4 here, centered like
+                // the source's ~5px-inset glyph), and
+                // .SidebarChannelGroupHeader_text right after it at
+                // padding-left:0 (sass/layout/_sidebar-left.scss) — channel
+                // rows are indented further (19px total via rowTone's
+                // border+pl-16), not this same amount, by design (screenshot
+                // /agents/tmp/sidebar-shots/ref-webapp-sections.png: the
+                // header sits closer to the edge than its rows).
+                className="flex h-8 w-full items-center pr-3 text-left text-xs font-semibold uppercase tracking-wider text-fg-muted hover:text-fg"
               >
-                <span className="flex w-4 items-center">{isCollapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}</span>
+                <span className="flex w-4 shrink-0 items-center justify-center">{isCollapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}</span>
                 {categoryName(cat)}
               </button>
               <ul>

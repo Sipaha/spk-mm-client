@@ -461,3 +461,24 @@ test('Unreads: switching servers drops the held channel', async () => {
   expect(within(channelsSection).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
 })
 
+// Header layout (sidebar-sections-brief.md §2): the official category
+// header sits flush against the sidebar's left edge (no left padding), its
+// chevron in a 16px column with the label immediately after it, and is
+// 32px tall — closer to the edge than the 19px-indented channel rows below
+// it, and taller than before.
+test('category header: flush left, 16px chevron column, no gap, 32px tall', () => {
+  renderSidebar()
+  const header = screen.getByRole('button', { name: 'Channels' })
+  expect(header).toHaveClass('h-8')
+  expect(header.className).not.toMatch(/\bpl-/)
+  expect(header.className).not.toMatch(/\bgap-/)
+  const chevronColumn = header.querySelector('span')!
+  expect(chevronColumn).toHaveClass('w-4')
+})
+
+test('Unreads header: same 32px height and left alignment as the collapsible headers, via a 16px blank column instead of a chevron', () => {
+  renderSidebar()
+  const header = screen.getByText('Unreads').closest('div')!
+  expect(header).toHaveClass('h-8', 'pl-4')
+})
+
