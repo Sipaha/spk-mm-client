@@ -353,3 +353,111 @@ test('overflow pills: a hidden-below unread channel without a mention shows the 
   fireEvent.click(bottom)
   expect(busy.scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
 })
+
+// Unreads section (sidebar-sections-brief.md): a synthetic "UNREADS"
+// category at the top of the list, holding every unread/mentioned channel
+// (incl. favorites and DMs) — removed from its own category while there.
+test('Unreads: sits above Favorites, holds an unread channel from Channels and one from a collapsed custom category, both leave their own category', () => {
+  renderSidebar()
+  const headers = screen.getAllByText(/^(Unreads|Favorites|Channels|Work|Direct Messages)$/)
+  expect(headers[0]).toHaveTextContent('Unreads')
+
+  // c-off (Channels) and c-b/"Busy" (Work, collapsed) are both unread in
+  // the fixture — both now render once, under Unreads, not their own
+  // category.
+  expect(screen.getAllByRole('button', { name: /Off-Topic/ })).toHaveLength(1)
+  expect(screen.getAllByRole('button', { name: 'Busy' })).toHaveLength(1)
+
+  const unreadsSection = screen.getByText('Unreads').closest('section')!
+  expect(within(unreadsSection).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
+  expect(within(unreadsSection).getByRole('button', { name: 'Busy' })).toBeInTheDocument()
+
+  // Channels category still renders, minus c-off.
+  const channelsSection = screen.getByRole('button', { name: 'Channels' }).closest('section')!
+  expect(within(channelsSection).queryByRole('button', { name: /Off-Topic/ })).toBeNull()
+  expect(within(channelsSection).getByRole('button', { name: 'Town Square' })).toBeInTheDocument()
+})
+
+test('Unreads: hidden entirely when there are no unread channels', () => {
+  const allRead: SidebarDTO = {
+    ...sb,
+    categories: (sb.categories ?? []).map((c) => ({ ...c, channels: (c.channels ?? []).map((ch) => ({ ...ch, unread: false, mentions: 0 })) })),
+  }
+  renderSidebar({ sidebar: allRead })
+  expect(screen.queryByText('Unreads')).toBeNull()
+})
+
+test('Unreads: the header is not collapsible (no chevron, no aria-expanded, not a button)', () => {
+  renderSidebar()
+  const header = screen.getByText('Unreads')
+  expect(header.closest('button')).toBeNull()
+  expect(header.querySelector('svg')).toBeNull()
+})
+
+test('Unreads: clicking an unread row there still fires onChannel like any other row', async () => {
+  const p = renderSidebar()
+  const unreadsSection = screen.getByText('Unreads').closest('section')!
+  await userEvent.click(within(unreadsSection).getByRole('button', { name: /Off-Topic/ }))
+  expect(p.onChannel).toHaveBeenCalledWith('c-off')
+})
+
+// The active channel: kept in Unreads until the user switches to a
+// *different* channel (webapp: state.views.channel.lastUnreadChannel),
+// so a row read while open doesn't jump out from under the cursor.
+test('Unreads: the active channel stays after being read, then leaves once a different channel is opened', async () => {
+  const p = renderSidebar()
+  // Click the unread Off-Topic row (still unread in props: React state
+  // doesn't know it "got read" — only the click itself matters here).
+  const unreadsSection = screen.getByText('Unreads').closest('section')!
+  await userEvent.click(within(unreadsSection).getByRole('button', { name: /Off-Topic/ }))
+  expect(p.onChannel).toHaveBeenCalledWith('c-off')
+
+  // The app would normally now update `sidebar` (c-off marked read) and
+  // `activeChannelId`; simulate that here.
+  const nowRead: SidebarDTO = {
+    ...sb,
+    categories: (sb.categories ?? []).map((c) =>
+      c.id === 'ch' ? { ...c, channels: (c.channels ?? []).map((ch) => (ch.id === 'c-off' ? { ...ch, unread: false, mentions: 0 } : ch)) } : c,
+    ),
+  }
+  p.rerender({ sidebar: nowRead, activeChannelId: 'c-off' })
+
+  // Still shown under Unreads (held), not back under Channels.
+  expect(screen.getByText('Unreads')).toBeInTheDocument()
+  let section = screen.getByText('Unreads').closest('section')!
+  expect(within(section).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
+  const channelsSection = screen.getByRole('button', { name: 'Channels' }).closest('section')!
+  expect(within(channelsSection).queryByRole('button', { name: /Off-Topic/ })).toBeNull()
+
+  // Now switch to a different, already-read channel (Town Square) by
+  // clicking it — c-off must leave Unreads for good, and Busy (still
+  // genuinely unread) is the only thing left there.
+  const stillOffSection = screen.getByText('Unreads').closest('section')!
+  // Town Square isn't in Unreads; click it directly.
+  await userEvent.click(screen.getByRole('button', { name: 'Town Square' }))
+  expect(p.onChannel).toHaveBeenCalledWith('c-town')
+  p.rerender({ sidebar: nowRead, activeChannelId: 'c-town' })
+
+  expect(screen.getByText('Unreads')).toBeInTheDocument() // Busy is still unread
+  section = screen.getByText('Unreads').closest('section')!
+  expect(within(section).queryByRole('button', { name: /Off-Topic/ })).toBeNull()
+  const channelsSection2 = screen.getByRole('button', { name: 'Channels' }).closest('section')!
+  expect(within(channelsSection2).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
+  void stillOffSection
+})
+
+test('Unreads: switching servers drops the held channel', async () => {
+  const p = renderSidebar()
+  const unreadsSection = screen.getByText('Unreads').closest('section')!
+  await userEvent.click(within(unreadsSection).getByRole('button', { name: /Off-Topic/ }))
+  const nowRead: SidebarDTO = {
+    ...sb,
+    categories: (sb.categories ?? []).map((c) =>
+      c.id === 'ch' ? { ...c, channels: (c.channels ?? []).map((ch) => (ch.id === 'c-off' ? { ...ch, unread: false, mentions: 0 } : ch)) } : c,
+    ),
+  }
+  p.rerender({ sidebar: nowRead, activeChannelId: 'c-off', server: { ...server, id: 2 } })
+  const channelsSection = screen.getByRole('button', { name: 'Channels' }).closest('section')!
+  expect(within(channelsSection).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
+})
+

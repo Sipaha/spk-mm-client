@@ -52,8 +52,8 @@ func TestPresenceShowsInPostsAndDMRows(t *testing.T) {
 	require.Len(t, v.Posts, 1)
 	assert.Equal(t, "77", v.Posts[0].Avatar)
 	assert.Equal(t, "away", v.Posts[0].Status)
-	assert.Equal(t, ChannelItem{ID: "dm2", Name: "bob", Type: "D", Unread: true, Mentions: 1, UserID: "u2", Avatar: "77", Status: "away"}, sidebarItem(s, "dm2"))
-	assert.Equal(t, ChannelItem{ID: "town", Name: "Town Square", Type: "O", Slug: "town-square"}, sidebarItem(s, "town"), "channels carry no user")
+	assert.Equal(t, ChannelItem{ID: "dm2", Name: "bob", Type: "D", Unread: true, Mentions: 1, LastActivityAt: 500, UserID: "u2", Avatar: "77", Status: "away"}, sidebarItem(s, "dm2"))
+	assert.Equal(t, ChannelItem{ID: "town", Name: "Town Square", Type: "O", LastActivityAt: 400, Slug: "town-square"}, sidebarItem(s, "town"), "channels carry no user")
 
 	s.mu.Lock()
 	assert.Equal(t, model.Status{Status: "dnd", DNDEndTime: 9}, model.Status{Status: s.status.Status, DNDEndTime: s.status.DNDEndTime}, "my own status feeds the DND check of notifications")

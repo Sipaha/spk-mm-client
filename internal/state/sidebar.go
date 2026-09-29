@@ -23,6 +23,12 @@ type ChannelItem struct {
 	Unread   bool   `json:"unread"`
 	Mentions int    `json:"mentions"`
 	Muted    bool   `json:"muted"`
+	// LastActivityAt: the same recency key sortLocked("recent") uses —
+	// last_root_post_at under CRT (if set), else last_post_at, never older
+	// than create_at. The frontend's Unreads section (sidebar-sections-
+	// brief.md) sorts by it, mirroring the webapp's sortUnreadChannels
+	// (mattermost-redux selectors/entities/channels.ts).
+	LastActivityAt int64 `json:"last_activity_at"`
 	// Slug: a team channel's URL name — what a ~channel link in a message
 	// says ("" for DMs/GMs).
 	Slug string `json:"slug,omitempty"`
@@ -180,7 +186,7 @@ func (s *Server) categoriesLocked(teamID string) []CategoryView {
 			ch := s.chans[id]
 			u, m := s.unreadLocked(ch)
 			it := ChannelItem{ID: id, Name: s.channelNameLocked(ch), Type: ch.Info.Type,
-				Unread: u, Mentions: m, Muted: ch.Member.Muted()}
+				Unread: u, Mentions: m, Muted: ch.Member.Muted(), LastActivityAt: s.lastActivityLocked(&ch.Info)}
 			if !ch.Info.IsDM() && !ch.Info.IsGroup() {
 				it.Slug = ch.Info.Name
 			}
@@ -267,21 +273,25 @@ func (s *Server) visibleDMsLocked(ids []string) []string {
 	return out
 }
 
+// lastActivityLocked: the recency key shared by sortLocked("recent") and
+// ChannelItem.LastActivityAt — last_root_post_at under CRT (if set), else
+// last_post_at, never older than create_at (a channel with no posts sorts
+// by its creation time).
+func (s *Server) lastActivityLocked(info *model.Channel) int64 {
+	last := info.LastPostAt
+	if s.crtLocked() && info.LastRootPostAt != 0 {
+		last = info.LastRootPostAt
+	}
+	return max(last, info.CreateAt)
+}
+
 func (s *Server) sortLocked(ids []string, sorting string) []string {
 	out := append([]string(nil), ids...)
 	switch sorting {
 	case "manual":
 		return out
 	case "recent":
-		crt := s.crtLocked()
-		key := func(id string) int64 {
-			c := s.chans[id].Info
-			last := c.LastPostAt
-			if crt && c.LastRootPostAt != 0 {
-				last = c.LastRootPostAt
-			}
-			return max(last, c.CreateAt)
-		}
+		key := func(id string) int64 { return s.lastActivityLocked(&s.chans[id].Info) }
 		sort.SliceStable(out, func(i, j int) bool { return key(out[i]) > key(out[j]) })
 	default: // "", "alpha"
 		sort.SliceStable(out, func(i, j int) bool {

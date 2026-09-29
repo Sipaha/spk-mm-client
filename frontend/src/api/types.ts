@@ -38,6 +38,12 @@ export interface ChannelItem {
   unread: boolean
   mentions: number
   muted: boolean
+  // last_activity_at: last_root_post_at (CRT) or last_post_at, never older
+  // than create_at (internal/state/sidebar.go lastActivityLocked) — the
+  // Unreads section (sidebarSections.ts) sorts by it. Optional like the
+  // other DTO fields below: only Sidebar.tsx's tests need it, and it's
+  // always present on the wire (Go never omits a non-omitempty int field).
+  last_activity_at?: number
   user_id?: string // DMs: the partner
   avatar?: string // DMs: picture version ('' / absent: profile not loaded)
   status?: string // DMs: presence

@@ -4,6 +4,8 @@ import { t } from '../i18n'
 import { Avatar, presenceLabel } from './Avatar'
 import { ChannelTypeMarker, IconArrowDown, IconChevronDown, IconChevronRight, IconMore } from './icons'
 import { useMenuA11y } from './menuA11y'
+import type { HeldChannel } from './sidebarSections'
+import { computeSidebarSections } from './sidebarSections'
 import { useUnreadOverflow } from './unreadOverflow'
 
 interface Props {
@@ -233,6 +235,12 @@ export function Sidebar(p: Props) {
   const [menu, setMenu] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null)
+  // held: the active channel that was unread/mentioned the moment it was
+  // opened (sidebarSections.ts HeldChannel) — captured by handleChannelClick
+  // below, at click time, the same way the webapp's setLastUnreadChannel
+  // captures it synchronously at dispatch time (before the async mark-as-
+  // read round trip can flip the channel's own `unread` back to false).
+  const [held, setHeld] = useState<HeldChannel | null>(null)
   const menuAnchor = useRef<HTMLButtonElement>(null)
   const teams = p.sidebar?.teams ?? []
 
@@ -244,17 +252,41 @@ export function Sidebar(p: Props) {
     setMenu(false)
   }, [p.server.id, p.activeChannelId])
 
+  // A server switch drops any held channel — it's a different server's
+  // channel id, and Sidebar isn't remounted across the switch (same reason
+  // as the menu effect above).
+  useEffect(() => {
+    setHeld(null)
+  }, [p.server.id])
+
+  const handleChannelClick = (item: ChannelItem) => {
+    setHeld(item.unread ? { id: item.id, hadMentions: item.mentions > 0 } : null)
+    p.onChannel(item.id)
+  }
+
+  // sections: the Unreads category (sidebar-sections-brief.md) plus the
+  // regular categories with those channels already removed — computed once,
+  // pure, and covered by sidebarSections.test.ts (not re-derived per render
+  // loop or duplicated between the JSX and the overflow-pill row list
+  // below).
+  const sections = computeSidebarSections(p.sidebar?.categories ?? null, held)
+
   // categoriesView: the same per-category "shown" filtering the render loop
-  // below uses (collapsed categories still show their own unread rows),
-  // computed once so the overflow pills' countable-row list (ruling 2) can't
-  // drift from what's actually rendered.
-  const categoriesView = (p.sidebar?.categories ?? []).map((cat) => {
+  // below uses (collapsed categories still show their own unread rows —
+  // though with the Unreads section above, any channel that would qualify
+  // has already left this category entirely), computed once so the
+  // overflow pills' countable-row list (ruling 2) can't drift from what's
+  // actually rendered.
+  const categoriesView = sections.categories.map((cat) => {
     const isCollapsed = collapsed[cat.id] ?? cat.collapsed
     const all = cat.channels ?? []
     const shown = isCollapsed ? all.filter((c) => c.unread || c.id === p.activeChannelId) : all
     return { cat, isCollapsed, shown }
   })
-  const overflowRows = categoriesView.flatMap(({ shown }) => shown.filter(isCountableUnread).map((c) => ({ id: c.id, mentions: c.mentions })))
+  const overflowRows = [
+    ...sections.unread.filter(isCountableUnread).map((c) => ({ id: c.id, mentions: c.mentions })),
+    ...categoriesView.flatMap(({ shown }) => shown.filter(isCountableUnread).map((c) => ({ id: c.id, mentions: c.mentions }))),
+  ]
   const overflow = useUnreadOverflow(scrollerEl, overflowRows)
 
   return (
@@ -310,6 +342,36 @@ export function Sidebar(p: Props) {
       <div className="relative min-h-0 flex-1">
         <div ref={setScrollerEl} className="h-full overflow-y-auto pb-4">
           {!p.sidebar && <p className="px-3 py-2 text-fg-muted">{t('sidebar.loading')}</p>}
+          {sections.unread.length > 0 && (
+            // Unreads (sidebar-sections-brief.md): always on, never
+            // collapsible (SidebarCategoryHeaderStatic in the webapp has no
+            // chevron), hidden entirely when empty. mt-1.5 matches the
+            // regular categories' own top gap below.
+            <section className="mt-1.5">
+              {/* pl-4 (16px): the official static header has no chevron
+                  (SidebarCategoryHeaderStatic renders no <i>), so
+                  .SidebarChannelGroupHeader_text keeps its default
+                  padding-left:16px instead of the collapsible headers'
+                  padding-left:0 — the 16px column is blank space here,
+                  keeping the label aligned with collapsible headers' text. */}
+              <div className="flex h-8 w-full items-center pl-4 pr-3 text-left text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                {t('cat.unreads')}
+              </div>
+              <ul>
+                {sections.unread.map((c) => (
+                  <li key={c.id}>
+                    <ChannelRow
+                      serverId={p.server.id}
+                      item={c}
+                      active={c.id === p.activeChannelId}
+                      onClick={() => handleChannelClick(c)}
+                      rowRef={isCountableUnread(c) ? overflow.rowRef(c.id) : undefined}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {categoriesView.map(({ cat, isCollapsed, shown }) => (
             // mt-1.5 (Addendum 2, metrics parity): the official webapp's
             // .SidebarChannelGroup_content margin-bottom is 6px.
@@ -333,7 +395,7 @@ export function Sidebar(p: Props) {
                       serverId={p.server.id}
                       item={c}
                       active={c.id === p.activeChannelId}
-                      onClick={() => p.onChannel(c.id)}
+                      onClick={() => handleChannelClick(c)}
                       rowRef={isCountableUnread(c) ? overflow.rowRef(c.id) : undefined}
                     />
                   </li>

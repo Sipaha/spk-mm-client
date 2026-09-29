@@ -24,6 +24,28 @@ func TestSidebarCategoriesVisibilityAndOrder(t *testing.T) {
 	assert.False(t, muted.Unread)
 }
 
+// TestChannelItemLastActivityAt: the frontend's Unreads section (sidebar-
+// sections-brief.md) sorts by recency the same way the webapp's
+// sortUnreadChannels does (mattermost-redux channels.ts) — last_root_post_at
+// under CRT if set, else last_post_at, never older than create_at. The
+// fixture's channels all set LastPostAt == LastRootPostAt == last argument
+// and CreateAt: 1, so with CRT disabled (fixture's default) the expected
+// value is just that last-post argument.
+func TestChannelItemLastActivityAt(t *testing.T) {
+	sb := newFixture().Sidebar("t1")
+	fav := sb.Categories[0].Channels[0]
+	require.Equal(t, "off", fav.ID)
+	assert.Equal(t, int64(300), fav.LastActivityAt, "off: ch(..., 300)")
+
+	var town ChannelItem
+	for _, c := range sb.Categories[1].Channels {
+		if c.ID == "town" {
+			town = c
+		}
+	}
+	assert.Equal(t, int64(400), town.LastActivityAt, "town: ch(..., 400)")
+}
+
 func TestSidebarTeamsAggregateWithoutDMs(t *testing.T) {
 	sb := newFixture().Sidebar("")
 	require.Len(t, sb.Teams, 1)
