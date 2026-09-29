@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// The dev desktop run's side of the PDF memory gate (devpdf.go).
+// The dev desktop run's side of the PDF memory check (devpdf.go).
 
 var defaultPDFPace = pdfPace{
 	settle: 20 * time.Second, channelSettle: 10 * time.Second, baseline: 15 * time.Second, dwell: 8 * time.Second, gap: 25 * time.Second, idle: 2 * time.Minute,

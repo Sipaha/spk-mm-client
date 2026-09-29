@@ -14,14 +14,15 @@ import (
 	"time"
 )
 
-// The PDF memory gate (plan ruling, PDF Task 4): after 20 opens of a 50-page
-// picture-heavy PDF, the web process's lower envelope after a close stays
-// within pdfGateMaxMB of the pre-PDF baseline, with no upward trend. A dev
-// desktop run with --mm-fake --mm-fake-pdf-cycles N drives the real viewer
-// (runPDFCycles) with nothing attached, logs the figures and quits.
+// The PDF memory check (PDF Task 4): a dev desktop run with --mm-fake
+// --mm-fake-pdf-cycles N drives the real viewer (runPDFCycles) with nothing
+// attached — N opens of a 50-page picture-heavy PDF — logs the web
+// process's memory after every close and a trend summary, and quits. There
+// is no pass/fail: the rule is "no unbounded growth" (the +20 MB gate of the
+// plan was withdrawn by the user on 2026-09-29; after heavy use the web
+// process sits +30…+40 MB over its pre-PDF baseline, bounded — AGENTS.md,
+// spike doc S4 «PDF: гейт памяти»). Judge the closes in the log.
 const (
-	pdfGateMaxMB    = 20.0
-	pdfGateMaxSlope = 0.25 // MB per open: at most +5 MB over 20 opens
 	// pdfMarkPrefix: the page's answers to the driver's scripts arrive as
 	// Wails raw messages with this prefix (window._wails.invoke).
 	pdfMarkPrefix = "spk-dev-pdf:"
@@ -35,7 +36,7 @@ type pdfPace struct {
 	baseline      time.Duration // sampled before the first open
 	dwell         time.Duration // reading the first page, and again after scrolling
 	gap           time.Duration // after a close; its lowest sample is the close's figure
-	idle          time.Duration // after the last close: the level once WebKit has had time to give memory back (reported, not gated)
+	idle          time.Duration // after the last close: the level once WebKit has had time to give memory back (reported with the closes)
 	markWait      time.Duration // the longest the page may take to answer a script
 	tick          time.Duration // memory sampling interval
 	scrollSteps   int
@@ -56,13 +57,12 @@ type pdfCycleResult struct {
 	Canvases                             string // canvases alive after scrolling, as the page reported
 }
 
-type pdfGateResult struct {
+type pdfCheckResult struct {
 	BaselineMB     float64
 	IdleMinMB      float64
 	Cycles         []pdfCycleResult
 	MaxDeltaMB     float64
 	SlopeMBPerOpen float64
-	Pass           bool
 }
 
 // The scripts start with a comment naming them (the tests' fake page reads
@@ -108,8 +108,8 @@ const pdfCloseJS = `/*close*/(async () => {
 // runPDFCycles opens manual.pdf in the viewer c.n times — reads, scrolls
 // ~30 pages, reads, closes, waits — sampling the web process all along, and
 // logs each cycle and the verdict.
-func runPDFCycles(ctx context.Context, c pdfCycles) (pdfGateResult, error) {
-	var res pdfGateResult
+func runPDFCycles(ctx context.Context, c pdfCycles) (pdfCheckResult, error) {
+	var res pdfCheckResult
 	p := c.pace
 	if !sleepCtx(ctx, p.settle) {
 		return res, ctx.Err()
@@ -120,10 +120,10 @@ func runPDFCycles(ctx context.Context, c pdfCycles) (pdfGateResult, error) {
 	}
 	lo, _, ok := c.watch(ctx, p.baseline)
 	if !ok {
-		return res, errors.New("pdf gate: the web process's memory is not readable")
+		return res, errors.New("pdf memory check: the web process's memory is not readable")
 	}
 	res.BaselineMB = lo
-	slog.Info("pdf gate baseline", "web_mb", round1(lo))
+	slog.Info("pdf memory baseline", "web_mb", round1(lo))
 	closed := make([]float64, 0, c.n)
 	for i := range c.n {
 		var cy pdfCycleResult
@@ -133,7 +133,7 @@ func runPDFCycles(ctx context.Context, c pdfCycles) (pdfGateResult, error) {
 			mark, hi, err := c.await(ctx)
 			peak = max(peak, hi)
 			if err != nil {
-				return "", fmt.Errorf("pdf gate: cycle %d: %w", i+1, err)
+				return "", fmt.Errorf("pdf memory check: cycle %d: %w", i+1, err)
 			}
 			_, hi, _ = c.watch(ctx, then)
 			peak = max(peak, hi)
@@ -149,7 +149,7 @@ func runPDFCycles(ctx context.Context, c pdfCycles) (pdfGateResult, error) {
 		cy.Canvases = strings.TrimPrefix(mark, "scrolled canvases=")
 		c.exec(pdfCloseJS)
 		if _, _, err := c.await(ctx); err != nil {
-			return res, fmt.Errorf("pdf gate: cycle %d: %w", i+1, err)
+			return res, fmt.Errorf("pdf memory check: cycle %d: %w", i+1, err)
 		}
 		cy.OpenPeakMB = peak
 		cy.ClosedMinMB, cy.ClosedMaxMB, _ = c.watch(ctx, p.gap)
@@ -158,16 +158,16 @@ func runPDFCycles(ctx context.Context, c pdfCycles) (pdfGateResult, error) {
 		}
 		res.Cycles = append(res.Cycles, cy)
 		closed = append(closed, cy.ClosedMinMB)
-		slog.Info("pdf gate cycle", "n", i+1, "open_peak_mb", round1(cy.OpenPeakMB), "closed_min_mb", round1(cy.ClosedMinMB),
+		slog.Info("pdf memory cycle", "n", i+1, "open_peak_mb", round1(cy.OpenPeakMB), "closed_min_mb", round1(cy.ClosedMinMB),
 			"closed_max_mb", round1(cy.ClosedMaxMB), "delta_mb", round1(cy.ClosedMinMB-lo), "canvases", cy.Canvases)
 	}
 	res.IdleMinMB, _, _ = c.watch(ctx, p.idle)
-	res.MaxDeltaMB, res.SlopeMBPerOpen, res.Pass = pdfVerdict(lo, closed)
+	res.MaxDeltaMB, res.SlopeMBPerOpen = pdfTrend(lo, closed)
 	deltas := make([]string, len(closed))
 	for i, v := range closed {
 		deltas[i] = strconv.FormatFloat(round1(v-lo), 'f', 1, 64)
 	}
-	slog.Info("pdf gate result", "pass", res.Pass, "baseline_mb", round1(lo), "max_delta_mb", round1(res.MaxDeltaMB), "idle_delta_mb", round1(res.IdleMinMB-lo),
+	slog.Info("pdf memory result", "baseline_mb", round1(lo), "max_delta_mb", round1(res.MaxDeltaMB), "idle_delta_mb", round1(res.IdleMinMB-lo),
 		"slope_mb_per_open", math.Round(res.SlopeMBPerOpen*100)/100, "deltas_mb", strings.Join(deltas, " "))
 	return res, nil
 }
@@ -217,9 +217,9 @@ func (c pdfCycles) watch(ctx context.Context, d time.Duration) (lo, hi float64, 
 	return lo, hi, ok
 }
 
-// pdfVerdict: the largest close over the baseline, the least-squares slope
-// of the closes (MB per open), and whether the gate holds.
-func pdfVerdict(baseline float64, closed []float64) (maxDelta, slope float64, pass bool) {
+// pdfTrend: the largest close over the baseline and the least-squares slope
+// of the closes (MB per open) — numbers to judge, not a verdict.
+func pdfTrend(baseline float64, closed []float64) (maxDelta, slope float64) {
 	n := float64(len(closed))
 	var sx, sy, sxx, sxy float64
 	maxDelta = math.Inf(-1)
@@ -231,7 +231,21 @@ func pdfVerdict(baseline float64, closed []float64) (maxDelta, slope float64, pa
 	if d := n*sxx - sx*sx; d != 0 {
 		slope = (n*sxy - sx*sy) / d
 	}
-	return maxDelta, slope, len(closed) > 0 && maxDelta <= pdfGateMaxMB && slope <= pdfGateMaxSlope
+	return maxDelta, slope
+}
+
+// pdfMarkFilter: the handler for the page's raw messages — only the
+// driver's own (pdfMarkPrefix) go to marks, without blocking the caller
+// (Wails' message loop).
+func pdfMarkFilter(marks chan<- string) func(string) {
+	return func(m string) {
+		if mark, ok := strings.CutPrefix(m, pdfMarkPrefix); ok {
+			select {
+			case marks <- mark:
+			default:
+			}
+		}
+	}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

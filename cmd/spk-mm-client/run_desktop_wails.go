@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -77,6 +76,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	var dev []desktop.DevAction
 	var driver func(ctx context.Context, exec func(js string))
 	var devMessage func(msg string)
+	driverErr := make(chan error, 1)
 	if o.MMFake {
 		fakes := make([]*mmfake.Server, max(o.FakeServers, 1))
 		urls := make([]string, len(fakes))
@@ -108,14 +108,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		}
 		if o.FakePDFCycles > 0 {
 			marks := make(chan string, 16)
-			devMessage = func(m string) {
-				if mark, ok := strings.CutPrefix(m, pdfMarkPrefix); ok {
-					select {
-					case marks <- mark:
-					default:
-					}
-				}
-			}
+			devMessage = pdfMarkFilter(marks)
 			driver = func(ctx context.Context, exec func(js string)) {
 				defer quit()
 				_, err := runPDFCycles(ctx, pdfCycles{
@@ -123,13 +116,14 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 					openChannel: func() { svc.NotificationClicked(ids[0], "c-offtopic", "") },
 				})
 				if err != nil {
-					slog.Error("pdf gate did not finish", "err", err)
+					slog.Error("pdf memory check did not finish", "err", err)
+					driverErr <- err // buffered: the run exits non-zero
 				}
 			}
 		}
 	}
 
-	return desktop.Run(ctx, desktop.Options{
+	err = desktop.Run(ctx, desktop.Options{
 		FrontendFS:     frontendFS(),
 		Service:        svc,
 		Emitter:        em,
@@ -141,4 +135,13 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 		DevDriver:      driver,
 		DevMessage:     devMessage,
 	})
+	if err != nil {
+		return err
+	}
+	select {
+	case err := <-driverErr: // a dev driver that did not finish fails the run
+		return err
+	default:
+		return nil
+	}
 }

@@ -16,7 +16,7 @@ import (
 )
 
 // The seeded manual is a well-formed multi-page PDF (the viewer's pdf.js
-// renders it; the memory gate scrolls through it): every xref offset points
+// renders it; the PDF memory check scrolls through it): every xref offset points
 // at its object, the page tree counts PDFPages pages, and each page says
 // which it is. spec.pdf stays junk behind a valid header (JunkPDFFileID).
 func TestSeededPDFIsARealMultiPageDocument(t *testing.T) {
@@ -74,7 +74,7 @@ func TestSeededPDFHasOneLandscapePage(t *testing.T) {
 	assert.NotEqual(t, PDFPages, LandscapePage)
 }
 
-// The memory gate (PDF Task 4) needs a document like the spike's 4.3 MB
+// The PDF memory check (PDF Task 4) needs a document like the spike's 4.3 MB
 // test50.pdf: every page carries its own photo-like 480x360 JPEG (pdf.js
 // decodes one image per page, as in a scanned or illustrated manual), not
 // one picture shared by all pages (pdf.js would cache and decode it once).

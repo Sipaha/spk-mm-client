@@ -30,7 +30,7 @@ type Options struct {
 	IconMentionPNG []byte
 	DevActions     []DevAction  // dev builds: extra tray items (fake server controls)
 	Media          http.Handler // /media/ (internal/media); nil: pictures are not served
-	// DevDriver (dev runs such as the PDF memory gate; nil otherwise) runs
+	// DevDriver (dev runs such as the PDF memory check; nil otherwise) runs
 	// once the app has started, with a way to run a script in the page;
 	// DevMessage receives the page's raw messages (window._wails.invoke) —
 	// without it Wails gets no raw message handler at all.

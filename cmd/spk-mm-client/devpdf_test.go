@@ -109,7 +109,7 @@ func TestPDFCyclesOpenScrollAndCloseTheViewer(t *testing.T) {
 	}
 	assert.InDelta(t, 5, res.MaxDeltaMB, 0.01)
 	assert.InDelta(t, 105, res.IdleMinMB, 0.01, "and the level after a longer idle, for the record")
-	assert.True(t, res.Pass)
+	assert.InDelta(t, 0, res.SlopeMBPerOpen, 0.01)
 }
 
 func TestPDFCyclesStopOnAPageError(t *testing.T) {
@@ -142,25 +142,49 @@ func TestPDFCyclesGiveUpOnASilentPage(t *testing.T) {
 	assert.ErrorContains(t, err, "no answer")
 }
 
-// The gate (plan ruling): every close at most +20 MB over the baseline, and
-// no upward trend over the opens.
-func TestPDFGateVerdict(t *testing.T) {
+// The summary is raw numbers, no verdict (the +20 MB gate was withdrawn,
+// user decision 2026-09-29 — the rule is "no unbounded growth"): the
+// largest close over the baseline and the least-squares slope of the closes.
+func TestPDFTrend(t *testing.T) {
 	flat := []float64{112, 108, 115, 110, 109, 114, 111, 107, 113, 110}
-	maxDelta, slope, pass := pdfVerdict(100, flat)
+	maxDelta, slope := pdfTrend(100, flat)
 	assert.InDelta(t, 15, maxDelta, 0.01)
 	assert.InDelta(t, 0, slope, 0.3)
-	assert.True(t, pass)
 
 	rising := make([]float64, 20)
 	for i := range rising {
-		rising[i] = 101 + float64(i)*0.9 // +18 at the end: under the cap, but growing
+		rising[i] = 101 + float64(i)*0.9
 	}
-	_, slope, pass = pdfVerdict(100, rising)
+	maxDelta, slope = pdfTrend(100, rising)
+	assert.InDelta(t, 18.1, maxDelta, 0.01)
 	assert.InDelta(t, 0.9, slope, 0.01)
-	assert.False(t, pass, "an upward trend fails even under the cap")
+}
 
-	_, _, pass = pdfVerdict(100, []float64{110, 125, 110, 110})
-	assert.False(t, pass, "a close over +20 MB fails")
+// A cancelled run (the app quitting) stops at once, touching no page.
+func TestPDFCyclesStopWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pace := quickPace()
+	pace.settle = time.Minute
+	page := &fakePage{marks: make(chan string, 4), reply: func(string) string { return "rendered" }}
+	start := time.Now()
+	_, err := runPDFCycles(ctx, pdfCycles{
+		n: 1, openChannel: func() { t.Error("channel opened") }, exec: page.exec, marks: page.marks,
+		sample: func() (int64, bool) { return 100 << 10, true }, pace: pace,
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(start), time.Second)
+	assert.Empty(t, page.kinds())
+}
+
+// The page's answers reach the driver only with the driver's prefix.
+func TestPDFMarksFilter(t *testing.T) {
+	marks := make(chan string, 4)
+	f := pdfMarkFilter(marks)
+	f("something else")
+	f(pdfMarkPrefix + "rendered")
+	require.Len(t, marks, 1)
+	assert.Equal(t, "rendered", <-marks)
 }
 
 func TestParsePrivateDirty(t *testing.T) {

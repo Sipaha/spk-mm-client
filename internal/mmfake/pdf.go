@@ -21,12 +21,12 @@ const (
 	// (a scanned cover, an embedded slide, an appendix), and PdfView.tsx (fix
 	// round 1, review of commit cffdfe9) must size each page from its own
 	// viewport instead of stretching every page into page 1's box. Exercises
-	// that both in the memory gate (Task 4) and in e2e (Task 5).
+	// that both in the PDF memory check (Task 4) and in e2e (Task 5).
 	LandscapePage = 2
 )
 
 // The seeded manual's pictures: one photo-like JPEG per page, so the PDF
-// memory gate (docs/spikes/2026-09-24-stage1-spikes.md S4) loads a document
+// memory check (docs/spikes/2026-09-24-stage1-spikes.md S4) loads a document
 // like the spike's 4.3 MB test50.pdf — pdf.js decodes a picture per page.
 const (
 	manualImageW = 480
