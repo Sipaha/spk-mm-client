@@ -396,6 +396,8 @@ func TestAbandonedQueuedPDFLeavesAtOnce(t *testing.T) {
 	release()
 	time.Sleep(100 * time.Millisecond)
 	assert.Zero(t, e.origin.count("/api/v4/files/p2"), "never fetched")
+	resp, _ := e.get("/media/1/pdf/p2")
+	assert.Equal(t, 200, resp.StatusCode, "the abandoned call's 503 is not negative-cached")
 }
 
 // R1: a request that comes after the cancel does not join the abandoned
