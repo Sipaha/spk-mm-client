@@ -346,3 +346,20 @@ test('switching between fit and manual zoom keeps the scroll anchored to the sam
   // scrollTop at its old (336) pixel value, which would now land elsewhere.
   expect(scrollToSpy).toHaveBeenCalledWith({ top: 411 })
 })
+
+// pdf-lag report (2026-09-30): WebKitGTK repaints the page box on every
+// wheel-scroll step, and a blurred box-shadow on a page-sized box (Tailwind
+// `shadow`, 1840x2381 px at the old default zoom) made each step cost
+// 125–200 ms instead of ~32 ms — janky scrolling. Page boxes carry no shadow
+// or other blur/filter effect; the dark backdrop already frames the page.
+test('page boxes have no box-shadow or filter (WebKitGTK repaints them on every scroll step)', async () => {
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  const boxes = Array.from(container.querySelectorAll<HTMLElement>('[data-page]'))
+  expect(boxes.length).toBe(5)
+  for (const b of boxes) {
+    expect(b.className).not.toMatch(/(^|\s)(shadow|drop-shadow|blur|backdrop-blur|filter)(-|\s|$)/)
+    expect(b.style.boxShadow).toBe('')
+    expect(b.style.filter).toBe('')
+  }
+})

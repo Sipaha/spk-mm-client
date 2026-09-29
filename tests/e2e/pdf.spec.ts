@@ -260,6 +260,23 @@ test('the scanned page (3, CCITT) actually paints, not silently blank', async ({
   await expect(v).toHaveCount(0)
 })
 
+// pdf-lag report (2026-09-30): WebKitGTK repaints the page box on every
+// wheel-scroll step, and a blurred box-shadow on it made each step cost
+// 125–200 ms (janky scrolling of the everyday one-page receipt). Chromium
+// can't show the jank, but the page box must not carry a shadow at all.
+test('receipt (one page, vector text): the page box has no box-shadow', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /^bob/).click()
+  await feed(page).getByRole('button', { name: 'View Receipt-1234-5678-9012.pdf' }).click()
+  const v = viewer(page)
+  await expect(v.getByText(/^\d+ \/ \d+$/)).toHaveText('1 / 1')
+  await expect(v.locator('[data-page="1"] .pdf-text-layer span').first()).toBeAttached({ timeout: 15_000 })
+  expect(await v.locator('[data-page="1"]').evaluate((el) => getComputedStyle(el).boxShadow)).toBe('none')
+
+  await page.keyboard.press('Escape')
+  await expect(v).toHaveCount(0)
+})
+
 test('a broken PDF (spec.pdf) falls back to the file card, no iframe/embed/object', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()

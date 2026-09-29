@@ -350,10 +350,14 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
             // white) page background once it loads. Sized from the page's
             // own measured viewport (or page 1's, as a placeholder, until
             // it's been fetched) — never a single shared size for every
-            // page (fix round 1).
+            // page (fix round 1). No box-shadow (or any blur/filter): WebKitGTK
+            // repaints this page-sized box on every wheel-scroll step, and a
+            // blurred shadow made each step cost 125–200 ms instead of ~32 ms
+            // (janky scrolling — pdf-lag report 2026-09-30; Chromium doesn't
+            // care). The dark backdrop frames the page anyway.
             const box = boxOf(i)
             return (
-              <div key={i} data-page={i} className="relative mx-auto bg-panel shadow" style={{ width: box.w, height: box.h, marginBottom: GAP }} />
+              <div key={i} data-page={i} className="relative mx-auto bg-panel" style={{ width: box.w, height: box.h, marginBottom: GAP }} />
             )
           })}
       </div>
