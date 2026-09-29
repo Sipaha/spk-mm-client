@@ -81,3 +81,72 @@ test('dragging the thread-panel splitter resizes it', async ({ page }) => {
   await expect(threadPane(page)).toHaveJSProperty('offsetWidth', Math.round(before) - 60)
   await removeServerFromMenu(page)
 })
+
+// noOverflow: document.scrollingElement.scrollWidth must never exceed
+// clientWidth -- a flex item missing min-width:0 (ChannelPane's own bug,
+// 2026-09-29) refuses to shrink past its intrinsic content width once a
+// splitter grows far enough, so the row overflows the actual window instead
+// of the feed shrinking.
+async function noOverflow(page: Parameters<typeof signInAlice>[0]) {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.scrollingElement!.scrollWidth,
+    clientWidth: document.scrollingElement!.clientWidth,
+  }))
+  expect(scrollWidth).toBe(clientWidth)
+}
+
+// Splitter-drag bug (coordinator report, 2026-09-29, real WebKitGTK desktop
+// build): dragging the feed|thread-panel splitter to widen the panel froze
+// the splitter line in place while the panel's content shifted right and
+// clipped at the window's edge -- ChannelPane (the feed) was missing
+// min-w-0, so it refused to shrink below its intrinsic content width
+// (~448px in that repro) once the thread panel grew past the point where
+// there was still "naturally" enough room, and the row overflowed the
+// window instead. Root-caused via the WebKit inspector (Runtime.evaluate
+// over its remote-debugging socket) and a real XTest pointer drag on a
+// throwaway Xvfb display -- this Chromium e2e drags to the actual clamped
+// maximum (not a small, safe delta) so it exercises the same overflow
+// regardless of engine. Covers both splitters, both drag directions.
+test('dragging either splitter to its max never overflows the window (splitter-drag bug, 2026-09-29)', async ({ page }) => {
+  await signInAlice(page)
+  await noOverflow(page)
+
+  // Sidebar to its max, by keyboard (deterministic — no drag-distance guessing).
+  const sidebarSep = page.getByRole('separator', { name: 'Resize sidebar' })
+  await sidebarSep.focus()
+  await page.keyboard.press('End')
+  const sidebarMax = await sidebarSep.getAttribute('aria-valuemax')
+  await expect(sidebarSep).toHaveAttribute('aria-valuenow', sidebarMax!)
+  await noOverflow(page)
+
+  // Open the thread panel and drag its splitter far to the left (widen it)
+  // — the original report's exact scenario. The drag distance deliberately
+  // overshoots any legitimate width increase: the clamp, not the drag
+  // distance, must be what stops it, and even right at the clamped max
+  // nothing may overflow.
+  await seedThread(page, 'overflow check root', ['overflow check reply'])
+  await channel(page, /Town Square/).click()
+  await page.getByRole('button', { name: /^Replies: 1/ }).click()
+  const pane = threadPane(page)
+  await expect(pane).toBeVisible()
+
+  const threadSep = page.getByRole('separator', { name: 'Resize thread panel' })
+  const box = (await threadSep.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 - 1000, box.y + box.height / 2, { steps: 20 })
+  await page.mouse.up()
+
+  const threadMax = await threadSep.getAttribute('aria-valuemax')
+  await expect(threadSep).toHaveAttribute('aria-valuenow', threadMax!)
+  await noOverflow(page)
+
+  // The splitter must have visibly followed the pointer (not frozen in
+  // place, the bug's other symptom): the panel's right edge sits exactly on
+  // the window's right edge, not past it.
+  const paneBox = (await pane.boundingBox())!
+  const viewport = page.viewportSize()!
+  expect(Math.round(paneBox.x + paneBox.width)).toBe(viewport.width)
+
+  await removeServerFromMenu(page)
+})

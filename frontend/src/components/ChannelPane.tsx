@@ -109,7 +109,19 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`relative flex min-h-0 flex-1 flex-col bg-app ${dragActive ? 'file-drop-target-active' : ''}`}
+      // min-w-0: without it, this flex item's automatic min-width defaults
+      // to its content's intrinsic width (the classic flexbox min-width:
+      // auto trap), so it refuses to shrink below that once a sibling
+      // splitter (sidebar or thread panel) grows past the point where
+      // there's still "naturally" enough room — the row then overflows
+      // the actual window instead of the feed shrinking, which reads as
+      // "the splitter freezes while the panel's content and right edge
+      // run off the screen" (splitter-drag bug, 2026-09-29; found via the
+      // WebKit inspector + a real XTest drag: ChannelPane plateaued at a
+      // fixed intrinsic width — e.g. 448px on a 1200px window — no matter
+      // how wide the thread panel grew, so document.scrollingElement.
+      // scrollWidth outgrew clientWidth by exactly the panel's excess).
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col bg-app ${dragActive ? 'file-drop-target-active' : ''}`}
       data-drop-label={t('composer.dropHint')}
     >
       <header className="flex min-w-0 items-baseline gap-3 border-b border-line bg-panel px-4 py-2">
