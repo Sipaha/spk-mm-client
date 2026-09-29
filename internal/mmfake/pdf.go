@@ -23,7 +23,62 @@ const (
 	// viewport instead of stretching every page into page 1's box. Exercises
 	// that both in the PDF memory check (Task 4) and in e2e (Task 5).
 	LandscapePage = 2
+	// ScannedPage carries a CCITT Group 4 (fax-style, 1-bit) image instead
+	// of the other pages' JPEG — final review I3: pdf.js 6.3 decodes
+	// CCITTFaxDecode (and JBIG2) through the same jbig2.wasm module the
+	// worker fetches from wasmUrl, so this page only paints once the UI
+	// actually ships and wires that optional asset; without it, pdf.js
+	// leaves the page blank rather than failing loudly.
+	ScannedPage = 3
 )
+
+// scannedImageW/H, scannedImageCCITT: a tiny 200x100 1-bit "SCAN" bitmap,
+// pre-encoded as raw ITU-T T.6 (CCITT Group 4) data. Generated once, offline
+// (Go has no CCITT encoder in std or already-vendored libraries), and
+// embedded here rather than at runtime:
+//
+//	convert -size 200x100 xc:white -fill black -gravity center -pointsize 36 \
+//	  -annotate 0 SCAN -threshold 50% -depth 1 -define tiff:rows-per-strip=1000 \
+//	  -compress Group4 scan.tiff
+//
+// then the TIFF's single strip (offset 8, 130 bytes — confirmed via its
+// StripOffsets/StripByteCounts tags) extracted as-is: TIFF Group4 and PDF's
+// /Filter /CCITTFaxDecode /DecodeParms << /K -1 >> are the same ITU-T T.6
+// bitstream. PhotometricInterpretation 1 (BlackIsZero) on the source TIFF
+// matches PDF's own CCITTFaxDecode default (BlackIs1 false), so no polarity
+// flip is needed.
+const (
+	scannedImageW = 200
+	scannedImageH = 100
+)
+
+var scannedImageCCITT = []byte{
+	0x26, 0xa1, 0x92, 0x2f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	0xff, 0x20, 0x7d, 0xe4, 0x31, 0xe4, 0x12, 0x08, 0x78, 0x21, 0xef, 0x08,
+	0x30, 0x41, 0xad, 0xd6, 0xab, 0x6b, 0xe8, 0xe1, 0x51, 0xc1, 0xd6, 0xfd,
+	0x04, 0x28, 0x21, 0x97, 0x5f, 0xf4, 0x97, 0xd2, 0xe9, 0x25, 0xe5, 0xf7,
+	0xfd, 0x56, 0xbf, 0xea, 0xbf, 0xfd, 0xd5, 0x7b, 0x7e, 0xda, 0xab, 0x7e,
+	0x97, 0x0f, 0xad, 0x2b, 0xf0, 0xdd, 0x2f, 0xbf, 0xb0, 0xfa, 0xff, 0xc3,
+	0x7a, 0x5e, 0xdf, 0xbf, 0x1f, 0xa5, 0xb7, 0xaa, 0x5f, 0xbf, 0xed, 0xff,
+	0xa3, 0x02, 0x3f, 0xfe, 0xd5, 0xff, 0xd7, 0xaf, 0x62, 0xb4, 0x9b, 0x5d,
+	0x2f, 0x20, 0x56, 0xeb, 0x64, 0x6f, 0x5f, 0xf1, 0x4c, 0x6b, 0xef, 0xd3,
+	0xd7, 0xf8, 0x60, 0x83, 0x09, 0x7d, 0xac, 0x44, 0x44, 0x47, 0xff, 0xff,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf8, 0x00, 0x80, 0x08,
+}
+
+// pageImageObj is the per-page image XObject body: a CCITT-encoded scan for
+// ScannedPage, a JPEG photo (manualImage) for every other page.
+func pageImageObj(p int) string {
+	if p == ScannedPage {
+		return fmt.Sprintf(
+			"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 1 "+
+				"/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns %d /Rows %d /BlackIs1 false >> /Length %d >>\nstream\n%s\nendstream",
+			scannedImageW, scannedImageH, scannedImageW, scannedImageH, len(scannedImageCCITT), scannedImageCCITT)
+	}
+	pic := manualImage(p)
+	return fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream",
+		manualImageW, manualImageH, len(pic), pic)
+}
 
 // The seeded manual's pictures: one photo-like JPEG per page, so the PDF
 // memory check (docs/spikes/2026-09-24-stage1-spikes.md S4) loads a document
@@ -67,9 +122,7 @@ func manualPDF(pages int) []byte {
 		first := 4 + 3*(p-1)
 		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 %d 0 R >> >> /Contents %d 0 R >>", w, h, first+2, first+1))
 		obj(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
-		pic := manualImage(p)
-		obj(fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream",
-			manualImageW, manualImageH, len(pic), pic))
+		obj(pageImageObj(p))
 	}
 	xref := b.Len()
 	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)

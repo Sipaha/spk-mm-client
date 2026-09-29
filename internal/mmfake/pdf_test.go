@@ -88,7 +88,9 @@ func TestSeededPDFIsImageHeavy(t *testing.T) {
 
 	re := regexp.MustCompile(`<< /Type /XObject /Subtype /Image /Width 480 /Height 360 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length (\d+) >>\nstream\n`)
 	locs := re.FindAllSubmatchIndex(doc, -1)
-	require.Len(t, locs, PDFPages, "one picture per page")
+	// PDFPages-1: ScannedPage carries a CCITT-encoded scan instead of a JPEG
+	// (final review I3) — TestSeededPDFHasAScannedCCITTPage covers it.
+	require.Len(t, locs, PDFPages-1, "one JPEG picture per page except the scanned one")
 	seen := map[[32]byte]bool{}
 	for _, l := range locs {
 		n, err := strconv.Atoi(string(doc[l[2]:l[3]]))
@@ -101,9 +103,40 @@ func TestSeededPDFIsImageHeavy(t *testing.T) {
 		assert.Equal(t, 360, img.Bounds().Dy())
 		seen[sha256.Sum256(body)] = true
 	}
-	assert.Len(t, seen, PDFPages, "every page has a picture of its own")
+	assert.Len(t, seen, PDFPages-1, "every JPEG page has a picture of its own")
 	assert.Equal(t, PDFPages, bytes.Count(doc, []byte("/XObject << /Im1 ")), "each page's resources name its picture")
 	assert.Equal(t, PDFPages, bytes.Count(doc, []byte("/Im1 Do")), "and each page draws it")
+}
+
+// TestSeededPDFHasAScannedCCITTPage: final review I3 — pdf.js 6.3 decodes
+// CCITTFaxDecode/JBIG2 images through the jbig2.wasm module fetched from
+// wasmUrl; without shipping and wiring that asset, a scanned page like this
+// one renders blank. ScannedPage exercises the real end-to-end path (the
+// fake serves it, PdfView.tsx must ask pdf.js to actually fetch the wasm).
+func TestSeededPDFHasAScannedCCITTPage(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	_, doc := a.raw("GET", "/api/v4/files/"+PDFFileID, nil)
+
+	re := regexp.MustCompile(`<< /Type /XObject /Subtype /Image /Width (\d+) /Height (\d+) /ColorSpace /DeviceGray /BitsPerComponent 1 ` +
+		`/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns (\d+) /Rows (\d+) /BlackIs1 false >> /Length (\d+) >>\nstream\n`)
+	locs := re.FindAllSubmatchIndex(doc, -1)
+	require.Len(t, locs, 1, "exactly one CCITT-encoded page")
+	l := locs[0]
+	for _, pair := range [][2][]byte{{doc[l[2]:l[3]], []byte(strconv.Itoa(scannedImageW))}, {doc[l[4]:l[5]], []byte(strconv.Itoa(scannedImageH))}} {
+		assert.Equal(t, string(pair[1]), string(pair[0]))
+	}
+	n, err := strconv.Atoi(string(doc[l[10]:l[11]]))
+	require.NoError(t, err)
+	assert.Equal(t, len(scannedImageCCITT), n)
+	body := doc[l[1] : l[1]+n]
+	assert.Equal(t, scannedImageCCITT, body)
+	require.True(t, bytes.HasPrefix(doc[l[1]+n:], []byte("\nendstream")), "the /Length is right")
+
+	assert.NotEqual(t, 1, ScannedPage)
+	assert.NotEqual(t, PDFPages, ScannedPage)
+	assert.NotEqual(t, LandscapePage, ScannedPage)
 }
 
 // Every fake (a soak run starts several in one process) serves the same
