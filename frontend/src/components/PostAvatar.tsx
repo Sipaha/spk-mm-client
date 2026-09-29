@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { PostView } from '../api/types'
 import { mediaURL, useLoadFailure } from '../media'
 import { Avatar } from './Avatar'
 import { EmojiGlyph } from './EmojiGlyph'
+import { IconWebhook } from './icons'
 
 interface Props {
   serverId: number
@@ -10,24 +11,38 @@ interface Props {
   size: number
 }
 
-// PostAvatar is the picture next to a post: a webhook's own icon when Go
-// says so (PostView.icon) — its picture from /media/<srv>/posticon/<post
-// id> (by post, never by URL: Go fetches it) or an emoji — otherwise the
-// account's avatar, which is also what a failed icon falls back to. Eager
-// like Avatar (see there).
+// PostAvatar is the picture next to a post. Go decides (PostView.icon):
+// a webhook's own icon — its picture from /media/<srv>/posticon/<post id>
+// (by post, never by URL: Go fetches it) or an emoji; "webhook" — a webhook
+// post without an icon of its own; otherwise the account's avatar. A webhook
+// post never shows its owner's avatar (it would read as if the owner had
+// written it — the webapp shows its generic webhook logo too): the generic
+// webhook icon is what it shows without an icon, while its icon loads and
+// when that fails. Eager like Avatar (see there).
 //
-// Until the icon has loaded the account's avatar stands in over it: a new
-// post is a new /media URL, and one whose picture Go has not fetched yet (a
-// webhook's first icon from an external host takes a round trip there; a
-// broken one fails only after it) would otherwise be an empty circle for
-// that long. An icon already in the webview's cache is complete at mount:
-// no stand-in, no flash.
+// Until the icon has loaded the generic one stands in over it: a new post is
+// a new /media URL, and one whose picture Go has not fetched yet (a webhook's
+// first icon from an external host takes a round trip there; a broken one
+// fails only after it) would otherwise be an empty circle for that long. An
+// icon already in the webview's cache is complete at mount: no stand-in, no
+// flash.
 export function PostAvatar({ serverId, post, size }: Props) {
   // A failure is remembered per icon version: an edit that changes the
   // icon tries the new one.
   const version = post.icon_version ?? ''
   const [failed, fail] = useLoadFailure(serverId, `${post.id}|${version}`)
   const [loadedSrc, setLoadedSrc] = useState('')
+  const src = mediaURL(serverId, 'posticon', post.id, version ? { v: version } : {})
+  const loaded = loadedSrc === src
+  // Complete at mount (the webview's cache): shown before the first paint.
+  // Only success is checked here: a failed /media answer is never cached
+  // (no Cache-Control), so its error event always comes, after mount.
+  const cached = useCallback(
+    (el: HTMLImageElement | null) => {
+      if (el && !loaded && el.complete && el.naturalWidth > 0) setLoadedSrc(src)
+    },
+    [src, loaded],
+  )
   const icon = post.icon ?? ''
   const emoji = icon.length > 2 && icon.startsWith(':') && icon.endsWith(':') ? icon.slice(1, -1) : ''
   if (emoji) {
@@ -40,17 +55,11 @@ export function PostAvatar({ serverId, post, size }: Props) {
       </span>
     )
   }
-  const account = <Avatar serverId={serverId} userId={post.user_id} version={post.avatar} name={post.author} status={post.status} size={size} surface="app" />
   if (icon === 'post' && !failed) {
-    const src = mediaURL(serverId, 'posticon', post.id, version ? { v: version } : {})
-    const loaded = loadedSrc === src
     return (
       <span className="relative block shrink-0" style={{ width: size, height: size }}>
         <img
-          // Complete at mount (the webview's cache): shown before the first paint.
-          ref={(el) => {
-            if (el && !loaded && el.complete && el.naturalWidth > 0) setLoadedSrc(src)
-          }}
+          ref={cached}
           src={src}
           alt=""
           width={size}
@@ -61,9 +70,25 @@ export function PostAvatar({ serverId, post, size }: Props) {
           onError={fail}
           className="block h-full w-full rounded-full bg-hover object-cover"
         />
-        {loaded ? null : <span className="absolute inset-0">{account}</span>}
+        {loaded ? null : <WebhookIcon size={size} className="absolute inset-0" />}
       </span>
     )
   }
-  return account
+  if (icon === 'post' || icon === 'webhook') return <WebhookIcon size={size} className="relative" />
+  return <Avatar serverId={serverId} userId={post.user_id} version={post.avatar} name={post.author} status={post.status} size={size} surface="app" />
+}
+
+// WebhookIcon: the generic picture of a webhook post, on a round tinted
+// background of the theme (accent-tinted, like a mention chip).
+function WebhookIcon({ size, className }: { size: number; className: string }) {
+  return (
+    <span
+      data-webhook-icon=""
+      aria-hidden="true"
+      className={`${className} flex shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent`}
+      style={{ width: size, height: size }}
+    >
+      <IconWebhook size={Math.round(size * 0.6)} />
+    </span>
+  )
 }

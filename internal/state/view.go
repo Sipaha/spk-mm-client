@@ -47,8 +47,9 @@ type PostView struct {
 	// override_username (for a tooltip); "" otherwise.
 	RealAuthor string `json:"real_author,omitempty"`
 	// Icon: the author's picture is overridden by a webhook — "post" (the
-	// picture is /media/<srv>/posticon/<post id>) or ":name:" (an emoji);
-	// "" = the account's avatar.
+	// picture is /media/<srv>/posticon/<post id>; the generic webhook icon
+	// while it loads or when it fails), ":name:" (an emoji) or "webhook"
+	// (the generic webhook icon); "" = the account's avatar.
 	Icon string `json:"icon,omitempty"`
 	// IconVersion: with Icon "post", what its picture is (a hash of the
 	// icon URL) — the UI's ?v= on /media/…/posticon/<id>, so an edit that
@@ -235,8 +236,9 @@ func (s *Server) overrideNameLocked(p model.Post) (string, bool) {
 // webhook post (not a system one), not asking for the account's picture
 // (use_user_icon), on a server with EnablePostIconOverride. An emoji icon
 // wins: the server also rewrites override_icon_url to that emoji's
-// picture, which the UI draws itself. Without either the account's avatar
-// stays (the webapp would show its generic webhook logo).
+// picture, which the UI draws itself. Without either: "webhook", the UI's
+// generic webhook icon (the webapp's DEFAULT_WEBHOOK_LOGO) — never the
+// account's picture, which would read as if its owner had written the post.
 func (s *Server) iconOverrideLocked(p model.Post) string {
 	if !bool(p.Props.FromWebhook) || p.IsSystem() || bool(p.Props.UseUserIcon) || !s.cfg.PostIconOverride {
 		return ""
@@ -247,7 +249,7 @@ func (s *Server) iconOverrideLocked(p model.Post) string {
 	if p.Props.OverrideIconURL != "" {
 		return "post"
 	}
-	return ""
+	return "webhook"
 }
 
 var emojiNameRe = regexp.MustCompile(`^[a-zA-Z0-9_+-]{1,64}$`)

@@ -4,7 +4,9 @@ import { feed, removeServerFromMenu, serverId, signInAlice, testPost, unique } f
 // Webhook posts (the fake allows EnablePostUsernameOverride and
 // EnablePostIconOverride): the webhook's own name with the account in a
 // tooltip, BOT, and its own icon — fetched by Go and addressed by post id.
-test('a webhook post shows its own name and icon; a refused icon falls back to the avatar', async ({ page }) => {
+// Never the owner's avatar: without an icon, or when it is refused, the
+// generic webhook icon.
+test('a webhook post shows its own name and icon; without one or a refused one, the generic webhook icon', async ({ page }) => {
   await signInAlice(page)
   const srv = await serverId(page)
 
@@ -21,6 +23,10 @@ test('a webhook post shows its own name and icon; a refused icon falls back to t
     channel_id: 'c-town', username: 'bob', message: lan,
     override_username: 'Deploy', override_icon_url: 'http://127.0.0.1:9/fox.png',
   })
+  const bare = unique('nightly build done')
+  await testPost(page, 'fake/webhook', {
+    channel_id: 'c-town', username: 'bob', message: bare, override_username: 'Nightly',
+  })
   const party = unique('release tagged')
   await testPost(page, 'fake/webhook', {
     channel_id: 'c-town', username: 'bob', message: party,
@@ -36,7 +42,13 @@ test('a webhook post shows its own name and icon; a refused icon falls back to t
 
   const refused = feed(page).locator('article', { hasText: lan })
   await expect(refused.getByText('Deploy', { exact: true })).toBeVisible()
-  await expect(refused.locator('img').first()).toHaveAttribute('src', new RegExp(`^/media/${srv}/avatar/u-bob`))
+  await expect(refused.locator('[data-webhook-icon]')).toBeVisible()
+  await expect(refused.locator('img')).toHaveCount(0)
+
+  const plain = feed(page).locator('article', { hasText: bare })
+  await expect(plain.getByText('Nightly', { exact: true })).toHaveAttribute('title', 'bob')
+  await expect(plain.locator('[data-webhook-icon]')).toBeVisible()
+  await expect(plain.locator('img')).toHaveCount(0)
 
   const rocket = feed(page).locator('article', { hasText: party })
   await expect(rocket.getByText('Release', { exact: true })).toBeVisible()

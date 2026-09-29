@@ -599,12 +599,23 @@ test('a webhook post shows its own name (the account in a tooltip) and its icon 
   expect(img).toHaveAttribute('src', '/media/1/posticon/w1')
 })
 
-test('a webhook icon that fails to load falls back to the account avatar', () => {
+test('a webhook icon that fails to load falls back to the generic webhook icon, not the account avatar', () => {
   const { container } = render(
     <PostItem serverId={1} post={post({ id: 'w1', author: 'GitLab', icon: 'post', avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />,
   )
   fireEvent.error(container.querySelector('img')!)
-  expect(container.querySelector('img')).toHaveAttribute('src', '/media/1/avatar/u-bob?v=5')
+  expect(container.querySelector('img')).toBeNull()
+  expect(container.querySelector('[data-webhook-icon]')).toBeInTheDocument()
+})
+
+test('a webhook post without an icon shows the generic webhook icon, with the account in the name tooltip', () => {
+  const { container } = render(
+    <PostItem serverId={1} post={post({ id: 'w3', author: 'CI', real_author: 'bob', icon: 'webhook', bot: true, webhook: true, avatar: '5' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />,
+  )
+  expect(container.querySelector('img')).toBeNull()
+  expect(container.querySelector('[data-webhook-icon]')).toBeInTheDocument()
+  expect(screen.getByText('CI')).toHaveAttribute('title', 'bob')
+  expect(screen.getByText('BOT')).toBeInTheDocument()
 })
 
 test('an emoji icon is drawn as the avatar', () => {

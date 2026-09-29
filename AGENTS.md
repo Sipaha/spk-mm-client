@@ -125,10 +125,15 @@
   Дальше — те же растровые/размерные/пиксельные проверки, дисковый кэш (одна копия на URL для всех
   постов webhook); офлайн не качает (`PostIcon.Live`). Имя (`override_username`) — только при
   `EnablePostUsernameOverride` и `from_webhook` (и в уведомлениях: `NotifyCandidate.SenderName` —
-  `authorLocked`); такой пост всегда BOT и никогда не группируется с соседями. В UI, пока картинка не загрузилась,
-  поверх неё стоит аватар аккаунта (`PostAvatar`): у нового поста новый URL, и первая загрузка с внешнего
-  хоста или отказ (редирект на HTML и т.п.) — это секунды пустого круга; картинка, уже лежащая в кэше
-  WebView (`complete` при монтировании), показывается сразу, без подмены. —
+  `authorLocked`); такой пост всегда BOT и никогда не группируется с соседями. Аватар владельца
+  webhook-пост **не показывает** (выглядело бы, будто написал владелец; webapp —
+  `DEFAULT_WEBHOOK_LOGO`): без своей иконки (`from_webhook`, не `use_user_icon`, при
+  `EnablePostIconOverride`) — `PostView.Icon == "webhook"`, в UI общая иконка webhook (`IconWebhook` на
+  круглом фоне темы, `PostAvatar`); она же — пока своя картинка не загрузилась (у нового поста новый
+  URL, первая загрузка с внешнего хоста или отказ — секунды пустого круга) и при отказе. Картинка, уже
+  лежащая в кэше WebView (`complete` при монтировании), показывается сразу, без подмены. Бот-аккаунт
+  без `from_webhook`, `use_user_icon` и сервер с выключенным `EnablePostIconOverride` — аватар аккаунта,
+  как в webapp. —
   `TestPostIconIsKeyedByPostID`, `TestRouteIcon`, `TestIconRedirectPolicy`,
   `TestPostIconServerRedirectsNeverCarryTheToken`, `TestPostIconServerRedirectToPlainHTTPIsRefused`,
   `TestPostIconUnauthorizedIsRememberedNotSignIn`, `TestPostIconExternalSendsNoCredentials`,
@@ -145,7 +150,7 @@
   `TestPostViewIconVersionFollowsTheIconURL`, `TestNotifySenderFollowsTheUsernameOverride`,
   `TestMediaPostIconThroughTheService`, `TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway`,
   `frontend/src/components/PostAvatar.test.tsx`, `PostItem.test.tsx` («a webhook icon that fails to
-  load falls back to the account avatar»), `feedRows.test.ts`, `tests/e2e/webhook.spec.ts`. Фейк:
+  load falls back to the generic webhook icon…»), `TestPostViewWebhookWithoutAnIconShowsTheGenericOne`, `feedRows.test.ts`, `tests/e2e/webhook.spec.ts`. Фейк:
   `Options.ImageProxy`, `Options.DisablePostOverrides`, `WebhookPostAs`, `WebhookIconPath`,
   `UnauthorizedIconPath`, `RedirectIconPath`, `SetProxiedImage`; test-API `/api/_test/fake/webhook`
   `{channel_id, username, message, override_username, override_icon_url, override_icon_emoji}` → `{id}`.

@@ -84,6 +84,43 @@ func TestPostViewWebhookOverridesOffInConfig(t *testing.T) {
 	assert.False(t, ok, "no icon override allowed: nothing to fetch")
 }
 
+// A webhook post without an icon of its own shows the generic webhook icon
+// ("webhook"), never the account's picture: it would look as if the owner
+// had written it (webapp post_profile_picture: DEFAULT_WEBHOOK_LOGO for
+// from_webhook without use_user_icon, with EnablePostIconOverride). A bot
+// account's own post, use_user_icon and a server with overrides off keep the
+// account's picture, as there.
+func TestPostViewWebhookWithoutAnIconShowsTheGenericOne(t *testing.T) {
+	bare := mkPost("h1", "off", "u2", 1000)
+	bare.Props = model.PostProps{FromWebhook: true, OverrideUsername: "CI"}
+	own := mkPost("h2", "off", "u2", 2000)
+	own.Props = model.PostProps{FromWebhook: true, UseUserIcon: true}
+	bot := mkPost("h3", "off", "u2", 3000)
+	bot.Props = model.PostProps{FromBot: true}
+
+	s := newFixture()
+	s.SetWindow("off", []model.Post{bare, own, bot}, true, 3, 0)
+	v, ok := s.ChannelView("off")
+	require.True(t, ok)
+	assert.Equal(t, "webhook", v.Posts[0].Icon)
+	assert.Empty(t, v.Posts[0].IconVersion)
+	assert.Equal(t, "bob", v.Posts[0].RealAuthor, "the tooltip still names the account")
+	assert.Empty(t, v.Posts[1].Icon, "use_user_icon: the account's picture")
+	assert.Empty(t, v.Posts[2].Icon, "a bot account's own post: its own avatar")
+	_, ok = s.PostIconURL("h1")
+	assert.False(t, ok, "no picture to fetch")
+
+	off := New(fixedNow)
+	b := fixture()
+	b.Config.PostIconOverride = false
+	off.Bootstrap(b)
+	off.SetUsers([]model.User{{ID: "u1", Username: "alice"}, {ID: "u2", Username: "bob"}})
+	off.SetWindow("off", []model.Post{bare}, true, 1, 0)
+	v, ok = off.ChannelView("off")
+	require.True(t, ok)
+	assert.Empty(t, v.Posts[0].Icon, "EnablePostIconOverride=false: the account's picture, as in the webapp")
+}
+
 func TestConfigCarriesPostOverrideFlags(t *testing.T) {
 	s := newFixture()
 	cfg := s.Config()
