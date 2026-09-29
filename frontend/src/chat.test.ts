@@ -107,7 +107,7 @@ beforeEach(() => {
   useStore.setState({
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
     editingId: null, downloads: [], downloadsOpen: false, attachments: [], attachError: null,
-    thread: null, threadAttachments: [], threadAttachError: null,
+    thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null,
   })
 })
 
@@ -528,6 +528,51 @@ test('openFromNotification opens the channel, then the thread, when a root_id is
   expect(useStore.getState().channel?.id).toBe('a')
   expect(client.openThread).toHaveBeenCalledWith(1, 'a', 'r1')
   await vi.waitFor(() => expect(useStore.getState().thread).toEqual(thread('r1')))
+})
+
+// heldChannel (sidebar-sections-brief.md, fix round 1): captured centrally
+// in openChannel — the single gateway every switch funnels through — so
+// every origin (a Sidebar row click, a notification, a ~channel link) is
+// just a call to openChannel/openFromNotification under the hood. The
+// "~channel link" origin (Markdown.tsx's ChannelMention, which also calls
+// openChannel directly) is covered at the component level in
+// Markdown.test.tsx, not duplicated here.
+const withUnreadA = (over: Partial<{ mentions: number }> = {}) =>
+  sidebar({
+    categories: [{
+      id: 'c1', type: 'channels', name: 'Channels', collapsed: false,
+      channels: [{ id: 'a', name: 'A', type: 'O', unread: true, mentions: 0, muted: false, ...over }],
+    }],
+  })
+
+test('opening an unread channel (a Sidebar row click) holds it, remembering whether it had a mention', async () => {
+  useStore.setState({ sidebar: withUnreadA({ mentions: 2 }) })
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  expect(useStore.getState().heldChannel).toEqual({ id: 'a', hadMentions: true })
+})
+
+test('opening an already-read channel clears any previously held one', async () => {
+  useStore.setState({ heldChannel: { id: 'x', hadMentions: true }, sidebar: withUnreadA() })
+  vi.mocked(client.openChannel).mockResolvedValue(chan('b'))
+  await openChannel(1, 'b') // 'b' isn't in the sidebar fixture at all → not unread
+  expect(useStore.getState().heldChannel).toBeNull()
+})
+
+test('openFromNotification captures the held channel exactly like a direct openChannel call', async () => {
+  useStore.setState({ sidebar: withUnreadA() })
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openFromNotification(1, 'a')
+  expect(useStore.getState().heldChannel).toEqual({ id: 'a', hadMentions: false })
+})
+
+test('opening a channel on a server that is not yet selected holds nothing — its sidebar is not loaded yet', async () => {
+  // selectedId is 1 (beforeEach); `sidebar` here would belong to server 1,
+  // so a switch to server 2 must not read it as if it were server 2's.
+  useStore.setState({ sidebar: withUnreadA({ mentions: 1 }) })
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(2, 'a')
+  expect(useStore.getState().heldChannel).toBeNull()
 })
 
 test('opening a channel closes a thread open for that server; opening a different server closes its thread too', async () => {

@@ -102,6 +102,7 @@ func (s *Server) inTeamLocked(c *Chan, teamID string) bool {
 func isDirect(c *Chan) bool { return c.Info.IsDM() || c.Info.IsGroup() }
 
 func (s *Server) categoriesLocked(teamID string) []CategoryView {
+	crt := s.crtLocked()
 	oc, ok := s.cats[teamID]
 	if !ok || len(oc.Categories) == 0 {
 		oc = model.OrderedCategories{
@@ -180,13 +181,13 @@ func (s *Server) categoriesLocked(teamID string) []CategoryView {
 			}
 			ids = vis
 		}
-		ids = s.sortLocked(ids, c.Sorting)
+		ids = s.sortLocked(ids, c.Sorting, crt)
 		cv := CategoryView{ID: c.ID, Type: c.Type, Name: c.DisplayName, Collapsed: c.Collapsed, Channels: []ChannelItem{}}
 		for _, id := range ids {
 			ch := s.chans[id]
 			u, m := s.unreadLocked(ch)
 			it := ChannelItem{ID: id, Name: s.channelNameLocked(ch), Type: ch.Info.Type,
-				Unread: u, Mentions: m, Muted: ch.Member.Muted(), LastActivityAt: s.lastActivityLocked(&ch.Info)}
+				Unread: u, Mentions: m, Muted: ch.Member.Muted(), LastActivityAt: s.lastActivityLocked(&ch.Info, crt)}
 			if !ch.Info.IsDM() && !ch.Info.IsGroup() {
 				it.Slug = ch.Info.Name
 			}
@@ -276,22 +277,24 @@ func (s *Server) visibleDMsLocked(ids []string) []string {
 // lastActivityLocked: the recency key shared by sortLocked("recent") and
 // ChannelItem.LastActivityAt — last_root_post_at under CRT (if set), else
 // last_post_at, never older than create_at (a channel with no posts sorts
-// by its creation time).
-func (s *Server) lastActivityLocked(info *model.Channel) int64 {
+// by its creation time). crt is read once by the caller (categoriesLocked)
+// rather than re-read here per channel/comparison — crtLocked() is a
+// preference-map lookup, and this runs inside a sort's comparator.
+func (s *Server) lastActivityLocked(info *model.Channel, crt bool) int64 {
 	last := info.LastPostAt
-	if s.crtLocked() && info.LastRootPostAt != 0 {
+	if crt && info.LastRootPostAt != 0 {
 		last = info.LastRootPostAt
 	}
 	return max(last, info.CreateAt)
 }
 
-func (s *Server) sortLocked(ids []string, sorting string) []string {
+func (s *Server) sortLocked(ids []string, sorting string, crt bool) []string {
 	out := append([]string(nil), ids...)
 	switch sorting {
 	case "manual":
 		return out
 	case "recent":
-		key := func(id string) int64 { return s.lastActivityLocked(&s.chans[id].Info) }
+		key := func(id string) int64 { return s.lastActivityLocked(&s.chans[id].Info, crt) }
 		sort.SliceStable(out, func(i, j int) bool { return key(out[i]) > key(out[j]) })
 	default: // "", "alpha"
 		sort.SliceStable(out, func(i, j int) bool {

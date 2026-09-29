@@ -5,10 +5,13 @@ import type { CategoryView, ChannelItem } from '../api/types'
 // was unread/mentioned the moment it became active, kept in the Unreads
 // section until the user switches to a *different* channel, so a row
 // doesn't jump out from under the cursor the instant it's marked read.
-// Sidebar.tsx captures it at click time (ChannelRow's onClick, using the
-// row's own props before calling onChannel) the same way the webapp's
-// switchToChannel/setLastUnreadChannel captures it synchronously at
-// dispatch time, before the async mark-as-read round trip.
+// Captured centrally in `chat.ts`'s `openChannel` — the single gateway
+// every channel switch funnels through (a sidebar click, a notification, a
+// `~channel` link in the feed or thread panel) — read synchronously from
+// the store before the async mark-as-read round trip, the same way the
+// webapp's switchToChannel/setLastUnreadChannel captures it synchronously
+// at dispatch time. Lives on the store (`heldChannel`) rather than in
+// Sidebar.tsx's own state so every origin sees the same value.
 export interface HeldChannel {
   id: string
   hadMentions: boolean

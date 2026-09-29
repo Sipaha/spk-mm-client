@@ -1,11 +1,22 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
-import type { EmojiDTO } from '../api/types'
+import type { ChannelDTO, EmojiDTO, SidebarDTO } from '../api/types'
 import { forgetRecent } from '../emoji/recent'
+import { useStore } from '../store'
 import { Markdown } from './Markdown'
 import { emojiNames, isEmojiOnlyText, splitEmoji } from './remarkEmoji'
 import { splitMentions } from './remarkMentions'
+
+// Only ChannelMention's ~link test below needs the API client — it drives
+// the real chat.ts openChannel (not a mock of openChannel itself), so the
+// held-channel capture (sidebar-sections-brief.md fix round 1) is exercised
+// end to end for this origin, the same way chat.test.ts does for the
+// sidebar-click/notification origins.
+vi.mock('../api/client', () => ({
+  client: { openChannel: vi.fn(), attachments: vi.fn().mockResolvedValue([]) },
+}))
+const { client } = await import('../api/client')
 
 afterEach(() => {
   forgetRecent(1)
@@ -172,4 +183,33 @@ test('emoji: a shortcode inside a markdown link\'s label converts; the URL itsel
   expect(link.textContent).toBe('😄 click here')
   await userEvent.click(link)
   expect(onLink).toHaveBeenCalledWith('https://example.com')
+})
+
+// ChannelMention's ~link (sidebar-sections-brief.md fix round 1): a third
+// origin, besides a Sidebar row click and a notification, that switches the
+// active channel — clicking it calls chat.ts's real openChannel (not a
+// mock), so this proves the held-channel capture is centralized there and
+// fires for this origin too, not just the Sidebar-click one fix round 1
+// replaced.
+test('~channel link: clicking it opens the channel and holds it (fix round 1: capture is centralized in chat.ts, not Sidebar-click-only)', async () => {
+  const sb: SidebarDTO = {
+    team_id: 't1', selected_channel_id: 'town', teams: [],
+    categories: [{
+      id: 'c1', type: 'channels', name: 'Channels', collapsed: false,
+      channels: [{ id: 'town', name: 'Town Square', type: 'O', slug: 'town-square', unread: true, mentions: 1, muted: false }],
+    }],
+  }
+  useStore.setState({ selectedId: 1, sidebar: sb, channel: null, heldChannel: null })
+  const ch: ChannelDTO = {
+    id: 'town', name: 'Town Square', type: 'O', header: '', purpose: '', team_id: 't1', team_name: 'team', posts: [],
+    new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false,
+  }
+  vi.mocked(client.openChannel).mockResolvedValue(ch)
+
+  render(<Markdown text="~town-square" me="alice" onLink={() => {}} serverId={1} />)
+  const link = screen.getByRole('link', { name: '~Town Square' })
+  await userEvent.click(link)
+
+  expect(client.openChannel).toHaveBeenCalledWith(1, 'town')
+  await waitFor(() => expect(useStore.getState().heldChannel).toEqual({ id: 'town', hadMentions: true }))
 })

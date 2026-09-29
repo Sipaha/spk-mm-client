@@ -11,7 +11,9 @@ const srv = (o: Partial<ServerDTO> = {}): ServerDTO => ({
 })
 
 beforeEach(() =>
-  useStore.setState({ servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null }),
+  useStore.setState({
+    servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null, heldChannel: null,
+  }),
 )
 
 test('first server is selected on load, the add-server screen survives refreshes', () => {
@@ -201,4 +203,15 @@ test('switching servers (select) clears the thread too', () => {
   useStore.getState().setThread(thread('r1'))
   useStore.getState().select(2)
   expect(useStore.getState().thread).toBeNull()
+})
+
+// heldChannel (sidebar-sections-brief.md fix round 1): captured centrally in
+// chat.ts's openChannel, not owned by Sidebar.tsx, so it must reset the same
+// way sidebar/channel/thread already do — via `cleared`, on every server
+// switch (select) and sign-out (setServers dropping a signed-out selection).
+test('switching servers (select) clears the held channel too', () => {
+  useStore.getState().setServers([srv(), srv({ id: 2 })])
+  useStore.getState().setHeldChannel({ id: 'a', hadMentions: true })
+  useStore.getState().select(2)
+  expect(useStore.getState().heldChannel).toBeNull()
 })

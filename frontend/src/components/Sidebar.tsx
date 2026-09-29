@@ -12,6 +12,11 @@ interface Props {
   server: ServerDTO
   sidebar: SidebarDTO | null
   activeChannelId: string | null
+  // held (sidebar-sections-brief.md, fix round 1): the active channel's
+  // unread/mention snapshot from the moment it was opened — captured
+  // centrally in chat.ts's openChannel (every switch's single gateway,
+  // regardless of origin) and stored on `useStore`, not owned here.
+  held: HeldChannel | null
   onTeam(teamId: string): void
   onChannel(channelId: string): void
   onSignOut(): void
@@ -235,12 +240,6 @@ export function Sidebar(p: Props) {
   const [menu, setMenu] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null)
-  // held: the active channel that was unread/mentioned the moment it was
-  // opened (sidebarSections.ts HeldChannel) — captured by handleChannelClick
-  // below, at click time, the same way the webapp's setLastUnreadChannel
-  // captures it synchronously at dispatch time (before the async mark-as-
-  // read round trip can flip the channel's own `unread` back to false).
-  const [held, setHeld] = useState<HeldChannel | null>(null)
   const menuAnchor = useRef<HTMLButtonElement>(null)
   const teams = p.sidebar?.teams ?? []
 
@@ -252,24 +251,12 @@ export function Sidebar(p: Props) {
     setMenu(false)
   }, [p.server.id, p.activeChannelId])
 
-  // A server switch drops any held channel — it's a different server's
-  // channel id, and Sidebar isn't remounted across the switch (same reason
-  // as the menu effect above).
-  useEffect(() => {
-    setHeld(null)
-  }, [p.server.id])
-
-  const handleChannelClick = (item: ChannelItem) => {
-    setHeld(item.unread ? { id: item.id, hadMentions: item.mentions > 0 } : null)
-    p.onChannel(item.id)
-  }
-
   // sections: the Unreads category (sidebar-sections-brief.md) plus the
   // regular categories with those channels already removed — computed once,
   // pure, and covered by sidebarSections.test.ts (not re-derived per render
   // loop or duplicated between the JSX and the overflow-pill row list
   // below).
-  const sections = computeSidebarSections(p.sidebar?.categories ?? null, held)
+  const sections = computeSidebarSections(p.sidebar?.categories ?? null, p.held)
 
   // categoriesView: the same per-category "shown" filtering the render loop
   // below uses (collapsed categories still show their own unread rows —
@@ -364,7 +351,7 @@ export function Sidebar(p: Props) {
                       serverId={p.server.id}
                       item={c}
                       active={c.id === p.activeChannelId}
-                      onClick={() => handleChannelClick(c)}
+                      onClick={() => p.onChannel(c.id)}
                       rowRef={isCountableUnread(c) ? overflow.rowRef(c.id) : undefined}
                     />
                   </li>
@@ -403,7 +390,7 @@ export function Sidebar(p: Props) {
                       serverId={p.server.id}
                       item={c}
                       active={c.id === p.activeChannelId}
-                      onClick={() => handleChannelClick(c)}
+                      onClick={() => p.onChannel(c.id)}
                       rowRef={isCountableUnread(c) ? overflow.rowRef(c.id) : undefined}
                     />
                   </li>

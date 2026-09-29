@@ -37,7 +37,7 @@ const sb: SidebarDTO = {
 
 function renderSidebar(over: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const props = {
-    server, sidebar: sb, activeChannelId: 'c-town',
+    server, sidebar: sb, activeChannelId: 'c-town', held: null,
     onTeam: vi.fn(), onChannel: vi.fn(), onSignOut: vi.fn(), onRemove: vi.fn(), onReauth: vi.fn(), onAddServer: vi.fn(),
     ...over,
   }
@@ -402,25 +402,20 @@ test('Unreads: clicking an unread row there still fires onChannel like any other
 })
 
 // The active channel: kept in Unreads until the user switches to a
-// *different* channel (webapp: state.views.channel.lastUnreadChannel),
-// so a row read while open doesn't jump out from under the cursor.
-test('Unreads: the active channel stays after being read, then leaves once a different channel is opened', async () => {
-  const p = renderSidebar()
-  // Click the unread Off-Topic row (still unread in props: React state
-  // doesn't know it "got read" — only the click itself matters here).
-  const unreadsSection = screen.getByText('Unreads').closest('section')!
-  await userEvent.click(within(unreadsSection).getByRole('button', { name: /Off-Topic/ }))
-  expect(p.onChannel).toHaveBeenCalledWith('c-off')
-
-  // The app would normally now update `sidebar` (c-off marked read) and
-  // `activeChannelId`; simulate that here.
+// *different* channel (webapp: state.views.channel.lastUnreadChannel), so a
+// row read while open doesn't jump out from under the cursor. Capture
+// itself moved to chat.ts's openChannel (fix round 1 — see chat.test.ts for
+// "sidebar click"/"notification open" origins and Markdown.test.tsx for the
+// "~channel link" origin); this only tests that Sidebar *consumes* the
+// `held` prop correctly, however it got set.
+test('Unreads: a held (but now read) channel stays under Unreads until `held` moves elsewhere', () => {
   const nowRead: SidebarDTO = {
     ...sb,
     categories: (sb.categories ?? []).map((c) =>
       c.id === 'ch' ? { ...c, channels: (c.channels ?? []).map((ch) => (ch.id === 'c-off' ? { ...ch, unread: false, mentions: 0 } : ch)) } : c,
     ),
   }
-  p.rerender({ sidebar: nowRead, activeChannelId: 'c-off' })
+  const p = renderSidebar({ sidebar: nowRead, activeChannelId: 'c-off', held: { id: 'c-off', hadMentions: true } })
 
   // Still shown under Unreads (held), not back under Channels.
   expect(screen.getByText('Unreads')).toBeInTheDocument()
@@ -429,36 +424,16 @@ test('Unreads: the active channel stays after being read, then leaves once a dif
   const channelsSection = screen.getByRole('button', { name: 'Channels' }).closest('section')!
   expect(within(channelsSection).queryByRole('button', { name: /Off-Topic/ })).toBeNull()
 
-  // Now switch to a different, already-read channel (Town Square) by
-  // clicking it — c-off must leave Unreads for good, and Busy (still
+  // The caller (chat.ts, via the store) moves `held` on once the user opens
+  // a different channel — c-off leaves Unreads for good, and Busy (still
   // genuinely unread) is the only thing left there.
-  const stillOffSection = screen.getByText('Unreads').closest('section')!
-  // Town Square isn't in Unreads; click it directly.
-  await userEvent.click(screen.getByRole('button', { name: 'Town Square' }))
-  expect(p.onChannel).toHaveBeenCalledWith('c-town')
-  p.rerender({ sidebar: nowRead, activeChannelId: 'c-town' })
+  p.rerender({ activeChannelId: 'c-town', held: null })
 
   expect(screen.getByText('Unreads')).toBeInTheDocument() // Busy is still unread
   section = screen.getByText('Unreads').closest('section')!
   expect(within(section).queryByRole('button', { name: /Off-Topic/ })).toBeNull()
   const channelsSection2 = screen.getByRole('button', { name: 'Channels' }).closest('section')!
   expect(within(channelsSection2).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
-  void stillOffSection
-})
-
-test('Unreads: switching servers drops the held channel', async () => {
-  const p = renderSidebar()
-  const unreadsSection = screen.getByText('Unreads').closest('section')!
-  await userEvent.click(within(unreadsSection).getByRole('button', { name: /Off-Topic/ }))
-  const nowRead: SidebarDTO = {
-    ...sb,
-    categories: (sb.categories ?? []).map((c) =>
-      c.id === 'ch' ? { ...c, channels: (c.channels ?? []).map((ch) => (ch.id === 'c-off' ? { ...ch, unread: false, mentions: 0 } : ch)) } : c,
-    ),
-  }
-  p.rerender({ sidebar: nowRead, activeChannelId: 'c-off', server: { ...server, id: 2 } })
-  const channelsSection = screen.getByRole('button', { name: 'Channels' }).closest('section')!
-  expect(within(channelsSection).getByRole('button', { name: /Off-Topic/ })).toBeInTheDocument()
 })
 
 // Header layout (sidebar-sections-brief.md §2): the official category

@@ -44,7 +44,7 @@ function useWindowWidth(): number {
 
 export function App() {
   const {
-    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, setError, loginFailed, setInfo, showSignIn,
+    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, heldChannel, setError, loginFailed, setInfo, showSignIn,
   } = useStore()
 
   // Sidebar/thread-panel splitter widths (theme brief 2026-09-28 scope 3a):
@@ -203,6 +203,7 @@ export function App() {
             server={selected}
             sidebar={sidebar}
             activeChannelId={channel?.id ?? null}
+            held={heldChannel}
             onTeam={(teamId) => void loadSidebar(selected.id, teamId, true)}
             onChannel={(channelId) => void openChannel(selected.id, channelId)}
             onSignOut={() => void signOut(selected)}

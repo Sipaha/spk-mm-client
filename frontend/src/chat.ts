@@ -1,8 +1,17 @@
 import { ApiError, client, uploadAttachmentBrowser } from './api/client'
-import type { AttachmentView, ChannelDTO, DownloadView, PostView } from './api/types'
+import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, SidebarDTO } from './api/types'
 import { errorMessage } from './errors'
 import { t } from './i18n'
 import { useStore } from './store'
+
+// findChannelItem: the sidebar's own record for channelId, if the given
+// sidebar is currently loaded and has it — used by openChannel below to
+// snapshot unread/mentions before the switch. Mirrors the by-slug lookup in
+// Markdown.tsx's ChannelMention, but by id.
+function findChannelItem(sidebar: SidebarDTO | null, channelId: string): ChannelItem | null {
+  for (const c of sidebar?.categories ?? []) for (const it of c.channels ?? []) if (it.id === channelId) return it
+  return null
+}
 
 // Responses can land out of order (a click while a refresh is in flight):
 // each request takes a sequence number and only the latest one lands.
@@ -89,7 +98,21 @@ export async function openChannel(serverId: number, channelId: string) {
   // starts fresh, same as the channel fetch itself below.
   closeThread(serverId)
   wanted = { serverId, channelId }
-  useStore.getState().setEditing(null)
+  const s = useStore.getState()
+  // heldChannel (sidebar-sections-brief.md, fix round 1): snapshotted here
+  // because this is the one gateway every channel switch funnels through —
+  // a Sidebar row click, a notification click (openFromNotification below),
+  // or a ~channel link in the feed or thread panel (Markdown.tsx's
+  // ChannelMention) — read synchronously from the *current* store, before
+  // fetchChannel's async mark-as-read can flip the channel's own `unread`
+  // back to false. Mirrors the webapp's setLastUnreadChannel, dispatched
+  // synchronously with SELECT_CHANNEL before its own async view-channel
+  // call. `s.sidebar` only reflects `s.selectedId`'s server (store.ts), so
+  // a cross-server open (not yet on serverId) can't find a match here and
+  // correctly holds nothing.
+  const item = s.selectedId === serverId ? findChannelItem(s.sidebar, channelId) : null
+  s.setHeldChannel(item?.unread ? { id: item.id, hadMentions: item.mentions > 0 } : null)
+  s.setEditing(null)
   await fetchChannel(serverId, channelId, true)
 }
 

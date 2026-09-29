@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
+import type { HeldChannel } from './components/sidebarSections'
 import { forgetRecent } from './emoji/recent'
 
 // FileSave: a file's download as its own card shows it (no banner — it
@@ -74,6 +75,13 @@ interface State {
   thread: ThreadDTO | null
   threadAttachments: AttachmentView[]
   threadAttachError: string | null
+  // heldChannel (sidebar-sections-brief.md, fix round 1): the active
+  // channel's unread/mention snapshot from the moment it was opened,
+  // captured in chat.ts's openChannel (the single gateway every switch
+  // funnels through, regardless of origin) and consumed by Sidebar.tsx to
+  // keep the row under Unreads until the *next* switch. Reset with the
+  // channel/sidebar (server switch, sign-out) via `cleared` below.
+  heldChannel: HeldChannel | null
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -96,13 +104,14 @@ interface State {
   setThread(thread: ThreadDTO | null): void
   setThreadAttachments(list: AttachmentView[]): void
   setThreadAttachError(msg: string | null): void
+  setHeldChannel(h: HeldChannel | null): void
 }
 
 const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
 
 const cleared = {
   sidebar: null, channel: null, editingId: null, attachments: [], attachError: null,
-  thread: null, threadAttachments: [], threadAttachError: null,
+  thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null,
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -129,6 +138,7 @@ export const useStore = create<State>((set, get) => ({
   thread: null,
   threadAttachments: [],
   threadAttachError: null,
+  heldChannel: null,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -209,6 +219,7 @@ export const useStore = create<State>((set, get) => ({
   setThread: (thread) => set({ thread }),
   setThreadAttachments: (list) => set({ threadAttachments: list }),
   setThreadAttachError: (msg) => set({ threadAttachError: msg }),
+  setHeldChannel: (h) => set({ heldChannel: h }),
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).
