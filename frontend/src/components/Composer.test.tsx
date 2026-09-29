@@ -552,6 +552,27 @@ test('a wide toolbar row shows every button with no "more" button', async () => 
   }
 })
 
+// Re-review M-2: only the observer's notifications wait for a frame; the
+// mount measures at once, so a narrow panel never paints one frame with all
+// 9 buttons overflowing before they collapse.
+test('the toolbar fits on mount without waiting for a frame', () => {
+  const ro = stubResizeObserver()
+  const frames = manualFrames()
+  const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.getAttribute('role') === 'toolbar' ? 200 : 0
+  })
+  try {
+    render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+    const toolbar = screen.getByRole('toolbar', { name: 'Composer toolbar' })
+    expect(within(toolbar).getByRole('button', { name: 'More formatting options' })).toBeInTheDocument()
+    expect(within(toolbar).queryByRole('button', { name: 'Numbered list' })).toBeNull()
+  } finally {
+    width.mockRestore()
+    ro.restore()
+    frames.restore()
+  }
+})
+
 // The rAF-deferred fit measurement (fix round 1, item c) does not settle
 // synchronously — flush the mocked frame queue before the first assertion,
 // same as the two tests above.
@@ -616,11 +637,10 @@ test('auto-grow measures with the composer box\'s height held, then releases it'
 
 // Fix round 1, item (a): the auto-grow cap must track the real pane
 // (ChannelPane's/ThreadPane's own column), not the composer's own root —
-// boxRef's parent is this component's own `border-t … px-3 py-2` wrapper,
-// which grows right along with the composer; the pane is one level further
-// up. Found by the bottom-stick agent: capped at ~3-4 lines in practice
-// instead of ~40% of the real pane.
-test('the auto-grow height cap is observed on the pane (two levels above the box), not the composer\'s own root', () => {
+// the `border-t … px-3 py-2` wrapper grows right along with the composer;
+// the pane is its parent. Found by the bottom-stick agent: capped at ~3-4
+// lines in practice instead of ~40% of the real pane.
+test('the auto-grow height cap is observed on the pane (the composer root\'s parent), not the composer\'s own root', () => {
   const ro = stubResizeObserver()
   try {
     render(

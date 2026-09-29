@@ -112,7 +112,7 @@ describe('applyMarkdown', () => {
   })
 
   test('mixed selection: caret ends up on the boundary of the actually-inserted text, not shifted by lines that were left alone', () => {
-    // Only the second line gets "> " (4 chars); the first line is untouched,
+    // Only the second line gets "> " (2 chars); the first line is untouched,
     // so the selection covering both must grow by exactly 2 chars (one
     // prefix), not 4 (two prefixes) or 0.
     const before = '> one\ntwo'

@@ -26,9 +26,7 @@ test.afterEach(async ({ page }) => {
 // the row observer, was skipped. The virtualizer now takes the scroller's
 // size in the next frame (Feed.tsx, observeElementRect), and the check runs
 // in every test.
-let checkLoops = true
 test.beforeEach(async ({ page }) => {
-  checkLoops = true
   await page.addInitScript(() => {
     const w = window as unknown as { __roErrors: string[] }
     w.__roErrors = []
@@ -38,7 +36,6 @@ test.beforeEach(async ({ page }) => {
   })
 })
 test.afterEach(async ({ page }) => {
-  if (!checkLoops) return
   const errs = await page.evaluate(() => (window as unknown as { __roErrors?: string[] }).__roErrors ?? []).catch(() => [])
   expect(errs, 'ResizeObserver loop errors').toEqual([])
 })

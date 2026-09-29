@@ -56,17 +56,16 @@ const GROUP_BREAK_INDICES = FORMAT_BUTTONS.reduce<number[]>((acc, b, i) => {
 }, [])
 
 // RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, attach, emoji,
-// send) is always exactly these 4 fixed-size buttons — a constant is exact
-// and needs no extra ResizeObserver/ref of its own. 4 buttons have only 3
-// gaps *between* them (review fix round 1, Minor: counting a 4th, trailing
-// one here as well as the row's own px-1.5 padding — 6px each side — plus
-// the one gap *before* this group double-counted about 2px). TOOLBAR_RESERVED
-// is exactly those three things: the right group itself, the row's padding,
-// and that one gap before it.
+// send) is always exactly these 4 fixed-size buttons — a constant, no
+// ResizeObserver/ref of its own. 4 buttons have 3 gaps *between* them.
+// TOOLBAR_RESERVED is the right group plus the row's px-1.5 padding (6px
+// each side) — not the gap before the group: the last left item's
+// TOOLBAR_ITEM_WIDTH (a button or "more") already carries that trailing gap
+// (re-review M-1; checked against Chromium's layout, composer report).
 const RIGHT_GROUP_BUTTON_COUNT = 4
 const RIGHT_GROUP_WIDTH = RIGHT_GROUP_BUTTON_COUNT * TOOLBAR_BUTTON_SIZE + (RIGHT_GROUP_BUTTON_COUNT - 1) * TOOLBAR_GAP
 const TOOLBAR_ROW_PADDING = 12 // px-1.5, both sides
-const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + TOOLBAR_ROW_PADDING + TOOLBAR_GAP
+const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + TOOLBAR_ROW_PADDING
 
 function ToolbarButton({
   label, onClick, children, pressed, disabled, haspopup, expanded, className = 'text-fg-muted',
@@ -139,7 +138,7 @@ export function Composer({
   const formattingBarLoaded = useStore((s) => s.formattingBarLoaded)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const boxRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const latest = useRef(draft)
   const saved = useRef(draft)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -183,9 +182,12 @@ export function Composer({
   // "only setState when the count changes" guard on its own. It was not the
   // source the e2e kept catching, though: that was the virtualizer's rect
   // observer (Feed.tsx, observeElementRect; round 1, item b follow-up).
+  // Only the observer's notifications wait for a frame: the mount measures
+  // in a layout effect, before the first paint, so a narrow thread panel
+  // does not paint one frame with all 9 buttons overflowing (re-review M-2).
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [visibleCount, setVisibleCount] = useState(FORMAT_BUTTONS.length)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = toolbarRef.current
     if (!row || typeof ResizeObserver === 'undefined') return
     let raf = 0
@@ -199,7 +201,7 @@ export function Composer({
       if (raf) return
       raf = requestAnimationFrame(measure)
     }
-    schedule()
+    measure()
     const ro = new ResizeObserver(schedule)
     ro.observe(row)
     return () => {
@@ -213,17 +215,17 @@ export function Composer({
 
   // maxTextareaHeight: ~40% of the pane's height — ChannelPane's/
   // ThreadPane's own flex column, whose height does not itself change as
-  // the composer grows. boxRef is the bordered box; its parentElement is
-  // *this component's own root* (the `border-t … px-3 py-2` wrapper below),
-  // which does grow with the composer — that was the bug (fix round 1,
-  // item a): the cap chased its own box and topped out at ~3-4 lines
-  // instead of ~40% of the real pane. The pane is one level further up:
-  // boxRef -> composer root -> pane. typeof ResizeObserver check: jsdom has
+  // the composer grows: the parent of this component's own root (rootRef,
+  // the `border-t … px-3 py-2` wrapper below). The root itself grows with
+  // the composer — that was the bug (fix round 1, item a): the cap chased
+  // its own box and topped out at ~3-4 lines instead of ~40% of the real
+  // pane. A ref, not a parentElement chain from the box, so a wrapper added
+  // around the box cannot move it (re-review M-3). typeof ResizeObserver check: jsdom has
   // none (Feed.tsx uses the same guard) — tests fall back to no cap, which
   // is harmless (no real layout to measure there anyway).
   const [maxTextareaHeight, setMaxTextareaHeight] = useState<number | undefined>(undefined)
   useEffect(() => {
-    const pane = boxRef.current?.parentElement?.parentElement
+    const pane = rootRef.current?.parentElement
     if (!pane || typeof ResizeObserver === 'undefined') return
     const update = () => setMaxTextareaHeight(Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * PANE_HEIGHT_RATIO)))
     update()
@@ -444,7 +446,7 @@ export function Composer({
   }
 
   return (
-    <div className="border-t border-line bg-panel px-3 py-2">
+    <div ref={rootRef} className="border-t border-line bg-panel px-3 py-2">
       {error && (
         <p role="alert" className="pb-1 text-xs text-danger">
           {error}
@@ -462,7 +464,7 @@ export function Composer({
         onRetry={(id) => retryAttachment(serverId, id)}
         onFocusTextarea={() => textareaRef.current?.focus()}
       />
-      <div ref={boxRef} className="flex flex-col rounded-lg border border-line bg-app focus-within:border-accent">
+      <div className="flex flex-col rounded-lg border border-line bg-app focus-within:border-accent">
         <textarea
           ref={textareaRef}
           aria-label={t('composer.label')}

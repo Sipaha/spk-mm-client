@@ -24,9 +24,10 @@ export const TOOLBAR_GAP = 2
 // always followed by something (another button, a separator, the "more"
 // button, or the right-hand group).
 export const TOOLBAR_ITEM_WIDTH = TOOLBAR_BUTTON_SIZE + TOOLBAR_GAP
-// TOOLBAR_SEPARATOR_WIDTH: a group-break divider's footprint (mx-1 = 8px of
-// margin plus its own w-px = 1px).
-export const TOOLBAR_SEPARATOR_WIDTH = 9
+// TOOLBAR_SEPARATOR_WIDTH: a group-break divider's footprint — mx-1 (8px of
+// margin), its own w-px (1px), and the gap-0.5 (2px) between it and its
+// button inside their shared span (re-review M-1: that inner gap was missed).
+export const TOOLBAR_SEPARATOR_WIDTH = 11
 // TOOLBAR_MORE_WIDTH: space reserved for the "more formatting" button
 // itself whenever not everything fits — same footprint as any other button.
 export const TOOLBAR_MORE_WIDTH = TOOLBAR_ITEM_WIDTH
