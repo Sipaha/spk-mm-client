@@ -125,7 +125,10 @@
   Дальше — те же растровые/размерные/пиксельные проверки, дисковый кэш (одна копия на URL для всех
   постов webhook); офлайн не качает (`PostIcon.Live`). Имя (`override_username`) — только при
   `EnablePostUsernameOverride` и `from_webhook` (и в уведомлениях: `NotifyCandidate.SenderName` —
-  `authorLocked`); такой пост всегда BOT и никогда не группируется с соседями. —
+  `authorLocked`); такой пост всегда BOT и никогда не группируется с соседями. В UI, пока картинка не загрузилась,
+  поверх неё стоит аватар аккаунта (`PostAvatar`): у нового поста новый URL, и первая загрузка с внешнего
+  хоста или отказ (редирект на HTML и т.п.) — это секунды пустого круга; картинка, уже лежащая в кэше
+  WebView (`complete` при монтировании), показывается сразу, без подмены. —
   `TestPostIconIsKeyedByPostID`, `TestRouteIcon`, `TestIconRedirectPolicy`,
   `TestPostIconServerRedirectsNeverCarryTheToken`, `TestPostIconServerRedirectToPlainHTTPIsRefused`,
   `TestPostIconUnauthorizedIsRememberedNotSignIn`, `TestPostIconExternalSendsNoCredentials`,

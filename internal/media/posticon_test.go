@@ -627,6 +627,41 @@ func TestPostIconPrivateTargetsOnlyForAnIntranetServer(t *testing.T) {
 	mu.Unlock()
 }
 
+// A new post of a webhook whose icon is on disk already is a new /media URL
+// for the webview, but not a new fetch for Go: the picture is found by where
+// it comes from before any network step — no DNS lookup for the intranet
+// rule, no external slot, no second request (the delay a user saw on new
+// webhook posts was a first fetch or a failing one, not this).
+func TestPostIconSharedExternalIconIsServedFromDiskWithoutNetwork(t *testing.T) {
+	img := pngOf(4, 4)
+	x := newExt(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(img) })
+	e := newEnv(t, 0, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	e.withIcons(testIcons{
+		"old": {URL: x.URL + "/logo.png", Base: "https://mm.corp", Live: true},
+		"new": {URL: x.URL + "/logo.png", Base: "https://mm.corp", Live: true},
+	}, nil)
+	var lookups atomic.Int32
+	e.cache.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		lookups.Add(1)
+		return []netip.Addr{netip.MustParseAddr("10.0.0.5")}, nil
+	}
+	e.cache.extIntranet = newExternalClient(allowAll)
+	resp, _ := e.get("/media/1/posticon/old")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, int32(1), lookups.Load())
+
+	// Every external slot busy: a request that needed one would hang.
+	for range cap(e.cache.extSem) {
+		e.cache.extSem <- struct{}{}
+	}
+	e.clock.jump(intranetTTL + time.Minute) // the intranet answer has expired too
+	resp, body := e.get("/media/1/posticon/new")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, img, body)
+	assert.Equal(t, 1, x.count("/logo.png"), "one fetch for every post with that icon")
+	assert.Equal(t, int32(1), lookups.Load(), "no lookup for a picture on disk")
+}
+
 // M2: the icon URL of a post is versioned by what it points at.
 func TestPostIconAcceptsAVersion(t *testing.T) {
 	img := pngOf(4, 4)
