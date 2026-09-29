@@ -163,18 +163,27 @@ test('video, audio and markdown previews: smoke', async ({ page }) => {
 
 test('reactions: chips toggle, the picker adds, others arrive live', async ({ page }) => {
   await signInAlice(page)
-  await channel(page, /Off-Topic/).click()
   // A post the test creates itself, not the seeded "Welcome to off-topic"
   // root (PDF final review I1): Off-Topic's history has grown past what the
   // virtualized feed keeps rendered while sitting at the bottom, so the
   // welcome post can fall outside the rendered window and this locator would
   // never resolve — deterministically, not as a flake. A fresh post lands at
   // the bottom, right where the feed already is.
+  //
+  // In Town Square (c-town, signInAlice's own landing channel), not
+  // Off-Topic: Off-Topic's real membership (internal/mmfake/seed.go's
+  // `add("c-offtopic", ...)`) is only alice and bob — carol only ever
+  // appears there via seed-time data fabrication that bypasses the live
+  // membership check, so fake/react as carol on a *live* post fails
+  // reactLocked's isMemberLocked with a real (and initially confusing:
+  // caught the hard way, by running this test) 403. Town Square's seeded
+  // membership includes carol too, giving two independent non-alice
+  // reactors to set up a starting "👍 2" that alice hasn't reacted to yet.
   const text = unique('reactions test post')
-  await fakePost(page, 'c-offtopic', 'bob', text)
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: '+1' })
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'carol', emoji: '+1' })
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'partyparrot' })
+  await fakePost(page, 'c-town', 'bob', text)
+  await testPost(page, 'fake/react', { channel_id: 'c-town', message: text, username: 'bob', emoji: '+1' })
+  await testPost(page, 'fake/react', { channel_id: 'c-town', message: text, username: 'carol', emoji: '+1' })
+  await testPost(page, 'fake/react', { channel_id: 'c-town', message: text, username: 'bob', emoji: 'partyparrot' })
   const post = feed(page).locator('article', { hasText: text })
   await expect(post.getByRole('button', { name: '👍 2' })).toBeVisible()
   await post.getByRole('button', { name: '👍 2' }).click()
@@ -190,7 +199,7 @@ test('reactions: chips toggle, the picker adds, others arrive live', async ({ pa
   await expect(picker).toHaveCount(0)
   await expect(post.getByRole('button', { name: '🥑 1, you reacted' })).toBeVisible()
 
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'fire' })
+  await testPost(page, 'fake/react', { channel_id: 'c-town', message: text, username: 'bob', emoji: 'fire' })
   await expect(post.getByRole('button', { name: '🔥 1' })).toBeVisible()
   await expect(post.locator('img[src*="/emoji/partyparrot"]')).toBeVisible()
 
@@ -209,7 +218,7 @@ test('reactions: chips toggle, the picker adds, others arrive live', async ({ pa
   // reaches the server too, not just the optimistic UI.
   await post.getByRole('button', { name: '🥑 1, you reacted' }).click()
   await expect(post.getByRole('button', { name: /🥑/ })).toHaveCount(0)
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'fire', remove: true })
+  await testPost(page, 'fake/react', { channel_id: 'c-town', message: text, username: 'bob', emoji: 'fire', remove: true })
   await expect(post.getByRole('button', { name: /🔥/ })).toHaveCount(0)
   await removeServerFromMenu(page)
 })
