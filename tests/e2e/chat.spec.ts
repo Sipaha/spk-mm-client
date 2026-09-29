@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test'
 import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
+// Sidebar-menu fix/addendum screenshots (2026-09-29): a fixed absolute path
+// per the brief, not the generic E2E_SHOTS default other specs use.
+const SIDEBAR_SHOTS = '/home/spk/.spk/sawe/ss/Mattermost/.agents/tmp/sidebar-shots'
+
 // A failed test must not leave its server behind: every later test signs in
 // from the empty start screen (same rule as feed-scroll.spec.ts).
 test.afterEach(async ({ page }) => {
@@ -183,5 +187,17 @@ test('expired session: cached chat stays readable, sign in again restores it', a
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await expect(page.getByText('Session expired — showing saved messages.')).toHaveCount(0)
   expect(((await apiCall(page, 'ListServers')) as { state: string }[]).at(-1)?.state).not.toBe('needs_reauth')
+  await removeServerFromMenu(page)
+})
+
+// Sidebar-menu brief (2026-09-29): the "⋯" menu had no outside-click
+// handling at all and stayed open while the user clicked elsewhere.
+test('server menu closes when clicking elsewhere in the app', async ({ page }) => {
+  await signInAlice(page)
+  await page.getByRole('button', { name: 'Server menu' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible()
+  await page.screenshot({ path: `${SIDEBAR_SHOTS}/menu-open.png` }) // behavioural fix; not asserted, just a visual check nothing moved
+  await feed(page).click()
+  await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0)
   await removeServerFromMenu(page)
 })

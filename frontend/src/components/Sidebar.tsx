@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CategoryView, ChannelItem, ServerDTO, SidebarDTO } from '../api/types'
 import { t } from '../i18n'
 import { Avatar, presenceLabel } from './Avatar'
 import { ChannelTypeMarker, IconChevronDown, IconChevronRight, IconMore } from './icons'
+import { useMenuA11y } from './menuA11y'
 
 interface Props {
   server: ServerDTO
@@ -94,10 +95,65 @@ function StatusLine({ state, onReauth }: { state: ServerDTO['state']; onReauth()
   return null
 }
 
+// ServerMenu is the header's "⋯" dropdown (sign out / remove server). Same
+// keyboard/focus/outside-click contract as PostMenu/FormattingMenu, via the
+// shared useMenuA11y (menuA11y.ts) — plus two closes of its own, because
+// unlike a post's toolbar this menu sits in a header that outlives it: a
+// window blur (the user alt-tabbed away) and a server/channel switch (this
+// component keeps rendering with new props instead of unmounting, so a
+// stale menu would otherwise linger over the next server's header — see the
+// effect in Sidebar below).
+function ServerMenu({
+  anchorEl,
+  onSignOut,
+  onRemove,
+  onClose,
+}: {
+  anchorEl: HTMLElement
+  onSignOut(): void
+  onRemove(): void
+  onClose(): void
+}) {
+  const { root, onMenuKey, onMenuBlur, closeAndFocusAnchor } = useMenuA11y(anchorEl, onClose)
+
+  useEffect(() => {
+    window.addEventListener('blur', onClose)
+    return () => window.removeEventListener('blur', onClose)
+  }, [onClose])
+
+  return (
+    <div
+      ref={root}
+      role="menu"
+      aria-label={t('sidebar.menu')}
+      className="absolute right-2 top-11 z-10 flex w-44 flex-col rounded border border-line bg-panel py-1 shadow-lg"
+      onKeyDown={onMenuKey}
+      onBlur={onMenuBlur}
+    >
+      <button type="button" role="menuitem" className="px-3 py-1.5 text-left text-fg hover:bg-hover" onClick={() => { closeAndFocusAnchor(); onSignOut() }}>
+        {t('server.signOut')}
+      </button>
+      <button type="button" role="menuitem" className="px-3 py-1.5 text-left text-danger hover:bg-hover" onClick={() => { closeAndFocusAnchor(); onRemove() }}>
+        {t('server.remove')}
+      </button>
+    </div>
+  )
+}
+
 export function Sidebar(p: Props) {
   const [menu, setMenu] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const menuAnchor = useRef<HTMLButtonElement>(null)
   const teams = p.sidebar?.teams ?? []
+
+  // A server or channel switch closes the menu (brief ruling 2026-09-29):
+  // this component isn't remounted when either changes, so without this the
+  // menu could stay open across the switch, anchored to the same button but
+  // now floating over a different server/channel's header.
+  useEffect(() => {
+    setMenu(false)
+  }, [p.server.id, p.activeChannelId])
+
   return (
     <aside
       aria-label={t('sidebar.label')}
@@ -112,18 +168,18 @@ export function Sidebar(p: Props) {
           <div className="truncate font-semibold text-fg">{p.server.name}</div>
           <div className="truncate text-xs text-fg-subtle">@{p.server.username}</div>
         </div>
-        <button aria-label={t('sidebar.menu')} aria-expanded={menu} className="flex h-8 w-8 shrink-0 items-center justify-center rounded hover:bg-hover" onClick={() => setMenu(!menu)}>
+        <button
+          ref={menuAnchor}
+          aria-label={t('sidebar.menu')}
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded hover:bg-hover"
+          onClick={() => setMenu(!menu)}
+        >
           <IconMore />
         </button>
-        {menu && (
-          <div role="menu" className="absolute right-2 top-11 z-10 flex w-44 flex-col rounded border border-line bg-panel py-1 shadow-lg">
-            <button role="menuitem" className="px-3 py-1.5 text-left text-fg hover:bg-hover" onClick={() => { setMenu(false); p.onSignOut() }}>
-              {t('server.signOut')}
-            </button>
-            <button role="menuitem" className="px-3 py-1.5 text-left text-danger hover:bg-hover" onClick={() => { setMenu(false); p.onRemove() }}>
-              {t('server.remove')}
-            </button>
-          </div>
+        {menu && menuAnchor.current && (
+          <ServerMenu anchorEl={menuAnchor.current} onSignOut={p.onSignOut} onRemove={p.onRemove} onClose={() => setMenu(false)} />
         )}
       </header>
       <StatusLine state={p.server.state} onReauth={p.onReauth} />
