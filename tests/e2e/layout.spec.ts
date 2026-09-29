@@ -205,8 +205,12 @@ test('two file cards in the thread panel at its 320px minimum wrap instead of ov
   await page.keyboard.press('Home') // THREAD_MIN (splitter.ts) — the documented 320px floor
   await expect(pane).toHaveJSProperty('offsetWidth', 320)
 
-  await expect(threadPane(page).getByRole('button', { name: 'quarterly-report-final.zip' })).toBeVisible()
-  await expect(threadPane(page).getByRole('button', { name: 'deck.pptx' })).toBeVisible()
+  // exact: true — Playwright's default name match is a case-insensitive
+  // substring, and "quarterly-report-final.zip" also matches the secondary
+  // "Download quarterly-report-final.zip"/"Open quarterly-report-final.zip"
+  // buttons right next to it (strict-mode violation without this).
+  await expect(threadPane(page).getByRole('button', { name: 'quarterly-report-final.zip', exact: true })).toBeVisible()
+  await expect(threadPane(page).getByRole('button', { name: 'deck.pptx', exact: true })).toBeVisible()
 
   const { scrollWidth, clientWidth } = await threadFeed(page).evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
   expect(scrollWidth).toBe(clientWidth)
