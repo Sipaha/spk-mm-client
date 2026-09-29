@@ -238,6 +238,61 @@ test.each(['channel', 'thread'] as const)('%s: loads continue on their own at mo
   }
 })
 
+// A thread's history lands *below* its root: the root heads the panel before
+// and after the page, so it cannot anchor the restore. e2e (threads.spec, "a
+// long thread … without gaps"), since the composer grew and the panel's feed
+// got shorter: the load started with the root on screen, the restore kept
+// the root in place — the feed stayed at the top, the page just loaded was
+// skipped and the next one requested (77 of 150 replies ever shown). Real
+// layout, by hand: each row sits at its virtualizer offset minus scrollTop,
+// and scrollTo moves the feed.
+test('thread: history that lands under the root keeps the reply seen at the top in place, not the root', async () => {
+  const frames = manualFrames()
+  const root: PostView = { ...P('R', 'bob', 60), reply_count: 20 }
+  const reply = (n: number): PostView => ({ ...P(`r${n}`, n % 2 ? 'carol' : 'bob', 60 - n), root_id: 'R' })
+  const replies = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => reply(from + i))
+  const onLoadOlder = vi.fn().mockResolvedValue(true)
+  const p = { ...props({ has_more: true, posts: [root, ...replies(11, 20)] }, onLoadOlder), variant: 'thread' as const }
+  const view = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  let top = 0
+  Object.defineProperties(log, {
+    scrollHeight: { configurable: true, get: () => 5000 },
+    clientHeight: { configurable: true, get: () => 600 },
+    scrollTop: { configurable: true, get: () => top, set: (v: number) => void (top = Math.max(0, v)) },
+  })
+  log.scrollTo = ((o: ScrollToOptions) => void (top = Math.max(0, o.top ?? top))) as typeof log.scrollTo
+  const rowTop = (el: HTMLElement) => Number(/translateY\((-?[\d.]+)px\)/.exec(el.style.transform)?.[1] ?? 0) - top
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const row = this.dataset.kind !== undefined
+    const y = row ? rowTop(this) : 0
+    const h = this === log ? 600 : row ? 40 : 0
+    return { top: y, bottom: y + h, left: 0, right: 0, width: 0, height: h, x: 0, y, toJSON: () => ({}) } as DOMRect
+  })
+  const onScreen = (key: string) => {
+    const el = log.querySelector<HTMLElement>(`[data-key="${key}"]`)
+    return el ? rowTop(el) : null
+  }
+  try {
+    await frames.flush() // the mount's frames
+    top = 0 // the user reached the top: the root is on screen, the first loaded reply under it
+    fireEvent.scroll(log)
+    await frames.flush()
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    const before = onScreen('r11')
+    expect(before).not.toBeNull()
+    expect(onScreen('R')).toBeLessThan(before!) // the root is above it, also on screen
+
+    view.rerender(<Feed {...p} data={{ ...p.data, posts: [root, ...replies(1, 20)] }} />)
+    await frames.flush()
+    expect(onScreen('r11')).toBe(before) // the reply the user saw stays where it was
+    expect(top).toBeGreaterThan(0) // the page just loaded is above, not skipped
+  } finally {
+    rect.mockRestore()
+    frames.restore()
+  }
+})
+
 test('the history row keeps its box while loading: the label is only hidden, never removed', async () => {
   // The scroll anchor is captured just before the loading label appears; if
   // the row above it grew when the label rendered, everything below would

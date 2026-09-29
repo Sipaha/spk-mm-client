@@ -303,14 +303,24 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // Re-run on every scroll while the page is in flight (onScroll), so the
   // anchor is where the user is when the rows land, not where they were
   // when the fetch started.
+  // Only rows the page lands above can anchor: a thread's root heads the
+  // panel before and after every page (the older replies land under it and
+  // its "N replies" line), so keeping the root in place kept the feed at its
+  // top — the page just loaded was skipped and the next one requested
+  // (threads.spec, "a long thread … without gaps": whenever the load started
+  // with the root on screen).
   const captureAnchor = () => {
     const el = scroller.current
+    const first = rows.find((r) => r.kind === 'post')
+    const head = variant === 'thread' && first?.kind === 'post' && !first.post.root_id ? first.key : null
     const found = el
       ? pickAnchor(
-          [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')].map((r) => {
-            const b = r.getBoundingClientRect()
-            return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
-          }),
+          [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')]
+            .filter((r) => r.dataset.key !== head)
+            .map((r) => {
+              const b = r.getBoundingClientRect()
+              return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
+            }),
           el.getBoundingClientRect().top,
         )
       : null
