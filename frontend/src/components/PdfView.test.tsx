@@ -140,10 +140,10 @@ test('a load failure (network error, bad magic, over the size cap) calls onFail'
   await waitFor(() => expect(onFail).toHaveBeenCalled())
 })
 
-test('Ctrl+= / Ctrl+- / Ctrl+0 zoom in, out and back to fit-width', async () => {
+test('Ctrl+= / Ctrl+- / Ctrl+0 zoom in, out and back to the default zoom', async () => {
   render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
   await screen.findByText('1 / 5')
-  await screen.findByText('100%') // fit-width, per the stubbed clientWidth above
+  await screen.findByText('100%') // the default zoom, capped at fit-width by the narrow stubbed clientWidth above
 
   fireEvent.keyDown(window, { code: 'Equal', ctrlKey: true })
   expect(await screen.findByText('125%')).toBeInTheDocument()
@@ -320,8 +320,51 @@ test('resizing the pane re-fits every page and keeps the same current page (fix 
     roCallback?.()
   })
 
-  await waitFor(() => expect(page1Box.style.width).toBe('200px')) // (248 - 48) / 100
+  // The default zoom grows with the pane only up to its 175% cap…
+  await waitFor(() => expect(page1Box.style.width).toBe('175px'))
+  // …Fit width follows the pane all the way: (248 - 48) / 100.
+  fireEvent.click(screen.getByRole('button', { name: 'Fit width' }))
+  await waitFor(() => expect(page1Box.style.width).toBe('200px'))
   expect(screen.getByText('1 / 5')).toBeInTheDocument() // stayed on the same page
+})
+
+// pdf-lag report (2026-09-30): fitting every page to the pane by default
+// opened a Letter receipt at 301% on a 1920 px window (huge text, a
+// page-sized canvas to repaint on every scroll step). The default is the
+// webapp's zoom (ZoomSettings.DEFAULT_SCALE = 1.75: a Letter page ~1071 px
+// wide), capped so it never exceeds the pane; Fit width is an explicit mode
+// and Ctrl+0 returns to the default.
+test('default zoom: the webapp\'s 175% on a wide pane, not fit-to-width; Fit width and Ctrl+0 switch modes', async () => {
+  stubClientWidth = 348 // fit-to-width would be (348 - 48) / 100 = 300%
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  expect(await screen.findByText('175%')).toBeInTheDocument()
+  const page1Box = container.querySelector('[data-page="1"]') as HTMLElement
+  expect(page1Box.style.width).toBe('175px')
+  expect(page1Box.className).toMatch(/(^|\s)mx-auto(\s|$)/) // centred in the pane
+  const fitButton = screen.getByRole('button', { name: 'Fit width' })
+  expect(fitButton).toHaveAttribute('aria-pressed', 'false')
+
+  fireEvent.click(fitButton)
+  expect(await screen.findByText('300%')).toBeInTheDocument()
+  expect(page1Box.style.width).toBe('300px')
+  expect(fitButton).toHaveAttribute('aria-pressed', 'true')
+
+  fireEvent.keyDown(window, { code: 'Digit0', ctrlKey: true })
+  expect(await screen.findByText('175%')).toBeInTheDocument()
+  expect(page1Box.style.width).toBe('175px')
+  expect(fitButton).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('default zoom never makes a page wider than the pane: a landscape page is capped at its own fit width', async () => {
+  numPages = 2
+  stubClientWidth = 348 // fit: portrait 100 wide -> 300%, landscape 200 wide -> 150%
+  sizeForPage = (i) => (i === 2 ? { w: 200, h: 50 } : { w: 100, h: 100 })
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 2')
+  await waitFor(() => expect(getPage).toHaveBeenCalledWith(2))
+  await waitFor(() => expect((container.querySelector('[data-page="2"]') as HTMLElement).style.width).toBe('300px')) // 200 * 1.5, not 200 * 1.75
+  expect((container.querySelector('[data-page="1"]') as HTMLElement).style.width).toBe('175px')
 })
 
 test('switching between fit and manual zoom keeps the scroll anchored to the same page (fix round 2)', async () => {

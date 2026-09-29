@@ -49,7 +49,19 @@ const MIN_SCALE = 0.25
 const MAX_SCALE = 4
 const ZOOM_STEP = 1.25
 const CANVAS_PIXEL_CAP = 2_000_000 // ~2 MP, independent of zoom/DPR
+// The default zoom, the webapp's (ZoomSettings.DEFAULT_SCALE in
+// webapp/channels/src/utils/constants.tsx; pdf_preview.tsx renders the
+// page viewport at that scale, 1 CSS px per PDF point at scale 1): a Letter
+// page opens ~1071 px wide, centred, capped so it never exceeds the pane
+// (pdf-lag report 2026-09-30 — fitting every page to the pane opened a
+// receipt at 301% on a 1920 px window). "Fit width" stays an explicit mode.
+const DEFAULT_SCALE = 1.75
 const GAP = 12
+
+// auto: DEFAULT_SCALE, capped at each page's own fit-width scale (the
+// default, and what Ctrl+0 returns to); fit: each page fit to the pane's
+// width; manual: one uniform `zoom` for every page (+/−, Ctrl+wheel).
+type ZoomMode = 'auto' | 'fit' | 'manual'
 
 interface Slot {
   page?: PDFPageProxy
@@ -76,7 +88,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   // — real PDFs mix portrait/landscape/oddly-sized pages; a page not yet
   // fetched falls back to page 1's size as a placeholder until it is).
   const [naturalSizes, setNaturalSizes] = useState<Record<number, { w: number; h: number }>>({})
-  const [fit, setFit] = useState(true)
+  const [mode, setMode] = useState<ZoomMode>('auto')
   const [zoom, setZoom] = useState(1)
   const [width, setWidth] = useState(0)
   const [current, setCurrent] = useState(1)
@@ -95,17 +107,21 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   // page's box; a landscape page at page 1's scale would be ~41% wider
   // than the pane, forcing a horizontal scrollbar onto the whole scroller
   // (a CSS overflow container's scrollbar is governed by its widest
-  // child), even while looking at a page that itself fits fine. In manual
-  // zoom, one uniform scale applies to every page, unchanged.
+  // child), even while looking at a page that itself fits fine. The default
+  // (auto) mode caps DEFAULT_SCALE at that same per-page fit scale. In
+  // manual zoom, one uniform scale applies to every page, unchanged.
   function scaleFor(i: number): number {
     const sz = naturalSizes[i] ?? base
-    if (fit && sz && width) return clampScale((width - 48) / sz.w)
+    if (mode !== 'manual' && sz && width) {
+      const fitScale = (width - 48) / sz.w
+      return clampScale(mode === 'fit' ? fitScale : Math.min(DEFAULT_SCALE, fitScale))
+    }
     return zoom
   }
-  // The zoom % shown in fit mode is the *current* page's own scale.
+  // The zoom % shown in auto/fit mode is the *current* page's own scale.
   const displayScale = scaleFor(current)
   // Kept in a ref so the mount-once keyboard/wheel handlers below can read
-  // the scale actually on screen (fit or manual) without resubscribing.
+  // the scale actually on screen (auto, fit or manual) without resubscribing.
   const scaleRef = useRef(displayScale)
   scaleRef.current = displayScale
 
@@ -198,7 +214,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
 
   // layout: cumulative top offset and box height of every page, from
   // boxOf — recomputed whenever a page's real size becomes known, the fit
-  // pane width changes, the zoom changes, fit is toggled, or the document
+  // pane width changes, the zoom changes, the zoom mode changes, or the document
   // (page count) changes. O(n) per change, which is cheap next to the cost
   // of actually rendering a page.
   const layout = useMemo(() => {
@@ -212,7 +228,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       y += h + GAP
     }
     return { offsets, heights }
-  }, [naturalSizes, base, fit, width, zoom, n])
+  }, [naturalSizes, base, mode, width, zoom, n])
 
   // Which pages are on screen: from scrollTop and each page's own real (or
   // placeholder) height — no longer a uniform-page-size assumption (fix
@@ -258,26 +274,26 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       if (s.scale === sc && s.canvas) continue
       void renderPage(doc, i, s, sc)
     }
-  }, [doc, visible, fit, width, zoom, naturalSizes, base])
+  }, [doc, visible, mode, width, zoom, naturalSizes, base])
 
   // Scroll anchor (fix round 2): whenever the scale actually on screen
-  // changes — fit toggled, manual zoom changed, or the pane resized (which
+  // changes — zoom mode switched, manual zoom changed, or the pane resized (which
   // re-fits every page) — keep the same page under the top of the
   // scroller, rather than leaving scrollTop at its old pixel value (which
   // would land on a different page once every page's height has changed).
   // Skipped on mount (prevAnchorKey starts null): nothing to anchor to yet.
   const prevAnchorKey = useRef<string | null>(null)
   useEffect(() => {
-    const key = `${fit}|${zoom}|${width}`
+    const key = `${mode}|${zoom}|${width}`
     const el = scroller.current
     if (el && n && prevAnchorKey.current !== null && prevAnchorKey.current !== key) {
       el.scrollTo({ top: layout.offsets[current] ?? 0 })
     }
     prevAnchorKey.current = key
-  }, [fit, zoom, width])
+  }, [mode, zoom, width])
 
   function zoomBy(factor: number): void {
-    setFit(false)
+    setMode('manual')
     setZoom(clampScale(scaleRef.current * factor))
   }
 
@@ -288,15 +304,15 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     const onKey = (e: KeyboardEvent) => {
       if (isShortcut(e, ['Equal', 'NumpadAdd'], { ctrl: true })) {
         e.preventDefault()
-        setFit(false)
+        setMode('manual')
         setZoom(clampScale(scaleRef.current * ZOOM_STEP))
       } else if (isShortcut(e, ['Minus', 'NumpadSubtract'], { ctrl: true })) {
         e.preventDefault()
-        setFit(false)
+        setMode('manual')
         setZoom(clampScale(scaleRef.current / ZOOM_STEP))
       } else if (isShortcut(e, ['Digit0', 'Numpad0'], { ctrl: true })) {
         e.preventDefault()
-        setFit(true)
+        setMode('auto')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -336,7 +352,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
         <button type="button" aria-label={t('pdf.zoomIn')} className={btn} onClick={() => zoomBy(ZOOM_STEP)}>
           +
         </button>
-        <button type="button" aria-pressed={fit} className={btn} onClick={() => setFit(true)}>
+        <button type="button" aria-pressed={mode === 'fit'} className={btn} onClick={() => setMode('fit')}>
           {t('pdf.fitWidth')}
         </button>
       </div>

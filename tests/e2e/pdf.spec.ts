@@ -106,7 +106,7 @@ test('manual.pdf: page counter, paging to the landscape page, no horizontal over
   await expect(v).toHaveCount(0)
 })
 
-test('zoom in/out change the percentage; Fit width returns to the original scale', async ({ page }) => {
+test('zoom in/out change the percentage; Fit width is its own mode; Ctrl+0 returns to the default zoom', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
   await feed(page).getByRole('button', { name: 'View manual.pdf' }).click()
@@ -114,7 +114,7 @@ test('zoom in/out change the percentage; Fit width returns to the original scale
   // Wait for the real document first: before it loads, PdfView's toolbar
   // shows the placeholder zoom state (100%, its initial `zoom` default,
   // scaleFor() falls through to it while naturalSizes/base are still
-  // empty) — capturing that instead of the settled fit-width scale would
+  // empty) — capturing that instead of the settled default scale would
   // race every click below against the async pdf.js load completing.
   await expect(v.getByText(/^\d+ \/ 50$/)).toHaveText('1 / 50')
   const percent = v.getByText(/^\d+%$/)
@@ -123,7 +123,8 @@ test('zoom in/out change the percentage; Fit width returns to the original scale
   // scrollbar changes the scroller's clientWidth, and PdfView's
   // ResizeObserver-driven re-fit can still land a tick after the page
   // count first shows up, changing the percentage out from under a
-  // one-shot read.
+  // one-shot read (only while the pane is narrower than the default zoom's
+  // page, which caps at fit-width).
   let lastPercent: string | null = null
   await expect
     .poll(async () => {
@@ -133,17 +134,26 @@ test('zoom in/out change the percentage; Fit width returns to the original scale
       return stable
     })
     .toBe(true)
-  const fitPercent = lastPercent
+  // The default zoom is the webapp's 175% (pdf-lag report 2026-09-30), not
+  // fit-to-width: at the default 1280 px viewport an A4 page at 175% is
+  // narrower than the pane.
+  const defaultPercent = lastPercent
+  expect(defaultPercent).toBe('175%')
 
   await v.getByRole('button', { name: 'Zoom in' }).click()
-  await expect(percent).not.toHaveText(fitPercent!)
+  await expect(percent).not.toHaveText(defaultPercent!)
 
   await v.getByRole('button', { name: 'Zoom out' }).click()
   await v.getByRole('button', { name: 'Zoom out' }).click()
-  await expect(percent).not.toHaveText(fitPercent!)
+  await expect(percent).not.toHaveText(defaultPercent!)
 
+  // Fit width fills the pane — wider than the default here.
   await v.getByRole('button', { name: 'Fit width' }).click()
-  await expect(percent).toHaveText(fitPercent!)
+  await expect(v.getByRole('button', { name: 'Fit width' })).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(async () => parseInt((await percent.textContent()) ?? '0', 10)).toBeGreaterThan(175)
+
+  await page.keyboard.press('Control+0')
+  await expect(percent).toHaveText(defaultPercent!)
 
   await page.keyboard.press('Escape')
   await expect(v).toHaveCount(0)
@@ -272,6 +282,42 @@ test('receipt (one page, vector text): the page box has no box-shadow', async ({
   await expect(v.getByText(/^\d+ \/ \d+$/)).toHaveText('1 / 1')
   await expect(v.locator('[data-page="1"] .pdf-text-layer span').first()).toBeAttached({ timeout: 15_000 })
   expect(await v.locator('[data-page="1"]').evaluate((el) => getComputedStyle(el).boxShadow)).toBe('none')
+
+  await page.keyboard.press('Escape')
+  await expect(v).toHaveCount(0)
+})
+
+// pdf-lag report (2026-09-30): fitting every page to the pane opened a
+// Letter receipt at 301% on a 1920 px window. The default is the webapp's
+// zoom (1.75: a 612 pt page is 1071 CSS px wide), centred, capped so the
+// page never exceeds the pane; Fit width is an explicit mode.
+test('receipt: opens at the webapp\'s 175%, centred; a narrow window caps it at the pane width', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /^bob/).click()
+  await feed(page).getByRole('button', { name: 'View Receipt-1234-5678-9012.pdf' }).click()
+  const v = viewer(page)
+  await expect(v.getByText(/^\d+ \/ \d+$/)).toHaveText('1 / 1')
+  // The toolbar's own percentage (right after "Zoom out") — the receipt's
+  // text layer has "0%" spans of its own.
+  const percent = v.getByRole('button', { name: 'Zoom out' }).locator('xpath=following-sibling::span[1]')
+  await expect(percent).toHaveText('175%')
+  const box = v.locator('[data-page="1"]')
+  const scroller = v.locator('.overflow-auto')
+  const geo = async () =>
+    box.evaluate((el) => {
+      const b = el.getBoundingClientRect()
+      const sc = el.parentElement!
+      const s = sc.getBoundingClientRect()
+      return { w: Math.round(b.width), left: Math.round(b.left - s.left), right: Math.round(s.left + sc.clientWidth - b.right) }
+    })
+  const wide = await geo()
+  expect(wide.w).toBe(1071)
+  expect(Math.abs(wide.left - wide.right)).toBeLessThanOrEqual(2) // centred
+
+  await page.setViewportSize({ width: 800, height: 700 })
+  await expect.poll(async () => parseInt((await percent.textContent()) ?? '0', 10)).toBeLessThan(175)
+  await expect.poll(async () => (await geo()).w).toBeLessThan(800)
+  await expect.poll(() => scroller.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
 
   await page.keyboard.press('Escape')
   await expect(v).toHaveCount(0)
