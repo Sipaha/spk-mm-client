@@ -85,7 +85,13 @@ const ru = {
   'thread.backToChannel': 'К каналу',
   'thread.replies': 'Ответов: {n}',
   'thread.lastReply': 'последний ответ {time}',
-  'thread.replyTo': 'Ответ {author}: {snippet}',
+  // replyToPrefix/replyToAccent: the reply-context line's two halves
+  // (reply-style brief 2026-09-28, webapp-like emphasis) — the prefix in
+  // text-fg-muted, "{author}: {snippet}" in the accent colour (PostItem.tsx
+  // splits them into two <span>s; concatenated they read "Ответ на
+  // сообщение bob: hi there").
+  'thread.replyToPrefix': 'Ответ на сообщение',
+  'thread.replyToAccent': '{author}: {snippet}',
   'thread.replyInThread': 'Ответ в треде',
   'thread.rootDeleted': 'Исходное сообщение удалено',
   'thread.capped': 'Показаны последние 200 ответов',
@@ -314,7 +320,10 @@ const en: Record<Key, string> = {
   'thread.backToChannel': 'Back to channel',
   'thread.replies': 'Replies: {n}',
   'thread.lastReply': 'last reply {time}',
-  'thread.replyTo': 'Reply to {author}: {snippet}',
+  // See the ru block's comment — same split, English wording ("Commented on
+  // bob's message: hi there").
+  'thread.replyToPrefix': 'Commented on',
+  'thread.replyToAccent': "{author}'s message: {snippet}",
   'thread.replyInThread': 'Reply in a thread',
   'thread.rootDeleted': 'The original message was deleted',
   'thread.capped': 'Showing the last 200 replies',

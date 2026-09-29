@@ -18,6 +18,13 @@ export type Row =
       // without CRT, in the channel feed (variant 'channel'). author '' =
       // the root is not held ("reply in a thread").
       replyContext?: { author: string; snippet: string } | null
+      // isInlineReply: this post is a reply rendered inline in the channel
+      // feed (variant 'channel', no CRT) — set for EVERY such reply, not
+      // only the first of a series (unlike replyContext). PostItem uses it
+      // to wrap the post's content column in a left border bar, webapp-like
+      // (reply-style brief, 2026-09-28). Never set in the thread panel or
+      // with CRT on.
+      isInlineReply?: boolean
     }
 
 export type FeedVariant = 'channel' | 'thread'
@@ -70,15 +77,16 @@ export function buildRows(
       lineDone = true
       head = true
     }
+    const isInlineReply = variant === 'channel' && !ch.crt && !!p.root_id
     let replyContext: { author: string; snippet: string } | null | undefined
-    if (variant === 'channel' && !ch.crt && p.root_id && isFirstReplyOfSeries(prev, p)) {
+    if (isInlineReply && isFirstReplyOfSeries(prev, p)) {
       replyContext = { author: p.root_author ?? '', snippet: p.root_snippet ?? '' }
       head = true
     }
     // A pending post's real post arrives under a different id; keying by
     // pending_post_id (set on both sides by the Go layer) keeps the row —
     // and the virtualizer's measured size for it — across the swap.
-    rows.push({ kind: 'post', key: p.pending_post_id || p.id, post: p, head, replyContext })
+    rows.push({ kind: 'post', key: p.pending_post_id || p.id, post: p, head, replyContext, isInlineReply })
     broken = false
     if (variant === 'thread' && firstPost && !p.root_id) {
       // The root's own reply_count is the thread's true total — never the

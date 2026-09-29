@@ -527,16 +527,20 @@ test('"N replies" is a clickable link under a root (both CRT modes), never under
   expect(screen.queryByText(/Replies:/)).toBeNull() // never in the panel
 })
 
-// Task 6: the reply-context line ("reply to <author>: <snippet>"), fed by
-// feedRows via the replyContext prop — a click opens the thread.
-test('the reply-context line renders "reply to <author>: <snippet>" or "reply in a thread", and opens the thread on click', async () => {
+// Reply-style brief (2026-09-28): the reply-context line now reads
+// "Commented on <author>'s message: <snippet>" (webapp wording/emphasis),
+// still fed by feedRows via the replyContext prop, a click opens the thread.
+test('the reply-context line renders "Commented on <author>\'s message: <snippet>" (RU: "Ответ на сообщение …") or "reply in a thread", and opens the thread on click', async () => {
   const a = actions()
   const { rerender } = render(
     <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyContext={{ author: 'bob', snippet: 'hi there' }} />,
   )
-  const line = screen.getByRole('button', { name: 'Reply to bob: hi there' })
+  const line = screen.getByRole('button', { name: "Commented on bob's message: hi there" })
   await userEvent.click(line)
   expect(a.openThread).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }))
+  // the prefix and the author+snippet part are in different theme tokens.
+  expect(within(line).getByText('Commented on')).toHaveClass('text-fg-muted')
+  expect(within(line).getByText("bob's message: hi there")).toHaveClass('text-accent')
 
   rerender(
     <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} replyContext={{ author: '', snippet: '' }} />,
@@ -544,7 +548,46 @@ test('the reply-context line renders "reply to <author>: <snippet>" or "reply in
   expect(screen.getByRole('button', { name: 'Reply in a thread' })).toBeInTheDocument()
 
   rerender(<PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
-  expect(screen.queryByText(/Reply/)).toBeNull()
+  expect(screen.queryByText(/Reply|Commented/)).toBeNull()
+
+  setLocale('ru')
+  rerender(
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="ru-RU" crt={false} actions={a} editing={false} replyContext={{ author: 'bob', snippet: 'hi there' }} />,
+  )
+  expect(screen.getByRole('button', { name: 'Ответ на сообщение bob: hi there' })).toBeInTheDocument()
+  setLocale('en')
+})
+
+// Reply-style brief (2026-09-28): every inline reply row (feedRows'
+// isInlineReply, not just the first of a series) wraps its content column
+// (message/attachments/files/reactions/pending/failed — NOT the avatar or
+// the header name/time) in a left-border bar; a normal post and a reply row
+// with isInlineReply not set (thread panel, CRT on) get no wrapper at all.
+test('isInlineReply wraps the content column in a left-border bar; other posts get none', () => {
+  const { rerender } = render(
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head={false} me={me} locale="en-US" crt={false} actions={actions()} editing={false} isInlineReply />,
+  )
+  const bar = screen.getByTestId('reply-bar')
+  expect(within(bar).getByText('hello')).toBeInTheDocument() // the message sits inside the bar
+
+  rerender(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.queryByTestId('reply-bar')).toBeNull()
+
+  // A reply that is not flagged inline (CRT on, or the thread panel) gets no bar either.
+  rerender(
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} variant="thread" />,
+  )
+  expect(screen.queryByTestId('reply-bar')).toBeNull()
+})
+
+// The header (avatar/name/time) stays outside the bar even for a head row.
+test('isInlineReply on a head row still excludes the header from the bar', () => {
+  render(
+    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} isInlineReply />,
+  )
+  const bar = screen.getByTestId('reply-bar')
+  expect(within(bar).queryByText('bob')).toBeNull() // author name is in the header, not the bar
+  expect(screen.getByText('bob')).toBeInTheDocument() // still rendered, just outside
 })
 
 // Task 3 brief: "сохранить" sits after "добавить реакцию" and before the

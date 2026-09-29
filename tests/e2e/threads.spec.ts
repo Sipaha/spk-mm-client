@@ -220,7 +220,11 @@ test('a mention in a thread reply notifies with its root; the click opens the ch
   await page.screenshot({ path: `${shots}/threads-7-opened-from-notification.png` })
 })
 
-test('CRT off: replies sit in the feed under a "Reply to bob" line that opens the panel; the root shows "Replies: N"', async ({ page }) => {
+// Reply-style brief (2026-09-28): the context line reads "Commented on
+// <author>'s message: <snippet>" (webapp-like emphasis), and EVERY inline
+// reply — not just the first of a run — sits behind a left border bar
+// (reply-bar), so a run of consecutive replies reads as one continuous block.
+test('CRT off: replies sit in the feed under a "Commented on bob\'s message" line, behind a left border bar, that opens the panel; the root shows "Replies: N"', async ({ page }) => {
   await signInWithCRT(page, 'disabled')
   const root = unique('flat root')
   const r1 = unique('flat reply one')
@@ -235,8 +239,16 @@ test('CRT off: replies sit in the feed under a "Reply to bob" line that opens th
   await expect(feed(page).getByText(r1)).toBeVisible()
   await expect(feed(page).getByText(r2)).toBeVisible()
   await expect(repliesLink(page, root, 2)).toBeVisible()
-  const context = feed(page).getByRole('button', { name: `Reply to bob: ${root}` })
+  const context = feed(page).getByRole('button', { name: `Commented on bob's message: ${root}` })
   await expect(context).toHaveCount(1) // only the first reply of the run carries it
+
+  // Both replies of the run — not just the first — get the bar. rootRow's
+  // hasText is a substring match, and the root's own text is embedded as r1's
+  // context-line snippet ("Commented on bob's message: <root text>") — filter
+  // that out so the root's own row (no bar) isn't confused with r1's.
+  await expect(rootRow(page, r1).getByTestId('reply-bar')).toBeVisible()
+  await expect(rootRow(page, r2).getByTestId('reply-bar')).toBeVisible()
+  await expect(rootRow(page, root).filter({ hasNotText: 'Commented on' }).getByTestId('reply-bar')).toHaveCount(0) // the root itself: no bar
   await page.screenshot({ path: `${shots}/threads-8-crt-off-feed.png` })
 
   await context.click()

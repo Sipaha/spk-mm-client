@@ -58,6 +58,13 @@ interface Props {
   // for the first reply of a series without CRT — computed by feedRows.
   // undefined/null: no context line.
   replyContext?: { author: string; snippet: string } | null
+  // isInlineReply: this post is a reply rendered inline in the channel feed
+  // (variant 'channel', no CRT) — computed by feedRows for EVERY such reply,
+  // not only the first of a series. Wraps the content column (message,
+  // attachments, files, reactions, pending/failed state — not the avatar or
+  // the header name/time) in a left border bar (reply-style brief,
+  // 2026-09-28).
+  isInlineReply?: boolean
 }
 
 const NAMED_COLORS: Record<string, string> = { good: '#2eb886', warning: '#daa038', danger: '#a30200' }
@@ -209,7 +216,7 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
   )
 }
 
-export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, actions, editing, variant = 'channel', replyContext = null }: Props) {
+export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, actions, editing, variant = 'channel', replyContext = null, isInlineReply = false }: Props) {
   const time = formatTime(post.create_at, locale)
   const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
@@ -292,69 +299,85 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           </header>
         )}
         {replyContext && (
-          <button type="button" className="mb-0.5 block text-xs text-fg-muted hover:underline" onClick={openThread}>
-            {replyContext.author ? t('thread.replyTo', { author: replyContext.author, snippet: replyContext.snippet }) : t('thread.replyInThread')}
-          </button>
-        )}
-        {editing ? (
-          <EditBox post={post} actions={actions} />
-        ) : (
-          <div className={post.system ? 'italic text-fg-muted' : ''}>
-            {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
-            {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
-          </div>
-        )}
-        {post.attachments?.map((a, i) => (
-          <AttachmentView key={i} serverId={serverId} a={a} me={me.username} onLink={actions.link} emojiInfo={actions.emojiInfo} />
-        ))}
-        {post.files && post.files.length > 0 && (
-          <Attachments
-            serverId={serverId}
-            files={post.files}
-            me={me.username}
-            onLink={actions.link}
-            onView={(f) => actions.view(post, f.id)}
-            onDownload={actions.download}
-            onOpen={actions.open}
-          />
-        )}
-        {post.reactions && post.reactions.length > 0 && (
-          <Reactions
-            serverId={serverId}
-            postId={post.id}
-            reactions={post.reactions}
-            me={me}
-            onToggle={(r) => react(r.emoji, !r.mine)}
-            onAdd={canReact ? openPicker : undefined}
-            loadReactors={(_postId, emoji) => actions.reactionUsers(post, emoji)}
-          />
-        )}
-        {variant === 'channel' && !post.root_id && (post.reply_count ?? 0) > 0 && (
-          <button type="button" className="mt-0.5 block text-xs font-medium text-accent hover:underline" onClick={openThread}>
-            {post.last_reply_at
-              ? `${t('thread.replies', { n: String(post.reply_count) })} · ${t('thread.lastReply', { time: formatTime(post.last_reply_at, locale) })}`
-              : t('thread.replies', { n: String(post.reply_count) })}
-          </button>
-        )}
-        {post.pending && (
-          <div className="flex items-center gap-2 text-xs text-fg-muted">
-            {t('post.sending')}
-            {/* A post with files still waiting (e.g. offline) can be cancelled
-                (DiscardPost works on a waiting post); once every file is
-                uploaded, CreatePost may already be in flight for it, so the
-                button disappears rather than race a discard against it. */}
-            {(post.files?.length ?? 0) > 0 && post.files!.some((f) => f.state !== 'uploaded') && (
-              <button className="underline" onClick={() => actions.discard(post)}>{t('post.cancelSending')}</button>
+          <button type="button" className="mb-0.5 block max-w-full truncate text-left text-xs hover:underline" onClick={openThread}>
+            {replyContext.author ? (
+              <>
+                <span className="text-fg-muted">{t('thread.replyToPrefix')}</span>{' '}
+                <span className="text-accent">{t('thread.replyToAccent', { author: replyContext.author, snippet: replyContext.snippet })}</span>
+              </>
+            ) : (
+              <span className="text-fg-muted">{t('thread.replyInThread')}</span>
             )}
-          </div>
+          </button>
         )}
-        {post.failed && (
-          <div role="alert" className="flex gap-2 text-xs text-danger">
-            {t('post.failed')}
-            <button className="underline" onClick={() => actions.retry(post)}>{t('post.retry')}</button>
-            <button className="underline" onClick={() => actions.discard(post)}>{t('post.discard')}</button>
-          </div>
-        )}
+        {/* isInlineReply: the content column (message, attachments, files,
+            reactions, pending/failed) sits behind a left border bar,
+            webapp-like — every reply in the run, not just the head one, so
+            consecutive replies form one continuous-looking bar. The header
+            (avatar/name/time) above and the replyContext line stay outside
+            it. Pure CSS: no extra measurement, the virtualizer's row height
+            only shifts by the bar's own padding. */}
+        <div className={isInlineReply ? 'border-l-[3px] border-fg-subtle/35 pl-2' : undefined} data-testid={isInlineReply ? 'reply-bar' : undefined}>
+          {editing ? (
+            <EditBox post={post} actions={actions} />
+          ) : (
+            <div className={post.system ? 'italic text-fg-muted' : ''}>
+              {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
+              {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
+            </div>
+          )}
+          {post.attachments?.map((a, i) => (
+            <AttachmentView key={i} serverId={serverId} a={a} me={me.username} onLink={actions.link} emojiInfo={actions.emojiInfo} />
+          ))}
+          {post.files && post.files.length > 0 && (
+            <Attachments
+              serverId={serverId}
+              files={post.files}
+              me={me.username}
+              onLink={actions.link}
+              onView={(f) => actions.view(post, f.id)}
+              onDownload={actions.download}
+              onOpen={actions.open}
+            />
+          )}
+          {post.reactions && post.reactions.length > 0 && (
+            <Reactions
+              serverId={serverId}
+              postId={post.id}
+              reactions={post.reactions}
+              me={me}
+              onToggle={(r) => react(r.emoji, !r.mine)}
+              onAdd={canReact ? openPicker : undefined}
+              loadReactors={(_postId, emoji) => actions.reactionUsers(post, emoji)}
+            />
+          )}
+          {variant === 'channel' && !post.root_id && (post.reply_count ?? 0) > 0 && (
+            <button type="button" className="mt-0.5 block text-xs font-medium text-accent hover:underline" onClick={openThread}>
+              {post.last_reply_at
+                ? `${t('thread.replies', { n: String(post.reply_count) })} · ${t('thread.lastReply', { time: formatTime(post.last_reply_at, locale) })}`
+                : t('thread.replies', { n: String(post.reply_count) })}
+            </button>
+          )}
+          {post.pending && (
+            <div className="flex items-center gap-2 text-xs text-fg-muted">
+              {t('post.sending')}
+              {/* A post with files still waiting (e.g. offline) can be cancelled
+                  (DiscardPost works on a waiting post); once every file is
+                  uploaded, CreatePost may already be in flight for it, so the
+                  button disappears rather than race a discard against it. */}
+              {(post.files?.length ?? 0) > 0 && post.files!.some((f) => f.state !== 'uploaded') && (
+                <button className="underline" onClick={() => actions.discard(post)}>{t('post.cancelSending')}</button>
+              )}
+            </div>
+          )}
+          {post.failed && (
+            <div role="alert" className="flex gap-2 text-xs text-danger">
+              {t('post.failed')}
+              <button className="underline" onClick={() => actions.retry(post)}>{t('post.retry')}</button>
+              <button className="underline" onClick={() => actions.discard(post)}>{t('post.discard')}</button>
+            </div>
+          )}
+        </div>
       </div>
       {!post.pending && !post.failed && !editing && visible && (
         <div

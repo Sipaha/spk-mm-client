@@ -97,6 +97,35 @@ test('replyContext: never set with CRT on, and never in the thread panel', () =>
 })
 
 // Task 6: variant 'thread' inserts a "N replies" divider right after the root.
+// Reply-style brief (2026-09-28): every inline reply (not only the first of
+// a series) gets isInlineReply so PostItem can draw the left border bar
+// around its whole content column, in the channel feed, without CRT.
+test('isInlineReply: every reply post in the channel feed without CRT, not only the first of a series', () => {
+  const rows = buildRows(
+    ch([
+      P('root', 'bob', 0),
+      P('r0', 'carol', 1, { root_id: 'root' }), // directly under its root: still an inline reply
+      P('mid', 'bob', 2),
+      P('r1', 'carol', 3, { root_id: 'root' }), // first of a new run
+      P('r2', 'carol', 4, { root_id: 'root' }), // consecutive: still flagged
+    ]),
+  )
+  const post = (id: string) => rows.find((r) => r.kind === 'post' && r.post.id === id) as Extract<Row, { kind: 'post' }>
+  expect(post('root').isInlineReply).toBeFalsy()
+  expect(post('r0').isInlineReply).toBe(true)
+  expect(post('mid').isInlineReply).toBeFalsy()
+  expect(post('r1').isInlineReply).toBe(true)
+  expect(post('r2').isInlineReply).toBe(true)
+})
+
+test('isInlineReply: never set with CRT on, and never in the thread panel', () => {
+  const post = P('r1', 'carol', 0, { root_id: 'root' })
+  const withCRT = buildRows(ch([P('root', 'bob', 0), post], { crt: true }))
+  expect((withCRT.find((r) => r.kind === 'post' && r.post.id === 'r1') as Extract<Row, { kind: 'post' }>).isInlineReply).toBeFalsy()
+  const inThread = buildRows(ch([P('root', 'bob', 0), post]), 'thread')
+  expect((inThread.find((r) => r.kind === 'post' && r.post.id === 'r1') as Extract<Row, { kind: 'post' }>).isInlineReply).toBeFalsy()
+})
+
 test('thread variant: a "N replies" divider follows the root, counting the rest', () => {
   const rows = buildRows(ch([P('root', 'bob', 0), P('r1', 'carol', 1, { root_id: 'root' }), P('r2', 'carol', 2, { root_id: 'root' })]), 'thread')
   expect(shape(rows)).toEqual(['day', 'root*', 'threadReplies', 'r1*', 'r2'])

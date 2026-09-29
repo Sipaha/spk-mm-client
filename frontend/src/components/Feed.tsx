@@ -560,7 +560,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
           </div>
         )
       case 'post':
-        return <PostItem serverId={serverId} post={r.post} head={r.head} me={me} locale={locale} variant={variant} crt={data.crt} replyContext={r.replyContext} actions={actions} editing={r.post.id === editingId} />
+        return <PostItem serverId={serverId} post={r.post} head={r.head} me={me} locale={locale} variant={variant} crt={data.crt} replyContext={r.replyContext} isInlineReply={r.isInlineReply} actions={actions} editing={r.post.id === editingId} />
     }
   }
 
