@@ -24,6 +24,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/media"
+	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/store"
 )
@@ -411,6 +412,37 @@ func TestTestAPIWebhookPost(t *testing.T) {
 	assert.Equal(t, "GitLab", string(p.Props.OverrideUsername))
 	assert.Equal(t, "/static/images/webhook-icon.png", p.Props.OverrideIconURL)
 	assert.Equal(t, ":tada:", p.Props.OverrideIconEmoji)
+}
+
+// fake/webhook also carries message_attachments straight through to
+// Props.Attachments (density-brief 2026-09-29: the screenshot fixture for a
+// Jenkins-style CI notification card, posted live via this test-API route
+// rather than baked into the default seed — c-town's seed shape and every
+// test that counts its posts/unreads must stay exactly as before).
+func TestTestAPIWebhookPostWithAttachments(t *testing.T) {
+	ts, token, fake := setup(t, true)
+	body := `{"channel_id":"c-town","username":"bob","override_username":"jenkins","attachments":[` +
+		`{"color":"#00c100","title":"sample-app - build completed - 006","text":"Branch: **master**",` +
+		`"fields":[{"title":"Changes","value":"- [abc1234](https://example.com/commit/abc1234) fix","short":false}],` +
+		`"footer":"build #006"}]}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/_test/fake/webhook", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Origin", ts.URL)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	posts := fake.VisiblePosts("c-town")
+	p := posts[len(posts)-1]
+	require.Len(t, p.Props.Attachments, 1)
+	a := p.Props.Attachments[0]
+	assert.Equal(t, "#00c100", a.Color)
+	assert.Equal(t, "sample-app - build completed - 006", a.Title)
+	assert.Empty(t, a.Pretext, "pretext-less, per the density brief's fixture spec")
+	require.Len(t, a.Fields, 1)
+	assert.Equal(t, "Changes", a.Fields[0].Title)
+	assert.Equal(t, model.Flag(false), a.Fields[0].Short)
+	assert.Equal(t, "build #006", a.Footer)
 }
 
 // "Show in folder" has no file manager in browser mode: e2e reads the

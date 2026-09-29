@@ -83,37 +83,55 @@ function AttachmentView({
   onLink(href: string): void
   emojiInfo(): Promise<EmojiDTO>
 }) {
+  // Card shape ported from the official webapp's .attachment__content /
+  // .attachment__container (channels/src/sass/layout/_webhooks.scss,
+  // mm-10.11): a 1px border with no left side (the coloured bar reads as
+  // the left edge instead), rounded only on the right (their border-radius
+  // is "0 4px 4px 0" — Tailwind's rounded-r matches exactly, our default
+  // radius is also 4px), 12px padding, a 5px margin above/below, and no
+  // width cap (density-brief 2026-09-29: "full available width" — the
+  // official CSS only caps width for the permalink/opengraph variant,
+  // which we don't render here). The pretext (if any) sits outside the
+  // card, unbordered, like .attachment__thumb-pretext.
   return (
-    <div className="mt-1 max-w-3xl border-l-4 pl-3" style={{ borderColor: barColor(a.color) }}>
-      {a.pretext && <Markdown text={a.pretext} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
-      {a.author_name && <div className="text-xs font-medium text-fg-muted">{a.author_name}</div>}
-      {a.title &&
-        (a.title_link ? (
-          <a href={a.title_link} className="font-semibold text-accent hover:underline" onClick={(e) => { e.preventDefault(); onLink(a.title_link!) }}>
-            {a.title}
-          </a>
-        ) : (
-          <div className="font-semibold">
-            <Markdown text={a.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
-          </div>
-        ))}
-      {a.text && <Markdown text={a.text} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
-      {a.fields && a.fields.length > 0 && (
-        <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
-          {a.fields.map((f, i) => (
-            <div key={i} className={f.short ? '' : 'col-span-2'}>
-              {f.title && (
-                <div className="text-xs font-semibold">
-                  <Markdown text={f.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
-                </div>
-              )}
-              {f.value && <Markdown text={f.value} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
-            </div>
-          ))}
+    <>
+      {a.pretext && (
+        <div className="mt-1">
+          <Markdown text={a.pretext} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
         </div>
       )}
-      {a.footer && <div className="mt-0.5 text-xs text-fg-muted">{a.footer}</div>}
-    </div>
+      <div className="my-[5px] max-w-full overflow-hidden rounded-r border-y border-r border-line">
+        <div className="border-l-4 p-3" style={{ borderColor: barColor(a.color) }}>
+          {a.author_name && <div className="text-xs font-medium text-fg-muted">{a.author_name}</div>}
+          {a.title &&
+            (a.title_link ? (
+              <a href={a.title_link} className="font-semibold text-accent hover:underline" onClick={(e) => { e.preventDefault(); onLink(a.title_link!) }}>
+                {a.title}
+              </a>
+            ) : (
+              <div className="font-semibold">
+                <Markdown text={a.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
+              </div>
+            ))}
+          {a.text && <Markdown text={a.text} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
+          {a.fields && a.fields.length > 0 && (
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
+              {a.fields.map((f, i) => (
+                <div key={i} className={f.short ? '' : 'col-span-2'}>
+                  {f.title && (
+                    <div className="text-xs font-semibold">
+                      <Markdown text={f.title} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
+                    </div>
+                  )}
+                  {f.value && <Markdown text={f.value} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />}
+                </div>
+              ))}
+            </div>
+          )}
+          {a.footer && <div className="mt-0.5 text-xs text-fg-muted">{a.footer}</div>}
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -290,7 +308,10 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
       </div>
       <div className="min-w-0 flex-1">
         {head && (
-          <header className="flex items-baseline gap-2">
+          // mb-0.5 (2px): official's .post__header margin-bottom — the
+          // density brief's "more space between header and content"
+          // (density-brief 2026-09-29).
+          <header className="mb-0.5 flex items-baseline gap-2">
             <span className="font-semibold" title={post.real_author}>
               {post.author}
             </span>

@@ -216,20 +216,24 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           {t('thread.rootDeleted')}
         </div>
       )}
-      <Composer
-        key={`composer-${thread.channel_id}-${thread.root_id}`}
-        channelId={thread.channel_id}
-        channelName={thread.channel_name}
-        draft={thread.draft}
-        rootId={thread.root_id}
-        disabled={thread.root_deleted}
-        serverId={server.id}
-        attachments={threadAttachments}
-        emojiInfo={() => emojiInfo(server.id)}
-        onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
-        onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
-        onEditLast={() => editLastOwn(thread)}
-      />
+      {/* pt-2: feed↔composer gap (density-brief 2026-09-29) — see
+          ChannelPane.tsx for why it lives in the pane wrapper. */}
+      <div className="pt-2">
+        <Composer
+          key={`composer-${thread.channel_id}-${thread.root_id}`}
+          channelId={thread.channel_id}
+          channelName={thread.channel_name}
+          draft={thread.draft}
+          rootId={thread.root_id}
+          disabled={thread.root_deleted}
+          serverId={server.id}
+          attachments={threadAttachments}
+          emojiInfo={() => emojiInfo(server.id)}
+          onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
+          onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
+          onEditLast={() => editLastOwn(thread)}
+        />
+      </div>
       {viewer && viewer.rootId === thread.root_id && (
         <Viewer
           serverId={server.id}

@@ -166,18 +166,24 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         </div>
       )}
       <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} toastHost={TOAST_HOST.channel} />
-      <Composer
-        key={`composer-${channel.id}`}
-        channelId={channel.id}
-        channelName={channel.name}
-        draft={channel.draft}
-        serverId={server.id}
-        attachments={attachments}
-        emojiInfo={() => emojiInfo(server.id)}
-        onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
-        onDraft={(text) => saveDraft(server.id, channel.id, text)}
-        onEditLast={() => editLastOwn(channel)}
-      />
+      {/* pt-2: feed↔composer gap (density-brief 2026-09-29) — the official
+          client leaves visible air above the input box; kept here in the
+          pane wrapper rather than in Feed.tsx/Composer.tsx, both under
+          active edit by the composer-fix-round-2 agent. */}
+      <div className="pt-2">
+        <Composer
+          key={`composer-${channel.id}`}
+          channelId={channel.id}
+          channelName={channel.name}
+          draft={channel.draft}
+          serverId={server.id}
+          attachments={attachments}
+          emojiInfo={() => emojiInfo(server.id)}
+          onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
+          onDraft={(text) => saveDraft(server.id, channel.id, text)}
+          onEditLast={() => editLastOwn(channel)}
+        />
+      </div>
       {viewer && viewer.channelId === channel.id && (
         <Viewer
           serverId={server.id}

@@ -247,16 +247,17 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		}))
 		tm.HandleFunc("POST /api/_test/fake/webhook", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
-				ChannelID         string `json:"channel_id"`
-				Username          string `json:"username"` // the webhook's owner
-				Message           string `json:"message"`
-				OverrideUsername  string `json:"override_username"`
-				OverrideIconURL   string `json:"override_icon_url"`
-				OverrideIconEmoji string `json:"override_icon_emoji"`
+				ChannelID         string             `json:"channel_id"`
+				Username          string             `json:"username"` // the webhook's owner
+				Message           string             `json:"message"`
+				OverrideUsername  string             `json:"override_username"`
+				OverrideIconURL   string             `json:"override_icon_url"`
+				OverrideIconEmoji string             `json:"override_icon_emoji"`
+				Attachments       []model.Attachment `json:"attachments"` // density-brief 2026-09-29 screenshot fixture: a webhook post with message_attachments
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			p := fake.WebhookPostAs(in.ChannelID, in.Username, in.Message, model.PostProps{OverrideUsername: model.FlexString(in.OverrideUsername),
-				OverrideIconURL: in.OverrideIconURL, OverrideIconEmoji: in.OverrideIconEmoji})
+				OverrideIconURL: in.OverrideIconURL, OverrideIconEmoji: in.OverrideIconEmoji, Attachments: in.Attachments})
 			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
 		}))
 		tm.HandleFunc("POST /api/_test/fake/thread", withFake(func(w http.ResponseWriter, r *http.Request) {
