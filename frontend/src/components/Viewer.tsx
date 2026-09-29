@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { DownloadButton } from './DownloadButton'
 import { FileCard } from './FileCard'
+import { TOAST_HOST, useToastHost } from './Toast'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
 import { IconChevronLeft, IconChevronRight, IconClose } from './icons'
@@ -33,6 +34,10 @@ interface Props {
 // files (wrapping), focus starts on Close and returns to where it was.
 export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, onDownload, onOpen }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  // The viewer is a fixed z-50 modal: while open it hosts the toast
+  // (Toast.tsx), or a failed Download here would sit unseen under it.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useToastHost(dialogRef, TOAST_HOST.viewer, 'viewer')
   // The media endpoint can 404/413/415 an image that looked fine in the
   // feed (e.g. it changed on the server); track failures by file id (all of
   // them, for the life of the viewer) so a fallback survives ←/→ back to a
@@ -145,7 +150,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
     return v
   }
   return (
-    <div role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
         <span className="min-w-0 truncate font-medium">{file.name}</span>
         <span className="shrink-0 text-xs text-fg-muted">{formatSize(file.size)}</span>

@@ -4,6 +4,8 @@ import { vi } from 'vitest'
 import type { FileView } from '../api/types'
 import { client } from '../api/client'
 import { setLocale } from '../i18n'
+import { useStore } from '../store'
+import { Toast } from './Toast'
 import { Viewer } from './Viewer'
 
 // PdfView pulls in the real pdfjs-dist chunk; Viewer.tsx only needs to prove
@@ -447,4 +449,20 @@ test('pdf: a load failure falls back to a card, still with no iframe/embed/objec
   expect(container.querySelector('iframe')).toBeNull()
   expect(container.querySelector('embed')).toBeNull()
   expect(container.querySelector('object')).toBeNull()
+})
+
+// Review R1 (stick/download fix round 2): the viewer is a fixed z-50 modal,
+// so a toast hosted by a feed sat under it — a failed Download in the
+// viewer header was never seen. While open, the viewer hosts the toast.
+test('a toast shows inside the open viewer, above everything under it', () => {
+  const { unmount } = render(
+    <>
+      <Viewer serverId={1} files={[img, log]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />
+      <Toast />
+    </>,
+  )
+  act(() => useStore.getState().showToast('Could not download build.png: boom'))
+  expect(screen.getByRole('dialog', { name: 'File viewer' })).toContainElement(screen.getByText(/Could not download build\.png/))
+  unmount()
+  useStore.setState({ toast: null })
 })

@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
@@ -8,6 +8,7 @@ import { buildRows, type FeedVariant, type Row } from './feedRows'
 import { IconArrowDown } from './icons'
 import { PostItem, type PostActions } from './PostItem'
 import { ScrollShift } from './scrollShift'
+import { useToastHost } from './Toast'
 
 // FeedData: what Feed needs from a channel or a thread (ChannelDTO and
 // ThreadDTO both have this shape — see AGENTS.md/Task 6 brief). new_since/
@@ -24,9 +25,10 @@ interface Props {
   actions: PostActions
   editingId: string | null
   onLoadOlder(): Promise<boolean>
-  // overlay: floats over the feed's visible box, like the jump-to-latest
-  // button (the pane's toast — Toast.tsx).
-  overlay?: ReactNode
+  // toastHost: this feed's priority as a toast host (Toast.tsx's
+  // TOAST_HOST) — the toast then floats over the feed's visible box, like the
+  // jump-to-latest button. Without it the feed hosts no toast.
+  toastHost?: number
 }
 
 const NEAR_TOP = 300
@@ -95,7 +97,7 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, overlay }: Props) {
+export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, toastHost }: Props) {
   const rows = useMemo(() => buildRows(data, variant), [data, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
@@ -602,7 +604,15 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
           </span>
         )}
       </button>
-      {overlay}
+      {toastHost !== undefined && <ToastHost priority={toastHost} />}
     </div>
   )
+}
+
+// ToastHost: the feed's toast host — a box over the feed's visible area
+// that takes no pointer events itself.
+function ToastHost({ priority }: { priority: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useToastHost(ref, priority, 'feed')
+  return <div ref={ref} data-toast-host="feed" className="pointer-events-none absolute inset-0" />
 }

@@ -269,3 +269,48 @@ test('several file cards on the last post: a download changes no card\'s size an
   expect(o.distance, JSON.stringify(o)).toBeLessThan(2)
   await removeServerFromMenu(page)
 })
+
+// Review R1 (fix round 2): the viewer is a fixed z-50 modal; a toast hosted
+// by the feed sat under it, so a failed Download in the viewer header was
+// never seen. While open, the viewer hosts the toast.
+test('a failed Download in the file viewer shows its toast over the viewer', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+  await expect(page.getByRole('heading', { name: /Off-Topic/ })).toBeVisible()
+  await feed(page).getByRole('button', { name: 'View build.png' }).click()
+  const viewer = page.getByRole('dialog', { name: 'File viewer' })
+  await expect(viewer.getByRole('img', { name: 'build.png' })).toBeVisible()
+  await viewer.getByRole('button', { name: 'Download', exact: true }).click()
+  const reveal = viewer.getByRole('button', { name: 'Show in folder' })
+  await expect(reveal).toBeVisible()
+  await reveal.click()
+  let saved = ''
+  await expect
+    .poll(async () => (saved = ((await testGet(page, 'revealed-files')) as string[]).find((p) => p.endsWith('build.png')) ?? ''))
+    .not.toBe('')
+  const dir = dirname(saved)
+  rmSync(saved) // Go would hand the copy saved this session back without fetching
+  chmodSync(dir, 0o500)
+  try {
+    await viewer.getByRole('button', { name: 'Download', exact: true }).click()
+    const toast = viewer.getByTestId('toast-region')
+    await expect(toast).toContainText('Could not download build.png')
+    await expect(page.getByTestId('toast-region')).toHaveCount(1) // one live region
+    // really on top: the topmost element at the toast's centre is the toast
+    const onTop = await toast.locator('[data-tone]').evaluate((el) => {
+      const b = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2))
+    })
+    expect(onTop).toBe(true)
+    if (shots) await page.screenshot({ path: `${shots}/stick-viewer-toast.png` })
+    await toast.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(toast).toBeEmpty()
+    await expect(viewer).toBeVisible() // dismissing the toast does not close the viewer
+  } finally {
+    chmodSync(dir, 0o700)
+  }
+  await page.keyboard.press('Escape')
+  await expect(viewer).toHaveCount(0)
+  await removeServerFromMenu(page)
+})

@@ -16,7 +16,7 @@ import { Feed } from './Feed'
 import { fileKind } from './files'
 import { ChannelTypeMarker, IconDownload } from './icons'
 import type { PostActions } from './PostItem'
-import { Toast } from './Toast'
+import { TOAST_HOST } from './Toast'
 import { Viewer } from './Viewer'
 
 export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; channel: ChannelDTO | null; onReauth(): void }) {
@@ -26,7 +26,6 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloads = useStore((s) => s.downloads)
   const downloadsOpen = useStore((s) => s.downloadsOpen)
   const attachments = useStore((s) => s.attachments)
-  const threadOpen = useStore((s) => s.thread !== null) // the toast floats over the rightmost feed (Toast.tsx)
   const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
   const downloadsLabel = activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
@@ -154,7 +153,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           {t('channel.syncing')}
         </div>
       )}
-      <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} overlay={threadOpen ? null : <Toast />} />
+      <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} toastHost={TOAST_HOST.channel} />
       <Composer
         key={`composer-${channel.id}`}
         channelId={channel.id}

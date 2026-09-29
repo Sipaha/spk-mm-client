@@ -14,7 +14,7 @@ import { Feed, type FeedData } from './Feed'
 import { fileKind } from './files'
 import { IconChevronLeft, IconClose } from './icons'
 import type { PostActions } from './PostItem'
-import { Toast } from './Toast'
+import { TOAST_HOST } from './Toast'
 import { Viewer } from './Viewer'
 
 interface Props {
@@ -209,7 +209,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         actions={actions}
         editingId={editingId}
         onLoadOlder={() => loadOlderReplies(server.id, thread.root_id)}
-        overlay={<Toast />}
+        toastHost={TOAST_HOST.thread}
       />
       {thread.root_deleted && (
         <div role="status" className="border-t border-line bg-panel px-3 py-1.5 text-xs text-fg-muted">

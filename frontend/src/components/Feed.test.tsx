@@ -4,6 +4,7 @@ import { vi } from 'vitest'
 import type { ChannelDTO, PostView } from '../api/types'
 import { setLocale } from '../i18n'
 import { anchorNudge, Feed, pickAnchor } from './Feed'
+import { Toast, TOAST_HOST } from './Toast'
 
 // jsdom has no layout: give the scroller and rows sizes so the virtualizer renders.
 const saved = {
@@ -635,11 +636,16 @@ test('before the first rows (still loading) a resize writes nothing', () => {
   }
 })
 
-test('the overlay (the pane\'s toast) floats in the feed\'s box, not inside the scrolling content', () => {
-  render(<Feed {...props()} overlay={<div data-testid="ov" />} />)
-  const ov = screen.getByTestId('ov')
-  expect(screen.getByRole('log')).not.toContainElement(ov)
-  expect(ov.parentElement).toBe(screen.getByRole('log').parentElement)
+test('a feed given a toast-host priority hosts the toast in its box, not inside the scrolling content', () => {
+  render(
+    <>
+      <Feed {...props()} toastHost={TOAST_HOST.channel} />
+      <Toast />
+    </>,
+  )
+  const region = screen.getByTestId('toast-region')
+  expect(screen.getByRole('log')).not.toContainElement(region)
+  expect(screen.getByRole('log').parentElement).toContainElement(region)
 })
 
 // The scroll event of our own pin arrives a frame later, measured against a
