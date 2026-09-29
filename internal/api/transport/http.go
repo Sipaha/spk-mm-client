@@ -138,6 +138,14 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return nil, h.api.SetThreadWidth(ctx, r.Width)
 	}))
+	h.mux.HandleFunc("POST /api/GetFormattingBarHidden", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.GetFormattingBarHidden(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/SetFormattingBarHidden", handle(func(ctx context.Context, r *struct {
+		Hidden bool `json:"hidden"`
+	}) (any, error) {
+		return nil, h.api.SetFormattingBarHidden(ctx, r.Hidden)
+	}))
 	h.mux.HandleFunc("POST /api/SelectServer", handle(func(ctx context.Context, r *idReq) (any, error) {
 		return nil, h.api.SelectServer(ctx, r.ID)
 	}))

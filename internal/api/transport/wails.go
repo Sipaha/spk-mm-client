@@ -35,6 +35,12 @@ func (w *API) SetSidebarWidth(width int) error {
 func (w *API) SetThreadWidth(width int) error {
 	return w.a.SetThreadWidth(context.Background(), width)
 }
+func (w *API) GetFormattingBarHidden() (bool, error) {
+	return w.a.GetFormattingBarHidden(context.Background())
+}
+func (w *API) SetFormattingBarHidden(hidden bool) error {
+	return w.a.SetFormattingBarHidden(context.Background(), hidden)
+}
 func (w *API) SelectServer(id int64) error   { return w.a.SelectServer(context.Background(), id) }
 func (w *API) SetFocused(focused bool) error { return w.a.SetFocused(context.Background(), focused) }
 func (w *API) NetworkChanged() error         { return w.a.NetworkChanged(context.Background()) }

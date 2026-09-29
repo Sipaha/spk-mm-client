@@ -207,6 +207,20 @@ const ru = {
   'downloads.savedAt': '{size} · {time}',
   'layout.resizeSidebar': 'Изменить ширину боковой панели',
   'layout.resizeThread': 'Изменить ширину панели треда',
+  'composer.bold': 'Жирный (Ctrl+B)',
+  'composer.italic': 'Курсив (Ctrl+I)',
+  'composer.strike': 'Зачёркнутый',
+  'composer.heading': 'Заголовок',
+  'composer.linkFormat': 'Ссылка (Ctrl+Alt+K)',
+  'composer.code': 'Код',
+  'composer.quote': 'Цитата',
+  'composer.bulletList': 'Маркированный список',
+  'composer.numberedList': 'Нумерованный список',
+  'composer.formatShow': 'Показать панель форматирования',
+  'composer.formatHide': 'Скрыть панель форматирования',
+  'composer.formatToolbar': 'Панель форматирования',
+  'composer.emoji': 'Эмодзи',
+  'composer.send': 'Отправить сообщение',
 } as const
 
 type Key = keyof typeof ru
@@ -417,6 +431,20 @@ const en: Record<Key, string> = {
   'downloads.savedAt': '{size} · {time}',
   'layout.resizeSidebar': 'Resize sidebar',
   'layout.resizeThread': 'Resize thread panel',
+  'composer.bold': 'Bold (Ctrl+B)',
+  'composer.italic': 'Italic (Ctrl+I)',
+  'composer.strike': 'Strikethrough',
+  'composer.heading': 'Heading',
+  'composer.linkFormat': 'Link (Ctrl+Alt+K)',
+  'composer.code': 'Code',
+  'composer.quote': 'Quote',
+  'composer.bulletList': 'Bulleted list',
+  'composer.numberedList': 'Numbered list',
+  'composer.formatShow': 'Show formatting',
+  'composer.formatHide': 'Hide formatting',
+  'composer.formatToolbar': 'Formatting toolbar',
+  'composer.emoji': 'Emoji',
+  'composer.send': 'Send message',
 }
 
 export const dict = { ru, en }

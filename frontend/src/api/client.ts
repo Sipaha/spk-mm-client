@@ -35,6 +35,10 @@ export interface Client {
   setSidebarWidth(width: number): Promise<void>
   /** setSidebarWidth's counterpart for the thread panel's splitter. */
   setThreadWidth(width: number): Promise<void>
+  /** The composer's Aa toggle (false: never saved -- shown by default). App-wide. */
+  getFormattingBarHidden(): Promise<boolean>
+  /** Persists the composer's Aa toggle. */
+  setFormattingBarHidden(hidden: boolean): Promise<void>
   selectServer(id: number): Promise<void>
   setFocused(focused: boolean): Promise<void>
   networkChanged(): Promise<void>
@@ -137,6 +141,8 @@ export const httpClient: Client = {
   getLayout: () => post('GetLayout', {}),
   setSidebarWidth: (width) => done(post('SetSidebarWidth', { width })),
   setThreadWidth: (width) => done(post('SetThreadWidth', { width })),
+  getFormattingBarHidden: () => post('GetFormattingBarHidden', {}),
+  setFormattingBarHidden: (hidden) => done(post('SetFormattingBarHidden', { hidden })),
   selectServer: (id) => done(post('SelectServer', { id })),
   setFocused: (focused) => done(post('SetFocused', { focused })),
   networkChanged: () => done(post('NetworkChanged', {})),
@@ -249,6 +255,8 @@ export const wailsClient: Client = {
   getLayout: () => wcall('GetLayout'),
   setSidebarWidth: (width) => wcall('SetSidebarWidth', width),
   setThreadWidth: (width) => wcall('SetThreadWidth', width),
+  getFormattingBarHidden: () => wcall('GetFormattingBarHidden'),
+  setFormattingBarHidden: (hidden) => wcall('SetFormattingBarHidden', hidden),
   selectServer: (id) => wcall('SelectServer', id),
   setFocused: (focused) => wcall('SetFocused', focused),
   networkChanged: () => wcall('NetworkChanged'),

@@ -160,6 +160,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         draft={channel.draft}
         serverId={server.id}
         attachments={attachments}
+        emojiInfo={() => emojiInfo(server.id)}
         onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
         onDraft={(text) => saveDraft(server.id, channel.id, text)}
         onEditLast={() => editLastOwn(channel)}

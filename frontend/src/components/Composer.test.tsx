@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
@@ -9,7 +9,15 @@ import { Composer } from './Composer'
 
 vi.mock('../api/client', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api/client')>()
-  return { ...real, isDesktop: vi.fn(() => false) }
+  return {
+    ...real,
+    isDesktop: vi.fn(() => false),
+    client: {
+      ...real.client,
+      getFormattingBarHidden: vi.fn().mockResolvedValue(false),
+      setFormattingBarHidden: vi.fn().mockResolvedValue(undefined),
+    },
+  }
 })
 vi.mock('../chat', () => ({
   pickAttachments: vi.fn(),
@@ -19,7 +27,7 @@ vi.mock('../chat', () => ({
   retryAttachment: vi.fn(),
 }))
 
-const { isDesktop } = await import('../api/client')
+const { isDesktop, client } = await import('../api/client')
 const { attachFromClipboard, pickAttachments, removeAttachment, retryAttachment, uploadAttachments } = await import('../chat')
 
 const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
@@ -56,7 +64,12 @@ beforeEach(() => {
   vi.mocked(uploadAttachments).mockReset()
   vi.mocked(removeAttachment).mockReset()
   vi.mocked(retryAttachment).mockReset()
-  useStore.setState({ attachError: null, threadAttachError: null })
+  vi.mocked(client.getFormattingBarHidden).mockReset().mockResolvedValue(false)
+  vi.mocked(client.setFormattingBarHidden).mockReset().mockResolvedValue(undefined)
+  // formattingBarLoaded: true skips Composer's one-time fetch effect so
+  // tests are deterministic without waiting on it — see composer_prefs's
+  // toggle tests below for direct coverage of that fetch/persist path.
+  useStore.setState({ attachError: null, threadAttachError: null, formattingBarHidden: false, formattingBarLoaded: true })
 })
 afterEach(() => vi.useRealTimers())
 
@@ -318,4 +331,112 @@ test('disabled: the textarea and attach button are disabled, and Enter sends not
   expect(screen.getByRole('button', { name: 'Attach files' })).toBeDisabled()
   fireEvent.keyDown(box, { key: 'Enter' })
   expect(onSend).not.toHaveBeenCalled()
+})
+
+// Composer brief 2026-09-29: formatting toolbar, Aa toggle, emoji insert,
+// send-button states.
+
+function select(box: HTMLTextAreaElement, start: number, end: number) {
+  fireEvent.select(box, {})
+  box.setSelectionRange(start, end)
+}
+
+test('the formatting toolbar renders bold/italic/strike/heading/link/code/quote/list buttons by default', () => {
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  const toolbar = screen.getByRole('toolbar', { name: 'Formatting toolbar' })
+  for (const name of ['Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Strikethrough', 'Heading', 'Link (Ctrl+Alt+K)', 'Code', 'Quote', 'Bulleted list', 'Numbered list']) {
+    expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument()
+  }
+})
+
+test('clicking Bold wraps the current selection with **, and toggles it off when clicked again', async () => {
+  const user = userEvent.setup()
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+  await user.type(box, 'hello world')
+  select(box, 6, 11) // "world"
+  await user.click(screen.getByRole('button', { name: 'Bold (Ctrl+B)' }))
+  expect(box).toHaveValue('hello **world**')
+  select(box, 8, 13) // the now-bolded "world", between the ** markers
+  await user.click(screen.getByRole('button', { name: 'Bold (Ctrl+B)' }))
+  expect(box).toHaveValue('hello world')
+})
+
+test('Ctrl+B/Ctrl+I/Ctrl+Alt+K apply bold/italic/link from the keyboard (physical key, works on any layout)', async () => {
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+  fireEvent.change(box, { target: { value: 'word' } })
+  select(box, 0, 4)
+  fireEvent.keyDown(box, { code: 'KeyB', ctrlKey: true })
+  expect(box).toHaveValue('**word**')
+  fireEvent.change(box, { target: { value: 'word' } })
+  select(box, 0, 4)
+  fireEvent.keyDown(box, { code: 'KeyI', ctrlKey: true })
+  expect(box).toHaveValue('*word*')
+  fireEvent.change(box, { target: { value: '' } })
+  select(box, 0, 0)
+  fireEvent.keyDown(box, { code: 'KeyK', ctrlKey: true, altKey: true })
+  expect(box).toHaveValue('[text](url)')
+})
+
+test('Aa hides the formatting buttons, persists the choice, and shows them again', async () => {
+  const user = userEvent.setup()
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  expect(screen.getByRole('button', { name: 'Bold (Ctrl+B)' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Hide formatting' }))
+  expect(screen.queryByRole('button', { name: 'Bold (Ctrl+B)' })).toBeNull()
+  expect(client.setFormattingBarHidden).toHaveBeenCalledWith(true)
+  expect(useStore.getState().formattingBarHidden).toBe(true)
+  await user.click(screen.getByRole('button', { name: 'Show formatting' }))
+  expect(screen.getByRole('button', { name: 'Bold (Ctrl+B)' })).toBeInTheDocument()
+  expect(client.setFormattingBarHidden).toHaveBeenCalledWith(false)
+})
+
+test('a fresh app session reads the saved Aa state once', async () => {
+  useStore.setState({ formattingBarHidden: false, formattingBarLoaded: false })
+  vi.mocked(client.getFormattingBarHidden).mockResolvedValue(true)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Bold (Ctrl+B)' })).toBeNull())
+  expect(client.getFormattingBarHidden).toHaveBeenCalled()
+})
+
+test('the send button is dim/disabled when empty, active once there is text or an attachment, and sends on click', async () => {
+  const user = userEvent.setup()
+  const onSend = vi.fn().mockResolvedValue(undefined)
+  const { rerender } = render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  const sendBtn = screen.getByRole('button', { name: 'Send message' })
+  expect(sendBtn).toBeDisabled()
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  await user.type(box, 'hi')
+  expect(sendBtn).toBeEnabled()
+  await user.click(sendBtn)
+  expect(onSend).toHaveBeenCalledWith('hi', [])
+
+  rerender(<Composer {...cf(channel())} serverId={1} attachments={[av({ id: 'a1' })]} onSend={onSend} onDraft={() => {}} onEditLast={() => {}} />)
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+})
+
+test('the emoji button opens the picker, and picking one inserts :name: at the caret and refocuses the textarea', async () => {
+  const user = userEvent.setup()
+  const info = { recent: [], custom: [], custom_enabled: false }
+  const emojiInfo = vi.fn().mockResolvedValue(info)
+  render(<Composer {...cf(channel())} serverId={1} attachments={[]} emojiInfo={emojiInfo} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+  const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+  await user.type(box, 'say hi')
+  await user.click(screen.getByRole('button', { name: 'Emoji' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Emoji picker' })
+  await user.type(within(dialog).getByRole('textbox', { name: 'Search emoji' }), 'grinning')
+  await user.keyboard('{ArrowDown}{Enter}')
+  expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).toBeNull()
+  expect(box.value).toContain(':grinning:')
+  expect(box).toHaveFocus()
+})
+
+// Task 6/brief parity: the thread (reply) composer gets the same toolbar.
+test('a reply composer (rootId set) also has the formatting toolbar', () => {
+  render(
+    <Composer {...cf(channel())} rootId="root1" serverId={3} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />,
+  )
+  expect(screen.getByRole('button', { name: 'Bold (Ctrl+B)' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument()
 })

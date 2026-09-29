@@ -1,14 +1,75 @@
-import { useEffect, useRef, useState } from 'react'
-import { ApiError, isDesktop } from '../api/client'
-import type { AttachmentView } from '../api/types'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ApiError, client, isDesktop } from '../api/client'
+import type { AttachmentView, EmojiDTO } from '../api/types'
 import { attachFromClipboard, pickAttachments, removeAttachment, retryAttachment, uploadAttachments } from '../chat'
+import type { MarkdownMode } from '../composerFormatting'
+import { applyMarkdown, insertAtCaret, replaceTextareaValue } from '../composerFormatting'
 import { errorMessage } from '../errors'
 import { t } from '../i18n'
+import { isShortcut } from '../keyboard'
 import { useStore } from '../store'
 import { AttachmentsTray } from './AttachmentsTray'
-import { IconAttach } from './icons'
+import { IconBold, IconCode, IconHeading, IconItalic, IconListBulleted, IconListNumbered, IconMood, IconQuote, IconSend, IconStrikethrough } from './composerIcons'
+import { IconAttach, IconLink } from './icons'
+
+const EmojiPicker = lazy(() => import('./EmojiPicker'))
 
 const DRAFT_DELAY = 500
+
+// PANE_HEIGHT_RATIO: the textarea auto-grows up to this share of the pane
+// (its own parent's) height, then scrolls internally — brief's "~40% of
+// the pane height". MIN_MAX_HEIGHT keeps that floor sane before the
+// ResizeObserver has measured anything (or in a very short pane).
+const PANE_HEIGHT_RATIO = 0.4
+const MIN_MAX_HEIGHT = 88
+
+// formattingBarFetchStarted: a module-level guard, not per-instance state —
+// the channel composer and the thread composer can be mounted at the same
+// time and would otherwise both fire GetFormattingBarHidden on their first
+// render. The Aa toggle is app-wide (one ui_prefs row), so one fetch is enough.
+let formattingBarFetchStarted = false
+
+// FORMAT_BUTTONS: left group of the toolbar, brief's exact order and
+// grouping ("B, I, S, H | link, code, quote | bulleted, numbered").
+// groupBreak marks a button that starts a new group (a separator goes
+// before it).
+const FORMAT_BUTTONS: { mode: MarkdownMode; label: Parameters<typeof t>[0]; Icon: typeof IconBold; groupBreak?: boolean }[] = [
+  { mode: 'bold', label: 'composer.bold', Icon: IconBold },
+  { mode: 'italic', label: 'composer.italic', Icon: IconItalic },
+  { mode: 'strike', label: 'composer.strike', Icon: IconStrikethrough },
+  { mode: 'heading', label: 'composer.heading', Icon: IconHeading },
+  { mode: 'link', label: 'composer.linkFormat', Icon: IconLink, groupBreak: true },
+  { mode: 'code', label: 'composer.code', Icon: IconCode },
+  { mode: 'quote', label: 'composer.quote', Icon: IconQuote },
+  { mode: 'ul', label: 'composer.bulletList', Icon: IconListBulleted, groupBreak: true },
+  { mode: 'ol', label: 'composer.numberedList', Icon: IconListNumbered },
+]
+
+function ToolbarButton({
+  label, onClick, children, pressed, disabled, className = 'text-fg-muted',
+}: {
+  label: string
+  onClick(e: React.MouseEvent<HTMLButtonElement>): void
+  children: React.ReactNode
+  pressed?: boolean
+  disabled?: boolean
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-50 disabled:hover:bg-transparent ${pressed ? 'bg-hover text-fg' : className}`}
+    >
+      {children}
+    </button>
+  )
+}
 
 interface Props {
   channelId: string
@@ -23,14 +84,23 @@ interface Props {
   disabled?: boolean
   serverId: number
   attachments: AttachmentView[]
+  // emojiInfo: optional so the many pre-existing Composer tests that don't
+  // exercise the emoji picker need no changes — ChannelPane/ThreadPane
+  // always pass the real one.
+  emojiInfo?(): Promise<EmojiDTO>
   onSend(message: string, attachmentIds: string[]): Promise<void>
   onDraft(text: string): void
   onEditLast(): void
 }
 
+const emptyEmojiInfo = (): Promise<EmojiDTO> => Promise.resolve({ recent: [], custom: [], custom_enabled: false })
+
 // Composer must be keyed by (channel, root): its draft belongs to one
 // channel's or one thread's composer.
-export function Composer({ channelId, channelName, draft, rootId = '', disabled = false, serverId, attachments, onSend, onDraft, onEditLast }: Props) {
+export function Composer({
+  channelId, channelName, draft, rootId = '', disabled = false, serverId, attachments,
+  emojiInfo = emptyEmojiInfo, onSend, onDraft, onEditLast,
+}: Props) {
   const [text, setText] = useState(draft)
   const [error, setError] = useState<string | null>(null)
   const attachError = useStore((s) => (rootId ? s.threadAttachError : s.attachError))
@@ -39,11 +109,60 @@ export function Composer({ channelId, channelName, draft, rootId = '', disabled 
     if (rootId) s.setThreadAttachError(msg)
     else s.setAttachError(msg)
   }
+  const formattingBarHidden = useStore((s) => s.formattingBarHidden)
+  const formattingBarLoaded = useStore((s) => s.formattingBarLoaded)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const boxRef = useRef<HTMLDivElement>(null)
   const latest = useRef(draft)
   const saved = useRef(draft)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // The Aa toggle is app-wide (one ui_prefs row) — fetched once per app
+  // session, not once per composer instance (see formattingBarFetchStarted).
+  useEffect(() => {
+    if (formattingBarLoaded || formattingBarFetchStarted) return
+    formattingBarFetchStarted = true
+    client.getFormattingBarHidden().then(
+      (hidden) => useStore.getState().setFormattingBarHidden(hidden),
+      () => useStore.getState().setFormattingBarHidden(false),
+    )
+  }, [formattingBarLoaded])
+
+  const toggleFormattingBar = () => {
+    const next = !formattingBarHidden
+    useStore.getState().setFormattingBarHidden(next)
+    void client.setFormattingBarHidden(next).catch(() => {})
+  }
+
+  // maxTextareaHeight: ~40% of the pane's height (the composer's own
+  // parent — ChannelPane's/ThreadPane's flex column, whose height does not
+  // itself change as the composer grows). typeof ResizeObserver check:
+  // jsdom has none (Feed.tsx uses the same guard) — tests fall back to no
+  // cap, which is harmless (no real layout to measure there anyway).
+  const [maxTextareaHeight, setMaxTextareaHeight] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    const pane = boxRef.current?.parentElement
+    if (!pane || typeof ResizeObserver === 'undefined') return
+    const update = () => setMaxTextareaHeight(Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * PANE_HEIGHT_RATIO)))
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(pane)
+    return () => ro.disconnect()
+  }, [])
+
+  // Auto-grow: measure the real content height and apply it up to the cap,
+  // then let overflow-y-auto scroll. jsdom never computes layout
+  // (scrollHeight is always 0 there, same gotcha as Feed.test.tsx) — left
+  // at its CSS default height in tests, which is fine since nothing there
+  // asserts on pixel height.
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el || el.scrollHeight === 0) return
+    el.style.height = 'auto'
+    const next = maxTextareaHeight ? Math.min(el.scrollHeight, maxTextareaHeight) : el.scrollHeight
+    el.style.height = `${next}px`
+  }, [text, maxTextareaHeight])
 
   const flush = () => {
     clearTimeout(timer.current)
@@ -78,6 +197,8 @@ export function Composer({ channelId, channelName, draft, rootId = '', disabled 
     timer.current = setTimeout(flush, DRAFT_DELAY)
   }
 
+  const canSend = text.trim().length > 0 || attachments.length > 0
+
   const send = async () => {
     if (disabled) return
     const msg = text
@@ -108,13 +229,44 @@ export function Composer({ channelId, channelName, draft, rootId = '', disabled 
     }
   }
 
+  // runFormat: applies a formatting button/shortcut to the current
+  // selection through the real textarea (see composerFormatting.ts) — its
+  // 'input' event drives `change` the same way typing does, so the draft
+  // debounce and React state stay in sync without a separate setText call.
+  const runFormat = (mode: MarkdownMode) => {
+    if (disabled) return
+    const el = textareaRef.current
+    if (!el) return
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? el.value.length
+    const result = applyMarkdown(mode, el.value, start, end)
+    replaceTextareaValue(el, result.message, result.selectionStart, result.selectionEnd)
+  }
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       void send()
-    } else if (e.key === 'ArrowUp' && text === '') {
+      return
+    }
+    if (e.key === 'ArrowUp' && text === '') {
       e.preventDefault()
       onEditLast()
+      return
+    }
+    if (disabled) return
+    // Shortcuts match the webapp (physical key, so they work on a Russian
+    // layout too — see keyboard.ts): Ctrl+B bold, Ctrl+I italic,
+    // Ctrl+Alt+K link.
+    if (isShortcut(e.nativeEvent, 'KeyB', { ctrl: true }) && !e.altKey) {
+      e.preventDefault()
+      runFormat('bold')
+    } else if (isShortcut(e.nativeEvent, 'KeyI', { ctrl: true }) && !e.altKey) {
+      e.preventDefault()
+      runFormat('italic')
+    } else if (isShortcut(e.nativeEvent, 'KeyK', { ctrl: true }) && e.altKey) {
+      e.preventDefault()
+      runFormat('link')
     }
   }
 
@@ -180,8 +332,30 @@ export function Composer({ channelId, channelName, draft, rootId = '', disabled 
     }
   }
 
+  // Emoji picker: anchored to the 🙂 button, reusing the same component and
+  // recent/quick-emoji data as the post toolbar (PostItem.tsx) — see
+  // EmojiPicker.tsx. Every close path (pick, Escape, outside click) returns
+  // focus to the textarea (brief: "Esc returns focus to the textarea").
+  const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
+  const openPicker = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (disabled) return
+    setPicker({ anchor: e.currentTarget.getBoundingClientRect(), info: null })
+    emojiInfo().then(
+      (info) => setPicker((p) => (p ? { ...p, info } : p)),
+      () => {},
+    )
+  }
+  const closePicker = () => {
+    setPicker(null)
+    textareaRef.current?.focus()
+  }
+  const pickEmoji = (name: string) => {
+    closePicker()
+    if (textareaRef.current) insertAtCaret(textareaRef.current, `:${name}: `)
+  }
+
   return (
-    <div className="border-t border-line bg-panel px-4 py-3">
+    <div className="border-t border-line bg-panel px-3 py-2">
       {error && (
         <p role="alert" className="pb-1 text-xs text-danger">
           {error}
@@ -199,32 +373,74 @@ export function Composer({ channelId, channelName, draft, rootId = '', disabled 
         onRetry={(id) => retryAttachment(serverId, id)}
         onFocusTextarea={() => textareaRef.current?.focus()}
       />
-      <div className="flex items-end gap-2">
-        <button
-          type="button"
-          aria-label={t('composer.attach')}
-          title={t('composer.attach')}
-          onClick={onAttachClick}
-          disabled={disabled}
-          className="flex shrink-0 items-center justify-center rounded px-2 py-2 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-50"
-        >
-          <IconAttach />
-        </button>
+      <div ref={boxRef} className="flex flex-col rounded-lg border border-line bg-app focus-within:border-accent">
         <textarea
           ref={textareaRef}
           aria-label={t('composer.label')}
           placeholder={rootId ? t('composer.replyPlaceholder') : t('composer.placeholder', { name: channelName })}
           value={text}
-          rows={Math.min(10, text.split('\n').length)}
+          rows={1}
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled}
           autoFocus
-          className="w-full flex-1 resize-none rounded border border-line bg-app px-3 py-2 text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none disabled:opacity-50"
+          style={{ maxHeight: maxTextareaHeight ? `${maxTextareaHeight}px` : undefined }}
+          className="w-full resize-none overflow-y-auto rounded-t-lg bg-transparent px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none disabled:opacity-50"
         />
+        <div role="toolbar" aria-label={t('composer.formatToolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
+          {!formattingBarHidden &&
+            FORMAT_BUTTONS.map(({ mode, label, Icon, groupBreak }) => (
+              <span key={mode} className="flex items-center gap-0.5">
+                {groupBreak && <span aria-hidden className="mx-1 h-4 w-px bg-line" />}
+                <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled}>
+                  <Icon size={18} />
+                </ToolbarButton>
+              </span>
+            ))}
+          <div className="ml-auto flex items-center gap-0.5">
+            <ToolbarButton
+              label={formattingBarHidden ? t('composer.formatShow') : t('composer.formatHide')}
+              pressed={!formattingBarHidden}
+              onClick={toggleFormattingBar}
+            >
+              <span className="text-xs font-semibold leading-none">Aa</span>
+            </ToolbarButton>
+            <ToolbarButton label={t('composer.attach')} onClick={onAttachClick} disabled={disabled}>
+              <IconAttach size={18} />
+            </ToolbarButton>
+            <ToolbarButton label={t('composer.emoji')} onClick={openPicker} disabled={disabled}>
+              <IconMood size={18} />
+            </ToolbarButton>
+            <button
+              type="button"
+              aria-label={t('composer.send')}
+              title={t('composer.send')}
+              onClick={() => void send()}
+              disabled={disabled || !canSend}
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded ${
+                canSend && !disabled ? 'bg-accent text-accent-fg hover:opacity-90' : 'text-fg-muted opacity-50'
+              }`}
+            >
+              <IconSend size={16} />
+            </button>
+          </div>
+        </div>
       </div>
       {!isDesktop() && <input ref={fileInputRef} type="file" multiple onChange={onFilesSelected} className="hidden" />}
+      {picker &&
+        createPortal(
+          <Suspense fallback={null}>
+            <EmojiPicker
+              serverId={serverId}
+              anchor={picker.anchor}
+              info={picker.info}
+              onPick={pickEmoji}
+              onClose={closePicker}
+            />
+          </Suspense>,
+          document.body,
+        )}
     </div>
   )
 }

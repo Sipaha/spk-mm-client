@@ -223,6 +223,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         disabled={thread.root_deleted}
         serverId={server.id}
         attachments={threadAttachments}
+        emojiInfo={() => emojiInfo(server.id)}
         onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
         onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}
         onEditLast={() => editLastOwn(thread)}

@@ -58,6 +58,12 @@ type API interface {
 	SetSidebarWidth(ctx context.Context, width int) error
 	// SetThreadWidth is SetSidebarWidth for the thread panel's splitter.
 	SetThreadWidth(ctx context.Context, width int) error
+	// GetFormattingBarHidden returns the composer's saved Aa toggle state
+	// (false: never saved -- shown by default, the webapp's own default).
+	// App-wide, not per server.
+	GetFormattingBarHidden(ctx context.Context) (bool, error)
+	// SetFormattingBarHidden persists the composer's Aa toggle.
+	SetFormattingBarHidden(ctx context.Context, hidden bool) error
 	SelectServer(ctx context.Context, id int64) error
 	SetFocused(ctx context.Context, focused bool) error
 	NetworkChanged(ctx context.Context) error
