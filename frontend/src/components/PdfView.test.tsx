@@ -13,6 +13,9 @@ let numPages = 5
 // mixed portrait/landscape pages (fix round 1: pages used to all share page
 // 1's box regardless of their own size).
 let sizeForPage: (i: number) => { w: number; h: number } = () => ({ w: 100, h: 100 })
+// M5 (final review): a page whose first render's task.promise rejects
+// (cancelled, or a broken page) — its canvas must not leak past that.
+let renderShouldReject: (i: number) => boolean = () => false
 
 function makePage(i: number) {
   return {
@@ -20,7 +23,10 @@ function makePage(i: number) {
       const { w, h } = sizeForPage(i)
       return { width: w * scale, height: h * scale }
     },
-    render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+    render: vi.fn(() => ({
+      promise: renderShouldReject(i) ? Promise.reject(new Error('render cancelled')) : Promise.resolve(),
+      cancel: vi.fn(),
+    })),
     streamTextContent: vi.fn(() => ({})),
     cleanup: vi.fn(),
     _page: i,
@@ -38,6 +44,7 @@ vi.mock('pdfjs-dist', () => ({
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.js' }))
 
 const { default: PdfView } = await import('./PdfView')
+const { getDocument } = await import('pdfjs-dist')
 
 const file: FileView = { id: 'f-doc', name: 'doc.pdf', ext: 'pdf', size: 4096, mime: 'application/pdf' }
 
@@ -79,11 +86,13 @@ beforeEach(() => {
   setLocale('en')
   numPages = 5
   sizeForPage = () => ({ w: 100, h: 100 })
+  renderShouldReject = () => false
   stubClientWidth = 148
   roCallback = null
   scrollToSpy.mockClear()
   getPage.mockClear()
   destroy.mockClear()
+  vi.mocked(getDocument).mockClear()
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response(new Uint8Array([1, 2, 3]).buffer)),
@@ -105,6 +114,20 @@ test('loads the document and renders only the visible pages (±1), not the whole
   expect(getPage).not.toHaveBeenCalledWith(4)
   expect(getPage).not.toHaveBeenCalledWith(5)
   expect(onFail).not.toHaveBeenCalled()
+})
+
+test('getDocument is called with the optional wasm/cmap/font asset URLs, not just the bytes (final review I3)', async () => {
+  render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  expect(getDocument).toHaveBeenCalledWith(
+    expect.objectContaining({
+      wasmUrl: '/pdfjs/wasm/',
+      cMapUrl: '/pdfjs/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: '/pdfjs/standard_fonts/',
+      enableXfa: false,
+    }),
+  )
 })
 
 test('a load failure (network error, bad magic, over the size cap) calls onFail', async () => {
@@ -178,6 +201,34 @@ test('scrolling out of a page returns its canvas to the pool instead of allocati
   const laterCanvas = container.querySelector('[data-page="4"] canvas') ?? container.querySelector('[data-page="3"] canvas')
   expect(laterCanvas).not.toBeNull()
   expect(laterCanvas).toBe(firstCanvas) // same DOM node, reused — not a fresh one
+})
+
+test('a canvas whose first render is cancelled (task.promise rejects) is zeroed, not leaked (M5, final review)', async () => {
+  numPages = 3
+  renderShouldReject = (i) => i === 2
+  const canvases: HTMLCanvasElement[] = []
+  const nativeCreateElement = document.createElement.bind(document)
+  const spy = vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+    const el = nativeCreateElement(tag)
+    if (tag === 'canvas') canvases.push(el as HTMLCanvasElement)
+    return el
+  }) as typeof document.createElement)
+  try {
+    render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+    await screen.findByText('1 / 3')
+    await waitFor(() => expect(getPage).toHaveBeenCalledWith(2))
+    // Page 1 renders fine (canvases[0]); page 2's render rejects, but a
+    // canvas was already taken from the pool and sized for it before that —
+    // canvases[1]. Before the fix, nothing zeroed it on the reject path.
+    await waitFor(() => expect(canvases.length).toBeGreaterThanOrEqual(2))
+    const page2Canvas = canvases[1]
+    await waitFor(() => {
+      expect(page2Canvas.width).toBe(0)
+      expect(page2Canvas.height).toBe(0)
+    })
+  } finally {
+    spy.mockRestore()
+  }
 })
 
 test("fit mode: a landscape page fits its own width too, same as every other page — no page ever needs horizontal scroll (fix round 2, review of round 1's 11bc003)", async () => {

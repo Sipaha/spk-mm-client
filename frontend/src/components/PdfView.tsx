@@ -6,7 +6,7 @@
 //
 // Memory levers from the spike report (fixes-2026-09-28/pdf-spike-report.md,
 // "these are the tuning levers"), built in from the start rather than left
-// entirely to the later memory-gate task:
+// entirely to the later memory check:
 //  1. Only the visible pages plus one neighbour on each side keep a bitmap
 //     (KEEP=1) — everything else is released.
 //  2. Each page's canvas is capped at ~2 megapixels of backing store
@@ -28,6 +28,21 @@ import { mediaURL } from '../media'
 import './pdf.css'
 
 GlobalWorkerOptions.workerSrc = workerUrl
+
+// Optional pdf.js assets (final review I3): scanned pages (CCITT/JBIG2/JPX
+// images) and ICC colour spaces decode through wasm modules the worker
+// fetches on demand from wasmUrl; CJK text with predefined CMaps needs
+// cMapUrl; the 14 standard (non-embedded) fonts need standardFontDataUrl.
+// Without these, pdf.js silently leaves the page blank — no error, no
+// fallback to the card (a corrupted/unparseable document is what triggers
+// onFail, not a page it merely couldn't fully paint).
+// vite.config.ts's copyPdfjsAssets plugin copies these straight from the
+// pinned pdfjs-dist into dist/pdfjs/ at build time — none of it is in the
+// initial bundle or even in this lazy chunk; each file is its own request,
+// made only if a document actually needs it. Never quickjs-eval.* (pdf.js's
+// scripting sandbox): the plugin does not copy it, and the plan forbids PDF
+// scripting regardless.
+const PDFJS_ASSETS = '/pdfjs/'
 
 const KEEP = 1 // pages kept rendered on each side of the visible ones
 const MIN_SCALE = 0.25
@@ -123,7 +138,14 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
         if (!r.ok) throw new Error(`status ${r.status}`)
         const data = new Uint8Array(await r.arrayBuffer())
         if (cancelled) return
-        loadingTask = getDocument({ data, enableXfa: false })
+        loadingTask = getDocument({
+          data,
+          enableXfa: false,
+          cMapUrl: `${PDFJS_ASSETS}cmaps/`,
+          cMapPacked: true,
+          standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+          wasmUrl: `${PDFJS_ASSETS}wasm/`,
+        })
         const d = await loadingTask.promise
         if (cancelled) return
         const p1 = await d.getPage(1)
@@ -341,6 +363,10 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   async function renderPage(d: PDFDocumentProxy, i: number, s: Slot, sc: number): Promise<void> {
     s.task?.cancel()
     s.text?.cancel()
+    // Hoisted so the catch block below can return it to the pool if this
+    // render never finished (M5, final review): it may already have been
+    // taken from the pool and sized before the cancel/error.
+    let canvas: HTMLCanvasElement | undefined
     try {
       s.page ??= await d.getPage(i)
       if (slots.current.get(i) !== s) return // released while awaiting getPage
@@ -356,7 +382,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       // Lever 2: cap the bitmap at ~2 MP regardless of zoom/DPR — the CSS
       // size (below) is unaffected, only the backing-store resolution is.
       const renderScale = vp.width * vp.height * dpr * dpr > CANVAS_PIXEL_CAP ? Math.sqrt(CANVAS_PIXEL_CAP / (vp.width * vp.height)) : dpr
-      const canvas = s.canvas ?? takeCanvas()
+      canvas = s.canvas ?? takeCanvas()
       canvas.width = Math.max(1, Math.floor(vp.width * renderScale))
       canvas.height = Math.max(1, Math.floor(vp.height * renderScale))
       canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'
@@ -382,7 +408,15 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
     } catch {
       // Cancelled (a newer render/unmount superseded this one) or a broken
       // page: leave the blank page box rather than throwing out of pdf.js
-      // internals — a single bad page must not fail the whole document.
+      // internals — a single bad page must not fail the whole document. A
+      // canvas taken from the pool (or newly created) before the cancel,
+      // but never committed as s.canvas, must go back to the pool zeroed
+      // (M5, final review) — canvas backing stores, not the JS heap, are
+      // the memory driver found in the spike. `canvas !== s.canvas` also
+      // correctly leaves alone a canvas that WAS already showing a previous
+      // successful render of this same page (a re-render at a new scale
+      // was cancelled) — it's still valid, still attached, still s.canvas.
+      if (canvas && canvas !== s.canvas) returnCanvas(canvas)
     }
   }
 }
