@@ -563,6 +563,12 @@ test('the reply-context line renders "Commented on <author>\'s message: <snippet
 // (message/attachments/files/reactions/pending/failed — NOT the avatar or
 // the header name/time) in a left-border bar; a normal post and a reply row
 // with isInlineReply not set (thread panel, CRT on) get no wrapper at all.
+// Fix round 1 (review): dropped a third case here (variant="thread",
+// isInlineReply not passed) — PostItem never derives isInlineReply from
+// variant/crt itself (that's feedRows' job, already covered by
+// feedRows.test.ts's "never set with CRT on, and never in the thread
+// panel"), so asserting it here duplicated the "plain post" case below
+// without adding regression coverage of PostItem's own logic.
 test('isInlineReply wraps the content column in a left-border bar; other posts get none', () => {
   const { rerender } = render(
     <PostItem serverId={1} post={post({ root_id: 'root' })} head={false} me={me} locale="en-US" crt={false} actions={actions()} editing={false} isInlineReply />,
@@ -571,12 +577,6 @@ test('isInlineReply wraps the content column in a left-border bar; other posts g
   expect(within(bar).getByText('hello')).toBeInTheDocument() // the message sits inside the bar
 
   rerender(<PostItem serverId={1} post={post()} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
-  expect(screen.queryByTestId('reply-bar')).toBeNull()
-
-  // A reply that is not flagged inline (CRT on, or the thread panel) gets no bar either.
-  rerender(
-    <PostItem serverId={1} post={post({ root_id: 'root' })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} variant="thread" />,
-  )
   expect(screen.queryByTestId('reply-bar')).toBeNull()
 })
 

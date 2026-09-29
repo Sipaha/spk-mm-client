@@ -315,9 +315,17 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             webapp-like — every reply in the run, not just the head one, so
             consecutive replies form one continuous-looking bar. The header
             (avatar/name/time) above and the replyContext line stay outside
-            it. Pure CSS: no extra measurement, the virtualizer's row height
-            only shifts by the bar's own padding. */}
-        <div className={isInlineReply ? 'border-l-[3px] border-fg-subtle/35 pl-2' : undefined} data-testid={isInlineReply ? 'reply-bar' : undefined}>
+            it. `-my-0.5 py-0.5` bleeds the bordered box into the
+            <article>'s own `py-0.5` (PostItem's outer className) on both
+            sides — the negative margin pulls the border out to the row's
+            true top/bottom edge while the matching padding pushes the
+            content back to its original position, so two consecutive
+            reply rows' borders touch with no gap and no net height change
+            (fix round 1, I1: the review's own crops showed a visible break
+            here). Pure CSS throughout: no extra measurement, and these
+            classes are horizontal-or-cancelling-vertical only, so the
+            virtualizer's measured row height is unaffected. */}
+        <div className={isInlineReply ? '-my-0.5 border-l-[3px] border-line/70 py-0.5 pl-2' : undefined} data-testid={isInlineReply ? 'reply-bar' : undefined}>
           {editing ? (
             <EditBox post={post} actions={actions} />
           ) : (
