@@ -120,7 +120,7 @@ func TestSeededPDFHasAScannedCCITTPage(t *testing.T) {
 	_, doc := a.raw("GET", "/api/v4/files/"+PDFFileID, nil)
 
 	re := regexp.MustCompile(`<< /Type /XObject /Subtype /Image /Width (\d+) /Height (\d+) /ColorSpace /DeviceGray /BitsPerComponent 1 ` +
-		`/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns (\d+) /Rows (\d+) /BlackIs1 false >> /Length (\d+) >>\nstream\n`)
+		`/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns (\d+) /Rows (\d+) /BlackIs1 true >> /Length (\d+) >>\nstream\n`)
 	locs := re.FindAllSubmatchIndex(doc, -1)
 	require.Len(t, locs, 1, "exactly one CCITT-encoded page")
 	l := locs[0]

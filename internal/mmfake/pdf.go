@@ -44,9 +44,14 @@ const (
 // then the TIFF's single strip (offset 8, 130 bytes — confirmed via its
 // StripOffsets/StripByteCounts tags) extracted as-is: TIFF Group4 and PDF's
 // /Filter /CCITTFaxDecode /DecodeParms << /K -1 >> are the same ITU-T T.6
-// bitstream. PhotometricInterpretation 1 (BlackIsZero) on the source TIFF
-// matches PDF's own CCITTFaxDecode default (BlackIs1 false), so no polarity
-// flip is needed.
+// bitstream. The source TIFF's PhotometricInterpretation 1 (BlackIsZero)
+// does *not* carry over to PDF's own CCITTFaxDecode default (BlackIs1
+// false): rendering this exact stream with both poppler's pdftoppm and
+// Ghostscript against a standalone one-page PDF shows /BlackIs1 false
+// paints 96.5% of the page dark (white "SCAN" on black — inverted), while
+// /BlackIs1 true paints 3.5% dark (black "SCAN" on white, as authored). So
+// PDF's DecodeParms need the explicit flip (final review R1 of the
+// 2026-09-29 PDF plan; reference renders in .agents/tmp/ccitt/).
 const (
 	scannedImageW = 200
 	scannedImageH = 100
@@ -72,7 +77,7 @@ func pageImageObj(p int) string {
 	if p == ScannedPage {
 		return fmt.Sprintf(
 			"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 1 "+
-				"/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns %d /Rows %d /BlackIs1 false >> /Length %d >>\nstream\n%s\nendstream",
+				"/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns %d /Rows %d /BlackIs1 true >> /Length %d >>\nstream\n%s\nendstream",
 			scannedImageW, scannedImageH, scannedImageW, scannedImageH, len(scannedImageCCITT), scannedImageCCITT)
 	}
 	pic := manualImage(p)

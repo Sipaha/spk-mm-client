@@ -133,12 +133,20 @@ func (s *Server) SetFileThrottle(bytesPerSec int) {
 // one file (e.g. the PDF mid-load-cancel e2e check) does not also throttle
 // every other file in the channel and saturate the browser's connection
 // pool with them (Task 5 final review I2). 0 restores full-speed serving
-// and clears the scoping.
+// and clears the scoping. Also resets fileID's fileGetEvt record (final
+// review R3): fileGets persists across requests (and, in a long-lived fake,
+// across tests), so an earlier, unrelated GET of the same id would
+// otherwise leave a stale started:true (or cancelled:true) behind for a
+// later test's FileGetStatus poll to see immediately, before that test's
+// own fetch is even issued.
 func (s *Server) SetFileThrottleFor(fileID string, bytesPerSec int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fileThrottle = bytesPerSec
 	s.fileThrottleID = fileID
+	if fileID != "" {
+		delete(s.fileGets, fileID)
+	}
 }
 
 // fileGetEvt is one file id's most recent plain GET /api/v4/files/{id}:

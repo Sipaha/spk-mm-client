@@ -251,6 +251,35 @@ func TestFileThrottleForScopesToOneFile(t *testing.T) {
 	assert.Less(t, time.Since(start), 150*time.Millisecond, "an unscoped file ignores the throttle")
 }
 
+// SetFileThrottleFor resets that file id's fileGetEvt record (final review
+// R3): without this, a record left behind by an earlier, unrelated fetch of
+// the same id (started:true) would make a later test's "has the fake seen
+// this GET start" poll resolve immediately against the old fetch, before
+// the new one the test actually means to observe has even been issued —
+// e.g. pdf.spec.ts's mid-load-cancel test would then press Escape too
+// early, and its own fetch would never get cancelled, so "cancelled" would
+// stay false and the test would fail outright (not pass vacuously).
+func TestFileThrottleForResetsPriorFileGetStatus(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	s.newFileLocked("f-r3", "c-offtopic", "r3.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 50))
+	a := loginAs(t, s, "alice")
+	defer s.SetFileThrottleFor("", 0)
+
+	// An earlier, full-speed fetch of f-r3 (nothing to do with the test
+	// about to scope a throttle to it) leaves a stale record behind.
+	resp, _ := a.raw("GET", "/api/v4/files/f-r3", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	started, cancelled := s.FileGetStatus("f-r3")
+	require.True(t, started, "sanity: the prior fetch was recorded")
+	require.False(t, cancelled)
+
+	s.SetFileThrottleFor("f-r3", 1000)
+	started, cancelled = s.FileGetStatus("f-r3")
+	assert.False(t, started, "scoping a throttle to f-r3 must reset its stale fileGetEvt record")
+	assert.False(t, cancelled)
+}
+
 // FileGetStatus records a plain GET's start, and its cancellation once the
 // client disconnects mid-stream (Task 5 final review I2: the pdf.spec.ts
 // mid-load-cancel e2e test observes this instead of inferring cancellation
