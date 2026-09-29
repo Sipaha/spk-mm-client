@@ -71,3 +71,40 @@ test('top pill: a plain unread channel above the fold shows the "more unreads" v
   await expect(page.getByRole('heading', { name: /Off-Topic/ })).toBeVisible()
   await expect(offTopic).toHaveAttribute('aria-current', 'true')
 })
+
+// unreadsList: the Unreads section's own <ul> (sidebar-sections-brief.md) —
+// its heading text is exact ("Unreads", uppercased only by CSS), so scoping
+// through it disambiguates "is this row under Unreads" from "is this row
+// somewhere in the sidebar at all" (channel() alone can't tell).
+function unreadsList(page: import('@playwright/test').Page) {
+  return page.getByText('Unreads', { exact: true }).locator('xpath=following-sibling::ul')
+}
+
+test('Unreads: an unread channel appears there and leaves its own category; opening it keeps it there until switching away', async ({ page }) => {
+  await signInAlice(page)
+  const list = page.getByRole('complementary', { name: 'Server channels' })
+  await expect(list.getByText('Unreads', { exact: true })).toHaveCount(0)
+
+  const channelsSection = page.getByRole('button', { name: 'Channels' }).locator('xpath=ancestor::section')
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+
+  await testPost(page, 'fake/post', { channel_id: 'c-offtopic', username: 'bob', message: unique('unreads section') })
+
+  await expect(list.getByText('Unreads', { exact: true })).toBeVisible()
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
+
+  // Open it: the row is read almost immediately, but stays under Unreads
+  // (the held active channel) rather than jumping back to Channels.
+  await unreadsList(page).getByRole('button', { name: /Off-Topic/ }).click()
+  await expect(page.getByRole('heading', { name: /Off-Topic/ })).toBeVisible()
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
+
+  // Switch away: it returns to Channels, and Unreads disappears (nothing
+  // else was left unread by this test).
+  await channel(page, 'Town Square').click()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  await expect(list.getByText('Unreads', { exact: true })).toHaveCount(0)
+  await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+})
