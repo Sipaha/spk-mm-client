@@ -1,4 +1,4 @@
-//go:build wails && gtk3
+//go:build linux && wails && gtk3
 
 package desktop
 
@@ -23,11 +23,14 @@ static guint32 spk_raise_stamp(GtkWindow *w) {
 }
 
 // Brings a shown window to the front and focuses it: un-minimizes it and
-// asks the WM to activate it (_NET_ACTIVE_WINDOW) with a current timestamp,
-// which the WM honours. Off X11 it is a plain gtk_window_present, as before.
-static void spk_raise_present(GtkWindow *w) {
+// asks the WM to activate it (_NET_ACTIVE_WINDOW) with the timestamp t
+// stamped before the show, which the WM honours. t is 0 only when the window
+// was not realized before this show (its first one) — then it is stamped
+// now, the one extra X round trip. Off X11 it is a plain
+// gtk_window_present, as before.
+static void spk_raise_present(GtkWindow *w, guint32 t) {
 	gtk_window_set_urgency_hint(w, FALSE);
-	guint32 t = spk_raise_stamp(w);
+	if (t == 0) t = spk_raise_stamp(w);
 	if (t != 0) gtk_window_present_with_time(w, t);
 	else gtk_window_present(w);
 }
@@ -44,8 +47,8 @@ func nativeRaise(p unsafe.Pointer, show func()) bool {
 		return false
 	}
 	w := (*C.GtkWindow)(p)
-	C.spk_raise_stamp(w) // before the map, so the map itself may take focus
+	t := C.spk_raise_stamp(w) // before the map, so the map itself may take focus
 	show()
-	C.spk_raise_present(w)
+	C.spk_raise_present(w, t)
 	return true
 }

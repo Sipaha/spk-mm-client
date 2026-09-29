@@ -322,7 +322,11 @@ func raiseWindow(w *application.WebviewWindow) {
 	})
 	if !raised {
 		w.Show()
-		w.UnMinimise()
+		// Not before the native window exists (GTK startup gap): Wails'
+		// IsMinimised has no nil guard there and would log a GTK-CRITICAL.
+		if w.IsVisible() {
+			w.UnMinimise()
+		}
 		w.Focus()
 	}
 }

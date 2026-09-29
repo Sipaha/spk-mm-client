@@ -1,4 +1,4 @@
-//go:build wails && !gtk3
+//go:build wails && !(linux && gtk3)
 
 package desktop
 
