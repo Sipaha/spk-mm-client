@@ -225,12 +225,23 @@
   `TestRefreshUsersKeepsNewerProfilesAndReportsChanges`.
 - Скачивание/«Открыть» одного файла (`сервер/id`), пока он качается, присоединяются к той же
   загрузке (`Service.shared`): один запрос, одна копия; присоединившееся «Открыть» после неё
-  открывает файл по своему allowlist. UI сразу показывает «Скачивается <имя>…» (липкое
-  уведомление без авто-скрытия), его заменяет «Сохранено…» или ошибка. Запасной путь без жёстких
-  ссылок не удаляет после переименования путь `.part` — его уже может занять чужая одноимённая
-  загрузка. — `TestConcurrentSavesOfOneFileShareTheDownload`,
-  `TestNoLinkFallbackLeavesAnotherDownloadsPartAlone`, `frontend/src/chat.test.ts` («a download in
-  progress is shown at once and stays until it is replaced»).
+  открывает файл по своему allowlist. Запасной путь без жёстких ссылок не удаляет после
+  переименования путь `.part` — его уже может занять чужая одноимённая загрузка. —
+  `TestConcurrentSavesOfOneFileShareTheDownload`, `TestNoLinkFallbackLeavesAnotherDownloadsPartAlone`.
+- Обратная связь о скачивании — только на самой карточке файла и в плавающем тосте, **никаких
+  баннеров** над лентой (баннер «Сохранено в … / Показать в папке» сдвигал ленту — жалоба
+  2026-09-29; удалён). Кнопка скачивания (`DownloadButton` — карточка, текстовый/markdown-фрагмент,
+  заголовок просмотрщика) при клике сразу крутит кольцо (прогресс записи списка загрузок, пока её
+  нет — спиннер), по готовности ~2 с показывает ✓ (подсказка — путь), и до конца сессии рядом
+  остаётся «Показать в папке» (`downloads.reveal`/`downloads.showInFolder`). Иконка во всех
+  состояниях одного размера — высота карточки и строки ленты не меняется. Состояние — `fileSaves` в
+  store по ключу `<сервер>/<id файла>` (не больше `FILE_SAVES_CAP` = 200, старые вытесняются); сбой
+  возвращает файлу прежнее состояние. Ошибка (и «сохранено, но такие файлы не открываются») —
+  тост: `position: fixed` справа внизу над композером, вне потока вёрстки, `aria-live="polite"`,
+  сам скрывается через 6 с, закрывается кнопкой. Ошибки действий панели загрузок — тоже тост. —
+  `frontend/src/components/DownloadButton.test.tsx`, `Toast.test.tsx`, `frontend/src/chat.test.ts`
+  («a download is "saving" on its file at once…», «a failed download…»), `store.test.ts`,
+  `tests/e2e/media.spec.ts`, `tests/e2e/stick-bottom.spec.ts`.
 - Рамка картинки и текстового фрагмента имеет окончательный размер до загрузки содержимого —
   лента со скролл-якорем не прыгает при догрузке превью. —
   `frontend/src/components/Attachments.test.tsx` («the image box has its final size before the

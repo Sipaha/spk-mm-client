@@ -1,14 +1,17 @@
 import { expect, test, type Page } from '@playwright/test'
-import { channel, fakeURL, feed, removeServerFromMenu, signInAlice } from './helpers'
+import { chmodSync, existsSync, rmSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { channel, fakeURL, feed, removeServerFromMenu, signInAlice, testGet } from './helpers'
 
 // Bottom-stick on a viewport resize: a feed sitting at its bottom stays there
 // when its own height changes for a reason that is not a new row — a download
-// banner above it (before 2026-09-29), the composer growing with a multi-line
+// banner above it (removed 2026-09-29), the composer growing with a multi-line
 // draft, the window shrinking. Before the fix only a rows change re-pinned:
 // shrinking the scroller keeps scrollTop, fires no scroll event, and the last
 // post slid under the composer.
 
 let seeded = false // the fake lives for the whole run (workers: 1)
+const shots = process.env.STICK_SHOT_DIR // optional: where to write the screenshots
 
 // Secret (alice is its only member) gets a screenful of text posts and, last,
 // a post with a plain file card — all by alice, so nothing is unread and the
@@ -65,16 +68,52 @@ const lastPostOverflow = (page: Page) =>
     }
   })
 
-test('at the bottom, downloading the last post\'s attachment keeps the last post fully visible', async ({ page }) => {
+// Download feedback lives on the file's own card — no banner above the feed
+// (it pushed the conversation down: the same user report). A failure is a
+// floating toast, out of the layout flow.
+test('downloading the last post\'s attachment: feedback on the card, an error toast, and the last post stays fully visible', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSecretAtBottom(page)
-  await feed(page).getByRole('button', { name: 'Download stick-report.zip' }).click()
-  await page.waitForTimeout(600) // the download finishes, any feedback shows
-  await page.screenshot({ path: process.env.STICK_SHOT_DIR ? `${process.env.STICK_SHOT_DIR}/stick-download.png` : 'test-results/stick-download.png' })
-  const o = await lastPostOverflow(page)
+  const download = feed(page).getByRole('button', { name: 'Download stick-report.zip' })
+  await download.click()
+  const reveal = feed(page).getByRole('button', { name: 'Show stick-report.zip in folder' })
+  await expect(reveal).toBeVisible()
+  await expect(reveal).toHaveAttribute('title', 'Show in folder')
+  await expect(page.getByText(/^Saved to/)).toHaveCount(0) // no banner
+  if (shots) await feed(page).locator('[data-kind="post"]').last().screenshot({ path: `${shots}/stick-card-saved.png` })
+  let o = await lastPostOverflow(page)
   expect(o.text).toContain('stick last post with a file')
   expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
   expect(o.distance, JSON.stringify(o)).toBeLessThan(2)
+
+  // "Show in folder" reveals the saved file (the fake opener records it).
+  await reveal.click()
+  let saved = ''
+  await expect
+    .poll(async () => (saved = ((await testGet(page, 'revealed-files')) as string[]).find((p) => p.endsWith('stick-report.zip')) ?? ''))
+    .not.toBe('')
+  expect(existsSync(saved), `downloaded file missing on disk: ${saved}`).toBe(true)
+
+  // A failed download: a toast. The copy saved this session is gone (Go
+  // would hand it back without fetching) and the downloads directory is
+  // read-only, so the new copy cannot be written.
+  const dir = dirname(saved)
+  rmSync(saved)
+  chmodSync(dir, 0o500)
+  try {
+    await download.click()
+    const toast = page.getByTestId('toast-region')
+    await expect(toast).toContainText('Could not download stick-report.zip')
+    await expect(toast).toHaveAttribute('aria-live', 'polite')
+    if (shots) await page.screenshot({ path: `${shots}/stick-error-toast.png` })
+    o = await lastPostOverflow(page)
+    expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
+    expect(o.distance, JSON.stringify(o)).toBeLessThan(2)
+    await toast.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(toast).toBeEmpty()
+  } finally {
+    chmodSync(dir, 0o700)
+  }
   await removeServerFromMenu(page)
 })
 
@@ -89,7 +128,7 @@ test('at the bottom, a composer growing with a multi-line draft keeps the last p
     await page.keyboard.press('Shift+Enter')
   }
   await expect.poll(async () => (await box.boundingBox())!.height).toBeGreaterThan(before + 40)
-  await page.screenshot({ path: process.env.STICK_SHOT_DIR ? `${process.env.STICK_SHOT_DIR}/stick-composer.png` : 'test-results/stick-composer.png' })
+  if (shots) await page.screenshot({ path: `${shots}/stick-composer.png` })
   const o = await lastPostOverflow(page)
   expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
   expect(o.distance, JSON.stringify(o)).toBeLessThan(2)

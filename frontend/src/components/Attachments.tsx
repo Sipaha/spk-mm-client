@@ -22,7 +22,7 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
   const url = !src ? '' : file.staged ? mediaURL(serverId, 'staged', file.id) : big ? mediaURL(serverId, 'feed', file.id, { src }) : mediaURL(serverId, 'thumb', file.id)
   // A failed load is a card until the server goes live again.
   const [failed, fail] = useLoadFailure(serverId, url)
-  if (failed || !src) return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
+  if (failed || !src) return <FileCard serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
   const box = big ? fitBox(file.width, file.height, BIG.w, BIG.h) : { width: THUMB.w, height: THUMB.h }
   const img = (
     <img
@@ -107,7 +107,7 @@ export function Attachments({
       {others.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {others.map((f) => (
-            <FileCard key={f.id} file={f} onDownload={h.onDownload} onOpen={h.onOpen} onView={fileKind(f) === 'pdf' ? h.onView : undefined} />
+            <FileCard key={f.id} serverId={serverId} file={f} onDownload={h.onDownload} onOpen={h.onOpen} onView={fileKind(f) === 'pdf' ? h.onView : undefined} />
           ))}
         </div>
       )}

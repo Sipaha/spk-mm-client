@@ -220,11 +220,6 @@
   раньше `<header>`) — панель недостижима с экрана добавления сервера и
   вообще до открытия первого канала. — `frontend/src/components/Downloads.tsx`,
   `frontend/src/components/ChannelPane.tsx`.
-- Финальное ревью (остаток): при клике «Показать в папке» на
-  уведомлении «Сохранено», если файла нет в списке загрузок (БД),
-  fallback-ошибка в `frontend/src/chat.ts` (`revealSavedFile`) — hard-coded
-  англоязычная строка разработчика (`no downloads-list entry for <path>`)
-  вместо i18n-сообщения через `t()`. — `frontend/src/chat.ts`.
 - Финальное ревью (остаток): `consumeFocusSearch()` в
   `frontend/src/components/Viewer.tsx` читает и очищает ref прямо во время
   рендера; в React StrictMode (dev-сборка) двойной рендер теряет флаг, поэтому

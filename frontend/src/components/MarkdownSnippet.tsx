@@ -5,7 +5,8 @@ import { t } from '../i18n'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
-import { IconDownload, IconExpand, IconNote, IconOpenExternal } from './icons'
+import { DownloadButton } from './DownloadButton'
+import { IconExpand, IconNote, IconOpenExternal } from './icons'
 import { Markdown } from './Markdown'
 import { useTextFile } from './textFile'
 
@@ -25,7 +26,7 @@ export function MarkdownSnippet({
 }: { serverId: number; file: FileView; me: string; onLink(href: string): void } & FileHandlers) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id), useLiveEpoch(serverId))
   const [open, setOpen] = useState(false)
-  if (res.status === 'error') return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
+  if (res.status === 'error') return <FileCard serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
   return (
     // bg-panel, not bg-code-bg: .md pre/.md code (index.css) already paint
     // fenced code and inline code with --color-code-bg, so a snippet panel
@@ -46,9 +47,7 @@ export function MarkdownSnippet({
           <IconButton label={t('file.view', { name: file.name })} onClick={() => onView(file)}>
             <IconExpand />
           </IconButton>
-          <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-            <IconDownload />
-          </IconButton>
+          <DownloadButton serverId={serverId} file={file} onDownload={onDownload} />
           <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
             <IconOpenExternal />
           </IconButton>

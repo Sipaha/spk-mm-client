@@ -3,7 +3,8 @@ import type { FileView } from '../api/types'
 import { downloadErrorMessage } from '../errors'
 import { formatSize } from '../format'
 import { t } from '../i18n'
-import { IconDownload, IconExpand, IconFile, IconOpenExternal } from './icons'
+import { DownloadButton } from './DownloadButton'
+import { IconExpand, IconFile, IconOpenExternal } from './icons'
 
 export interface FileHandlers {
   onView(file: FileView): void
@@ -55,13 +56,15 @@ export function StagedProgress({ file }: { file: FileView }) {
 // Preview action — same icon/label convention as the image/text/markdown
 // "view" actions elsewhere (IconExpand + t('file.view')). A staged file (a
 // pending post's, not sent yet) has no server id yet, so it gets none of
-// download/open/preview, same reasoning as the other staged tiles.
+// download/open/preview, same reasoning as the other staged tiles. The
+// download button carries its own progress/saved feedback (DownloadButton).
 export function FileCard({
+  serverId,
   file,
   onDownload,
   onOpen,
   onView,
-}: { file: FileView; onView?(file: FileView): void } & Pick<FileHandlers, 'onDownload' | 'onOpen'>) {
+}: { serverId: number; file: FileView; onView?(file: FileView): void } & Pick<FileHandlers, 'onDownload' | 'onOpen'>) {
   return (
     <div className="flex max-w-sm flex-col gap-1 rounded border border-line px-2 py-1 text-xs">
       <div className="flex items-center gap-2">
@@ -77,9 +80,7 @@ export function FileCard({
                 <IconExpand />
               </IconButton>
             )}
-            <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-              <IconDownload />
-            </IconButton>
+            <DownloadButton serverId={serverId} file={file} onDownload={onDownload} />
             <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
               <IconOpenExternal />
             </IconButton>

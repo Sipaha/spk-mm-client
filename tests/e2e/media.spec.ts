@@ -44,10 +44,16 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
 
+  // Download feedback is on the card itself (no banner): "Show in folder"
+  // appears once saved, and reveals the saved file.
   await feed(page).getByRole('button', { name: 'Download spec.pdf' }).click()
-  const savedNotice = page.getByText(/Saved to .*spec\.pdf/)
-  await expect(savedNotice).toBeVisible()
-  const savedPath = (await savedNotice.textContent())!.replace(/^Saved to /, '')
+  const reveal = feed(page).getByRole('button', { name: 'Show spec.pdf in folder' })
+  await expect(reveal).toBeVisible()
+  await reveal.click()
+  let savedPath = ''
+  await expect
+    .poll(async () => (savedPath = ((await testGet(page, 'revealed-files')) as string[]).find((p) => p.endsWith('spec.pdf')) ?? ''))
+    .not.toBe('')
   expect(existsSync(savedPath), `downloaded file missing on disk: ${savedPath}`).toBe(true)
   await feed(page).getByRole('button', { name: 'Open server.log' }).click()
   await expect
@@ -96,7 +102,7 @@ test('downloads panel: entry appears, "Show in folder" is recorded, "Remove from
   // instance, one DB) — downloading it again here would land on a
   // deduplicated "spec (1).pdf" instead.
   await feed(page).getByRole('button', { name: 'Download big.log' }).click()
-  await expect(page.getByText(/Saved to .*big\.log/)).toBeVisible()
+  await expect(feed(page).getByRole('button', { name: 'Show big.log in folder' })).toBeVisible()
 
   // The button's accessible name carries the active-download count ("Downloads"
   // vs "Downloads — active: N", AGENTS.md) — match the stable prefix, not an

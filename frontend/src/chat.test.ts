@@ -46,7 +46,7 @@ const {
   attachFromClipboard, clearDownloads, closeDownloadsPanel, closeThread, downloadFile, downloadPrimaryAction, editPost,
   loadOlderReplies, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
   openDownloadsPanel, openFile, openFromNotification, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
-  react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
+  react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, revealSavedFile, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
 } = await import('./chat')
 
 const post = (over: Partial<PostView> = {}): PostView => ({
@@ -81,6 +81,7 @@ const sidebar = (over: Partial<SidebarDTO> = {}): SidebarDTO => ({
 
 beforeEach(() => {
   resetChat()
+  useStore.setState({ fileSaves: {}, toast: null, lastError: null })
   vi.mocked(client.openChannel).mockReset()
   vi.mocked(client.getChannel).mockReset()
   vi.mocked(client.sidebar).mockReset()
@@ -184,73 +185,64 @@ test('opening a channel of another team switches the sidebar team', async () => 
 })
 
 const spec = { id: 'f-spec', name: 'spec.pdf' }
+const save = (key = '1/f-spec') => useStore.getState().fileSaves[key]
 
-test('a download says where the file went; an unopened one says why', async () => {
-  setLocale('en')
-  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/home/a/Downloads/spec.pdf', opened: false })
-  await downloadFile(1, spec)
-  expect(useStore.getState().notice).toBe('Saved to /home/a/Downloads/spec.pdf')
-  vi.mocked(client.openFile).mockResolvedValue({ path: '/d/run.desktop', opened: false })
-  await openFile(1, { id: 'f-x', name: 'run.desktop' })
-  expect(useStore.getState().notice).toBe('Saved to /d/run.desktop. Files of this type are not opened automatically.')
-  useStore.getState().setNotice(null)
-  vi.mocked(client.openFile).mockResolvedValue({ path: '/d/a.log', opened: true })
-  await openFile(1, { id: 'f-log', name: 'a.log' })
-  expect(useStore.getState().notice).toBeNull()
-})
-
-test('a download in progress is shown at once and stays until it is replaced', async () => {
+test('a download is "saving" on its file at once and "saved" with its path when done — no banner', async () => {
   setLocale('en')
   let done!: (r: { path: string; opened: boolean }) => void
   vi.mocked(client.downloadFile).mockReturnValueOnce(new Promise((r) => (done = r)))
   const saving = downloadFile(1, spec)
-  expect(useStore.getState().notice).toBe('Downloading spec.pdf…')
-  expect(useStore.getState().noticeSticky).toBe(true)
-  done({ path: '/d/spec.pdf', opened: false })
+  expect(save()).toMatchObject({ state: 'saving' })
+  done({ path: '/home/a/Downloads/spec.pdf', opened: false })
   await saving
-  expect(useStore.getState().notice).toBe('Saved to /d/spec.pdf')
-  expect(useStore.getState().noticeSticky).toBe(false)
+  expect(save()).toMatchObject({ state: 'saved', path: '/home/a/Downloads/spec.pdf' })
+  expect(save().savedAt).toBeGreaterThan(0)
+  expect(useStore.getState().toast).toBeNull()
+  expect(useStore.getState().lastError).toBeNull()
+})
 
+test('a failed download: the file goes back to what it was and the error is a toast, not the layout banner', async () => {
+  setLocale('en')
+  useStore.getState().dismissToast()
+  vi.mocked(client.downloadFile).mockRejectedValueOnce(new Error('boom'))
+  await downloadFile(1, { id: 'f-new', name: 'new.bin' })
+  expect(save('1/f-new')).toBeUndefined()
+  expect(useStore.getState().toast).toMatchObject({ tone: 'error' })
+  expect(useStore.getState().toast!.text).toContain('new.bin')
+  expect(useStore.getState().lastError).toBeNull()
+
+  vi.mocked(client.downloadFile).mockResolvedValueOnce({ path: '/d/spec.pdf', opened: false })
+  await downloadFile(1, spec)
   vi.mocked(client.downloadFile).mockRejectedValueOnce(new Error('boom'))
   await downloadFile(1, spec)
-  expect(useStore.getState().notice).toBeNull()
-  expect(useStore.getState().lastError).not.toBeNull()
-
-  let opened!: (r: { path: string; opened: boolean }) => void
-  vi.mocked(client.openFile).mockReturnValueOnce(new Promise((r) => (opened = r)))
-  const opening = openFile(1, { id: 'f-log', name: 'a.log' })
-  expect(useStore.getState().notice).toBe('Downloading a.log…')
-  opened({ path: '/d/a.log', opened: true })
-  await opening
-  expect(useStore.getState().notice).toBeNull()
-  setLocale('ru')
-  const ru = downloadFile(1, spec)
-  expect(useStore.getState().notice).toBe('Скачивается spec.pdf…')
-  await ru
+  expect(save()).toMatchObject({ state: 'saved', path: '/d/spec.pdf', savedAt: 0 }) // the earlier copy is still there; no fresh ✓
 })
 
-test('the saved notice carries a "show in folder" action resolving the entry by path', async () => {
+test('open: an opened file is saved quietly; one not opened says why in a toast', async () => {
   setLocale('en')
-  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/d/spec.pdf', opened: false })
-  await downloadFile(1, spec)
-  const action = useStore.getState().noticeAction
-  expect(action?.label).toBe('Show in folder')
+  useStore.getState().dismissToast()
+  vi.mocked(client.openFile).mockResolvedValueOnce({ path: '/d/a.log', opened: true })
+  await openFile(1, { id: 'f-log', name: 'a.log' })
+  expect(save('1/f-log')).toMatchObject({ state: 'saved', path: '/d/a.log' })
+  expect(useStore.getState().toast).toBeNull()
+  vi.mocked(client.openFile).mockResolvedValueOnce({ path: '/d/run.desktop', opened: false })
+  await openFile(1, { id: 'f-x', name: 'run.desktop' })
+  expect(useStore.getState().toast).toMatchObject({ tone: 'info', text: 'Saved to /d/run.desktop. Files of this type are not opened automatically.' })
+})
 
+test('"show in folder" of a saved file resolves its downloads-list entry by path', async () => {
   vi.mocked(client.downloads).mockResolvedValue([dl({ id: 9, path: '/d/spec.pdf' }), dl({ id: 10, path: '/d/other.txt' })])
-  action?.onClick()
-  await vi.waitFor(() => expect(client.revealDownload).toHaveBeenCalledWith(9))
+  await revealSavedFile('/d/spec.pdf')
+  expect(client.revealDownload).toHaveBeenCalledWith(9)
 })
 
-test('"show in folder" reports an error instead of doing nothing when no entry matches the saved path (e.g. the SQLite insert failed)', async () => {
+test('"show in folder" with no entry for the saved path (e.g. the SQLite insert failed) says so in a toast', async () => {
   setLocale('en')
-  vi.mocked(client.downloadFile).mockResolvedValue({ path: '/d/spec.pdf', opened: false })
-  await downloadFile(1, spec)
-  const action = useStore.getState().noticeAction
-
-  useStore.getState().setError(null)
-  vi.mocked(client.downloads).mockResolvedValue([dl({ id: 10, path: '/d/other.txt' })]) // no entry for spec.pdf
-  action?.onClick()
-  await vi.waitFor(() => expect(useStore.getState().lastError).not.toBeNull())
+  useStore.getState().dismissToast()
+  vi.mocked(client.revealDownload).mockClear()
+  vi.mocked(client.downloads).mockResolvedValue([dl({ id: 10, path: '/d/other.txt' })])
+  await revealSavedFile('/d/spec.pdf')
+  expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: '/d/spec.pdf is not in the downloads list — it cannot be shown in its folder' })
   expect(client.revealDownload).not.toHaveBeenCalled()
 })
 

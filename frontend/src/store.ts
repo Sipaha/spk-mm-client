@@ -2,10 +2,27 @@ import { create } from 'zustand'
 import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
 import { forgetRecent } from './emoji/recent'
 
-export interface NoticeAction {
-  label: string
-  onClick(): void
+// FileSave: a file's download as its own card shows it (no banner — it
+// shifted the layout, user report 2026-09-29): "saving" while Go fetches it,
+// then "saved" with where it went (savedAt: when, for the card's brief ✓).
+export interface FileSave {
+  state: 'saving' | 'saved'
+  path: string // '' while saving a file never saved before
+  savedAt: number // Date.now() of the save; 0 for none yet, or after a failed re-download (no ✓)
 }
+
+// FILE_SAVES_CAP bounds fileSaves over a long session: the oldest entries go
+// (their cards just lose "Show in folder" — the downloads panel keeps it).
+export const FILE_SAVES_CAP = 200
+
+// Toast: a short floating message (a download's error, "saved but not
+// opened"), outside the layout flow — see Toast.tsx.
+export interface ToastMsg {
+  id: number
+  text: string
+  tone: 'error' | 'info'
+}
+let toastSeq = 0
 
 interface State {
   servers: ServerDTO[]
@@ -14,13 +31,23 @@ interface State {
   lastError: string | null
   loginFailures: number // bumped on every login_failed event
   info: AppInfo
+  // formattingBarHidden: the composer's Aa toggle (composer brief
+  // 2026-09-28) — app-wide, not per channel/thread, persisted through
+  // internal/api's GetFormattingBarHidden/SetFormattingBarHidden (same
+  // ui_prefs mechanism as the layout splitters). formattingBarLoaded guards
+  // Composer's one-time fetch on first mount against a refetch on every
+  // channel/thread switch (Composer is remounted per channel/root).
+  formattingBarHidden: boolean
+  formattingBarLoaded: boolean
   signInFor: number | null // "Sign in again" opened the sign-in form over this server's cached chats
   sidebar: SidebarDTO | null // of the selected server
   channel: ChannelDTO | null // open channel of the selected server
   editingId: string | null // post being edited inline
-  notice: string | null // info banner (e.g. where a download went)
-  noticeSticky: boolean // the notice stays until replaced (a download in progress)
-  noticeAction: NoticeAction | null // e.g. the saved notice's "Show in folder"
+  // fileSaves: per file (fileKey: "<server>/<file id>"), its download's
+  // state for the session — see FileSave. Insertion order is age: a set moves
+  // the key to the end, and past FILE_SAVES_CAP the first keys are dropped.
+  fileSaves: Record<string, FileSave>
+  toast: ToastMsg | null
   // liveEpochs: per server, bumped each time it goes live. A picture or
   // snippet that failed to load is remembered only for the epoch it failed
   // in — offline, /media/ answers 404 — and tried again after the next live.
@@ -49,11 +76,14 @@ interface State {
   setError(msg: string | null): void
   loginFailed(msg: string): void
   setInfo(info: AppInfo): void
+  setFormattingBarHidden(hidden: boolean): void
   showSignIn(id: number | null): void
   setSidebar(serverId: number, sb: SidebarDTO): void
   setChannel(serverId: number, ch: ChannelDTO): void
   setEditing(id: string | null): void
-  setNotice(msg: string | null, sticky?: boolean, action?: NoticeAction | null): void
+  setFileSave(key: string, save: FileSave | null): void
+  showToast(text: string, tone?: ToastMsg['tone']): void
+  dismissToast(id?: number): void // without an id: whatever is shown
   setDownloads(list: DownloadView[]): void
   setDownloadsOpen(open: boolean): void
   patchDownloadProgress(id: number, received: number): void
@@ -78,13 +108,14 @@ export const useStore = create<State>((set, get) => ({
   lastError: null,
   loginFailures: 0,
   info: { format_locale: '' },
+  formattingBarHidden: false,
+  formattingBarLoaded: false,
   signInFor: null,
   sidebar: null,
   channel: null,
   editingId: null,
-  notice: null,
-  noticeSticky: false,
-  noticeAction: null,
+  fileSaves: {},
+  toast: null,
   liveEpochs: {},
   downloads: [],
   downloadsOpen: false,
@@ -126,6 +157,7 @@ export const useStore = create<State>((set, get) => ({
   setError: (msg) => set({ lastError: msg }),
   loginFailed: (msg) => set((s) => ({ lastError: msg, loginFailures: s.loginFailures + 1 })),
   setInfo: (info) => set({ info }),
+  setFormattingBarHidden: (hidden) => set({ formattingBarHidden: hidden, formattingBarLoaded: true }),
   showSignIn: (id) => set({ signInFor: id }),
   setSidebar(serverId, sb) {
     if (get().selectedId === serverId) set({ sidebar: sb })
@@ -144,8 +176,19 @@ export const useStore = create<State>((set, get) => ({
     })
   },
   setEditing: (id) => set({ editingId: id }),
-  setNotice: (msg, sticky = false, action = null) =>
-    set({ notice: msg, noticeSticky: msg !== null && sticky, noticeAction: msg !== null ? action : null }),
+  setFileSave(key, save) {
+    const next = { ...get().fileSaves }
+    delete next[key]
+    if (save) next[key] = save
+    const keys = Object.keys(next)
+    for (let i = 0; i < keys.length - FILE_SAVES_CAP; i++) delete next[keys[i]]
+    set({ fileSaves: next })
+  },
+  showToast: (text, tone = 'error') => set({ toast: { id: ++toastSeq, text, tone } }),
+  dismissToast(id) {
+    const cur = get().toast
+    if (cur && (id === undefined || cur.id === id)) set({ toast: null })
+  },
   setDownloads(list) {
     set({ downloads: get().downloadsOpen || hasActiveDownload(list) ? list : [] })
   },

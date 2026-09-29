@@ -377,52 +377,67 @@ export const copyLink = (serverURL: string, teamName: string, postId: string) =>
   navigator.clipboard?.writeText(`${serverURL}/${teamName}/pl/${postId}`).catch(report)
 }
 
-// revealSavedFile backs the saved notice's "Show in folder" button: it
-// resolves the download's list entry by its (unique) saved path and asks
-// Go to show it — RevealDownload takes a downloads-list id, which
-// DownloadFile/OpenFile's result does not carry.
-async function revealSavedFile(path: string) {
+// fileKey names a file across servers for fileSaves (store.ts): the same
+// file id on two servers is two files.
+export const fileKey = (serverId: number, fileId: string) => `${serverId}/${fileId}`
+
+// Download feedback never goes to a banner above the feed (it shifted the
+// layout — user report 2026-09-29): the file's own card shows it
+// (DownloadButton.tsx), and a failure or a note is a floating toast.
+const toastError = (e: unknown) => useStore.getState().showToast(errorMessage(e))
+
+// revealSavedFile backs a saved file's "Show in folder" button: it resolves
+// the download's list entry by its (unique) saved path and asks Go to show
+// it — RevealDownload takes a downloads-list id, which DownloadFile/
+// OpenFile's result does not carry.
+export async function revealSavedFile(path: string) {
   try {
     const list = await client.downloads()
     const entry = list.find((d) => d.path === path)
     // No matching list entry (e.g. the download's SQLite insert failed
-    // even though the file itself was saved) — report it instead of
-    // silently doing nothing; there is no id to reveal by otherwise.
-    if (!entry) throw new Error(`no downloads-list entry for ${path}`)
+    // even though the file itself was saved) — say so instead of silently
+    // doing nothing; there is no id to reveal by otherwise.
+    if (!entry) {
+      useStore.getState().showToast(t('downloads.notListed', { path }))
+      return
+    }
     await client.revealDownload(entry.id)
   } catch (e) {
-    report(e)
+    toastError(e)
   }
 }
 
-// saving shows "Downloading <name>…" at once — a big file takes a while —
-// as a sticky notice (no auto-dismiss); the outcome replaces it. Go joins
-// clicks on a file already downloading to that download. A notice with a
-// path (saved, whether or not it was opened) gets a "Show in folder" action.
-async function saving(name: string, save: () => Promise<{ path: string; opened: boolean }>, done: (r: { path: string; opened: boolean }) => string | null) {
-  const s = useStore.getState()
-  const busy = t('file.downloading', { name })
-  s.setNotice(busy, true)
+// saving marks the file "saving" at once — a big file takes a while — and
+// "saved" with its path when Go is done (Go joins clicks on a file already
+// downloading to that download). A failure puts the file back as it was (a
+// copy saved earlier keeps its "Show in folder", without a ✓) and shows the
+// error in a toast.
+async function saving(serverId: number, file: { id: string; name: string }, save: () => Promise<{ path: string; opened: boolean }>) {
+  const key = fileKey(serverId, file.id)
+  const prev = useStore.getState().fileSaves[key]
+  const before = prev?.state === 'saved' ? prev : null
+  useStore.getState().setFileSave(key, { state: 'saving', path: before?.path ?? '', savedAt: before?.savedAt ?? 0 })
   try {
     const r = await save()
-    const msg = done(r)
-    if (msg !== null || useStore.getState().notice === busy) {
-      const action = msg !== null ? { label: t('downloads.showInFolder'), onClick: () => void revealSavedFile(r.path) } : null
-      useStore.getState().setNotice(msg, false, action)
-    }
+    useStore.getState().setFileSave(key, { state: 'saved', path: r.path, savedAt: Date.now() })
+    return r
   } catch (e) {
-    if (useStore.getState().notice === busy) useStore.getState().setNotice(null)
-    report(e)
+    useStore.getState().setFileSave(key, before && { ...before, savedAt: 0 }) // the copy, but no fresh ✓
+    useStore.getState().showToast(t('file.downloadFailed', { name: file.name, detail: errorMessage(e) }))
+    return null
   }
 }
 
-export const downloadFile = (serverId: number, file: { id: string; name: string }) =>
-  saving(file.name, () => client.downloadFile(serverId, file.id), (r) => t('file.saved', { path: r.path }))
+export const downloadFile = async (serverId: number, file: { id: string; name: string }) => {
+  await saving(serverId, file, () => client.downloadFile(serverId, file.id))
+}
 
 // openFile saves and opens with the system app; Go refuses to open
 // launchers (.desktop, scripts…) — then the user is told where the file is.
-export const openFile = (serverId: number, file: { id: string; name: string }) =>
-  saving(file.name, () => client.openFile(serverId, file.id), (r) => (r.opened ? null : t('file.savedNotOpened', { path: r.path })))
+export const openFile = async (serverId: number, file: { id: string; name: string }) => {
+  const r = await saving(serverId, file, () => client.openFile(serverId, file.id))
+  if (r && !r.opened) useStore.getState().showToast(t('file.savedNotOpened', { path: r.path }), 'info')
+}
 
 // --- Downloads panel ---------------------------------------------------
 
@@ -474,10 +489,10 @@ export function onDownloadsChanged(payload: Record<string, unknown> | undefined)
   void refreshDownloads()
 }
 
-export const openDownload = (id: number) => client.openDownload(id).catch(report)
-export const revealDownload = (id: number) => client.revealDownload(id).catch(report)
-export const removeDownload = (id: number) => client.removeDownload(id).catch(report)
-export const clearDownloads = () => client.clearDownloads().catch(report)
+export const openDownload = (id: number) => client.openDownload(id).catch(toastError)
+export const revealDownload = (id: number) => client.revealDownload(id).catch(toastError)
+export const removeDownload = (id: number) => client.removeDownload(id).catch(toastError)
+export const clearDownloads = () => client.clearDownloads().catch(toastError)
 
 // downloadPrimaryAction: what a click on a finished row / Enter does —
 // "Open" when possible, else "Show in folder"; nothing for an in-progress

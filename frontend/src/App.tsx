@@ -15,6 +15,7 @@ import {
   SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
 } from './components/splitter'
 import { ThreadPane } from './components/ThreadPane'
+import { Toast } from './components/Toast'
 import { IconClose } from './components/icons'
 import { errorMessage } from './errors'
 import { t } from './i18n'
@@ -43,8 +44,7 @@ function useWindowWidth(): number {
 
 export function App() {
   const {
-    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, notice, noticeSticky,
-    noticeAction, setError, loginFailed, setInfo, showSignIn, setNotice,
+    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, setError, loginFailed, setInfo, showSignIn,
   } = useStore()
 
   // Sidebar/thread-panel splitter widths (theme brief 2026-09-28 scope 3a):
@@ -163,14 +163,6 @@ export function App() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!notice || noticeSticky) return // a download in progress stays until its outcome replaces it
-    const timer = setTimeout(() => {
-      if (useStore.getState().notice === notice) setNotice(null)
-    }, 8000)
-    return () => clearTimeout(timer)
-  }, [notice, noticeSticky, setNotice])
-
   const selected = servers.find((s) => s.id === selectedId)
   const chat = selected && selected.signed_in && signInFor !== selected.id
   const signOut = (s: ServerDTO) => client.logout(s.id).catch(report)
@@ -183,21 +175,6 @@ export function App() {
       <button aria-label={t('app.dismiss')} className="flex items-center justify-center px-2" onClick={() => setError(null)}>
         <IconClose />
       </button>
-    </p>
-  )
-  const info = notice && (
-    <p role="status" className="flex items-center justify-between gap-3 bg-hover px-4 py-2 text-sm text-fg">
-      <span className="min-w-0 flex-1 break-all">{notice}</span>
-      <span className="flex shrink-0 items-center gap-2">
-        {noticeAction && (
-          <button className="font-medium underline" onClick={noticeAction.onClick}>
-            {noticeAction.label}
-          </button>
-        )}
-        <button aria-label={t('app.dismiss')} className="flex items-center justify-center px-2" onClick={() => setNotice(null)}>
-          <IconClose />
-        </button>
-      </span>
     </p>
   )
 
@@ -227,7 +204,6 @@ export function App() {
           />
           <main className="flex min-w-0 flex-1 flex-col">
             {banner}
-            {info}
             <div className="relative flex min-h-0 flex-1">
               <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />
               {thread && (
@@ -266,6 +242,7 @@ export function App() {
           )}
         </main>
       )}
+      <Toast />
     </div>
   )
 }

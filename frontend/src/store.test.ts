@@ -1,7 +1,7 @@
 import { vi } from 'vitest'
 import type { DownloadView, ServerDTO } from './api/types'
 import { forgetRecent } from './emoji/recent'
-import { useStore } from './store'
+import { FILE_SAVES_CAP, useStore } from './store'
 
 vi.mock('./emoji/recent', () => ({ forgetRecent: vi.fn() }))
 
@@ -114,12 +114,32 @@ const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
   started_at: 0, finished_at: 1, state: 'done', error: '', received: 10, exists: true, openable: true, ...over,
 })
 
-test('setNotice carries an optional action, cleared with the notice', () => {
-  const onClick = () => {}
-  useStore.getState().setNotice('Saved to /a', false, { label: 'Show in folder', onClick })
-  expect(useStore.getState().noticeAction).toEqual({ label: 'Show in folder', onClick })
-  useStore.getState().setNotice(null)
-  expect(useStore.getState().noticeAction).toBeNull()
+test('fileSaves: set and cleared per file key; the oldest entries go past the session cap', () => {
+  const st = () => useStore.getState()
+  st().setFileSave('1/a', { state: 'saving', path: '', savedAt: 0 })
+  st().setFileSave('1/a', { state: 'saved', path: '/d/a', savedAt: 5 })
+  expect(st().fileSaves['1/a']).toEqual({ state: 'saved', path: '/d/a', savedAt: 5 })
+  st().setFileSave('1/a', null)
+  expect(st().fileSaves['1/a']).toBeUndefined()
+  for (let i = 0; i < FILE_SAVES_CAP + 5; i++) st().setFileSave(`1/f${i}`, { state: 'saved', path: `/d/${i}`, savedAt: i })
+  expect(Object.keys(st().fileSaves)).toHaveLength(FILE_SAVES_CAP)
+  expect(st().fileSaves['1/f0']).toBeUndefined()
+  st().setFileSave('1/f5', { state: 'saved', path: '/d/5', savedAt: 99 }) // touched: now the newest
+  st().setFileSave('1/g', { state: 'saved', path: '/d/g', savedAt: 100 })
+  expect(st().fileSaves['1/f5']).toBeDefined()
+  expect(st().fileSaves['1/f6']).toBeUndefined()
+})
+
+test('toast: showing replaces the current one; dismissing an older id leaves a newer toast alone', () => {
+  const st = () => useStore.getState()
+  st().showToast('first')
+  const first = st().toast!
+  st().showToast('second', 'info')
+  expect(st().toast).toMatchObject({ text: 'second', tone: 'info' })
+  st().dismissToast(first.id)
+  expect(st().toast?.text).toBe('second')
+  st().dismissToast()
+  expect(st().toast).toBeNull()
 })
 
 test('the downloads list is dropped once the panel closes and nothing is active', () => {

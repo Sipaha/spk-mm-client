@@ -88,7 +88,7 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
     }
   }, [failed])
 
-  if (failed) return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
+  if (failed) return <FileCard serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
 
   if (kind === 'audio') {
     const el = (

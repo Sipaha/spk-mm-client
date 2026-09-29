@@ -3,6 +3,7 @@ import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
+import { DownloadButton } from './DownloadButton'
 import { FileCard } from './FileCard'
 import { fileKind, imageSrc } from './files'
 import { ImageZoom, type ImageZoomHandle } from './ImageZoom'
@@ -182,9 +183,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
               </button>
             </span>
           )}
-          <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => onDownload(file)}>
-            {t('viewer.download')}
-          </button>
+          <DownloadButton serverId={serverId} file={file} onDownload={onDownload} text />
           <button type="button" className="rounded px-2 py-0.5 hover:bg-hover" onClick={() => onOpen(file)}>
             {t('viewer.open')}
           </button>
@@ -232,13 +231,13 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
               onPercent={setScalePercent}
             />
           ) : (
-            <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
+            <FileCard key={file.id} serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
           )
         ) : kind === 'video' || kind === 'audio' ? (
           <MediaPlayer key={file.id} serverId={serverId} file={file} kind={kind} big onDownload={onDownload} onOpen={onOpen} />
         ) : kind === 'pdf' ? (
           failedIds.has(file.id) ? (
-            <FileCard key={file.id} file={file} onDownload={onDownload} onOpen={onOpen} />
+            <FileCard key={file.id} serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
           ) : (
             // Never an <iframe>/<embed>/<object> (plan.md ruling): WebKitGTK
             // renders application/pdf with its own bundled pdf.js 4.1.392,

@@ -34,7 +34,7 @@ vi.mock('../chat', () => ({
   editLastOwn: vi.fn(), editPost: vi.fn(), emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
   loadOlder: vi.fn(), markUnread: vi.fn(), setPostSaved: vi.fn(), openDownload: vi.fn(), openDownloadsPanel: vi.fn(),
   openFile: vi.fn(), openLink: vi.fn(), openThread: vi.fn(), react: vi.fn(), removeDownload: vi.fn(), retryPost: vi.fn(),
-  revealDownload: vi.fn(), saveDraft: vi.fn(), sendPost: vi.fn(), uploadAttachments: vi.fn().mockResolvedValue(undefined),
+  revealDownload: vi.fn(), revealSavedFile: vi.fn(), fileKey: (s: number, f: string) => `${s}/${f}`, saveDraft: vi.fn(), sendPost: vi.fn(), uploadAttachments: vi.fn().mockResolvedValue(undefined),
   attachFromClipboard: vi.fn(), pickAttachments: vi.fn(), removeAttachment: vi.fn(), retryAttachment: vi.fn(),
 }))
 

@@ -5,7 +5,8 @@ import { t } from '../i18n'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
-import { IconDownload, IconExpand, IconNote, IconOpenExternal } from './icons'
+import { DownloadButton } from './DownloadButton'
+import { IconExpand, IconNote, IconOpenExternal } from './icons'
 import { useTextFile } from './textFile'
 
 // The collapsed snippet is 8 lines high whether loaded or not: the feed
@@ -13,7 +14,7 @@ import { useTextFile } from './textFile'
 export function TextSnippet({ serverId, file, onView, onDownload, onOpen }: { serverId: number; file: FileView } & FileHandlers) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id), useLiveEpoch(serverId))
   const [open, setOpen] = useState(false)
-  if (res.status === 'error') return <FileCard file={file} onDownload={onDownload} onOpen={onOpen} />
+  if (res.status === 'error') return <FileCard serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
   return (
     <figure className="w-full max-w-3xl overflow-hidden rounded border border-line bg-code-bg text-xs">
       <figcaption className="flex items-center gap-2 border-b border-line px-2 py-1">
@@ -29,9 +30,7 @@ export function TextSnippet({ serverId, file, onView, onDownload, onOpen }: { se
           <IconButton label={t('file.view', { name: file.name })} onClick={() => onView(file)}>
             <IconExpand />
           </IconButton>
-          <IconButton label={t('file.download', { name: file.name })} onClick={() => onDownload(file)}>
-            <IconDownload />
-          </IconButton>
+          <DownloadButton serverId={serverId} file={file} onDownload={onDownload} />
           <IconButton label={t('file.open', { name: file.name })} onClick={() => onOpen(file)}>
             <IconOpenExternal />
           </IconButton>
