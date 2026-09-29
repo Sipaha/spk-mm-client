@@ -3,9 +3,12 @@ import { existsSync } from 'node:fs'
 import { channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost } from './helpers'
 
 // A failed test must not leave its server behind (chat.spec.ts rule); every
-// test below also closes the viewer (Escape) before it ends, so the modal
-// overlay never sits on top of the "Server menu" button this hook clicks.
+// test below also closes the viewer (Escape) before it ends, but a failed
+// assertion can still leave it open — press Escape here too (PDF final
+// review M2), so a stuck-open dialog never blocks the "Server menu" click
+// for its own 30 s timeout, which used to cascade into the next test/file.
 test.afterEach(async ({ page }) => {
+  if (await page.getByRole('dialog', { name: 'File viewer' }).isVisible().catch(() => false)) await page.keyboard.press('Escape')
   if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
 })
 
@@ -21,25 +24,45 @@ test('closing the viewer mid-load cancels the pending PDF fetch', async ({ page 
   await channel(page, /Off-Topic/).click()
   const srv = await serverId(page)
   try {
-    // 100 KB/s: manual.pdf (~4 MB, one JPEG per page) needs ~40 s at this
-    // rate, far longer than the time between opening the viewer and
-    // pressing Escape below — the fetch is still in flight when it closes.
-    await testPost(page, 'fake/throttle-file', { bytes_per_sec: 100_000 })
-    const [req] = await Promise.all([
-      page.waitForRequest((r) => r.url().includes(`/media/${srv}/pdf/f-manual`) && r.method() === 'GET'),
-      feed(page).getByRole('button', { name: 'View manual.pdf' }).click(),
-    ])
-    expect(req).toBeTruthy()
+    // Scoped to f-manual only, not every plain file (PDF final review I2):
+    // throttling every file also slows Off-Topic's own text/markdown
+    // snippet fetches (f-log, f-biglog, README, …), which go through the
+    // same fake endpoint — that can saturate Chromium's 6-connection pool
+    // and get the PDF request itself aborted client-side before Go's own
+    // media cache ever sees it, so the test would "pass" even against a
+    // build that never cancels anything server-side (the vacuous failure
+    // mode this test used to have). 100 KB/s: manual.pdf (~4 MB, one JPEG
+    // per page) needs ~40 s at this rate, far longer than this test needs.
+    await testPost(page, 'fake/throttle-file', { bytes_per_sec: 100_000, file_id: 'f-manual' })
+    await feed(page).getByRole('button', { name: 'View manual.pdf' }).click()
+
+    // Wait for the *fake's own record* that Go's media cache actually
+    // reached it and started reading — not a browser-side request event,
+    // which proves only that the browser sent something, never that the
+    // server-side fetch this test is about to cancel ever began.
+    await expect
+      .poll(async () => ((await testGet(page, 'fake/file-get-status?id=f-manual')) as { started: boolean }).started)
+      .toBe(true)
+
     await page.keyboard.press('Escape')
     await expect(viewer(page)).toHaveCount(0)
 
     // internal/media/pdf.go cancels the fetch once the last waiter (this
-    // request) leaves, and does not negative-cache the abandoned call
-    // (Task 1 re-review R2-1/R1): the next request must start a *fresh*
-    // fetch. Restore full speed and prove that fresh fetch is fast — if the
-    // old call were still alive instead, a same-file request would join it
-    // and stay bound to the old throttled rate for the rest of its life,
-    // timing out well before 8 s.
+    // request) leaves; that cancellation reaches the fake's own upstream
+    // GET, whose handler observes r.Context().Done() (streamThrottled) and
+    // records it (internal/mmfake, FileGetStatus — added for this test).
+    // This is the non-vacuous proof I2 asked for: a build where
+    // internal/media's Cache.get never cancels the abandoned call leaves
+    // "cancelled" false forever and this poll times out the test, instead
+    // of the old timing-based check, which passed either way.
+    await expect
+      .poll(async () => ((await testGet(page, 'fake/file-get-status?id=f-manual')) as { cancelled: boolean }).cancelled)
+      .toBe(true)
+
+    // Also not negative-cached (Task 1 re-review R1/R2-1): the next request
+    // must start a *fresh* fetch, not join a still-running old call. Having
+    // already confirmed the cancel server-side above (not just inferred it
+    // from timing), this fast-completion check is no longer racing anything.
     await testPost(page, 'fake/throttle-file', { bytes_per_sec: 0 })
     const resp = await page.request.get(`/media/${srv}/pdf/f-manual`, { timeout: 8_000 })
     expect(resp.ok()).toBe(true)
@@ -62,8 +85,18 @@ test('manual.pdf: page counter, paging to the landscape page, no horizontal over
   // page 2 is the seeded landscape page (internal/mmfake/pdf.go,
   // LandscapePage) — fit mode must fit *that* page's own width too (Tasks
   // 2+3 fix round 2), not stretch it at page 1's scale.
+  //
+  // Scroll page 2's own top to the scroller's top by reading real rendered
+  // geometry (getBoundingClientRect), not scrollIntoViewIfNeeded() (PDF
+  // final review M3): that only centres/aligns "as needed", which depends
+  // on how much of the scroller's viewport page 1 already fills — true only
+  // at some viewport sizes, not the actual contract being tested here.
   await expect(async () => {
-    await v.locator('[data-page="2"]').scrollIntoViewIfNeeded()
+    await scroller.evaluate((el) => {
+      const p2 = el.querySelector('[data-page="2"]')
+      if (!(p2 instanceof HTMLElement)) throw new Error('page 2 is not in the DOM yet')
+      el.scrollTop += p2.getBoundingClientRect().top - el.getBoundingClientRect().top
+    })
     await expect(pageCounter).toHaveText('2 / 50')
   }).toPass()
   await expect.poll(() => scroller.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
@@ -85,7 +118,22 @@ test('zoom in/out change the percentage; Fit width returns to the original scale
   // race every click below against the async pdf.js load completing.
   await expect(v.getByText(/^\d+ \/ 50$/)).toHaveText('1 / 50')
   const percent = v.getByText(/^\d+%$/)
-  const fitPercent = await percent.textContent()
+  // Poll for two consecutive equal reads, not a single read right after
+  // "1 / 50" appears (PDF final review M4): a classic, non-overlay
+  // scrollbar changes the scroller's clientWidth, and PdfView's
+  // ResizeObserver-driven re-fit can still land a tick after the page
+  // count first shows up, changing the percentage out from under a
+  // one-shot read.
+  let lastPercent: string | null = null
+  await expect
+    .poll(async () => {
+      const cur = await percent.textContent()
+      const stable = cur !== null && cur === lastPercent
+      lastPercent = cur
+      return stable
+    })
+    .toBe(true)
+  const fitPercent = lastPercent
 
   await v.getByRole('button', { name: 'Zoom in' }).click()
   await expect(percent).not.toHaveText(fitPercent!)

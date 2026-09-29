@@ -103,8 +103,10 @@ type Server struct {
 	broken         map[string]bool // BreakReplies
 	rejectResumes  bool
 	hits           map[string]int
-	fileThrottle   int // bytes/sec, 0 = full speed (SetFileThrottle)
-	uploadThrottle int // bytes/sec, 0 = full speed (SetUploadThrottle)
+	fileThrottle   int                    // bytes/sec, 0 = full speed (SetFileThrottle/SetFileThrottleFor)
+	fileThrottleID string                 // "" = every file (SetFileThrottle); a specific id = only that file (SetFileThrottleFor)
+	uploadThrottle int                    // bytes/sec, 0 = full speed (SetUploadThrottle)
+	fileGets       map[string]*fileGetEvt // last plain GET /api/v4/files/{id} per id (Task 5 final review I2)
 
 	filesDir string // uploads on disk (Options.FilesDir); "" = in memory
 

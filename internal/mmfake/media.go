@@ -328,6 +328,9 @@ func (s *Server) fileHandler(what string) func(http.ResponseWriter, *http.Reques
 		if f == nil {
 			return
 		}
+		if what == "" {
+			s.startFileGet(f.info.ID)
+		}
 		var content io.ReadSeekCloser
 		ctype := f.info.MimeType
 		switch what {
@@ -359,9 +362,10 @@ func (s *Server) fileHandler(what string) func(http.ResponseWriter, *http.Reques
 		w.Header().Set("Cache-Control", "private, max-age=86400")
 		s.mu.Lock()
 		bps := s.fileThrottle
+		throttleID := s.fileThrottleID
 		s.mu.Unlock()
-		if what == "" && bps > 0 {
-			streamThrottled(w, r, content, f.info.Size, bps)
+		if what == "" && bps > 0 && (throttleID == "" || throttleID == f.info.ID) {
+			streamThrottled(w, r, content, f.info.Size, bps, func() { s.cancelFileGet(f.info.ID) })
 			return
 		}
 		http.ServeContent(w, r, f.info.Name, time.Time{}, content)
@@ -380,8 +384,10 @@ func derivedContent(b []byte) io.ReadSeekCloser {
 // bytesPerSec, flushing after each one so a client copying the response
 // body observes its progress growing over time instead of getting it all
 // at once; it does not support Range (SetFileThrottle is a dev/e2e knob,
-// not used together with partial requests).
-func streamThrottled(w http.ResponseWriter, r *http.Request, content io.Reader, size int64, bytesPerSec int) {
+// not used together with partial requests). onCancel runs if the client's
+// context ends before the body finished sending (Task 5 final review I2) —
+// nil is fine when the caller does not need to observe that.
+func streamThrottled(w http.ResponseWriter, r *http.Request, content io.Reader, size int64, bytesPerSec int, onCancel func()) {
 	const tick = 100 * time.Millisecond
 	chunk := make([]byte, max(1, bytesPerSec/10))
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
@@ -403,6 +409,9 @@ func streamThrottled(w http.ResponseWriter, r *http.Request, content io.Reader, 
 		select {
 		case <-time.After(tick):
 		case <-r.Context().Done():
+			if onCancel != nil {
+				onCancel()
+			}
 			return
 		}
 	}

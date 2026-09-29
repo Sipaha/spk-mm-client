@@ -119,11 +119,68 @@ func (s *Server) SetLatency(part string, d time.Duration) {
 // /api/v4/files/{id} — not its /thumbnail or /preview, and not /info)
 // stream at roughly bytesPerSec, flushing after each small chunk instead of
 // answering at once: dev/e2e only, so a screenshot or a manual check can
-// catch a download mid-progress (0 restores full-speed serving).
+// catch a download mid-progress (0 restores full-speed serving). Clears any
+// earlier SetFileThrottleFor scoping — this always applies to every file.
 func (s *Server) SetFileThrottle(bytesPerSec int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fileThrottle = bytesPerSec
+	s.fileThrottleID = ""
+}
+
+// SetFileThrottleFor is SetFileThrottle scoped to one file id: only that
+// file's plain download is slowed, so a test that needs a slow window on
+// one file (e.g. the PDF mid-load-cancel e2e check) does not also throttle
+// every other file in the channel and saturate the browser's connection
+// pool with them (Task 5 final review I2). 0 restores full-speed serving
+// and clears the scoping.
+func (s *Server) SetFileThrottleFor(fileID string, bytesPerSec int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileThrottle = bytesPerSec
+	s.fileThrottleID = fileID
+}
+
+// fileGetEvt is one file id's most recent plain GET /api/v4/files/{id}:
+// whether it has started, and whether the client cancelled it before the
+// body finished (streamThrottled sees this via r.Context().Done()). A new
+// GET for the same id resets it — each open is its own observation.
+type fileGetEvt struct {
+	started   bool
+	cancelled bool
+}
+
+func (s *Server) startFileGet(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fileGets == nil {
+		s.fileGets = map[string]*fileGetEvt{}
+	}
+	s.fileGets[id] = &fileGetEvt{started: true}
+}
+
+func (s *Server) cancelFileGet(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.fileGets[id]; e != nil {
+		e.cancelled = true
+	}
+}
+
+// FileGetStatus reports id's most recent plain-GET observation (Task 5
+// final review I2): a dev/e2e knob so a test can prove the server side of a
+// cancelled fetch — internal/media's abandoned-PDF-fetch cancellation —
+// instead of inferring it from browser-side request timing, which a
+// saturated connection pool (several throttled files at once) can trip
+// before the request ever reaches this server.
+func (s *Server) FileGetStatus(id string) (started, cancelled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.fileGets[id]
+	if e == nil {
+		return false, false
+	}
+	return e.started, e.cancelled
 }
 
 // SetUploadThrottle makes POST /api/v4/files (the simple upload mode) read

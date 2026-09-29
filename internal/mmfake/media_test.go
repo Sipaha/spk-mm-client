@@ -2,6 +2,7 @@ package mmfake
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	_ "image/jpeg"
@@ -225,6 +226,87 @@ func TestFileThrottleSlowsPlainDownloadOnly(t *testing.T) {
 	require.Equal(t, 200, resp.StatusCode)
 	assert.Len(t, body, 300)
 	assert.Less(t, time.Since(start), 150*time.Millisecond, "0 restores full-speed serving")
+}
+
+// SetFileThrottleFor scopes the throttle to one file id (Task 5 final review
+// I2): another file's plain download is unaffected.
+func TestFileThrottleForScopesToOneFile(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	s.newFileLocked("f-a", "c-offtopic", "a.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 300))
+	s.newFileLocked("f-b", "c-offtopic", "b.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 300))
+	a := loginAs(t, s, "alice")
+	defer s.SetFileThrottleFor("", 0)
+
+	s.SetFileThrottleFor("f-a", 1000) // chunk 100 B/100 ms: 300 B takes 2 waits, ~200 ms
+
+	start := time.Now()
+	resp, _ := a.raw("GET", "/api/v4/files/f-a", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "the scoped file is throttled")
+
+	start = time.Now()
+	resp, _ = a.raw("GET", "/api/v4/files/f-b", nil)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Less(t, time.Since(start), 150*time.Millisecond, "an unscoped file ignores the throttle")
+}
+
+// FileGetStatus records a plain GET's start, and its cancellation once the
+// client disconnects mid-stream (Task 5 final review I2: the pdf.spec.ts
+// mid-load-cancel e2e test observes this instead of inferring cancellation
+// from browser-side request timing, which the throttle's own connection-pool
+// pressure could trip before the request ever reaches this server).
+func TestFileGetStatusRecordsStartAndCancel(t *testing.T) {
+	s := Start(Options{})
+	defer s.Close()
+	s.newFileLocked("f-slow", "c-offtopic", "slow.bin", "application/octet-stream", bytes.Repeat([]byte("x"), 5000))
+	a := loginAs(t, s, "alice")
+
+	started, cancelled := s.FileGetStatus("f-slow")
+	assert.False(t, started, "nothing has asked for f-slow yet")
+	assert.False(t, cancelled)
+
+	s.SetFileThrottleFor("f-slow", 100) // 5000 B at 100 B/s: far longer than this test needs to observe a start
+	defer s.SetFileThrottleFor("", 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", s.URL()+"/api/v4/files/f-slow", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+a.tok)
+	// respCh, not a synchronous body-read/close: Do() returns as soon as the
+	// response headers arrive (right after the first throttled chunk), long
+	// before the body has finished streaming — closing the body immediately
+	// here would itself cancel the request before this test's own explicit
+	// cancel() does, which is exactly the bug this test must not have.
+	respCh := make(chan *http.Response, 1)
+	go func() {
+		resp, doErr := http.DefaultClient.Do(req) //nolint:bodyclose // closed by this test once it is done with it
+		if doErr == nil {
+			respCh <- resp
+		}
+	}()
+
+	require.Eventually(t, func() bool {
+		started, _ := s.FileGetStatus("f-slow")
+		return started
+	}, 2*time.Second, 10*time.Millisecond, "the fake must record the GET's start")
+
+	_, cancelled = s.FileGetStatus("f-slow")
+	assert.False(t, cancelled, "not cancelled yet")
+
+	cancel()
+
+	require.Eventually(t, func() bool {
+		_, cancelled := s.FileGetStatus("f-slow")
+		return cancelled
+	}, 2*time.Second, 10*time.Millisecond, "the fake must record the client's cancel")
+
+	select {
+	case resp := <-respCh:
+		resp.Body.Close()
+	case <-time.After(time.Second):
+	}
 }
 
 func TestPictureChangeIsBroadcast(t *testing.T) {

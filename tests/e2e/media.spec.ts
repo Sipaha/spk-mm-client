@@ -1,8 +1,16 @@
 import { expect, test } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { channel, feed, removeServerFromMenu, signInAlice, testGet, testPost } from './helpers'
+import { channel, fakePost, feed, removeServerFromMenu, signInAlice, testGet, testPost, unique } from './helpers'
 
 const naturalWidth = (img: import('@playwright/test').Locator) => img.evaluate((i: HTMLImageElement) => i.naturalWidth)
+
+// A failed test must not leave its server behind (chat.spec.ts rule): without
+// this, a test that fails before its own removeServerFromMenu() cascades
+// into the next spec file's first test (PDF final review I1 — this is what
+// the reactions-test regression below actually looked like before its fix).
+test.afterEach(async ({ page }) => {
+  if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
+})
 
 test('avatars and presence in the sidebar and the feed', async ({ page }) => {
   await signInAlice(page)
@@ -156,7 +164,19 @@ test('video, audio and markdown previews: smoke', async ({ page }) => {
 test('reactions: chips toggle, the picker adds, others arrive live', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
-  const post = feed(page).locator('article', { hasText: 'Welcome to off-topic' })
+  // A post the test creates itself, not the seeded "Welcome to off-topic"
+  // root (PDF final review I1): Off-Topic's history has grown past what the
+  // virtualized feed keeps rendered while sitting at the bottom, so the
+  // welcome post can fall outside the rendered window and this locator would
+  // never resolve — deterministically, not as a flake. A fresh post lands at
+  // the bottom, right where the feed already is.
+  const text = unique('reactions test post')
+  await fakePost(page, 'c-offtopic', 'bob', text)
+  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: '+1' })
+  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'carol', emoji: '+1' })
+  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'partyparrot' })
+  const post = feed(page).locator('article', { hasText: text })
+  await expect(post.getByRole('button', { name: '👍 2' })).toBeVisible()
   await post.getByRole('button', { name: '👍 2' }).click()
   await expect(post.getByRole('button', { name: '👍 3, you reacted' })).toBeVisible()
   await post.getByRole('button', { name: '👍 3, you reacted' }).click()
@@ -170,7 +190,7 @@ test('reactions: chips toggle, the picker adds, others arrive live', async ({ pa
   await expect(picker).toHaveCount(0)
   await expect(post.getByRole('button', { name: '🥑 1, you reacted' })).toBeVisible()
 
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: 'Welcome to off-topic', username: 'bob', emoji: 'fire' })
+  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'fire' })
   await expect(post.getByRole('button', { name: '🔥 1' })).toBeVisible()
   await expect(post.locator('img[src*="/emoji/partyparrot"]')).toBeVisible()
 
@@ -184,10 +204,12 @@ test('reactions: chips toggle, the picker adds, others arrive live', async ({ pa
   await expect(post.getByRole('button', { name: '🔥 1' })).toBeVisible()
   await expect(post.getByRole('button', { name: '👍 2' })).toBeVisible()
 
-  // the fake is shared by all tests: put things back
+  // this post is fresh to this test run (nothing else references it), so
+  // there's no shared state to restore — still exercise removal, proving it
+  // reaches the server too, not just the optimistic UI.
   await post.getByRole('button', { name: '🥑 1, you reacted' }).click()
   await expect(post.getByRole('button', { name: /🥑/ })).toHaveCount(0)
-  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: 'Welcome to off-topic', username: 'bob', emoji: 'fire', remove: true })
+  await testPost(page, 'fake/react', { channel_id: 'c-offtopic', message: text, username: 'bob', emoji: 'fire', remove: true })
   await expect(post.getByRole('button', { name: /🔥/ })).toHaveCount(0)
   await removeServerFromMenu(page)
 })

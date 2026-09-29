@@ -328,11 +328,20 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		}))
 		tm.HandleFunc("POST /api/_test/fake/throttle-file", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
-				BytesPerSec int `json:"bytes_per_sec"`
+				BytesPerSec int    `json:"bytes_per_sec"`
+				FileID      string `json:"file_id"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			fake.SetFileThrottle(in.BytesPerSec)
+			if in.FileID != "" {
+				fake.SetFileThrottleFor(in.FileID, in.BytesPerSec)
+			} else {
+				fake.SetFileThrottle(in.BytesPerSec)
+			}
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
+		tm.HandleFunc("GET /api/_test/fake/file-get-status", withFake(func(w http.ResponseWriter, r *http.Request) {
+			started, cancelled := fake.FileGetStatus(r.URL.Query().Get("id"))
+			writeJSON(w, http.StatusOK, map[string]bool{"started": started, "cancelled": cancelled})
 		}))
 		tm.HandleFunc("POST /api/_test/fake/throttle-upload", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
