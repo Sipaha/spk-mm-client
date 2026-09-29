@@ -16,6 +16,31 @@ test.afterEach(async ({ page }) => {
   if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
 })
 
+// No "ResizeObserver loop completed with undelivered notifications" (review
+// M6: the bottom-stick first observed the rows' container, which the
+// virtualizer resizes from inside its own row observer's broadcast). The
+// browser reports it as a window error event. Not checked in the tests that
+// type into the composer: there Chromium reports it intermittently from the
+// composer's toolbar-fit observer together with the virtualizer's scroller
+// observer (bisected: either one disabled — 0 of 16 runs; the bottom-stick's
+// own observer disabled — still 4 of 16), which is not the feed's.
+let checkLoops = true
+test.beforeEach(async ({ page }) => {
+  checkLoops = true
+  await page.addInitScript(() => {
+    const w = window as unknown as { __roErrors: string[] }
+    w.__roErrors = []
+    window.addEventListener('error', (e) => {
+      if (String(e.message).includes('ResizeObserver')) w.__roErrors.push(String(e.message))
+    })
+  })
+})
+test.afterEach(async ({ page }) => {
+  if (!checkLoops) return
+  const errs = await page.evaluate(() => (window as unknown as { __roErrors?: string[] }).__roErrors ?? []).catch(() => [])
+  expect(errs, 'ResizeObserver loop errors').toEqual([])
+})
+
 let seeded = false // the fake lives for the whole run (workers: 1)
 const shots = process.env.STICK_SHOT_DIR // optional: where to write the screenshots
 
@@ -108,10 +133,16 @@ test('downloading the last post\'s attachment: feedback on the card, an error to
   chmodSync(dir, 0o500)
   try {
     await download.click()
-    const toast = page.getByTestId('toast-region')
+    const toast = feed(page).locator('xpath=..').getByTestId('toast-region')
     await expect(toast).toContainText('Could not download stick-report.zip')
     await expect(toast).toHaveAttribute('aria-live', 'polite')
     if (shots) await page.screenshot({ path: `${shots}/stick-error-toast.png` })
+    // above the composer and clear of the jump-to-latest button (review M3)
+    const tb = (await toast.locator('[data-tone]').boundingBox())!
+    const log = (await feed(page).boundingBox())! // the feed ends where the composer starts
+    expect(tb.y + tb.height).toBeLessThanOrEqual(log.y + log.height)
+    const jump = (await feed(page).locator('xpath=..').locator('button[aria-label^="Jump to latest"]').boundingBox())!
+    expect(tb.x + tb.width <= jump.x || tb.y + tb.height <= jump.y, `toast ${JSON.stringify(tb)} jump ${JSON.stringify(jump)}`).toBe(true)
     o = await lastPostOverflow(page)
     expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
     expect(o.distance, JSON.stringify(o)).toBeLessThan(2)
@@ -124,6 +155,7 @@ test('downloading the last post\'s attachment: feedback on the card, an error to
 })
 
 test('at the bottom, a composer growing with a multi-line draft keeps the last post fully visible', async ({ page }) => {
+  checkLoops = false // see the loop check above
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSecretAtBottom(page)
   const box = page.getByRole('textbox', { name: 'Message' })
@@ -153,6 +185,7 @@ test('at the bottom, a shorter window keeps the last post fully visible', async 
 })
 
 test('away from the bottom, a composer growing keeps the top visible post where it was', async ({ page }) => {
+  checkLoops = false // see the loop check above
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSecretAtBottom(page)
   const log = feed(page)
@@ -181,5 +214,58 @@ test('away from the bottom, a composer growing keeps the top visible post where 
   await page.waitForTimeout(200)
   expect(await topOf()).toEqual(before)
   await box.fill('')
+  await removeServerFromMenu(page)
+})
+
+// A post with several file cards at the bottom (review M10): the cards sit
+// in a wrapping row, so a card getting wider once "Show in folder" appears
+// could wrap and make the row taller. The reveal slot is reserved from the
+// start: no card changes size and the last row stays fully visible.
+test('several file cards on the last post: a download changes no card\'s size and the last row stays fully visible', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await signInAlice(page)
+  await seed(page)
+  const base = await fakeURL(page)
+  const login = await page.request.post(`${base}/api/v4/users/login`, { data: { login_id: 'alice', password: 'secret' } })
+  const auth = { Authorization: `Bearer ${login.headers()['token']}` }
+  const ids: string[] = []
+  for (const name of ['quarterly-report-final.zip', 'meeting-notes-archive.zip', 'design-assets-v2.zip', 'build-artifacts.tar', 'x.bin']) {
+    const up = await page.request.post(`${base}/api/v4/files?channel_id=c-secret&filename=${name}`, {
+      headers: { ...auth, 'Content-Type': 'application/octet-stream' },
+      data: Buffer.alloc(4096, 1),
+    })
+    expect(up.ok()).toBeTruthy()
+    ids.push((await up.json()).file_infos[0].id)
+  }
+  const post = await page.request.post(`${base}/api/v4/posts`, { headers: auth, data: { channel_id: 'c-secret', message: 'stick several files', file_ids: ids } })
+  expect(post.ok()).toBeTruthy()
+  await channel(page, /Secret/).click()
+  await expect(feed(page).getByText('stick several files')).toBeVisible()
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[role=log][data-feed=channel]')!
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 2
+  })
+  await page.waitForTimeout(800) // the opening's rows updates settle (see openSecretAtBottom)
+  const last = feed(page).locator('[data-kind="post"]').last()
+  const sizes = () =>
+    last.evaluate((row) => ({
+      row: Math.round(row.getBoundingClientRect().height),
+      cards: [...row.querySelectorAll('[data-slot="reveal"]')].map((b) => {
+        const r = b.parentElement!.parentElement!.getBoundingClientRect()
+        return [Math.round(r.width), Math.round(r.height), Math.round(r.top)]
+      }),
+    }))
+  const before = await sizes()
+  expect(before.cards).toHaveLength(5)
+  for (const name of ['quarterly-report-final.zip', 'build-artifacts.tar']) {
+    await feed(page).getByRole('button', { name: `Download ${name}` }).click()
+    await expect(feed(page).getByRole('button', { name: `Show ${name} in folder` })).toBeVisible()
+  }
+  if (shots) await last.screenshot({ path: `${shots}/stick-several-cards.png` })
+  expect(await sizes()).toEqual(before)
+  const o = await lastPostOverflow(page)
+  expect(o.text).toContain('stick several files')
+  expect(o.below, JSON.stringify(o)).toBeLessThanOrEqual(0)
+  expect(o.distance, JSON.stringify(o)).toBeLessThan(2)
   await removeServerFromMenu(page)
 })

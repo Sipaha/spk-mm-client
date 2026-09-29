@@ -536,3 +536,34 @@ test('the "more formatting" popover lists the collapsed buttons; picking one app
     ro.restore()
   }
 })
+
+// Auto-grow measures the textarea with height 'auto', which collapses it to
+// one row for that forced layout. Unless the composer box keeps its height
+// meanwhile, the feed above grows for that moment and the browser clamps
+// its scrollTop — a feed at its bottom was pulled up by every new line
+// (e2e-caught with the bottom-stick, fix round 1 of the stick/download task).
+test('auto-grow measures with the composer box\'s height held, then releases it', async () => {
+  const seen: { height: string; boxMin: string }[] = []
+  const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+  Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLTextAreaElement) {
+      seen.push({ height: this.style.height, boxMin: (this.parentElement as HTMLElement).style.minHeight })
+      return 60
+    },
+  })
+  try {
+    render(<Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />)
+    const box = screen.getByRole('textbox', { name: 'Message' })
+    seen.length = 0
+    await userEvent.type(box, 'a{Shift>}{Enter}{/Shift}b')
+    const measuring = seen.filter((s) => s.height === 'auto')
+    expect(measuring.length).toBeGreaterThan(0)
+    for (const s of measuring) expect(s.boxMin).not.toBe('')
+    expect((box.parentElement as HTMLElement).style.minHeight).toBe('')
+    expect(box.style.height).toBe('60px')
+  } finally {
+    if (desc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', desc)
+    else delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight
+  }
+})

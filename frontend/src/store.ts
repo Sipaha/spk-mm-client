@@ -48,6 +48,9 @@ interface State {
   // the key to the end, and past FILE_SAVES_CAP the first keys are dropped.
   fileSaves: Record<string, FileSave>
   toast: ToastMsg | null
+  // announcement: a short message for screen readers only (a finished
+  // download — the card's ✓ is visual) — Toast.tsx's Announcer.
+  announcement: { id: number; text: string } | null
   // liveEpochs: per server, bumped each time it goes live. A picture or
   // snippet that failed to load is remembered only for the epoch it failed
   // in — offline, /media/ answers 404 — and tried again after the next live.
@@ -84,6 +87,7 @@ interface State {
   setFileSave(key: string, save: FileSave | null): void
   showToast(text: string, tone?: ToastMsg['tone']): void
   dismissToast(id?: number): void // without an id: whatever is shown
+  announce(text: string): void
   setDownloads(list: DownloadView[]): void
   setDownloadsOpen(open: boolean): void
   patchDownloadProgress(id: number, received: number): void
@@ -116,6 +120,7 @@ export const useStore = create<State>((set, get) => ({
   editingId: null,
   fileSaves: {},
   toast: null,
+  announcement: null,
   liveEpochs: {},
   downloads: [],
   downloadsOpen: false,
@@ -185,6 +190,7 @@ export const useStore = create<State>((set, get) => ({
     set({ fileSaves: next })
   },
   showToast: (text, tone = 'error') => set({ toast: { id: ++toastSeq, text, tone } }),
+  announce: (text) => set({ announcement: { id: ++toastSeq, text } }),
   dismissToast(id) {
     const cur = get().toast
     if (cur && (id === undefined || cur.id === id)) set({ toast: null })

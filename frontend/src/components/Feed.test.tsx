@@ -450,14 +450,14 @@ test('StrictMode keeps the rows of a feed that stays mounted', async () => {
 // ResizeObserver created (Feed's and the virtualizer's own) is recorded, so
 // a test can fire the ones watching a given element.
 
-type Observed = { cb: ResizeObserverCallback; targets: Set<Element>; self: ResizeObserver }
+type Observed = { cb: ResizeObserverCallback; targets: Set<Element>; self: ResizeObserver; disconnected: boolean }
 function recordResizeObservers() {
   const all: Observed[] = []
   const saved = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
   class Stub {
     rec: Observed
     constructor(cb: ResizeObserverCallback) {
-      this.rec = { cb, targets: new Set(), self: this as unknown as ResizeObserver }
+      this.rec = { cb, targets: new Set(), self: this as unknown as ResizeObserver, disconnected: false }
       all.push(this.rec)
     }
     observe(el: Element) {
@@ -468,14 +468,16 @@ function recordResizeObservers() {
     }
     disconnect() {
       this.rec.targets.clear()
+      this.rec.disconnected = true
     }
   }
   ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = Stub
-  const fire = (el: Element) =>
+  const fire = (el: Element, entry: Partial<ResizeObserverEntry> = {}) =>
     act(() => {
-      for (const o of all) if (o.targets.has(el)) o.cb([{ target: el } as unknown as ResizeObserverEntry], o.self)
+      for (const o of all) if (o.targets.has(el)) o.cb([{ target: el, ...entry } as unknown as ResizeObserverEntry], o.self)
     })
-  return { fire, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
+  const watching = (el: Element) => all.filter((o) => o.targets.has(el))
+  return { fire, all, watching, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
 }
 
 // A scroller with a settable geometry: scrollTop is clamped to the range,
@@ -519,10 +521,13 @@ test('at the bottom, a shorter viewport (banner above, composer growing) keeps t
 })
 
 test('at the bottom, taller content with no new row (the last row re-measured) keeps the feed at the bottom', () => {
-  const { ro, g, sizer } = stickFeed()
+  const { ro, log, g } = stickFeed()
   try {
+    const rows = log.querySelectorAll<HTMLElement>('[data-index]')
+    const last = rows[rows.length - 1]
     g.scrollHeight = 2120
-    ro.fire(sizer)
+    // the virtualizer's own row observer reports the last row 120 px taller
+    ro.fire(last, { borderBoxSize: [{ blockSize: 160, inlineSize: 800 }] as unknown as ResizeObserverSize[] })
     expect(g.scrollTop).toBe(1520)
   } finally {
     ro.restore()
@@ -538,7 +543,8 @@ test('away from the bottom, a viewport resize leaves scrollTop alone (the rows o
     ro.fire(log)
     expect(g.scrollTop).toBe(700)
     g.scrollHeight = 2300
-    ro.fire(log.lastElementChild as HTMLElement)
+    const rows = log.querySelectorAll<HTMLElement>('[data-index]')
+    ro.fire(rows[rows.length - 1], { borderBoxSize: [{ blockSize: 340, inlineSize: 800 }] as unknown as ResizeObserverSize[] })
     expect(g.scrollTop).toBe(700)
   } finally {
     ro.restore()
@@ -575,5 +581,96 @@ test('a wheel gesture that leaves the bottom is not pulled back when it ends', (
   } finally {
     ro.restore()
     vi.useRealTimers()
+  }
+})
+
+test('the bottom-stick observer is disconnected on unmount', () => {
+  const { ro, log, unmount } = stickFeed()
+  try {
+    // Feed's own observer is the first one on the scroller: its layout
+    // effect runs before useVirtualizer's (declared earlier in Feed)
+    const mine = ro.watching(log)[0]
+    expect(mine).toBeDefined()
+    unmount()
+    expect(mine.disconnected).toBe(true)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('the rows\' container is not observed (resized synchronously from the virtualizer\'s row observer: a loop error)', () => {
+  const { ro, sizer } = stickFeed()
+  try {
+    expect(ro.watching(sizer)).toHaveLength(0)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('a feed opened at the "new messages" line is not at its bottom: a resize does not pull it down', () => {
+  const ro = recordResizeObservers()
+  try {
+    render(<Feed {...props()} />) // new_since puts the "new messages" line in the rows
+    const log = screen.getByRole('log')
+    const g = geometry(log, { scrollHeight: 2000, clientHeight: 600, scrollTop: 900 })
+    g.clientHeight = 500
+    ro.fire(log)
+    expect(g.scrollTop).toBe(900)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('before the first rows (still loading) a resize writes nothing', () => {
+  const ro = recordResizeObservers()
+  try {
+    render(<Feed {...props({ posts: [], loaded: false })} />)
+    const log = screen.getByRole('log')
+    const g = geometry(log, { scrollHeight: 1000, clientHeight: 600, scrollTop: 100 })
+    g.clientHeight = 500
+    ro.fire(log)
+    expect(g.scrollTop).toBe(100)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('the overlay (the pane\'s toast) floats in the feed\'s box, not inside the scrolling content', () => {
+  render(<Feed {...props()} overlay={<div data-testid="ov" />} />)
+  const ov = screen.getByTestId('ov')
+  expect(screen.getByRole('log')).not.toContainElement(ov)
+  expect(ov.parentElement).toBe(screen.getByRole('log').parentElement)
+})
+
+// The scroll event of our own pin arrives a frame later, measured against a
+// layout that may have shrunk again meanwhile (the composer growing by more
+// than NEAR_BOTTOM at once — a row of attachment chips): it must not read as
+// "the user left the bottom" — the feed did not move up, only its size
+// changed.
+test('the scroll event of our own pin, measured after a further shrink, keeps the feed at the bottom', () => {
+  const { ro, log, g } = stickFeed()
+  try {
+    g.clientHeight = 580
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1420) // pinned
+    g.clientHeight = 520 // the composer grew again before the pin's scroll event
+    fireEvent.scroll(log) // scrollTop 1420, distance 60
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1480)
+  } finally {
+    ro.restore()
+  }
+})
+
+test('a real scroll up (scrollTop decreased) still leaves the bottom', () => {
+  const { ro, log, g } = stickFeed()
+  try {
+    g.scrollTop = 1340 // up by 60
+    fireEvent.scroll(log)
+    g.clientHeight = 500
+    ro.fire(log)
+    expect(g.scrollTop).toBe(1340)
+  } finally {
+    ro.restore()
   }
 })

@@ -29,7 +29,7 @@ test('idle: the download button only, with its plain icon; a click downloads', (
   render(<FileCard serverId={1} file={file} onDownload={onDownload} onOpen={vi.fn()} />)
   expect(download()).not.toHaveAttribute('aria-busy')
   expect(download().querySelector('[data-state="idle"]')).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Show report.zip in folder' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Show report.zip in folder' })).not.toBeInTheDocument() // reserved, hidden, inert
   fireEvent.click(download())
   expect(onDownload).toHaveBeenCalledWith(file)
 })
@@ -86,4 +86,37 @@ test('ru: the reveal button\'s tooltip', () => {
   useStore.getState().setFileSave('1/f1', { state: 'saved', path: '/d/report.zip', savedAt: 0 })
   render(<FileCard serverId={1} file={file} onDownload={vi.fn()} onOpen={vi.fn()} />)
   expect(screen.getByRole('button', { name: 'Показать report.zip в папке' })).toHaveAttribute('title', 'Показать в папке')
+})
+
+// The reveal slot is always there, only hidden and inert until the file is
+// saved: a card never gets wider when "Show in folder" appears (in a post
+// with several cards a wider card could wrap onto a new line — review I1).
+test('the "Show in folder" slot is reserved in every state: same box, hidden and inert until saved', () => {
+  const slot = () => document.querySelector<HTMLElement>('[data-slot="reveal"]')!
+  const { rerender } = render(<FileCard serverId={1} file={file} onDownload={vi.fn()} onOpen={vi.fn()} />)
+  const box = (el: HTMLElement) => el.className.split(' ').filter((c) => c !== 'invisible').join(' ')
+  const idle = slot()
+  expect(idle).toHaveClass('invisible')
+  expect(idle).toHaveAttribute('aria-hidden', 'true')
+  expect(idle).toHaveAttribute('tabindex', '-1')
+  expect(idle).toHaveAttribute('inert')
+  const idleBox = box(idle)
+  act(() => useStore.getState().setFileSave('1/f1', { state: 'saving', path: '', savedAt: 0 }))
+  rerender(<FileCard serverId={1} file={file} onDownload={vi.fn()} onOpen={vi.fn()} />)
+  expect(slot()).toHaveClass('invisible')
+  expect(box(slot())).toBe(idleBox)
+  act(() => useStore.getState().setFileSave('1/f1', { state: 'saved', path: '/d/report.zip', savedAt: 0 }))
+  rerender(<FileCard serverId={1} file={file} onDownload={vi.fn()} onOpen={vi.fn()} />)
+  expect(slot()).not.toHaveClass('invisible')
+  expect(slot()).not.toHaveAttribute('aria-hidden')
+  expect(slot()).not.toHaveAttribute('inert')
+  expect(box(slot())).toBe(idleBox)
+  expect(slot().querySelector('svg')).toHaveAttribute('width', '18') // same icon box either way
+})
+
+test('the spinner only spins when motion is welcome (prefers-reduced-motion)', () => {
+  useStore.getState().setFileSave('1/f1', { state: 'saving', path: '', savedAt: 0 })
+  render(<FileCard serverId={1} file={file} onDownload={vi.fn()} onOpen={vi.fn()} />)
+  const svg = download().querySelector('[data-state="spinner"] svg')!
+  expect(svg.getAttribute('class')).toBe('motion-safe:animate-spin')
 })

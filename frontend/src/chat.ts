@@ -414,15 +414,19 @@ export async function revealSavedFile(path: string) {
 // error in a toast.
 async function saving(serverId: number, file: { id: string; name: string }, save: () => Promise<{ path: string; opened: boolean }>) {
   const key = fileKey(serverId, file.id)
-  const prev = useStore.getState().fileSaves[key]
-  const before = prev?.state === 'saved' ? prev : null
-  useStore.getState().setFileSave(key, { state: 'saving', path: before?.path ?? '', savedAt: before?.savedAt ?? 0 })
+  // The copy saved earlier, if any — also while another click's download of
+  // it is still running (its "saving" entry carries the earlier path).
+  const path = useStore.getState().fileSaves[key]?.path ?? ''
+  useStore.getState().setFileSave(key, { state: 'saving', path, savedAt: 0 })
   try {
     const r = await save()
     useStore.getState().setFileSave(key, { state: 'saved', path: r.path, savedAt: Date.now() })
+    useStore.getState().announce(t('file.savedAnnounce', { name: file.name }))
     return r
   } catch (e) {
-    useStore.getState().setFileSave(key, before && { ...before, savedAt: 0 }) // the copy, but no fresh ✓
+    const cur = useStore.getState().fileSaves[key]
+    // a joined click may have succeeded meanwhile: keep its result
+    if (cur?.state !== 'saved') useStore.getState().setFileSave(key, path ? { state: 'saved', path, savedAt: 0 } : null) // the copy, but no fresh ✓
     useStore.getState().showToast(t('file.downloadFailed', { name: file.name, detail: errorMessage(e) }))
     return null
   }
@@ -454,7 +458,7 @@ export async function refreshDownloads() {
     if (my !== downloadsSeq) return
     useStore.getState().setDownloads(list)
   } catch (e) {
-    if (my === downloadsSeq) report(e)
+    if (my === downloadsSeq) toastError(e)
   }
 }
 

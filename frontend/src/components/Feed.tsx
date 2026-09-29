@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import type { ChannelDTO } from '../api/types'
 import { formatDay } from '../format'
@@ -24,6 +24,9 @@ interface Props {
   actions: PostActions
   editingId: string | null
   onLoadOlder(): Promise<boolean>
+  // overlay: floats over the feed's visible box, like the jump-to-latest
+  // button (the pane's toast — Toast.tsx).
+  overlay?: ReactNode
 }
 
 const NEAR_TOP = 300
@@ -92,11 +95,12 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder }: Props) {
+export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, overlay }: Props) {
   const rows = useMemo(() => buildRows(data, variant), [data, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
   const atBottom = useRef(true)
+  const bottomTop = useRef<number | null>(null) // scrollTop when the feed was last known to be at its bottom
   const anchor = useRef<string | null>(null)
   const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
   const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
@@ -164,21 +168,27 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // last row re-measured taller). A shorter scroller keeps its scrollTop and
   // fires no scroll event, so the last post slid below the fold and stayed
   // there (user report 2026-09-29: a download's banner pushed the last post
-  // under the composer). A ResizeObserver on the scroller and on the rows'
-  // container re-pins a feed that was at its bottom (atBottom, as of the
-  // last scroll event) in the same frame: its callback runs after layout,
-  // before paint. Away from the bottom nothing is written: the viewport's
-  // top edge keeps its scrollTop, so the rows on screen stay put, and rows
-  // re-measured above the fold are the virtualizer's (and ScrollShift's).
-  // Mid-gesture (wheel/touch) nothing is written either — a script write to
-  // scrollTop cancels WebKitGTK's wheel animation (see ScrollShift); the pin
-  // waits for the gesture to go idle and applies only if the feed is still
-  // at its bottom then. The jump-to-latest button needs nothing here: the
-  // pin's own scroll event runs onScroll, which hides it within NEAR_BOTTOM.
+  // under the composer). `stick` re-pins a feed that was at its bottom
+  // (atBottom, as of the last scroll event): a ResizeObserver on the
+  // scroller calls it for the viewport (its callback runs after layout,
+  // before paint: the same frame), and a layout effect on the virtualizer's
+  // total size for the content (right in the commit that grew the rows'
+  // container). Not a ResizeObserver on that container: the virtualizer
+  // re-renders it synchronously from its own row observer, a shallower
+  // element resized inside the broadcast — "ResizeObserver loop completed
+  // with undelivered notifications" (review M6, seen in e2e). Away from the
+  // bottom nothing is written: the viewport's top edge keeps its scrollTop,
+  // so the rows on screen stay put, and rows re-measured above the fold are
+  // the virtualizer's (and ScrollShift's). Mid-gesture (wheel/touch) nothing
+  // is written either — a script write to scrollTop cancels WebKitGTK's
+  // wheel animation (see ScrollShift); the pin waits for the gesture to go
+  // idle and applies only if the feed is still at its bottom then. The
+  // jump-to-latest button needs nothing here: the pin's own scroll event
+  // runs onScroll, which hides it within NEAR_BOTTOM.
+  const stick = useRef(() => {})
   useLayoutEffect(() => {
     const el = scroller.current
-    const content = sizer.current
-    if (!el || !content || typeof ResizeObserver === 'undefined') return
+    if (!el) return
     let deferred = false
     const pin = () => {
       if (!ready.current || !atBottom.current) return
@@ -189,17 +199,19 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       shift.flush()
       const end = el.scrollHeight - el.clientHeight
       if (end - el.scrollTop > 0.5) el.scrollTop = end
+      bottomTop.current = el.scrollTop
     }
+    stick.current = pin
     afterGesture.current = () => {
       if (!deferred) return
       deferred = false
       pin()
     }
-    const ro = new ResizeObserver(pin)
-    ro.observe(el)
-    ro.observe(content)
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(pin)
+    ro?.observe(el)
     return () => {
-      ro.disconnect()
+      ro?.disconnect()
+      stick.current = () => {}
       afterGesture.current = () => {}
     }
   }, [shift])
@@ -213,6 +225,15 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     scrollToFn: shift.scrollTo,
   })
   v.shouldAdjustScrollPositionOnItemSizeChange = shift.shouldAdjust
+  // The content half of the bottom-stick (above): the rows' total height
+  // changed in this commit.
+  const total = v.getTotalSize()
+  const lastTotal = useRef(total)
+  useLayoutEffect(() => {
+    if (total === lastTotal.current) return
+    lastTotal.current = total
+    stick.current()
+  }, [total])
   // Our own scrolls land a pending shift *before* the virtualizer computes
   // the target: it clamps to the scroll range, which the shift has shrunk,
   // and would undershoot by it for a frame (index scrolls) or for good
@@ -426,7 +447,14 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     shift.onScroll()
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     const wasAtBottom = atBottom.current
-    atBottom.current = distance < NEAR_BOTTOM
+    // A feed at its bottom leaves it only by moving up. A scroll event
+    // measured after the feed got shorter again (the scroll of our own pin,
+    // one frame late, while the composer keeps growing) shows a distance past
+    // NEAR_BOTTOM with scrollTop where the pin put it: still the bottom — the
+    // bottom-stick re-pins it in this frame's ResizeObserver pass.
+    const stayed = wasAtBottom && bottomTop.current !== null && el.scrollTop >= bottomTop.current - 1
+    atBottom.current = distance < NEAR_BOTTOM || stayed
+    bottomTop.current = atBottom.current ? el.scrollTop : null
     if (!wasAtBottom && atBottom.current) resetNewPosts()
     if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
@@ -574,6 +602,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
           </span>
         )}
       </button>
+      {overlay}
     </div>
   )
 }

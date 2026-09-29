@@ -218,6 +218,39 @@ test('a failed download: the file goes back to what it was and the error is a to
   expect(save()).toMatchObject({ state: 'saved', path: '/d/spec.pdf', savedAt: 0 }) // the earlier copy is still there; no fresh ✓
 })
 
+test('a second click while the file downloads keeps the earlier copy\'s "Show in folder"; failing twice keeps it saved', async () => {
+  setLocale('en')
+  vi.mocked(client.downloadFile).mockResolvedValueOnce({ path: '/d/spec.pdf', opened: false })
+  await downloadFile(1, spec)
+  let failFirst!: (e: unknown) => void
+  let failSecond!: (e: unknown) => void
+  vi.mocked(client.downloadFile)
+    .mockReturnValueOnce(new Promise((_, r) => (failFirst = r)))
+    .mockReturnValueOnce(new Promise((_, r) => (failSecond = r)))
+  const a = downloadFile(1, spec)
+  const b = downloadFile(1, spec) // joins the running download (Go's shared)
+  expect(save()).toMatchObject({ state: 'saving', path: '/d/spec.pdf' })
+  failFirst(new Error('boom'))
+  failSecond(new Error('boom'))
+  await a
+  await b
+  expect(save()).toMatchObject({ state: 'saved', path: '/d/spec.pdf', savedAt: 0 })
+})
+
+test('a finished download is announced for screen readers', async () => {
+  setLocale('en')
+  vi.mocked(client.downloadFile).mockResolvedValueOnce({ path: '/d/spec.pdf', opened: false })
+  await downloadFile(1, spec)
+  expect(useStore.getState().announcement?.text).toBe('File saved: spec.pdf')
+})
+
+test('a failed downloads-list refresh is a toast, not the layout banner', async () => {
+  vi.mocked(client.downloads).mockRejectedValueOnce(new Error('db'))
+  await refreshDownloads()
+  expect(useStore.getState().toast).toMatchObject({ tone: 'error' })
+  expect(useStore.getState().lastError).toBeNull()
+})
+
 test('open: an opened file is saved quietly; one not opened says why in a toast', async () => {
   setLocale('en')
   useStore.getState().dismissToast()

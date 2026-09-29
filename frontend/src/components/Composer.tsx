@@ -208,13 +208,21 @@ export function Composer({
   // then let overflow-y-auto scroll. jsdom never computes layout
   // (scrollHeight is always 0 there, same gotcha as Feed.test.tsx) — left
   // at its CSS default height in tests, which is fine since nothing there
-  // asserts on pixel height.
+  // asserts on pixel height. The measuring layout (height 'auto' collapses
+  // the textarea to one row) runs with the composer box's height held: had
+  // the box shrunk for it, the feed above would have grown for that layout
+  // and the browser would have clamped its scrollTop — a feed at its bottom
+  // was pulled up by every new line, past the bottom-stick's reach
+  // (Feed.tsx; stick/download fix round 1).
   useLayoutEffect(() => {
     const el = textareaRef.current
-    if (!el || el.scrollHeight === 0) return
+    const box = el?.parentElement
+    if (!el || !box || el.scrollHeight === 0) return
+    box.style.minHeight = `${box.offsetHeight}px`
     el.style.height = 'auto'
     const next = maxTextareaHeight ? Math.min(el.scrollHeight, maxTextareaHeight) : el.scrollHeight
     el.style.height = `${next}px`
+    box.style.minHeight = ''
   }, [text, maxTextareaHeight])
 
   const flush = () => {

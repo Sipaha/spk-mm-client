@@ -13,8 +13,9 @@ export const SAVED_CHECK_MS = 2000
 // file is being saved the icon is a ring (the downloads-list entry's
 // progress, a spinner until there is one); once saved, a brief ✓ and, for
 // the rest of the session, a "Show in folder" button next to it. A failure
-// is a toast (chat.ts). The icon box keeps its size in every state, so the
-// card — and the feed row around it — never changes height. `text` is the
+// is a toast (chat.ts). The icon box keeps its size in every state and the
+// reveal slot is reserved (hidden) before the save, so the card keeps its
+// width and height — and the feed row around it never changes. `text` is the
 // viewer header's variant: text buttons, the status icon before the label.
 export function DownloadButton({ serverId, file, onDownload, text = false }: { serverId: number; file: FileView; onDownload(file: FileView): void; text?: boolean }) {
   const save = useStore((s) => s.fileSaves[fileKey(serverId, file.id)])
@@ -70,17 +71,22 @@ export function DownloadButton({ serverId, file, onDownload, text = false }: { s
           {icon}
         </span>
       </button>
-      {path && (
-        <button
-          type="button"
-          aria-label={t('downloads.reveal', { name: file.name })}
-          title={t('downloads.showInFolder')}
-          onClick={() => void revealSavedFile(path)}
-          className="flex items-center justify-center rounded px-1 text-fg-muted hover:bg-hover hover:text-fg"
-        >
-          <IconFolder size={size} />
-        </button>
-      )}
+      {/* Reserved in every state, hidden and inert until saved: the card
+          never gets wider when it appears (review I1 — in a post with
+          several cards a wider card could wrap onto a new line). */}
+      <button
+        type="button"
+        data-slot="reveal"
+        aria-label={path ? t('downloads.reveal', { name: file.name }) : undefined}
+        aria-hidden={path ? undefined : true}
+        inert={!path}
+        tabIndex={path ? undefined : -1}
+        title={path ? t('downloads.showInFolder') : undefined}
+        onClick={() => path && void revealSavedFile(path)}
+        className={`flex items-center justify-center rounded px-1 text-fg-muted hover:bg-hover hover:text-fg${path ? '' : ' invisible'}`}
+      >
+        <IconFolder size={size} />
+      </button>
     </>
   )
 }
@@ -92,7 +98,7 @@ function Ring({ pct, size }: { pct: number | null; size: number }) {
   const c = 2 * Math.PI * r
   const dash = pct === null ? c / 4 : (c * pct) / 100
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" focusable="false" className={pct === null ? 'animate-spin' : undefined}>
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" focusable="false" className={pct === null ? 'motion-safe:animate-spin' : undefined}>
       <circle cx="12" cy="12" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
       <circle cx="12" cy="12" r={r} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray={`${dash} ${c}`} transform="rotate(-90 12 12)" className="text-accent" />
     </svg>

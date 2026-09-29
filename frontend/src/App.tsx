@@ -15,7 +15,7 @@ import {
   SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
 } from './components/splitter'
 import { ThreadPane } from './components/ThreadPane'
-import { Toast } from './components/Toast'
+import { Announcer } from './components/Toast'
 import { IconClose } from './components/icons'
 import { errorMessage } from './errors'
 import { t } from './i18n'
@@ -242,7 +242,7 @@ export function App() {
           )}
         </main>
       )}
-      <Toast />
+      <Announcer />
     </div>
   )
 }
