@@ -109,6 +109,32 @@ test('hovering a chip shows the tooltip after the hover delay, with the right te
   expect(chip).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id)
 })
 
+// Controller follow-up (2026-09-29): now that the tooltip is just names
+// ("You, bob and carol"), it should sit right at the chip, not stretch away
+// from it the way a fixed-width, right-aligned box would. Left-aligned to
+// the chip's own left edge (placeBelowLeftAligned — see panelPosition.ts
+// for the placement math itself), sized to its content rather than a fixed
+// width.
+test('the tooltip is left-aligned to the chip and sized to its content, not a fixed width', async () => {
+  const loadReactors = vi.fn().mockResolvedValue(dto([{ id: 'u-bob', name: 'bob', avatar: '' }]))
+  const user = setupHover()
+  render(<Reactions serverId={1} postId="p1" me={me} reactions={[{ emoji: '+1', count: 1, mine: false }]} onToggle={vi.fn()} loadReactors={loadReactors} />)
+  const chip = screen.getByRole('button')
+  // jsdom does no real layout — offsetWidth/offsetHeight always read 0 —
+  // but getBoundingClientRect can be stubbed (same rig as PostMenu.test.tsx
+  // /Downloads.test.tsx), which is enough to check the wiring: the tooltip
+  // ends up left-aligned to *this* rect's left edge, not right-aligned to
+  // its right edge the way the old placeBelow would have put it.
+  chip.getBoundingClientRect = () => ({ top: 200, bottom: 220, left: 300, right: 340, width: 40, height: 20, x: 300, y: 200, toJSON() {} }) as DOMRect
+  await user.hover(chip)
+  await act(async () => vi.advanceTimersByTime(300))
+  const tooltip = await screen.findByRole('tooltip')
+  expect(tooltip.style.left).toBe('300px') // the chip's own left edge, not right-aligned to its right edge (340)
+  expect(tooltip.style.width).toBe('') // no fixed width set from JS — sized to content via the w-max/max-w-xs classes
+  expect(tooltip.className).toContain('w-max')
+  expect(tooltip.className).toContain('max-w-xs')
+})
+
 test('ru wording matches the brief exactly', async () => {
   setLocale('ru')
   const loadReactors = vi.fn().mockResolvedValue(dto([{ id: 'u-bob', name: 'bob', avatar: '' }]))

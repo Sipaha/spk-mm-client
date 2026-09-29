@@ -1,4 +1,4 @@
-import { placeBelow } from './panelPosition'
+import { placeBelow, placeBelowLeftAligned } from './panelPosition'
 
 test('below its anchor, right-aligned to the anchor\'s right edge, when there is room', () => {
   expect(placeBelow({ top: 100, bottom: 120, right: 520 }, 1400, 900, 220, 150)).toEqual({ left: 300, top: 124 })
@@ -43,4 +43,38 @@ test('PostMenu-shaped panel (220×76, 2 items — someone else\'s post) fits bel
   const pos = placeBelow({ top: 700, bottom: 720, right: 1395 }, 1400, 900, w, h)
   expect(pos.left).toBe(1172)
   expect(pos.top).toBe(724) // below: anchor.bottom(720) + 4 — fits (724 + 76 = 800 <= 892)
+})
+
+// ---- placeBelowLeftAligned (Reactions' hover tooltip, controller follow-up 2026-09-29) ----
+
+test('placeBelowLeftAligned: below its anchor, left-aligned to the anchor\'s left edge, when there is room', () => {
+  expect(placeBelowLeftAligned({ top: 100, bottom: 120, left: 300 }, 1400, 900, 90, 20)).toEqual({ left: 300, top: 124 })
+})
+
+test('placeBelowLeftAligned: flips above the anchor when there is no room below, still inside the viewport', () => {
+  expect(placeBelowLeftAligned({ top: 800, bottom: 820, left: 300 }, 1400, 900, 90, 150)).toEqual({ left: 300, top: 646 })
+})
+
+test('placeBelowLeftAligned: clamped to the left edge (min 8px) when the anchor is near the left of the viewport', () => {
+  expect(placeBelowLeftAligned({ top: 100, bottom: 120, left: 2 }, 1400, 900, 90, 20)).toEqual({ left: 8, top: 124 })
+})
+
+test('placeBelowLeftAligned: clamped to the right edge (vw - w - 8) when the anchor is near the right of the viewport (the box would otherwise overflow)', () => {
+  expect(placeBelowLeftAligned({ top: 100, bottom: 120, left: 1350 }, 1400, 900, 90, 20)).toEqual({ left: 1302, top: 124 })
+})
+
+test('placeBelowLeftAligned: clamped to the top edge (min 8px) when flipped above and the anchor is near the top', () => {
+  expect(placeBelowLeftAligned({ top: 20, bottom: 40, left: 300 }, 1400, 900, 90, 150)).toEqual({ left: 300, top: 44 })
+})
+
+// The reactors tooltip shape this replaced a fixed 280×60 assumption with —
+// a short "You, bob and carol" string is much narrower, so left-aligning to
+// the chip (rather than placeBelow's right-alignment) keeps the box next to
+// what the user actually hovered instead of stretching away to the left.
+test('placeBelowLeftAligned: a short-content tooltip stays anchored at the chip, not stretched away from it', () => {
+  // A reaction chip near the middle of a narrow feed column, with a small
+  // measured tooltip (e.g. "You, bob and carol" at ~140x20).
+  const pos = placeBelowLeftAligned({ top: 400, bottom: 424, left: 260 }, 900, 700, 140, 20)
+  expect(pos.left).toBe(260) // starts right at the chip's own left edge
+  expect(pos.top).toBe(428)
 })

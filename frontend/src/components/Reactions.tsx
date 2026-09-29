@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactionUsersDTO, ReactionView } from '../api/types'
 import { emojiChar, useEmojiIndex } from '../emoji'
@@ -6,7 +6,7 @@ import { t } from '../i18n'
 import { getCachedReactors, setCachedReactors } from '../reactorCache'
 import { reactorWhoParts } from '../reactorText'
 import { EmojiGlyph } from './EmojiGlyph'
-import { placeBelow } from './panelPosition'
+import { placeBelowLeftAligned } from './panelPosition'
 import { ReactorsModal } from './ReactorsModal'
 import { IconAddReaction } from './icons'
 
@@ -22,7 +22,6 @@ interface Props {
 
 const HOVER_DELAY = 300 // ms before a hover/focus fetches and shows the tooltip
 const LEAVE_GRACE = 150 // ms grace before hiding, so the pointer can cross into the tooltip
-const TOOLTIP_W = 280
 
 // FOCUSABLE_SELECTOR: for finding "the next focusable element after the
 // chip" (onOverflowKeyDown below) — a standard, good-enough tab-order
@@ -47,6 +46,13 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
   const reqID = useRef(0)
   const tooltipRoot = useRef<HTMLDivElement>(null)
   const overflowBtn = useRef<HTMLButtonElement | null>(null)
+  // tooltipSize: the tooltip's own measured size, read from the DOM rather
+  // than assumed (controller follow-up, 2026-09-29) — now that its content
+  // is just names, its width varies a lot (a single "You" vs. ten names
+  // plus an overflow button), so a fixed guess either clipped long lists or
+  // left a lot of empty space for short ones, and fed the wrong height into
+  // the below/flip-above math too.
+  const [tooltipSize, setTooltipSize] = useState({ w: 0, h: 0 })
 
   const clearTimers = () => {
     clearTimeout(hoverTimer.current)
@@ -94,6 +100,25 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
     if (hover && !reactions.some((r) => r.emoji === hover.r.emoji)) hide()
   }, [reactions, hover])
 
+  // Measures the tooltip's real size after every render it's shown in — a
+  // single layout read (offsetWidth/offsetHeight), not a ResizeObserver:
+  // the content only ever changes on our own re-renders (loading → result,
+  // a different chip hovered), never from anything outside React's control,
+  // so there is nothing an observer would catch that this doesn't. Runs in
+  // useLayoutEffect (before the browser paints) so a size change — e.g.
+  // "…" while loading, then the real name list once it resolves — never
+  // flashes at the wrong position: React commits the corrected position in
+  // the same paint. The functional setState bails out (same object
+  // reference) when the size hasn't actually changed, so this doesn't loop.
+  useLayoutEffect(() => {
+    if (!hover || !result) return
+    const el = tooltipRoot.current
+    if (!el) return
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    setTooltipSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
+  })
+
   const show = (r: ReactionView, anchor: HTMLElement) => {
     clearTimers()
     // The chip can vanish between scheduling a hover/focus show and the
@@ -101,7 +126,7 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
     // only reaction, the count reaches zero, and the whole chip unmounts
     // before HOVER_DELAY elapses. Showing anyway would anchor the tooltip
     // to a detached node: getBoundingClientRect() on a node with no layout
-    // box is always {0,0,0,0}, so placeBelow lands it at the viewport's
+    // box is always {0,0,0,0}, so placeBelowLeftAligned lands it at the viewport's
     // top-left corner — and nothing would ever close it, since its own
     // mouseleave/blur can't fire for an element no longer in the document
     // (e2e-bisected regression, 2026-09-29: this exact stuck tooltip ate a
@@ -201,7 +226,9 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
 
   const closeModal = () => setModal(null)
 
-  const tooltipPos = hover ? placeBelow(hover.anchor.getBoundingClientRect(), window.innerWidth, window.innerHeight, TOOLTIP_W, 60) : { left: 0, top: 0 }
+  const tooltipPos = hover
+    ? placeBelowLeftAligned(hover.anchor.getBoundingClientRect(), window.innerWidth, window.innerHeight, tooltipSize.w, tooltipSize.h)
+    : { left: 0, top: 0 }
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -249,8 +276,8 @@ export function Reactions({ serverId, postId, reactions, me, onToggle, onAdd, lo
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
             onBlur={onTooltipBlur}
-            className="fixed z-50 max-w-xs rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs text-fg shadow-xl"
-            style={{ left: tooltipPos.left, top: tooltipPos.top, width: TOOLTIP_W }}
+            className="fixed z-50 w-max max-w-xs rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs text-fg shadow-xl"
+            style={{ left: tooltipPos.left, top: tooltipPos.top }}
           >
             {result === 'loading' ? (
               t('reaction.loading')
