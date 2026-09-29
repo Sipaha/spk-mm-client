@@ -238,15 +238,10 @@ test.each(['channel', 'thread'] as const)('%s: loads continue on their own at mo
   }
 })
 
-// A thread's history lands *below* its root: the root heads the panel before
-// and after the page, so it cannot anchor the restore. e2e (threads.spec, "a
-// long thread … without gaps"), since the composer grew and the panel's feed
-// got shorter: the load started with the root on screen, the restore kept
-// the root in place — the feed stayed at the top, the page just loaded was
-// skipped and the next one requested (77 of 150 replies ever shown). Real
-// layout, by hand: each row sits at its virtualizer offset minus scrollTop,
-// and scrollTo moves the feed.
-test('thread: history that lands under the root keeps the reply seen at the top in place, not the root', async () => {
+// A thread panel of `height` px with a hand-driven layout: each row sits at
+// its virtualizer offset minus scrollTop, rows are 40 px, scrollTo moves the
+// feed. The root plus replies r11..r20 are loaded; more history is pending.
+async function threadRig(height: number) {
   const frames = manualFrames()
   const root: PostView = { ...P('R', 'bob', 60), reply_count: 20 }
   const reply = (n: number): PostView => ({ ...P(`r${n}`, n % 2 ? 'carol' : 'bob', 60 - n), root_id: 'R' })
@@ -255,41 +250,76 @@ test('thread: history that lands under the root keeps the reply seen at the top 
   const p = { ...props({ has_more: true, posts: [root, ...replies(11, 20)] }, onLoadOlder), variant: 'thread' as const }
   const view = render(<Feed {...p} />)
   const log = screen.getByRole('log')
-  let top = 0
+  const st = { top: 0 }
   Object.defineProperties(log, {
     scrollHeight: { configurable: true, get: () => 5000 },
-    clientHeight: { configurable: true, get: () => 600 },
-    scrollTop: { configurable: true, get: () => top, set: (v: number) => void (top = Math.max(0, v)) },
+    clientHeight: { configurable: true, get: () => height },
+    scrollTop: { configurable: true, get: () => st.top, set: (v: number) => void (st.top = Math.max(0, v)) },
   })
-  log.scrollTo = ((o: ScrollToOptions) => void (top = Math.max(0, o.top ?? top))) as typeof log.scrollTo
-  const rowTop = (el: HTMLElement) => Number(/translateY\((-?[\d.]+)px\)/.exec(el.style.transform)?.[1] ?? 0) - top
+  log.scrollTo = ((o: ScrollToOptions) => void (st.top = Math.max(0, o.top ?? st.top))) as typeof log.scrollTo
+  const rowTop = (el: HTMLElement) => Number(/translateY\((-?[\d.]+)px\)/.exec(el.style.transform)?.[1] ?? 0) - st.top
   const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     const row = this.dataset.kind !== undefined
     const y = row ? rowTop(this) : 0
-    const h = this === log ? 600 : row ? 40 : 0
+    const h = this === log ? height : row ? 40 : 0
     return { top: y, bottom: y + h, left: 0, right: 0, width: 0, height: h, x: 0, y, toJSON: () => ({}) } as DOMRect
   })
   const onScreen = (key: string) => {
     const el = log.querySelector<HTMLElement>(`[data-key="${key}"]`)
     return el ? rowTop(el) : null
   }
-  try {
-    await frames.flush() // the mount's frames
-    top = 0 // the user reached the top: the root is on screen, the first loaded reply under it
+  const scrollTo = async (top: number) => {
+    st.top = top
     fireEvent.scroll(log)
     await frames.flush()
-    expect(onLoadOlder).toHaveBeenCalledTimes(1)
-    const before = onScreen('r11')
-    expect(before).not.toBeNull()
-    expect(onScreen('R')).toBeLessThan(before!) // the root is above it, also on screen
-
+  }
+  const loadPage = async () => {
     view.rerender(<Feed {...p} data={{ ...p.data, posts: [root, ...replies(1, 20)] }} />)
     await frames.flush()
-    expect(onScreen('r11')).toBe(before) // the reply the user saw stays where it was
-    expect(top).toBeGreaterThan(0) // the page just loaded is above, not skipped
+  }
+  await frames.flush() // the mount's frames
+  return {
+    st, onLoadOlder, onScreen, scrollTo, loadPage,
+    restore: () => (rect.mockRestore(), frames.restore()),
+  }
+}
+
+// threads.spec "a long thread … without gaps" failed once the composer grew
+// and the panel got shorter: the load started with the root on screen, the
+// restore kept the root in place — the feed stayed at the top, the page just
+// loaded was skipped and the next one requested (77 of 150 replies shown).
+test('thread: history that lands under the root keeps the reply seen at the top in place, not the root', async () => {
+  const t = await threadRig(600)
+  try {
+    await t.scrollTo(0) // the user reached the top: the root is on screen, the first loaded reply under it
+    expect(t.onLoadOlder).toHaveBeenCalledTimes(1)
+    const before = t.onScreen('r11')
+    expect(before).not.toBeNull()
+    expect(t.onScreen('R')).toBeLessThan(before!) // the root is above it, also on screen
+    await t.loadPage()
+    expect(t.onScreen('r11')).toBe(before) // the reply the user saw stays where it was
+    expect(t.st.top).toBeGreaterThan(0) // the page just loaded is above, not skipped
   } finally {
-    rect.mockRestore()
-    frames.restore()
+    t.restore()
+  }
+})
+
+// Re-review I-1: with only the root on screen (a tall root, a short panel),
+// skipping the root anchored the first reply below the fold (overscan), and
+// keeping that one in place pushed the root the user was reading off screen.
+test('thread: history loaded while only the root is on screen keeps the root in place', async () => {
+  const t = await threadRig(100)
+  try {
+    await t.scrollTo(60) // the root is on screen; the first loaded reply starts at the bottom edge
+    expect(t.onLoadOlder).toHaveBeenCalledTimes(1)
+    const before = t.onScreen('R')
+    expect(before).not.toBeNull()
+    expect(before!).toBeLessThan(100)
+    expect(t.onScreen('r11')).toBeGreaterThanOrEqual(100) // no reply is on screen
+    await t.loadPage()
+    expect(t.onScreen('R')).toBe(before) // the root the user was reading does not move
+  } finally {
+    t.restore()
   }
 })
 
@@ -506,18 +536,19 @@ test('StrictMode keeps the rows of a feed that stays mounted', async () => {
 // ResizeObserver created (Feed's and the virtualizer's own) is recorded, so
 // a test can fire the ones watching a given element.
 
-type Observed = { cb: ResizeObserverCallback; targets: Set<Element>; self: ResizeObserver; disconnected: boolean }
+type Observed = { cb: ResizeObserverCallback; targets: Set<Element>; boxes: Map<Element, string | undefined>; self: ResizeObserver; disconnected: boolean }
 function recordResizeObservers() {
   const all: Observed[] = []
   const saved = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
   class Stub {
     rec: Observed
     constructor(cb: ResizeObserverCallback) {
-      this.rec = { cb, targets: new Set(), self: this as unknown as ResizeObserver, disconnected: false }
+      this.rec = { cb, targets: new Set(), boxes: new Map(), self: this as unknown as ResizeObserver, disconnected: false }
       all.push(this.rec)
     }
-    observe(el: Element) {
+    observe(el: Element, opts?: ResizeObserverOptions) {
       this.rec.targets.add(el)
+      this.rec.boxes.set(el, opts?.box)
     }
     unobserve(el: Element) {
       this.rec.targets.delete(el)
@@ -533,7 +564,12 @@ function recordResizeObservers() {
       for (const o of all) if (o.targets.has(el)) o.cb([{ target: el, ...entry } as unknown as ResizeObserverEntry], o.self)
     })
   const watching = (el: Element) => all.filter((o) => o.targets.has(el))
-  return { fire, all, watching, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
+  // Who is who on the scroller, whatever the effects' order: the
+  // virtualizer's rect observer asks for the border box
+  // (virtual-core's observeElementRect), Feed's bottom-stick passes no options.
+  const virtualizerRect = (el: Element) => watching(el).filter((o) => o.boxes.get(el) === 'border-box')
+  const bottomStick = (el: Element) => watching(el).filter((o) => o.boxes.get(el) === undefined)
+  return { fire, all, watching, virtualizerRect, bottomStick, restore: () => void ((globalThis as { ResizeObserver?: unknown }).ResizeObserver = saved) }
 }
 
 // A scroller with a settable geometry: scrollTop is clamped to the range,
@@ -643,10 +679,9 @@ test('a wheel gesture that leaves the bottom is not pulled back when it ends', (
 test('the bottom-stick observer is disconnected on unmount', () => {
   const { ro, log, unmount } = stickFeed()
   try {
-    // Feed's own observer is the first one on the scroller: its layout
-    // effect runs before useVirtualizer's (declared earlier in Feed)
-    const mine = ro.watching(log)[0]
+    const [mine, ...more] = ro.bottomStick(log)
     expect(mine).toBeDefined()
+    expect(more).toHaveLength(0)
     unmount()
     expect(mine.disconnected).toBe(true)
   } finally {
@@ -760,7 +795,7 @@ test('a shorter scroller changes the rendered rows in the next frame, not inside
     fireEvent.scroll(log)
     const rendered = () => log.querySelectorAll('[data-index]').length
     const before = rendered()
-    const rect = ro.watching(log).filter((o) => o !== ro.watching(log)[0]) // [0] is the bottom-stick's (see above)
+    const rect = ro.virtualizerRect(log)
     expect(rect).toHaveLength(1)
     // Not inside act(): what the callback itself does to the DOM is the point.
     rect[0].cb([{ target: log, borderBoxSize: [{ blockSize: 200, inlineSize: 800 }] } as unknown as ResizeObserverEntry], rect[0].self)

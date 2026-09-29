@@ -232,6 +232,10 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     // undelivered notifications" (stick-bottom.spec, composer fix round 1).
     // The first measurement (not from an observer) passes straight through;
     // overscan covers the frame, and the bottom-stick has its own observer.
+    // Not virtual-core's useAnimationFrameWithResizeObserver: that one
+    // schedules a frame per notification, neither coalesced nor cancelled on
+    // unmount — a hidden window never runs them and they pin the unmounted
+    // feed (AGENTS.md, hidden-window rule); useFrames does both.
     observeElementRect: (instance, cb) => {
       let sync = true
       let latest: Parameters<typeof cb>[0] | null = null
@@ -328,22 +332,26 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // its "N replies" line), so keeping the root in place kept the feed at its
   // top — the page just loaded was skipped and the next one requested
   // (threads.spec, "a long thread … without gaps": whenever the load started
-  // with the root on screen).
+  // with the root on screen). But only when another post is on screen: with
+  // the root alone in view (a tall root, a short panel) the next candidate is
+  // a reply below the fold, and keeping that one in place pushed the root the
+  // user was reading off screen — then the root anchors, the page lands below
+  // (re-review I-1).
   const captureAnchor = () => {
     const el = scroller.current
     const first = rows.find((r) => r.kind === 'post')
     const head = variant === 'thread' && first?.kind === 'post' && !first.post.root_id ? first.key : null
-    const found = el
-      ? pickAnchor(
-          [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')]
-            .filter((r) => r.dataset.key !== head)
-            .map((r) => {
-              const b = r.getBoundingClientRect()
-              return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
-            }),
-          el.getBoundingClientRect().top,
-        )
-      : null
+    let found: { key: string; offset: number } | null = null
+    if (el) {
+      const viewTop = el.getBoundingClientRect().top
+      const viewBottom = viewTop + el.clientHeight
+      const boxes = [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')].map((r) => {
+        const b = r.getBoundingClientRect()
+        return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
+      })
+      const others = boxes.filter((b) => b.key !== head && b.top < viewBottom && b.bottom > viewTop)
+      found = pickAnchor(head !== null && others.length ? boxes.filter((b) => b.key !== head) : boxes, viewTop)
+    }
     anchor.current = found?.key ?? null
     anchorOffset.current = found?.offset ?? 0
   }
