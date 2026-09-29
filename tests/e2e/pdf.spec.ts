@@ -173,6 +173,80 @@ test('the PDF text layer is really selectable, not just decorative', async ({ pa
   await expect(v).toHaveCount(0)
 })
 
+// Final review R2: I3's fix (shipping wasm/cMap/standard-font assets and
+// wiring them into getDocument) was only checked with a screenshot and a
+// scratch probe, both one-off. pdf.js decodes ScannedPage's CCITT scan
+// (internal/mmfake/pdf.go) through jbig2.wasm and, per I3, silently leaves
+// the image out — no rejection, no fallback to the card — if that wiring
+// ever breaks (a path change, the copy plugin not running in some build).
+// So this samples actual rendered pixels, not just "no error was thrown".
+test('the scanned page (3, CCITT) actually paints, not silently blank', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /Off-Topic/).click()
+  await feed(page).getByRole('button', { name: 'View manual.pdf' }).click()
+  const v = viewer(page)
+  const pageCounter = v.getByText(/^\d+ \/ 50$/)
+  await expect(pageCounter).toHaveText('1 / 50')
+
+  // Same real-geometry scroll technique as the landscape-page test above
+  // (PDF final review M3): page 3's own placeholder div exists from the
+  // start (PdfView.tsx renders one per page up front; only the canvas
+  // inside is windowed), so this can jump straight to it.
+  const scroller = v.locator('.overflow-auto')
+  await expect(async () => {
+    await scroller.evaluate((el) => {
+      const p3 = el.querySelector('[data-page="3"]')
+      if (!(p3 instanceof HTMLElement)) throw new Error('page 3 is not in the DOM yet')
+      el.scrollTop += p3.getBoundingClientRect().top - el.getBoundingClientRect().top
+    })
+    await expect(pageCounter).toHaveText('3 / 50')
+  }).toPass()
+
+  const canvas = v.locator('[data-page="3"] canvas')
+  await expect(canvas).toBeVisible({ timeout: 15_000 })
+
+  // internal/mmfake/pdf.go's manualPage (used for every non-landscape page,
+  // including ScannedPage) draws its picture with
+  // "q 480 0 0 360 57 40 cm /Im1 Do Q" on a 595x842 portrait page: PDF x in
+  // [57,537], y in [40,400] (PDF's bottom-up y axis). Map that straight to
+  // a fraction of the canvas's own backing store — pdf.js sizes the canvas
+  // to the full page, so this holds at any zoom/DPR/CANVAS_PIXEL_CAP
+  // without guessing the actual render scale.
+  const stats = await canvas.evaluate((el) => {
+    const c = el as HTMLCanvasElement
+    const ctx = c.getContext('2d')!
+    const fx0 = 57 / 595
+    const fx1 = 537 / 595
+    const fy0 = (842 - 400) / 842
+    const fy1 = (842 - 40) / 842
+    const x = Math.round(fx0 * c.width)
+    const y = Math.round(fy0 * c.height)
+    const w = Math.round((fx1 - fx0) * c.width)
+    const h = Math.round((fy1 - fy0) * c.height)
+    const { data } = ctx.getImageData(x, y, w, h)
+    let dark = 0
+    let light = 0
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+      if (lum < 128) dark++
+      else light++
+    }
+    return { darkFraction: dark / (dark + light), lightFraction: light / (dark + light) }
+  })
+  // A real render: black "SCAN" text on a white background, ~3.5% dark
+  // (confirmed against poppler/Ghostscript reference renders — R1). Broken
+  // wasm wiring: pdf.js skips the image and this region stays essentially
+  // free of dark pixels (well under 0.5%) — non-uniform-but-light is not
+  // enough on its own, since the page's own header band/text already paint
+  // outside this box regardless of whether the scan itself renders.
+  expect(stats.darkFraction, `dark fraction ${stats.darkFraction}`).toBeGreaterThan(0.005)
+  expect(stats.darkFraction).toBeLessThan(0.2)
+  expect(stats.lightFraction).toBeGreaterThan(0.7)
+
+  await page.keyboard.press('Escape')
+  await expect(v).toHaveCount(0)
+})
+
 test('a broken PDF (spec.pdf) falls back to the file card, no iframe/embed/object', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
