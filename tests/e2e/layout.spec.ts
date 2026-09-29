@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { apiCall, channel, removeServerFromMenu, seedThread, signInAlice, threadPane } from './helpers'
+import { apiCall, channel, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadPane } from './helpers'
 
 // Theme brief 2026-09-28, scope 3a: resizable sidebar/thread-panel
 // splitters, app-wide persistence via internal/api's GetLayout/
@@ -60,7 +60,7 @@ test('dragging the thread-panel splitter resizes it', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
   await seedThread(page, 'layout root', ['layout reply 1'])
   await channel(page, /Town Square/).click()
-  await page.getByRole('button', { name: /^Replies: 1/ }).click()
+  await repliesLink(page, 'layout root', 1).click()
   const pane = threadPane(page)
   await expect(pane).toBeVisible()
   const before = (await pane.boundingBox())!.width
@@ -77,7 +77,7 @@ test('dragging the thread-panel splitter resizes it', async ({ page }) => {
 
   await page.reload()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
-  await page.getByRole('button', { name: /^Replies: 1/ }).click()
+  await repliesLink(page, 'layout root', 1).click()
   await expect(threadPane(page)).toHaveJSProperty('offsetWidth', Math.round(before) - 60)
   await removeServerFromMenu(page)
 })
@@ -126,7 +126,9 @@ test('dragging either splitter to its max never overflows the window (splitter-d
   // nothing may overflow.
   await seedThread(page, 'overflow check root', ['overflow check reply'])
   await channel(page, /Town Square/).click()
-  await page.getByRole('button', { name: /^Replies: 1/ }).click()
+  // By the root's own text: "layout root" (the test above, same fake, same
+  // channel) also shows "Replies: 1" once this root's post event lands.
+  await repliesLink(page, 'overflow check root', 1).click()
   const pane = threadPane(page)
   await expect(pane).toBeVisible()
 
