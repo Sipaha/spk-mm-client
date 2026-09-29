@@ -74,7 +74,7 @@ test('attachments, files, reactions and reply count', async () => {
   expect(screen.getByText('test').tagName).toBe('STRONG')
   expect(screen.getByText('Branch')).toBeInTheDocument()
   expect(screen.getByText('report.pdf')).toBeInTheDocument()
-  expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+  expect(screen.getByText('PDF 2KB')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '👍 2, you reacted' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: ':custom_party: 1' })).toBeInTheDocument()
   expect(screen.getByText('Replies: 3')).toBeInTheDocument()

@@ -114,6 +114,56 @@ export function IconNote(p: IconProps) {
   )
 }
 
+// FILE_PAGE: the dog-eared page outline shared by every FileCard type icon
+// (file-cards brief, 2026-09-30) — the same shape as IconFile itself, kept
+// as a constant rather than a wrapper component so IconFile stays a plain
+// Icon* (icons.test.tsx's generic sweep expects every export to take just
+// size/className).
+const FILE_PAGE = 'M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z'
+
+// IconFileSheet/IconFileSlide/IconFileArchive: drawn by us (not sourced
+// from Material Symbols/Icons like most of this file) — the official
+// client ships a bespoke coloured-page image per file type (mm-10.11
+// webapp/channels/src/sass/components/_files.scss's file-icon mixin); ours
+// reuses the one page outline (FILE_PAGE, same as IconFile) plus a small
+// mark evoking the type (a grid for spreadsheets, a title+body block for
+// slides, a zipper for archives), tinted per kind by the caller's
+// className (FileCard.tsx) — same "coloured per type" idea, own artwork.
+export function IconFileSheet(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d={FILE_PAGE} />
+      <rect x="7" y="11" width="10" height="1.6" rx="0.3" />
+      <rect x="7" y="14.2" width="10" height="1.6" rx="0.3" />
+      <rect x="7" y="17.4" width="10" height="1.6" rx="0.3" />
+      <rect x="11.2" y="11" width="1.6" height="8" rx="0.3" />
+    </Icon>
+  )
+}
+
+export function IconFileSlide(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d={FILE_PAGE} />
+      <rect x="7" y="11" width="10" height="3.4" rx="0.5" />
+      <rect x="7" y="15.8" width="6" height="1.4" rx="0.3" />
+      <rect x="7" y="18.2" width="8" height="1.4" rx="0.3" />
+    </Icon>
+  )
+}
+
+export function IconFileArchive(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d={FILE_PAGE} />
+      <rect x="10.6" y="9.6" width="2.8" height="1.8" />
+      <rect x="10.6" y="12.8" width="2.8" height="1.8" />
+      <rect x="10.6" y="16" width="2.8" height="1.8" />
+      <rect x="10.6" y="19.2" width="2.8" height="1.4" />
+    </Icon>
+  )
+}
+
 export function IconFolder(p: IconProps) {
   return (
     <Icon {...p}>

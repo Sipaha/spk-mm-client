@@ -80,7 +80,20 @@ export function Attachments({
   // plain 'other' card doesn't get.
   const others = files.filter((f) => fileKind(f) === 'other' || fileKind(f) === 'pdf')
   return (
-    <div className="mt-1 flex flex-col items-start gap-2">
+    // w-full min-w-0: without a definite width here, this column sizes
+    // itself by its own children's shrink-to-fit/min-content contribution
+    // (align-items: flex-start on a flex-col leaves every child to its own
+    // preferred size) — and a file-cards row that CAN wrap still reports
+    // its unwrapped max-content width to that calculation, so the column
+    // (and the post's whole flex row above it) grew wider than the actual
+    // available space and forced the thread panel to scroll horizontally
+    // instead of wrapping the cards (file-cards brief, 2026-09-30 — caught
+    // by the narrow-thread-panel screenshot, no matching unit test: jsdom
+    // has no real layout/intrinsic-sizing engine to catch it). w-full pins
+    // this column to its parent's actual width (PostItem's content
+    // column), so `others`' own w-full below has something real to wrap
+    // against.
+    <div className="mt-1 flex w-full min-w-0 flex-col items-start gap-2">
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {images.map((f) => (
@@ -105,7 +118,7 @@ export function Attachments({
         <MarkdownSnippet key={f.id} serverId={serverId} file={f} me={me} onLink={onLink} {...h} />
       ))}
       {others.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full min-w-0 flex-wrap gap-2">
           {others.map((f) => (
             <FileCard key={f.id} serverId={serverId} file={f} onDownload={h.onDownload} onOpen={h.onOpen} onView={fileKind(f) === 'pdf' ? h.onView : undefined} />
           ))}

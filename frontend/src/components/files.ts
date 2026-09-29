@@ -22,7 +22,7 @@ export const TEXT_EXT = new Set([
 export const GIF_INLINE_MAX = 8 * 1024 * 1024
 export const IMAGE_FILE_MAX = 25 * 1024 * 1024
 
-const extOf = (f: FileView) => (f.ext || (f.name.includes('.') ? f.name.slice(f.name.lastIndexOf('.') + 1) : f.name)).toLowerCase()
+export const extOf = (f: FileView) => (f.ext || (f.name.includes('.') ? f.name.slice(f.name.lastIndexOf('.') + 1) : f.name)).toLowerCase()
 
 // imageSrc: what the feed and the viewer load for an image — the server
 // preview, or the original when there is none (GIF keeps its animation;
@@ -94,6 +94,68 @@ export const VIDEO_BOX = { w: 480, h: 270 }
 export function videoBox(f: FileView): { width: number; height: number } {
   if (f.width && f.height) return fitBox(f.width, f.height, VIDEO_BOX.w, VIDEO_BOX.h)
   return { width: VIDEO_BOX.w, height: VIDEO_BOX.h }
+}
+
+// CardType: FileCard's icon/colour bucket (file-cards brief, 2026-09-30) —
+// finer-grained than FileKind for anything that lands in a generic card
+// (FileKind's 'other'), so a .docx and a .zip don't look the same. pdf/
+// image/video/audio/text ride on FileKind's own routing (a card only shows
+// them as a fallback — a failed image/media/text load); document/
+// spreadsheet/presentation/archive are extension/mime buckets of their
+// own, matching the webapp's getFileType/ICON_NAME_FROM_TYPE split
+// (mm-10.11 webapp/channels/src/utils/{utils,constants}.tsx) plus an
+// 'archive' bucket the webapp itself doesn't have (it lumps zip/tar into
+// its generic "other" — this project's cards call it out explicitly, per
+// the brief).
+export type CardType = 'pdf' | 'image' | 'video' | 'audio' | 'text' | 'document' | 'spreadsheet' | 'presentation' | 'archive' | 'generic'
+
+const DOCUMENT_EXT = new Set(['doc', 'docx', 'rtf', 'odt', 'pages'])
+const SPREADSHEET_EXT = new Set(['xls', 'xlsx', 'ods', 'numbers'])
+const PRESENTATION_EXT = new Set(['ppt', 'pptx', 'odp', 'key'])
+const ARCHIVE_EXT = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'xz'])
+
+export function cardType(f: FileView): CardType {
+  const kind = fileKind(f)
+  if (kind === 'pdf' || kind === 'image' || kind === 'video' || kind === 'audio') return kind
+  if (kind === 'text' || kind === 'markdown') return 'text'
+  const ext = extOf(f)
+  const mime = (f.mime || '').toLowerCase()
+  if (DOCUMENT_EXT.has(ext) || mime.includes('wordprocessingml') || mime === 'application/msword' || mime.includes('opendocument.text')) return 'document'
+  if (SPREADSHEET_EXT.has(ext) || mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel' || mime.includes('opendocument.spreadsheet')) return 'spreadsheet'
+  if (PRESENTATION_EXT.has(ext) || mime.includes('presentationml') || mime === 'application/vnd.ms-powerpoint' || mime.includes('opendocument.presentation')) return 'presentation'
+  if (ARCHIVE_EXT.has(ext) || mime.includes('zip') || mime.includes('x-rar') || mime.includes('x-7z') || mime.includes('x-tar') || mime.includes('gzip')) return 'archive'
+  return 'generic'
+}
+
+// cardTypeLabel: the card's meta line's type word ("PDF", "ZIP") — the
+// extension uppercased, like the webapp's own fileInfo.extension.toUpperCase()
+// (file_attachment.tsx), falling back to the MIME subtype when there is no
+// extension left (e.g. stripped on upload).
+export function cardTypeLabel(f: FileView): string {
+  // Not extOf(): that falls back to the *whole filename* when there is no
+  // dot (so 'Makefile' matches TEXT_EXT's 'makefile' entry) — exactly
+  // wrong for a user-facing label ("SPEC 2KB" for a dot-less "spec" would
+  // be nonsense). Here, no real extension means no extension label at all;
+  // MIME is the only other source of truth.
+  const realExt = f.ext || (f.name.includes('.') ? f.name.slice(f.name.lastIndexOf('.') + 1).toLowerCase() : '')
+  if (realExt) return realExt.toUpperCase()
+  const subtype = (f.mime || '').split('/')[1]
+  return subtype ? subtype.toUpperCase() : ''
+}
+
+// cardSizeLabel: the card's meta line's size word ("34KB") — the webapp's
+// own fileSizeToString (utils/utils.tsx): whole-number KB/MB/GB/TB (one
+// decimal only under 10 units), no space before the unit. Deliberately not
+// format.ts's formatSize (used everywhere else in this app — download
+// tooltips, toasts): the brief calls for matching the official client's
+// own card wording specifically ("PDF 34KB"), not our general size format.
+export function cardSizeLabel(bytes: number): string {
+  const unit = (n: number, u: string) => (bytes < n * 10 ? Math.round((bytes / n) * 10) / 10 : Math.round(bytes / n)) + u
+  if (bytes > 1024 ** 4) return unit(1024 ** 4, 'TB')
+  if (bytes > 1024 ** 3) return unit(1024 ** 3, 'GB')
+  if (bytes > 1024 ** 2) return unit(1024 ** 2, 'MB')
+  if (bytes > 1024) return Math.round(bytes / 1024) + 'KB'
+  return bytes + 'B'
 }
 
 // fitBox: the box an image is shown in — known before it loads, so the

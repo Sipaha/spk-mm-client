@@ -145,11 +145,19 @@ test('video and audio: fixed-box poster (video) and a compact row (audio), prelo
   vi.restoreAllMocks()
 })
 
-test('other files are cards with download and open, and no Preview action', async () => {
+test('other files are cards with a type+size meta line, download and open, and no Preview action', async () => {
   const h = handlers()
   const zip: FileView = { id: 'f-arc', name: 'archive.zip', ext: 'zip', size: 2048, mime: 'application/zip' }
   render(<Attachments serverId={1} files={[zip, { id: 's', name: 'logo.svg', ext: 'svg', size: 10, mime: 'image/svg+xml' }]} {...h} />)
-  expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+  expect(screen.getByText('ZIP 2KB')).toBeInTheDocument() // webapp-style meta line, not format.ts's "2.0 KB"
+  expect(screen.getByText('SVG 10B')).toBeInTheDocument()
+  // The card's own name/icon area is the primary action — non-previewable
+  // kinds download (labelled by the bare file name, never "Download <name>":
+  // that name is reserved for the secondary DownloadButton next to it, so
+  // e2e's exact-name lookups for it — e.g. "Download stick-report.zip" —
+  // still match exactly one button).
+  await userEvent.click(screen.getByRole('button', { name: 'archive.zip' }))
+  expect(h.onDownload).toHaveBeenCalledWith(zip)
   await userEvent.click(screen.getByRole('button', { name: 'Open archive.zip' }))
   expect(h.onOpen).toHaveBeenCalledWith(zip)
   expect(screen.getByRole('button', { name: 'Download logo.svg' })).toBeInTheDocument()
@@ -162,9 +170,12 @@ test('a pdf file is a card with a Preview action, alongside download and open', 
   const pdf: FileView = { id: 'f-spec', name: 'spec.pdf', ext: 'pdf', size: 2048, mime: 'application/pdf' }
   render(<Attachments serverId={1} files={[pdf]} {...h} />)
   expect(screen.getByText('spec.pdf')).toBeInTheDocument()
-  expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+  expect(screen.getByText('PDF 2KB')).toBeInTheDocument()
+  // Previewable: the card's own name/icon area is the "View" action, not a
+  // download — that label stays on the secondary DownloadButton alone.
   await userEvent.click(screen.getByRole('button', { name: 'View spec.pdf' }))
   expect(h.onView).toHaveBeenCalledWith(pdf)
+  expect(h.onDownload).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: 'Download spec.pdf' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Open spec.pdf' })).toBeInTheDocument()
   expect(document.querySelector('img')).toBeNull()

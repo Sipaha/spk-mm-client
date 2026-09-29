@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { FileView } from '../api/types'
-import { fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
+import { cardSizeLabel, cardType, cardTypeLabel, fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
 
 const F = (o: Partial<FileView>): FileView => ({ id: 'f', name: 'x', size: 100, mime: '', ...o })
 
@@ -77,4 +77,43 @@ test('fitBox keeps the aspect inside the box; unknown size gets a fixed box', ()
   expect(fitBox(400, 600, 480, 360)).toEqual({ width: 240, height: 360 })
   expect(fitBox(100, 50, 480, 360)).toEqual({ width: 100, height: 50 })
   expect(fitBox(undefined, undefined, 480, 360)).toEqual({ width: 240, height: 180 })
+})
+
+test('cardType: routed kinds (pdf/image/video/audio) pass through, text+markdown fold into "text"', () => {
+  expect(cardType(F({ name: 'spec.pdf', ext: 'pdf', mime: 'application/pdf' }))).toBe('pdf')
+  expect(cardType(F({ name: 'a.png', ext: 'png', mime: 'image/png', has_preview: true }))).toBe('image')
+  expect(cardType(F({ name: 'clip.webm', ext: 'webm', mime: 'video/webm' }))).toBe('video')
+  expect(cardType(F({ name: 'tone.mp3', ext: 'mp3', mime: 'audio/mpeg' }))).toBe('audio')
+  expect(cardType(F({ name: 'server.log', ext: 'log', mime: 'text/plain' }))).toBe('text')
+  expect(cardType(F({ name: 'notes.md', ext: 'md', mime: 'text/markdown' }))).toBe('text')
+})
+
+test('cardType: document/spreadsheet/presentation/archive, by extension or MIME', () => {
+  expect(cardType(F({ name: 'report.docx', ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }))).toBe('document')
+  expect(cardType(F({ name: 'report.doc', ext: 'doc', mime: 'application/msword' }))).toBe('document')
+  expect(cardType(F({ name: 'report', ext: '', mime: 'application/vnd.oasis.opendocument.text' }))).toBe('document')
+  expect(cardType(F({ name: 'nums.xlsx', ext: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))).toBe('spreadsheet')
+  // .csv is deliberately NOT here: TEXT_EXT already routes it to the plain-text
+  // preview (fileKind → 'text'), same as fileKind's own test file — a csv
+  // only ever reaches a card as that preview's failed-load fallback, hence 'text'.
+  expect(cardType(F({ name: 'deck.pptx', ext: 'pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }))).toBe('presentation')
+  expect(cardType(F({ name: 'deck.ppt', ext: 'ppt', mime: 'application/vnd.ms-powerpoint' }))).toBe('presentation')
+  expect(cardType(F({ name: 'stuff.zip', ext: 'zip', mime: 'application/zip' }))).toBe('archive')
+  expect(cardType(F({ name: 'stuff.tar.gz', ext: 'gz', mime: 'application/gzip' }))).toBe('archive')
+  expect(cardType(F({ name: 'unknown.bin', ext: 'bin', mime: 'application/octet-stream' }))).toBe('generic')
+})
+
+test('cardTypeLabel: uppercased extension, MIME subtype when there is none', () => {
+  expect(cardTypeLabel(F({ name: 'spec.pdf', ext: 'pdf' }))).toBe('PDF')
+  expect(cardTypeLabel(F({ name: 'archive.zip', ext: 'zip' }))).toBe('ZIP')
+  expect(cardTypeLabel(F({ name: 'spec', ext: '', mime: 'application/pdf' }))).toBe('PDF')
+  expect(cardTypeLabel(F({ name: 'noext', ext: '', mime: '' }))).toBe('')
+})
+
+test('cardSizeLabel: webapp-style rounding — whole KB/MB, one decimal only under 10 units, no space before the unit', () => {
+  expect(cardSizeLabel(512)).toBe('512B')
+  expect(cardSizeLabel(34719)).toBe('34KB') // brief's own example: "PDF 34KB"
+  expect(cardSizeLabel(1536)).toBe('2KB')
+  expect(cardSizeLabel(9.4 * 1024 * 1024)).toBe('9.4MB')
+  expect(cardSizeLabel(20 * 1024 * 1024)).toBe('20MB')
 })

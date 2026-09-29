@@ -53,6 +53,26 @@
   --color-sidebar-fg-unread: #cad3f5;
   --color-sidebar-active-bg: #2f374f;
   --color-sidebar-active-border: #8aadf4;
+
+  /* File card type colours (file-cards brief, 2026-09-30): the official
+     client tints its file-type icon per kind (red PDF, green spreadsheet,
+     etc. — mm-10.11 webapp/channels/src/sass/components/_files.scss's
+     per-extension file-icon images); these are the same idea on our own
+     Catppuccin Macchiato accents (https://catppuccin.com/palette — full
+     hex list) rather than copying the webapp's bespoke artwork colours.
+     Deliberately separate from the semantic tokens above (danger/online/
+     away) even where the swatch matches (file-pdf and danger are both
+     Macchiato "red") — a future re-theme may want to move file-type colour
+     independently of status colour. */
+  --color-file-pdf: #ed8796; /* red */
+  --color-file-document: #8aadf4; /* blue */
+  --color-file-spreadsheet: #a6da95; /* green */
+  --color-file-presentation: #f5a97f; /* peach */
+  --color-file-archive: #eed49f; /* yellow */
+  --color-file-audio: #c6a0f6; /* mauve */
+  --color-file-video: #7dc4e4; /* sapphire */
+  --color-file-image: #8bd5ca; /* teal */
+  --color-file-text: #91d7e3; /* sky */
 }
 
 /* Message markdown: Tailwind's preflight resets these elements. */
