@@ -207,18 +207,33 @@ test('the scanned page (3, CCITT) actually paints, not silently blank', async ({
 
   // internal/mmfake/pdf.go's manualPage (used for every non-landscape page,
   // including ScannedPage) draws its picture with
-  // "q 480 0 0 360 57 40 cm /Im1 Do Q" on a 595x842 portrait page: PDF x in
-  // [57,537], y in [40,400] (PDF's bottom-up y axis). Map that straight to
-  // a fraction of the canvas's own backing store — pdf.js sizes the canvas
-  // to the full page, so this holds at any zoom/DPR/CANVAS_PIXEL_CAP
-  // without guessing the actual render scale.
+  // "q 480 0 0 360 57 40 cm /Im1 Do Q" on a 595x842 portrait page, inside a
+  // decorative frame stroked at "50 150 495 300 re S" — that frame's own
+  // bottom edge (a thin line at PDF y=150) falls *inside* the image's own y
+  // range [40,400]. A correct render draws the (opaque) image over that
+  // edge and hides it; a broken one (the image skipped) leaves the bare
+  // line exposed — sampling the *whole* image box would then still show a
+  // sliver of "dark" pixels from that line alone, only barely below a loose
+  // threshold and not a reliable signal (confirmed empirically: a
+  // wasmUrl-pointed-nowhere mutant still passed a first draft of this test
+  // that used the full box). So this crops a tighter PDF-space rectangle,
+  // x:[65,530] y:[155,295], chosen by rendering the real fixture with
+  // poppler (pdftoppm): it sits inside "SCAN"'s own glyph area (y roughly
+  // 171-263) with margin, and safely above the y=150 frame line. Measured
+  // there directly against poppler: ~9.2% dark when the image renders,
+  // exactly 0% when the same page has its image-draw operator stripped
+  // (simulating the image being skipped) — a wide, clean margin, unlike the
+  // full-box crop's 3.5% vs 0.6%. Mapped to a fraction of the canvas's own
+  // backing store — pdf.js sizes the canvas to the full page, so this holds
+  // at any zoom/DPR/CANVAS_PIXEL_CAP without guessing the actual render
+  // scale.
   const stats = await canvas.evaluate((el) => {
     const c = el as HTMLCanvasElement
     const ctx = c.getContext('2d')!
-    const fx0 = 57 / 595
-    const fx1 = 537 / 595
-    const fy0 = (842 - 400) / 842
-    const fy1 = (842 - 40) / 842
+    const fx0 = 65 / 595
+    const fx1 = 530 / 595
+    const fy0 = (842 - 295) / 842
+    const fy1 = (842 - 155) / 842
     const x = Math.round(fx0 * c.width)
     const y = Math.round(fy0 * c.height)
     const w = Math.round((fx1 - fx0) * c.width)
@@ -233,15 +248,13 @@ test('the scanned page (3, CCITT) actually paints, not silently blank', async ({
     }
     return { darkFraction: dark / (dark + light), lightFraction: light / (dark + light) }
   })
-  // A real render: black "SCAN" text on a white background, ~3.5% dark
-  // (confirmed against poppler/Ghostscript reference renders — R1). Broken
-  // wasm wiring: pdf.js skips the image and this region stays essentially
-  // free of dark pixels (well under 0.5%) — non-uniform-but-light is not
-  // enough on its own, since the page's own header band/text already paint
-  // outside this box regardless of whether the scan itself renders.
-  expect(stats.darkFraction, `dark fraction ${stats.darkFraction}`).toBeGreaterThan(0.005)
-  expect(stats.darkFraction).toBeLessThan(0.2)
-  expect(stats.lightFraction).toBeGreaterThan(0.7)
+  // A real render: black "SCAN" strokes on white, ~9% dark in this crop
+  // (measured against a poppler reference render of the real fixture —
+  // R1/R2). Broken wasm wiring: pdf.js skips the image and this crop (well
+  // inside its bounds, clear of the frame's own line) stays exactly white.
+  expect(stats.darkFraction, `dark fraction ${stats.darkFraction}`).toBeGreaterThan(0.02)
+  expect(stats.darkFraction).toBeLessThan(0.3)
+  expect(stats.lightFraction).toBeGreaterThan(0.6)
 
   await page.keyboard.press('Escape')
   await expect(v).toHaveCount(0)
