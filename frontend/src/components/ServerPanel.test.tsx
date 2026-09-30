@@ -21,6 +21,8 @@ function fakeClient(over: Partial<Client> = {}): Client {
     logout: vi.fn().mockResolvedValue(undefined),
     subscribeEvents: vi.fn(),
     jumpToPost: vi.fn(),
+    searchPosts: vi.fn().mockResolvedValue({ hits: [], has_next: false, limit_reached: false }),
+    searchSuggest: vi.fn().mockResolvedValue({ users: [], others: [], channels: [], emoji: [], commands: [] }),
     loadNewer: vi.fn().mockResolvedValue(undefined),
     retryRevalidation: vi.fn().mockResolvedValue(undefined),
     openThreadAt: vi.fn(),

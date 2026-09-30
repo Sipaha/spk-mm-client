@@ -18,3 +18,10 @@ test('jump and gap codes have their own text', () => {
   setLocale('ru')
   expect(errorMessage(new ApiError('post_gone', ''))).toBe('Сообщение удалено или недоступно')
 })
+
+test('offline (a search asked nothing) has its own text', () => {
+  setLocale('en')
+  expect(errorMessage(new ApiError('offline', ''))).toBe('No connection to the server')
+  setLocale('ru')
+  expect(errorMessage(new ApiError('offline', ''))).toBe('Нет связи с сервером')
+})

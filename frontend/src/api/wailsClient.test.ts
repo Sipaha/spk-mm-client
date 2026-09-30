@@ -205,3 +205,24 @@ test('jumpToPost: an abort cancels the Wails call (its Go context); gap calls by
   await wailsClient.retryRevalidation(3, 'c1')
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'RetryRevalidation', 3, 'c1')
 })
+
+test('searchPosts/searchSuggest: an abort cancels the Wails call (its Go context)', async () => {
+  let resolve!: (v: unknown) => void
+  const cancel = vi.fn()
+  const p = Object.assign(new Promise((r) => (resolve = r)), { cancel })
+  vi.mocked(Call.ByName).mockReturnValue(p as never)
+  const ctl = new AbortController()
+  const res = wailsClient.searchPosts(3, 't1', 'hello', 1, -3600, ctl.signal)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SearchPosts', 3, 't1', 'hello', 1, -3600)
+  ctl.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  resolve({ hits: [], has_next: false, limit_reached: false })
+  await expect(res).resolves.toEqual({ hits: [], has_next: false, limit_reached: false })
+
+  vi.mocked(Call.ByName).mockRejectedValue(new Error('offline: '))
+  await expect(wailsClient.searchPosts(3, 't1', 'x', 0, 0)).rejects.toMatchObject({ code: 'offline' })
+
+  vi.mocked(Call.ByName).mockResolvedValue({ users: [], others: [], channels: [], emoji: [], commands: [] })
+  await wailsClient.searchSuggest(3, 't1', 'users', 'bo')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SearchSuggest', 3, 't1', 'users', 'bo')
+})

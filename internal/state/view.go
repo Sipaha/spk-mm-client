@@ -205,6 +205,19 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	return v, true
 }
 
+// PostViews renders posts no window may hold (search hits) the way the
+// feed does: the author's name, picture version and status from the held
+// profiles (load missing ones first).
+func (s *Server) PostViews(posts []model.Post) []PostView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]PostView, 0, len(posts))
+	for _, p := range posts {
+		out = append(out, s.postViewLocked(p))
+	}
+	return out
+}
+
 // pendingViewLocked shows a post being sent (the feed and the thread panel).
 func (s *Server) pendingViewLocked(p Pending) PostView {
 	return PostView{ID: p.ID, UserID: s.me.ID, Author: s.displayNameLocked(s.me.ID),

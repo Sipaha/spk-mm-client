@@ -189,6 +189,17 @@ func (w *API) Autocomplete(ctx context.Context, id int64, kind, channelID, rootI
 	return w.a.Autocomplete(ctx, id, kind, channelID, rootID, prefix)
 }
 
+// SearchPosts takes Wails' call context: cancelling the JS promise (a
+// newer search replaced it) cancels the server call.
+func (w *API) SearchPosts(ctx context.Context, id int64, teamID, terms string, page, tzOffset int) (api.SearchPageDTO, error) {
+	return w.a.SearchPosts(ctx, id, teamID, terms, page, tzOffset)
+}
+
+// SearchSuggest takes Wails' call context, like Autocomplete.
+func (w *API) SearchSuggest(ctx context.Context, id int64, teamID, kind, prefix string) (api.AutocompleteDTO, error) {
+	return w.a.SearchSuggest(ctx, id, teamID, kind, prefix)
+}
+
 // ExecuteCommand is not cancelled with its promise: a command, once sent,
 // runs to its end (like SendPost).
 func (w *API) ExecuteCommand(id int64, channelID, rootID, command string) error {

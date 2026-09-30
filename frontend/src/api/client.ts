@@ -13,6 +13,8 @@ import type {
   LayoutDTO,
   ReactionUsersDTO,
   SavedFile,
+  SearchPageDTO,
+  SearchSuggestKind,
   ServerDTO,
   SidebarDTO,
   ThreadDTO,
@@ -136,6 +138,20 @@ export interface Client {
   autocomplete(id: number, kind: AutocompleteKind, channelId: string, rootId: string, prefix: string, signal?: AbortSignal): Promise<AutocompleteDTO>
   /** Runs a slash command the user sent (rootId: a held thread's composer); command_not_found for an unknown trigger. */
   executeCommand(id: number, channelId: string, rootId: string, command: string): Promise<void>
+  /**
+   * Searches teamId (the server parses from:, in:, dates, phrases…): page
+   * 0…24, 20 posts each, newest first; tzOffset in seconds east of UTC
+   * (-new Date().getTimezoneOffset() * 60). Never retried; aborting `signal`
+   * cancels it in Go. Errors: offline, invalid_argument (terms empty or over
+   * 1000 bytes, page, team), session_expired, forbidden, cancelled.
+   */
+  searchPosts(id: number, teamId: string, terms: string, page: number, tzOffset: number, signal?: AbortSignal): Promise<SearchPageDTO>
+  /**
+   * The search box's from:/in: suggestions in teamId (not tied to a channel):
+   * users — the team's members; channels — the team's channels, DMs, GMs,
+   * name being what in: takes. Aborting `signal` cancels it in Go.
+   */
+  searchSuggest(id: number, teamId: string, kind: SearchSuggestKind, prefix: string, signal?: AbortSignal): Promise<AutocompleteDTO>
   subscribeEvents(onEvent: (e: ApiEvent) => void): () => void
 }
 
@@ -229,6 +245,9 @@ export const httpClient: Client = {
   autocomplete: (id, kind, channel_id, root_id, prefix, signal) =>
     post('Autocomplete', { id, kind, channel_id, root_id, prefix }, signal),
   executeCommand: (id, channel_id, root_id, command) => done(post('ExecuteCommand', { id, channel_id, root_id, command })),
+  searchPosts: (id, team_id, terms, page, tz_offset, signal) =>
+    post('SearchPosts', { id, team_id, terms, page, tz_offset }, signal),
+  searchSuggest: (id, team_id, kind, prefix, signal) => post('SearchSuggest', { id, team_id, kind, prefix }, signal),
   subscribeEvents(onEvent) {
     const es = new EventSource(`/api/events?token=${encodeURIComponent(tokenMeta())}`)
     es.onmessage = (m) => onEvent(JSON.parse(m.data) as ApiEvent)
@@ -368,6 +387,10 @@ export const wailsClient: Client = {
   autocomplete: (id, kind, channelId, rootId, prefix, signal) =>
     cancellable<AutocompleteDTO>(signal, 'Autocomplete', id, kind, channelId, rootId, prefix),
   executeCommand: (id, channelId, rootId, command) => wcall('ExecuteCommand', id, channelId, rootId, command),
+  searchPosts: (id, teamId, terms, page, tzOffset, signal) =>
+    cancellable<SearchPageDTO>(signal, 'SearchPosts', id, teamId, terms, page, tzOffset),
+  searchSuggest: (id, teamId, kind, prefix, signal) =>
+    cancellable<AutocompleteDTO>(signal, 'SearchSuggest', id, teamId, kind, prefix),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>
       Events.On(type, (ev: { data: unknown }) => {

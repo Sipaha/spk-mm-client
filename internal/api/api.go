@@ -194,6 +194,22 @@ type API interface {
 	// (rootID: a held thread's, else no_post); command_not_found when the
 	// server has no such trigger. Never called but on an explicit send.
 	ExecuteCommand(ctx context.Context, id int64, channelID, rootID, command string) error
+
+	// SearchPosts searches teamID (a team of this server) for terms — the
+	// server parses from:, in:, dates, "phrases", -exclusions, word* — and
+	// returns page 0…24 (20 posts each, newest first); tzOffset: seconds
+	// east of UTC (day bounds of on:/before:/after:). has_next: ask
+	// page+1; limit_reached: more exists past the last page. Never retried
+	// (a POST); the UI cancels a stale one through ctx. Errors: offline
+	// (nothing asked), invalid_argument (team, terms empty or over 1000
+	// bytes, page, offset), session_expired, forbidden, cancelled.
+	SearchPosts(ctx context.Context, id int64, teamID, terms string, page, tzOffset int) (SearchPageDTO, error)
+	// SearchSuggest answers the search box's suggestions in teamID, not
+	// tied to a channel: kind users (from: — the team's members) |
+	// channels (in: — the team's channels by slug, DMs as "@username", GMs
+	// as "@a,b,c" with every member, me too). Cached briefly; offline: no
+	// users and the DMs/GMs only. invalid_argument for a bad kind or team.
+	SearchSuggest(ctx context.Context, id int64, teamID, kind, prefix string) (AutocompleteDTO, error)
 }
 
 // Event types pushed to the UI.
@@ -254,6 +270,7 @@ const (
 	CodePostGone         = "post_gone"         // the post jumped to was deleted or does not exist
 	CodeNoProgress       = "no_progress"       // loading newer posts moved nothing twice in a row
 	CodeCancelled        = "cancelled"         // a newer navigation (or the caller) cancelled it
+	CodeOffline          = "offline"           // not connected to the server: nothing was asked (search)
 	// CodeCommandUnsupportedInThread: /leave from a thread composer (the
 	// server would leave the whole channel) — refused, nothing sent.
 	CodeCommandUnsupportedInThread = "command_unsupported_in_thread"

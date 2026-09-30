@@ -333,9 +333,11 @@ export interface ACUser {
 
 export interface ACChannel {
   id: string
-  name: string // what ~ inserts
+  // what ~ inserts; in searchSuggest's answer what in: takes — a team
+  // channel's slug, '@username' for a DM, '@a,b,c' for a GM (all members, me too)
+  name: string
   display_name: string
-  type: string // O | P
+  type: string // O | P (searchSuggest: D | G too)
   joined?: boolean
 }
 
@@ -353,3 +355,30 @@ export interface AutocompleteDTO {
   emoji: string[] | null
   commands: ACCommand[] | null
 }
+
+// Message search (Go's mmsync.SearchPage). A hit is the post as the feed
+// shows it plus its channel: channel_name is what in: takes, without a
+// DM/GM's '@' (a team channel's slug, a DM partner's username, a GM's
+// 'a,b,c'); channel_display the sidebar's name. jumpable=false: a channel
+// the client does not know (yet) — channel_name/display/type empty.
+// matches: the words the server matched in this very post (Elasticsearch
+// only; empty on Bleve/SQL — highlight by the query's terms then).
+export interface SearchHit extends PostView {
+  channel_id: string
+  channel_name: string
+  channel_display: string
+  channel_type: string
+  jumpable: boolean
+  matches: string[]
+}
+
+// has_next: ask page+1; limit_reached: more exists, but page 24 was the
+// last one a search session asks (show "refine the query").
+export interface SearchPageDTO {
+  hits: SearchHit[]
+  has_next: boolean
+  limit_reached: boolean
+}
+
+// searchSuggest kinds: users (from:), channels (in:).
+export type SearchSuggestKind = 'users' | 'channels'

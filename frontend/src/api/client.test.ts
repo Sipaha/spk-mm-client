@@ -223,3 +223,19 @@ test('a jump error keeps its code', async () => {
   )
   await expect(httpClient.jumpToPost(3, 'c1', 'p1')).rejects.toEqual(new ApiError('post_gone', ''))
 })
+
+test('search calls post their bodies; an abort cancels them', async () => {
+  const page = { hits: [], has_next: false, limit_reached: false }
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () => new Response(JSON.stringify(page), { headers: { 'content-type': 'application/json' } }),
+  )
+  const ctl = new AbortController()
+  expect(await httpClient.searchPosts(3, 't1', 'hello from:bob', 2, 10800, ctl.signal)).toEqual(page)
+  expect(fetchMock.mock.calls[0][1]!.signal).toBe(ctl.signal)
+  await httpClient.searchSuggest(3, 't1', 'channels', '@b', ctl.signal)
+  expect(fetchMock.mock.calls[1][1]!.signal).toBe(ctl.signal)
+  expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
+    ['/api/SearchPosts', { id: 3, team_id: 't1', terms: 'hello from:bob', page: 2, tz_offset: 10800 }],
+    ['/api/SearchSuggest', { id: 3, team_id: 't1', kind: 'channels', prefix: '@b' }],
+  ])
+})

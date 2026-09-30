@@ -374,6 +374,26 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return h.api.Autocomplete(ctx, r.ID, r.Kind, r.ChannelID, r.RootID, r.Prefix)
 	}))
+	// SearchPosts and SearchSuggest run under the request's context: the
+	// UI aborts a stale request (a newer search or prefix), which cancels
+	// its server call.
+	h.mux.HandleFunc("POST /api/SearchPosts", handle(func(ctx context.Context, r *struct {
+		ID       int64  `json:"id"`
+		TeamID   string `json:"team_id"`
+		Terms    string `json:"terms"`
+		Page     int    `json:"page"`
+		TZOffset int    `json:"tz_offset"`
+	}) (any, error) {
+		return h.api.SearchPosts(ctx, r.ID, r.TeamID, r.Terms, r.Page, r.TZOffset)
+	}))
+	h.mux.HandleFunc("POST /api/SearchSuggest", handle(func(ctx context.Context, r *struct {
+		ID     int64  `json:"id"`
+		TeamID string `json:"team_id"`
+		Kind   string `json:"kind"`
+		Prefix string `json:"prefix"`
+	}) (any, error) {
+		return h.api.SearchSuggest(ctx, r.ID, r.TeamID, r.Kind, r.Prefix)
+	}))
 	h.mux.HandleFunc("POST /api/ExecuteCommand", handle(func(ctx context.Context, r *struct {
 		ID        int64  `json:"id"`
 		ChannelID string `json:"channel_id"`

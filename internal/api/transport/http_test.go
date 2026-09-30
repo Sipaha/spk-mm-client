@@ -646,3 +646,93 @@ func TestAbortedJumpCancelsItsContext(t *testing.T) {
 		t.Fatal("the jump never saw the abort")
 	}
 }
+
+type searchAPI struct {
+	api.API
+	calls   []string
+	blocked chan struct{} // SearchPosts waits for its ctx to end when set
+	ended   chan error
+}
+
+func (f *searchAPI) SearchPosts(ctx context.Context, id int64, teamID, terms string, page, tzOffset int) (api.SearchPageDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("search %d/%s/%s/%d/%d", id, teamID, terms, page, tzOffset))
+	if f.blocked != nil {
+		close(f.blocked)
+		<-ctx.Done()
+		f.ended <- ctx.Err()
+		return api.SearchPageDTO{}, ctx.Err()
+	}
+	if terms == "offline" {
+		return api.SearchPageDTO{}, &api.CodedError{Code: api.CodeOffline}
+	}
+	hit := api.SearchHitDTO{ChannelID: "c1", ChannelName: "town-square", Jumpable: true, Matches: []string{}}
+	hit.ID, hit.Message = "p1", "hello"
+	return api.SearchPageDTO{Hits: []api.SearchHitDTO{hit}, HasNext: true}, nil
+}
+
+func (f *searchAPI) SearchSuggest(_ context.Context, id int64, teamID, kind, prefix string) (api.AutocompleteDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("suggest %d/%s/%s/%s", id, teamID, kind, prefix))
+	return api.AutocompleteDTO{Channels: []api.ACChannel{{ID: "d1", Name: "@bob", Type: "D"}}}, nil
+}
+
+func TestSearchRoutes(t *testing.T) {
+	f := &searchAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "SearchPosts", `{"id":3,"team_id":"t1","terms":"hello from:bob","page":2,"tz_offset":10800}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var page map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+	assert.Equal(t, true, page["has_next"])
+	assert.Equal(t, false, page["limit_reached"])
+	hit := page["hits"].([]any)[0].(map[string]any)
+	assert.Equal(t, "p1", hit["id"], "the post's fields inline")
+	assert.Equal(t, "hello", hit["message"])
+	assert.Equal(t, "c1", hit["channel_id"])
+	assert.Equal(t, "town-square", hit["channel_name"])
+	assert.Equal(t, true, hit["jumpable"])
+	assert.Equal(t, []any{}, hit["matches"])
+
+	resp = call(t, h, ts.URL, "SearchPosts", `{"id":3,"team_id":"t1","terms":"offline","page":0,"tz_offset":0}`)
+	assert.Equal(t, 400, resp.StatusCode)
+	var e map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&e))
+	assert.Equal(t, "offline", e["code"])
+
+	resp = call(t, h, ts.URL, "SearchSuggest", `{"id":3,"team_id":"t1","kind":"channels","prefix":"@b"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var ac struct {
+		Channels []api.ACChannel `json:"channels"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ac))
+	assert.Equal(t, "@bob", ac.Channels[0].Name)
+	assert.Equal(t, []string{"search 3/t1/hello from:bob/2/10800", "search 3/t1/offline/0/0", "suggest 3/t1/channels/@b"}, f.calls)
+}
+
+// An aborted fetch (a newer search replaced this one) cancels the request
+// context the search runs under.
+func TestAbortedSearchCancelsItsContext(t *testing.T) {
+	f := &searchAPI{blocked: make(chan struct{}), ended: make(chan error, 1)}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/SearchPosts",
+		strings.NewReader(`{"id":3,"team_id":"t1","terms":"x","page":0,"tz_offset":0}`))
+	req.Header.Set("Authorization", "Bearer "+h.AuthToken())
+	req.Header.Set("Origin", ts.URL)
+	go func() {
+		<-f.blocked
+		cancel()
+	}()
+	_, err := http.DefaultClient.Do(req)
+	require.Error(t, err)
+	select {
+	case err := <-f.ended:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the API call never saw the abort")
+	}
+}
