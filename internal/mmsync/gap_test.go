@@ -114,17 +114,17 @@ func TestSettleDoesNotProveWhileRefreshHoldsTheHello(t *testing.T) {
 	h.start()
 	h.live()
 	h.eventually(h.allLoaded, "prefetch")
-	h.fake.SetLatency("/categories", 5*time.Second)
+	h.fake.SetLatency("/categories", 300*time.Millisecond)
 	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
-	time.Sleep(time.Second) // the refresh is now waiting on categories
+	time.Sleep(50 * time.Millisecond) // the refresh is now waiting on categories
 	h.fake.SetDown(true)
 	h.fake.DropConnections(true)
 	h.eventually(func() bool { return h.w.Status() == StatusReconnecting }, "the drop went unnoticed")
 	h.fake.PostAs("c-offtopic", "bob", "sent during the gap")
 	clk.advance(10 * time.Minute)
-	time.Sleep(600 * time.Millisecond) // the abandoned refresh is due again
+	time.Sleep(100 * time.Millisecond) // the abandoned refresh is due again
 	h.fake.SetDown(false)
-	require.Eventually(t, func() bool { return h.hasMessage("c-offtopic", "sent during the gap") }, 25*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { return h.hasMessage("c-offtopic", "sent during the gap") }, 5*time.Second, 20*time.Millisecond,
 		"the post sent during the gap was never fetched")
 }
 
@@ -168,16 +168,16 @@ func TestRestoreSeedsGapStart(t *testing.T) {
 // is abandoned as a whole (categories are not blanked) and retried later.
 func TestRefreshDeadlineDuringCategoriesKeepsThemAndRetries(t *testing.T) {
 	h := newHarness(t, mmfake.Options{})
-	h.tune = func(c *Config) { c.refreshTimeout, c.refreshRetry = 500*time.Millisecond, 200*time.Millisecond }
+	h.tune = func(c *Config) { c.refreshTimeout, c.refreshRetry = 125*time.Millisecond, 50*time.Millisecond }
 	h.start()
 	h.live()
 	h.eventually(h.allLoaded, "prefetch")
 	before := h.categoryIDs()
 	require.Contains(t, before[0], "favorites")
-	h.fake.SetLatency("/categories", 2*time.Second)
+	h.fake.SetLatency("/categories", 500*time.Millisecond)
 	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
 	assert.Never(t, func() bool { return !slices.Equal(h.categoryIDs(), before) || h.inSidebar("c-extra") },
-		2*time.Second, 20*time.Millisecond, "a timed-out refresh must not be applied")
+		500*time.Millisecond, 20*time.Millisecond, "a timed-out refresh must not be applied")
 	h.fake.SetLatency("/categories", 0)
 	h.eventually(func() bool { return h.inSidebar("c-extra") }, "the timed-out refresh was not retried")
 	assert.Equal(t, before, h.categoryIDs())

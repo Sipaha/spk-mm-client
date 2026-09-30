@@ -22,16 +22,24 @@ func (h *harness) reads(root string) int {
 	return n
 }
 
+// noExtraWindow: how long exactlyReads/noReads watch for an extra read that
+// must not come. These helpers are called many times per test (every one is
+// a genuine wall-clock wait, since there's nothing to poll for but an
+// absence) — short by design so ~10 of them per test don't dominate its
+// runtime; still long enough to catch a read fired on the next tick of any
+// short-interval loop in this package.
+const noExtraWindow = 150 * time.Millisecond
+
 // exactlyReads waits for n reads of root and checks no more follow.
 func (h *harness) exactlyReads(root string, n int, msg string) {
 	h.t.Helper()
 	h.eventually(func() bool { return h.reads(root) >= n }, msg)
-	require.Never(h.t, func() bool { return h.reads(root) > n }, 400*time.Millisecond, 20*time.Millisecond, msg+": one read, not more")
+	require.Never(h.t, func() bool { return h.reads(root) > n }, noExtraWindow, 20*time.Millisecond, msg+": one read, not more")
 }
 
 func (h *harness) noReads(root string, msg string) {
 	h.t.Helper()
-	require.Never(h.t, func() bool { return h.fake.ThreadReadTries() > 0 || h.reads(root) > 0 }, 400*time.Millisecond, 20*time.Millisecond, msg)
+	require.Never(h.t, func() bool { return h.fake.ThreadReadTries() > 0 || h.reads(root) > 0 }, noExtraWindow, 20*time.Millisecond, msg)
 }
 
 // Review focus 4: a thread is marked read on the server only while its
@@ -95,7 +103,7 @@ func TestThreadIsNotReadWithoutCRT(t *testing.T) {
 	h.openThread(root, 3)
 	h.fake.ReplyAs("c-town", root, "bob", "no crt")
 	h.eventually(func() bool { return h.threadHas(root, "no crt") == 1 }, "reply")
-	require.Never(t, func() bool { return h.fake.ThreadReadTries() > 0 }, 400*time.Millisecond, 20*time.Millisecond,
+	require.Never(t, func() bool { return h.fake.ThreadReadTries() > 0 }, noExtraWindow, 20*time.Millisecond,
 		"without CRT the channel view reads threads")
 }
 
@@ -116,7 +124,7 @@ func TestThreadReadNotFollowingIsNotRepeated(t *testing.T) {
 		h.fake.ReplyAs("c-town", root, "bob", fmt.Sprintf("more %d", i))
 	}
 	h.eventually(func() bool { return h.threadHas(root, "more 2") == 1 }, "replies")
-	require.Never(t, func() bool { return h.fake.ThreadReadTries() > 1 }, 400*time.Millisecond, 20*time.Millisecond,
+	require.Never(t, func() bool { return h.fake.ThreadReadTries() > 1 }, noExtraWindow, 20*time.Millisecond,
 		"not following: no read per reply")
 
 	require.NoError(t, h.w.SendReply("c-town", root, "now I follow"))
@@ -144,13 +152,13 @@ func TestThreadMentionsSurviveRefreshWithoutDoubleCount(t *testing.T) {
 			h.eventually(func() bool { return h.rootReplies("c-town", root) == 1 }, "seeded")
 			base := h.badge()
 			hits := h.fake.Hits("GET", c.then)
-			h.fake.SetLatency(c.slow, time.Second)
+			h.fake.SetLatency(c.slow, 150*time.Millisecond)
 			h.fake.AddChannel("c-extra", "Extra", "alice", "bob") // user_added → a refresh
 			h.eventually(func() bool { return h.fake.Hits("GET", c.then) > hits }, "the refresh reached "+c.then)
 			h.fake.ReplyAs("c-town", root, "bob", "@alice look")
 			h.eventually(func() bool { return h.view("c-extra").Loaded }, "the refresh landed")
 			h.eventually(func() bool { return h.badge() == base+1 }, fmt.Sprintf("the badge: want %d", base+1))
-			require.Never(t, func() bool { return h.badge() != base+1 }, 800*time.Millisecond, 20*time.Millisecond,
+			require.Never(t, func() bool { return h.badge() != base+1 }, noExtraWindow, 20*time.Millisecond,
 				"counted once")
 		})
 	}
@@ -183,7 +191,7 @@ func TestThreadMentionsVanishWhenCRTTurnsOff(t *testing.T) {
 	// Without CRT the reply's mention is its channel's again (the REST
 	// counters say so) — and nothing of the thread's is left on top.
 	h.eventually(func() bool { return h.mentions("c-town") == 1 }, "the channel's mention")
-	require.Never(t, func() bool { return h.teamMentions("t-fake") != h.channelRows("t-fake") }, 600*time.Millisecond, 20*time.Millisecond,
+	require.Never(t, func() bool { return h.teamMentions("t-fake") != h.channelRows("t-fake") }, noExtraWindow, 20*time.Millisecond,
 		"no thread mention left on top of the channels'")
 }
 
@@ -206,7 +214,7 @@ func TestDMThreadMentionsCountOnce(t *testing.T) {
 	// A refresh reads it back from the totals: still once.
 	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
 	h.eventually(func() bool { return h.view("c-extra").Loaded }, "the refresh landed")
-	require.Never(t, func() bool { return h.badge() != base+1 }, 600*time.Millisecond, 20*time.Millisecond, "once after a refresh")
+	require.Never(t, func() bool { return h.badge() != base+1 }, noExtraWindow, 20*time.Millisecond, "once after a refresh")
 
 	// Reading it: the read goes through the current team, the event says
 	// that team — the mention still comes off the DM part.
@@ -264,7 +272,7 @@ func TestThreadCountsFailureKeepsThePreviousOnes(t *testing.T) {
 	h.fake.SetFailure("/teams/unread", 500)
 	h.fake.AddChannel("c-extra", "Extra", "alice", "bob")
 	h.eventually(func() bool { return h.view("c-extra").Loaded }, "the refresh still landed")
-	require.Never(t, func() bool { return h.badge() != base+1 }, 400*time.Millisecond, 20*time.Millisecond, "kept")
+	require.Never(t, func() bool { return h.badge() != base+1 }, noExtraWindow, 20*time.Millisecond, "kept")
 }
 
 // A reread that fails ("all read" on another device while the server

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 
 	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mm/ws"
@@ -82,6 +83,26 @@ func (h *harness) config() Config {
 		WakeCheck:  time.Hour,
 		WS:         func(o *ws.Options) { o.PingInterval, o.PingTimeout = 200*time.Millisecond, time.Second },
 		sinceLimit: h.sinceLimit,
+		// test seams: production defaults (revalRetryIn 2s, refreshRetryFirst
+		// 5s, metaDebounce 300ms, resumeSettle 3s) would make every
+		// reread/refresh/meta-debounce/resume-settle wait a real-time wait —
+		// harmless in prod, ruinous under -race across ~170 tests. Short by
+		// default here; individual tests still override via h.tune when they
+		// need a specific value (e.g. TestRefreshDeadlineDuringCategoriesKeepsThemAndRetries,
+		// TestSettleDoesNotProveWhileRefreshHoldsTheHello).
+		revalIdle:    20 * time.Millisecond,
+		refreshRetry: 50 * time.Millisecond,
+		metaDebounce: 20 * time.Millisecond,
+		resumeSettle: 100 * time.Millisecond,
+		// test seam: the production per-server budget (10 req/s, burst 20)
+		// throttles a fully-loaded fake to a crawl — a bootstrap or
+		// catch-up cycle alone issues ~20-30 requests, so every request
+		// past the burst waits a genuine 100ms for its token. That's the
+		// single largest contributor to package wall time (most of it is
+		// idle wait, not CPU — confirmed via `go test` without -race still
+		// taking ~125s). Effectively unlimited by default; a test that
+		// specifically exercises the limiter can still tune it.
+		limiter: rate.NewLimiter(rate.Inf, 0),
 	}
 }
 

@@ -603,9 +603,17 @@ func TestJumpRegistrationAndBeginAreOneStep(t *testing.T) {
 func TestJumpAcrossReconnectIsReread(t *testing.T) {
 	h, g := jumpHarness(t, mmfake.Options{})
 	target := h.postID("Message #10")
-	g.hold(query("after", target)) // GET /posts/{target} is answered already
+	// GET /posts/{target} is answered already; JumpTo then fetches its
+	// before= and after= pages concurrently (jump.go) — hold both, or the
+	// one let through races the SetDown/DropConnections below and can land
+	// a 503 outside the window this test means to exercise.
+	g.hold(func(r *http.Request) bool {
+		q := r.URL.Query()
+		return q.Get("before") == target || q.Get("after") == target
+	})
 	done := make(chan error, 1)
 	go func() { _, err := h.w.JumpTo(context.Background(), "c-town", target); done <- err }()
+	g.wait(t)
 	g.wait(t)
 	h.fake.SetDown(true)
 	h.fake.DropConnections(true)

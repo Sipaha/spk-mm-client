@@ -229,26 +229,32 @@ func TestLeaveInAThreadIsRefusedWithoutASend(t *testing.T) {
 // a new sign-in) ends with it — it must not keep using the old session.
 func TestAutocompleteAndCommandsEndWithTheWorker(t *testing.T) {
 	h := liveHarness(t, mmfake.Options{})
-	h.fake.SetLatency("/users/autocomplete", 5*time.Second)
-	h.fake.SetLatency("/commands/execute", 5*time.Second)
+	// The worker gives up on these calls promptly, but (by design) does not
+	// abort the underlying HTTP request already sent — it runs its full
+	// course server-side, and the fake's Close() (t.Cleanup) waits for it.
+	// Keep this latency small so that wait doesn't dominate the test; it
+	// only needs to comfortably outlast the "outlived its worker"/assertion
+	// bounds below to still prove the worker doesn't wait for it.
+	h.fake.SetLatency("/users/autocomplete", 400*time.Millisecond)
+	h.fake.SetLatency("/commands/execute", 400*time.Millisecond)
 	errs := make(chan error, 2)
 	go func() {
 		_, err := h.w.Autocomplete(context.Background(), ACUsers, "c-town", "b")
 		errs <- err
 	}()
 	go func() { errs <- h.w.ExecuteCommand(context.Background(), "c-town", "", "/echo x") }()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	start := time.Now()
 	h.stop()
 	for range 2 {
 		select {
 		case err := <-errs:
 			assert.Error(t, err)
-		case <-time.After(3 * time.Second):
+		case <-time.After(300 * time.Millisecond):
 			t.Fatal("a request outlived its worker")
 		}
 	}
-	assert.Less(t, time.Since(start), 3*time.Second)
+	assert.Less(t, time.Since(start), 300*time.Millisecond)
 	assert.Equal(t, 0, h.w.ac.len())
 }
 

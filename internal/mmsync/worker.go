@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mm/ws"
@@ -85,6 +87,14 @@ type Config struct {
 	refreshRetry   time.Duration
 	reactBackoff   []time.Duration // test seam: nil → defaultReactBackoff
 	revalIdle      time.Duration   // test seam: 0 → revalRetryIn
+	metaDebounce   time.Duration   // test seam: 0 → metaDebounce
+	resumeSettle   time.Duration   // test seam: 0 → resumeSettle
+	// limiter: nil → rest.NewLimiter() (10 req/s, burst 20 — the real
+	// server's per-server budget). A test harness that drives dozens of
+	// requests per reconnect/bootstrap cycle spends most of its wall time
+	// queued behind this in production-accurate form; tests may swap in an
+	// effectively unlimited one instead.
+	limiter *rate.Limiter
 	// test seam: called with the lane once a history operation is
 	// registered, before its state Begin
 	histBegun func(lane string)
@@ -126,6 +136,12 @@ func (c *Config) defaults() {
 	}
 	if c.revalIdle <= 0 {
 		c.revalIdle = revalRetryIn
+	}
+	if c.metaDebounce <= 0 {
+		c.metaDebounce = metaDebounce
+	}
+	if c.resumeSettle <= 0 {
+		c.resumeSettle = resumeSettle
 	}
 	if c.sinceLimit <= 0 {
 		c.sinceLimit = rest.SinceLimit
@@ -241,9 +257,13 @@ type Worker struct {
 
 func NewWorker(cfg Config, srv store.Server) *Worker {
 	cfg.defaults()
+	limiter := cfg.limiter
+	if limiter == nil {
+		limiter = rest.NewLimiter()
+	}
 	w := &Worker{
 		cfg: cfg, srv: srv,
-		rc:         rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(rest.NewLimiter()),
+		rc:         rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(limiter),
 		st:         state.New(cfg.Now),
 		nudge:      make(chan struct{}, 1),
 		authFail:   make(chan struct{}, 1),
@@ -472,7 +492,7 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 	onLive()
 	var settle <-chan time.Time
 	if !w.live.proven() {
-		settle = time.After(resumeSettle)
+		settle = time.After(w.cfg.resumeSettle)
 	}
 	for {
 		due := w.metaDue
@@ -490,7 +510,7 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 			if refresh != nil || len(held) > 0 {
 				// A hello may be among the held events: only the
 				// socket being quiet with nothing held proves the resume.
-				settle = time.After(resumeSettle)
+				settle = time.After(w.cfg.resumeSettle)
 				continue
 			}
 			w.proveLive() // no hello: the server accepted the resume
@@ -929,7 +949,7 @@ func (w *Worker) metaLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(metaDebounce):
+		case <-time.After(w.cfg.metaDebounce):
 		}
 		select {
 		case <-w.metaReq:

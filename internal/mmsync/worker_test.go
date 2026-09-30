@@ -369,7 +369,7 @@ func TestReplyDeleteLowersTheRootOnce(t *testing.T) {
 			h.eventually(func() bool { return count() == 2 }, "our own deletion did not lower the count")
 			h.fake.DeleteAs(h.fake.FindPost("c-town", "Reply 1"))
 			h.eventually(func() bool { return count() == 1 }, "another user's deletion did not lower the count")
-			require.Never(t, func() bool { return count() != 1 }, 300*time.Millisecond, 20*time.Millisecond, "lowered twice")
+			require.Never(t, func() bool { return count() != 1 }, 150*time.Millisecond, 20*time.Millisecond, "lowered twice")
 		})
 	}
 }
