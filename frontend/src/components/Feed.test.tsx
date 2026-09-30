@@ -1144,6 +1144,55 @@ test('keeps the visible post when rows are inserted above it (from below)', asyn
   }
 })
 
+// e2e (Task 8): with the gap open, a live post pushes the window's oldest
+// post out (into the gap). When that post is on screen under the gap row,
+// the rows below it moved up by its height until the page landed and put
+// them back. The post the reader is at stays put across such an update too.
+test('a live post trimming the window under the gap row while its page loads does not move the post on screen', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(400, {}, { onLoadNewer })
+  try {
+    await r.scrollTo(380) // came up from the window: the gap row in the upper part, the bottom out of reach
+    expect(r.onScreen('gap:1')).toBe(60)
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    const seen = r.onScreen('w3')!
+    await r.update({ posts: [...seg(1, 10), ...win(2, 11)], gap: openGap({ before_id: 'w2' }) }) // w11 arrives, w1 leaves the window
+    expect(r.onScreen('w1')).toBeNull()
+    expect(r.onScreen('w3')).toBe(seen)
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 11)], gap: openGap({ open: false, before_id: '' }), hist_rev: 2 })
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
+// e2e walk (Task 8): a reader coming down from the segment with a long step
+// (PageDown, a scrollbar drag) can land with the gap row in the upper half.
+// The side kept is the one the reader came from, not where the row landed —
+// else the page lands above them and they skip it (a 250-reply thread
+// skipped 140 replies this way).
+test('keeps the top post when the reader came down to the gap row, even with the row in the upper half', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(300, {}, { onLoadNewer })
+  try {
+    await r.scrollTo(0) // up in the segment: the gap row is below the screen
+    expect(onLoadNewer).not.toHaveBeenCalled()
+    await r.scrollTo(340) // one long step down: the row lands in the upper half
+    expect(r.onScreen('gap:1')).toBe(100)
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    const seen = r.onScreen('s9')!
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(r.onScreen('s9')).toBe(seen) // what the reader was reading stays; the page lands below it
+    expect(r.onScreen('n1')).toBe(100) // where the gap row was
+  } finally {
+    r.restore()
+  }
+})
+
 test('jump centers and highlights the target, beats the initial scroll', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   // A "new messages" line in the window would be the initial scroll's target.

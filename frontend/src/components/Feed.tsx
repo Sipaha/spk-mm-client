@@ -183,6 +183,11 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const bottomTop = useRef<number | null>(null) // scrollTop when the feed was last known to be at its bottom
   const anchor = useRef<string | null>(null)
   const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
+  // anchorEdge: which edge of the anchor row anchorOffset measures. 'bottom'
+  // for the post under a gap row: the page lands right above it and may
+  // join its author group (its header goes, the row gets shorter) — its
+  // bottom edge, and everything under it, stays put.
+  const anchorEdge = useRef<'top' | 'bottom'>('top')
   // The pending anchor belongs to a history page: it is restored by the
   // first render whose hist_rev is past anchorRev (the revision when the
   // page was asked for) — not by any rows update (a WS post, a
@@ -191,6 +196,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // (a plain thread) — the next rows update restores it.
   const anchorRev = useRef<number | undefined>(undefined)
   const anchorSide = useRef<'top' | 'gap'>('top') // 'gap': the post on the gap row's side on screen (loadNewer)
+  // readerSide: where the reader was, relative to the open gap row, when the
+  // row was last off screen — 'above' (in the segment, the row below the
+  // fold) or 'below' (in the window). null: not known yet (the gap just
+  // opened, a jump landed with the row on screen).
+  const readerSide = useRef<'above' | 'below' | null>(null)
+  // restoring: a landed page's anchor is being put back (the restore and
+  // its correction frames) — the scroll events of those writes pass through
+  // estimated row heights and say nothing about where the reader is.
+  const restoring = useRef(false)
+  const restoreTarget = useRef<{ key: string; offset: number; edge: 'top' | 'bottom'; side: 'top' | 'gap' } | null>(null) // where that restore puts its row
+  const anchorUnderGap = useRef(false) // the pending anchor is the post under the gap row (the reader came from below)
+  const anchorRefs = useRef<{ key: string; top: number; bottom: number }[]>([]) // the other posts on screen at the capture (holdAnchor)
   const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
   const anchorTried = useRef(false) // the last rows change restored a history anchor (dev diagnostics)
   const loading = useRef(false)
@@ -438,10 +455,15 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // (re-review I-1).
   //
   // A gap page lands in the middle, at the gap row: the post kept in place
-  // is the one on the side of the gap row that is on screen — the first
-  // post under the row when the row is in the upper half of the viewport
-  // (the user came up to it from the window: pages land above what they
-  // read), else the top one as for history.
+  // is the one on the side the reader came from — the first post under the
+  // row when they came up to it from the window (pages land above what they
+  // read), else the top one as for history. The side is where the row was
+  // when it was last off screen (readerSide), not where it is now: a long
+  // step down (PageDown, a scrollbar drag) can land it in the upper half,
+  // and keeping the post under it then put every page above the reader —
+  // a 250-reply thread walked down skipped 140 replies (e2e, Task 8). Not
+  // known (the row on screen since the gap opened or a jump): the upper
+  // half of the viewport means from below.
   const captureAnchor = () => {
     const el = scroller.current
     const first = rows.find((r) => r.kind === 'post')
@@ -456,11 +478,14 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       })
       const gapRow = anchorSide.current === 'gap' ? el.querySelector<HTMLElement>('[data-gap-open]') : null
       const g = gapRow?.getBoundingClientRect()
-      if (g && g.bottom > viewTop && g.top < viewBottom && (g.top + g.bottom) / 2 < (viewTop + viewBottom) / 2) {
-        let below: { key: string; top: number } | null = null
+      const fromBelow = readerSide.current === null ? g !== undefined && (g.top + g.bottom) / 2 < (viewTop + viewBottom) / 2 : readerSide.current === 'below'
+      if (g && g.bottom > viewTop && g.top < viewBottom && fromBelow) {
+        let below: { key: string; top: number; bottom: number } | null = null
         for (const b of boxes) if (b.top >= g.bottom - 0.5 && (!below || b.top < below.top)) below = b
-        if (below) found = { key: below.key, offset: below.top - viewTop }
+        if (below) found = { key: below.key, offset: below.bottom - viewTop }
       }
+      anchorUnderGap.current = found !== null
+      anchorEdge.current = found !== null ? 'bottom' : 'top'
       if (!found) {
         const others = boxes.filter((b) => b.key !== head && b.top < viewBottom && b.bottom > viewTop)
         found = pickAnchor(head !== null && others.length ? boxes.filter((b) => b.key !== head) : boxes, viewTop)
@@ -468,6 +493,22 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     }
     anchor.current = found?.key ?? null
     anchorOffset.current = found?.offset ?? 0
+    // holdAnchor's fallbacks: the other posts on screen — first those under
+    // the anchor, nearest first, then those above it, nearest first.
+    const view = el?.getBoundingClientRect().top ?? 0
+    const at = anchorOffset.current // under the anchor: past its top (or bottom) edge
+    const refs = el
+      ? [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')]
+          .map((r) => {
+            const b = r.getBoundingClientRect()
+            return { key: r.dataset.key ?? '', top: b.top - view, bottom: b.bottom - view }
+          })
+          .filter((b) => b.key !== found?.key && b.bottom > 0 && b.top < el.clientHeight)
+      : []
+    anchorRefs.current = [
+      ...refs.filter((b) => b.top >= at).sort((a, b) => a.top - b.top),
+      ...refs.filter((b) => b.top < at).sort((a, b) => b.top - a.top),
+    ]
   }
 
   // beginAnchor: a history page is asked for — the anchor is taken now and
@@ -475,6 +516,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const beginAnchor = (side: 'top' | 'gap') => {
     anchorSide.current = side
     anchorRev.current = data.hist_rev
+    // The previous page's restore still converging (the next gap page is
+    // asked for in the frame the last one landed): its row is where the
+    // restore puts it, not where the estimated first scroll left it —
+    // measuring now let every page of a long fill drift by the estimate.
+    const t = restoreTarget.current
+    if (restoring.current && t !== null && t.side === side && scroller.current?.querySelector(`[data-key="${CSS.escape(t.key)}"]`)) {
+      anchor.current = t.key
+      anchorOffset.current = t.offset
+      anchorEdge.current = t.edge
+      anchorRefs.current = []
+      return
+    }
     captureAnchor()
   }
 
@@ -600,26 +653,71 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // userScrolling is reset right before the restore call and only a
   // wheel/touchmove handler on the scroller sets it, so this can't mistake
   // the virtualizer's own scroll adjustments for the user and fight them.
-  const correctAnchorPosition = (key: string, target: number, attempt: number) => {
-    if (attempt > MAX_CORRECTIONS) return
+  const correctAnchorPosition = (key: string, target: number, attempt: number, edge: 'top' | 'bottom' = 'top') => {
+    if (attempt > MAX_CORRECTIONS) {
+      restoring.current = false
+      return
+    }
     frame('anchor', () => {
       const el = scroller.current
-      if (!el || userScrolling.current) return
+      if (!el || userScrolling.current) {
+        restoring.current = false
+        return
+      }
       // A plain DOM query, not v.elementsCache: the anchor row is being
       // (re-)mounted for the first time at the restored offset, and the
       // virtualizer can skip registering a freshly-rendered row there for a
       // frame. Same box (the positioned wrapper) the capture measured.
       const rowEl = el.querySelector(`[data-key="${CSS.escape(key)}"]`)
       if (!rowEl) {
-        correctAnchorPosition(key, target, attempt + 1) // not painted yet — retry
+        correctAnchorPosition(key, target, attempt + 1, edge) // not painted yet — retry
         return
       }
-      const measured = rowEl.getBoundingClientRect().top - el.getBoundingClientRect().top
+      const box = rowEl.getBoundingClientRect()
+      const measured = (edge === 'bottom' ? box.bottom : box.top) - el.getBoundingClientRect().top
       const nudge = anchorNudge(measured, target)
-      if (nudge === null) return // converged
+      if (nudge === null) {
+        restoring.current = false // converged
+        return
+      }
       el.scrollTop += nudge
-      correctAnchorPosition(key, target, attempt + 1)
+      correctAnchorPosition(key, target, attempt + 1, edge)
     })
+  }
+
+  // holdAnchor: a rows update ahead of the pending page (a WS post; with the
+  // gap open, the window's oldest post pushed out into the gap — on screen
+  // right under the gap row when the reader came up from the window) keeps
+  // the anchored post where it is, and the anchor stays pending for the
+  // page's own revision. Without it the posts under a removed row moved up
+  // until the page landed and put them back (e2e search.spec, Task 8).
+  // The anchored post itself may be the one that left: then the nearest post
+  // under it holds by its bottom edge — the post that follows the one that
+  // left may gain its author header (a new group after the gap row), and
+  // that header takes the freed space instead of pushing the posts below
+  // down — else the nearest one above, by its top. The anchor is then taken
+  // again from there.
+  const holdAnchor = () => {
+    const el = scroller.current
+    const key = anchor.current
+    if (!el || key === null || userScrolling.current) return
+    const view = el.getBoundingClientRect().top
+    const hold = (k: string, measure: (b: DOMRect) => number, target: number) => {
+      const rowEl = el.querySelector(`[data-key="${CSS.escape(k)}"]`)
+      if (!rowEl) return false
+      const nudge = anchorNudge(measure(rowEl.getBoundingClientRect()) - view, target)
+      if (nudge !== null) el.scrollTop += nudge
+      return true
+    }
+    if (hold(key, (b) => (anchorEdge.current === 'bottom' ? b.bottom : b.top), anchorOffset.current)) return
+    const at = anchorOffset.current
+    for (const ref of anchorRefs.current) {
+      const below = ref.top >= at
+      if (hold(ref.key, (b) => (below ? b.bottom : b.top), below ? ref.bottom : ref.top)) {
+        captureAnchor()
+        return
+      }
+    }
   }
 
   // centerOn keeps a jump's target centered once its real height and the
@@ -657,6 +755,8 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     userScrolling.current = false
     anchor.current = null // a history anchor taken before the target arrived must not move it later
     anchorRev.current = undefined
+    readerSide.current = null // the reader is at the target now; its own scroll event sets the side
+    restoring.current = false // centerOn takes over the correction frame
     atBottom.current = false
     bottomTop.current = null
     scrollToIndex(i, { align: 'center' })
@@ -707,19 +807,29 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       const key = anchor.current
       const offset = anchorOffset.current
       anchor.current = null
+      // A gap page lands where the reader is: the side kept is the side
+      // they are on (what the restore's own scroll events would misreport).
+      if (anchorSide.current === 'gap' && gapOpen) readerSide.current = anchorUnderGap.current ? 'below' : 'above'
+      restoring.current = true
+      restoreTarget.current = { key, offset, edge: anchorEdge.current, side: anchorSide.current }
       const el = scroller.current
       shift.flush() // before the target is computed (see scrollToIndex)
       const i = rows.findIndex((r) => r.key === key)
       const info = i >= 0 ? v.getOffsetForIndex(i, 'start') : undefined
       if (info && el) {
         userScrolling.current = false
-        v.scrollToOffset(Math.max(0, info[0] - offset), { align: 'start' })
-        correctAnchorPosition(key, offset, 1)
+        const edge = anchorEdge.current
+        const size = edge === 'bottom' ? (v.measurementsCache[i]?.size ?? 0) : 0
+        v.scrollToOffset(Math.max(0, info[0] + size - offset), { align: 'start' })
+        correctAnchorPosition(key, offset, 1, edge)
+      } else {
+        restoring.current = false
       }
       fillViewportIfShort()
       checkGap()
       return
     }
+    if (anchor.current !== null && !atBottom.current && !newSend) holdAnchor()
     if (atBottom.current || newSend) scrollToIndex(rows.length - 1, { align: 'end' })
     fillViewportIfShort()
     checkGap()
@@ -739,6 +849,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     anchor.current = null
     anchorRev.current = undefined
     frame('anchor', () => {}) // drops a pending anchor correction
+    restoring.current = false
     shift.flush()
     focusPending.current = focus.postId
     if (rows.length) applyFocus()
@@ -761,10 +872,35 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     if (i >= 0) scrollToIndex(i, { align: 'auto' })
   }, [editingId]) // only when editing starts, not on every new post
 
+  // noteReaderSide: while the open gap row is off screen, which side of it
+  // the reader is on (see readerSide). The row may not be mounted at all
+  // (virtualized): then its index against the mounted range tells.
+  const noteReaderSide = (el: HTMLElement) => {
+    if (!gapOpen) {
+      readerSide.current = null
+      return
+    }
+    if (restoring.current) return
+    const row = el.querySelector<HTMLElement>('[data-gap-open]')
+    if (row) {
+      const view = el.getBoundingClientRect()
+      const b = row.getBoundingClientRect()
+      if (b.top >= view.top + el.clientHeight) readerSide.current = 'above'
+      else if (b.bottom <= view.top) readerSide.current = 'below'
+      return
+    }
+    const gi = rows.findIndex((r) => r.kind === 'gap' && r.open)
+    const mounted = [...el.querySelectorAll<HTMLElement>('[data-index]')].map((n) => Number(n.dataset.index))
+    if (gi < 0 || !mounted.length) return
+    if (gi > Math.max(...mounted)) readerSide.current = 'above'
+    else if (gi < Math.min(...mounted)) readerSide.current = 'below'
+  }
+
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
     shift.onScroll()
+    noteReaderSide(el)
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     const wasAtBottom = atBottom.current
     // A feed at its bottom leaves it only by moving up. A scroll event
@@ -776,7 +912,9 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     atBottom.current = distance < NEAR_BOTTOM || stayed
     bottomTop.current = atBottom.current ? el.scrollTop : null
     if (!wasAtBottom && atBottom.current) resetNewPosts()
-    if (anchor.current) captureAnchor() // still waiting for the page's revision: track where the user is now
+    // Still waiting for the page's revision: track where the user is now —
+    // not the scroll events of a restore still converging (beginAnchor).
+    if (anchor.current && !restoring.current) captureAnchor()
     if (el.scrollTop < NEAR_TOP) void loadOlder()
     else autoLoads.current = 0 // away from the top: the next arrival there is a new episode
     checkGap()
