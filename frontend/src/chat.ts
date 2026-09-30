@@ -19,12 +19,13 @@ let sidebarSeq = 0
 let channelSeq = 0
 let attachmentsSeq = 0
 let threadSeq = 0
-// threadViewSeq orders the thread snapshots applied to the panel: every
-// read (refreshThread) takes one, and an open (plain or focused) moves it
-// when it starts and when it lands — an answer older than the latest read
-// or than an open is never applied over it.
+// threadViewSeq: the generation of thread snapshots — every operation
+// that fetches one (an open of any kind, a restore, a read) takes a new one
+// when it starts (viewThread). shownGen: the thread and generation of the
+// snapshot the panel shows; lastRead: the generation of the latest read.
 let threadViewSeq = 0
-let lastRead = 0 // threadViewSeq of the latest read begun
+let lastRead = 0
+let shownGen: { serverId: number; rootId: string; gen: number } | null = null
 let threadAttachmentsSeq = 0
 let wanted: { serverId: number; channelId: string } | null = null
 // PanelThread: a thread panel as Go holds it — the root, and the reply its
@@ -71,6 +72,7 @@ export function resetChat() {
   wanted = null
   threadWanted = null
   goThread = null
+  shownGen = null
   inFlight = false
   again = false
   downloadsSeq++
@@ -263,28 +265,55 @@ async function openThreadFocused(
 ) {
   const my = ++threadSeq
   goThread = { serverId, channelId, rootId, focus: replyId, owner: my }
-  const began = ++threadViewSeq
-  let th: ThreadDTO
+  let landed: boolean
   try {
-    th = await client.openThreadAt(serverId, channelId, rootId, replyId, signal)
+    landed = await viewThread(serverId, rootId, () => client.openThreadAt(serverId, channelId, rootId, replyId, signal), {
+      current: () => my === threadSeq && live(),
+      before: () => { threadWanted = { serverId, channelId, rootId, focus: replyId } },
+      after: () => {
+        useStore.getState().setThreadFocus(replyId)
+        void refreshThreadAttachments(serverId, channelId, rootId)
+      },
+    })
   } catch (e) {
     await reconcileGoThread(my)
     throw e
   }
-  const s = useStore.getState()
-  if (my !== threadSeq || !live() || s.selectedId !== serverId) {
-    await reconcileGoThread(my)
-    return
+  if (!landed) await reconcileGoThread(my)
+}
+
+// viewThread is the one way a thread snapshot reaches the panel — every
+// open (plain, a jump's focused one, a restore and its fallback read) and
+// every read (refreshThread) — under one rule:
+//   - the operation takes a new generation (threadViewSeq) when it starts;
+//   - its answer lands only while the operation is still current (and its
+//     server selected); `before` then runs, the snapshot is applied unless
+//     the panel already shows a newer one of the same thread (a snapshot
+//     whose operation started later), and `after` runs;
+//   - an open's snapshot, once applied, is newer than every read begun so
+//     far (a read in flight is dropped). Any read begun during the open —
+//     applied already, in flight, or the reason its answer was not applied
+//     — may lack the open's effect in Go or carry a change newer than its
+//     answer: exactly one more read follows (refreshThread — ordered with
+//     every other read). Reads begun before the open are older than it.
+// Resolves true when it landed; a failed fetch is thrown to the caller.
+async function viewThread(
+  serverId: number, rootId: string, fetch: () => Promise<ThreadDTO>,
+  o: { current: () => boolean; read?: boolean; before?: () => void; after?: () => void },
+): Promise<boolean> {
+  const began = ++threadViewSeq
+  if (o.read) lastRead = began
+  const th = await fetch()
+  if (!o.current() || useStore.getState().selectedId !== serverId) return false
+  o.before?.()
+  const shown = shownGen
+  if (!shown || shown.serverId !== serverId || shown.rootId !== rootId || shown.gen < began) {
+    shownGen = { serverId, rootId, gen: o.read ? began : ++threadViewSeq }
+    applyThread(th)
   }
-  threadWanted = { serverId, channelId, rootId, focus: null }
-  threadViewSeq++ // reads begun before this snapshot are older than it
-  applyThread(th)
-  s.setThreadFocus(replyId)
-  void refreshThreadAttachments(serverId, channelId, rootId)
-  // A read begun during the open — still in flight (dropped now) or
-  // already applied (and just replaced) — may carry a change newer than
-  // this answer: read once more. Reads begun before the open are older.
-  if (lastRead > began) await refreshThread(serverId, rootId)
+  o.after?.()
+  if (!o.read && lastRead > began) await refreshThread(serverId, rootId)
+  return true
 }
 
 // applyThread shows a snapshot of the panel's thread and keeps its focus
@@ -327,20 +356,14 @@ async function reconcileGoThread(owner: number) {
 async function restoreThread(panel: PanelThread) {
   const my = ++threadSeq
   goThread = { ...panel, owner: my }
-  threadViewSeq++
   const { serverId, channelId, rootId, focus } = panel
+  const current = () => my === threadSeq
   try {
-    const th = focus ? await client.openThreadAt(serverId, channelId, rootId, focus) : await client.openThread(serverId, channelId, rootId)
-    if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
-    threadViewSeq++
-    applyThread(th)
+    await viewThread(serverId, rootId, () => focus ? client.openThreadAt(serverId, channelId, rootId, focus) : client.openThread(serverId, channelId, rootId), { current })
   } catch (e) {
-    if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
+    if (!current() || useStore.getState().selectedId !== serverId) return
     try {
-      const th = await client.getThread(serverId, rootId)
-      if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
-      threadViewSeq++
-      applyThread(th)
+      await viewThread(serverId, rootId, () => client.getThread(serverId, rootId), { current })
     } catch {
       if (my !== threadSeq) return
       const cur = useStore.getState().thread
@@ -412,14 +435,11 @@ export async function openThread(serverId: number, channelId: string, rootId: st
   threadWanted = { serverId, channelId, rootId, focus: null }
   const my = ++threadSeq
   goThread = { ...threadWanted, owner: my }
-  threadViewSeq++
   try {
-    const th = await client.openThread(serverId, channelId, rootId)
-    if (my !== threadSeq) return
-    threadViewSeq++
-    const s = useStore.getState()
-    if (s.selectedId === serverId) applyThread(th)
-    void refreshThreadAttachments(serverId, channelId, rootId)
+    await viewThread(serverId, rootId, () => client.openThread(serverId, channelId, rootId), {
+      current: () => my === threadSeq,
+      after: () => void refreshThreadAttachments(serverId, channelId, rootId),
+    })
   } catch (e) {
     if (my === threadSeq) report(e)
   }
@@ -448,20 +468,16 @@ export function closeThread(serverId: number) {
 // refreshThread re-reads serverId's open thread (a thread_changed event, or
 // after loadOlderReplies) — ignored once a different thread (or none) is
 // open by the time it resolves.
-// Only the latest read lands, and none begun before an open that landed
-// since (threadViewSeq) — an older snapshot never replaces a newer one.
+// Ordered with every other snapshot by viewThread: an older one never
+// replaces a newer one.
 export async function refreshThread(serverId: number, rootId: string) {
-  if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
-  const my = ++threadViewSeq
-  lastRead = my
+  const current = () => threadWanted?.serverId === serverId && threadWanted.rootId === rootId
+  if (!current()) return
+  const began = threadViewSeq + 1 // viewThread's generation for this read
   try {
-    const th = await client.getThread(serverId, rootId)
-    if (my !== threadViewSeq) return
-    if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
-    const s = useStore.getState()
-    if (s.selectedId === serverId) applyThread(th)
+    await viewThread(serverId, rootId, () => client.getThread(serverId, rootId), { current, read: true })
   } catch (e) {
-    if (my === threadViewSeq) report(e)
+    if (threadViewSeq === began) report(e) // nothing newer began since
   }
 }
 

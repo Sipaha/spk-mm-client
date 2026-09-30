@@ -1147,3 +1147,183 @@ test('fix 3: a newer thread command wins over a restore still on its way', async
   await b
   expect(useStore.getState().thread?.root_id).toBe('rc')
 })
+
+test('Codex round3: restoring focus does not overwrite a newer completed refresh', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  const focus = { target_id: 'old-reply', has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'tail', stale: false }, rev: 1 }
+  const stale = thread('ra', { focus }), fresh = thread('ra', { focus, posts: [post({ id: 'fresh' })] })
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply', { in_feed: false, root_id: 'ra' }))
+  vi.mocked(client.openThreadAt).mockResolvedValueOnce(stale)
+  await jumpToPost(1, 'a', 'old-reply')
+  let reject!: (e: unknown) => void
+  const restoring = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockImplementationOnce(() => new Promise<ThreadDTO>((_, r) => { reject = r })).mockReturnValueOnce(restoring.p)
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('other', { in_feed: false, root_id: 'rb' })).mockResolvedValueOnce(landed('root'))
+  const b = jumpToPost(1, 'a', 'other')
+  await vi.waitFor(() => expect(reject).toBeDefined())
+  await jumpToPost(1, 'a', 'root')
+  reject(new ApiError('cancelled', ''))
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalledTimes(3))
+  vi.mocked(client.getThread).mockResolvedValue(fresh)
+  await refreshThread(1, 'ra')
+  expect(useStore.getState().thread?.posts).toEqual(fresh.posts)
+  restoring.resolve(stale)
+  await b
+  await Promise.resolve()
+  expect(useStore.getState().thread?.posts).toEqual(fresh.posts)
+})
+
+// --- Fix round 4: one rule for every thread snapshot (viewThread) ---------
+
+const focusAt = (target_id: string) => ({ target_id, has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'tail', stale: false }, rev: 1 })
+
+// Each path brings the panel to root `root` with the operation's own fetch
+// on its way (answer resolves it); done settles when the operation ends.
+// getThread answers come from `reads` in call order.
+type OpenPath = { root: string; focus: string | null; answer: (th: ThreadDTO) => void; done: Promise<unknown> }
+let reads: Array<Promise<ThreadDTO>> = []
+const queueReads = () => {
+  reads = []
+  vi.mocked(client.getThread).mockImplementation(() => reads.shift() ?? Promise.reject(new Error('unexpected read')))
+}
+
+async function restoreOnItsWay(fallback: boolean): Promise<OpenPath> {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply', { in_feed: false, root_id: 'ra' }))
+  vi.mocked(client.openThreadAt).mockResolvedValueOnce(thread('ra', { focus: focusAt('old-reply') }))
+  await jumpToPost(1, 'a', 'old-reply')
+  let reject!: (e: unknown) => void
+  const restoring = deferred<ThreadDTO>()
+  const fallbackRead = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockImplementationOnce(() => new Promise<ThreadDTO>((_, r) => { reject = r }))
+  if (fallback) {
+    vi.mocked(client.openThreadAt).mockRejectedValueOnce(new ApiError('offline', ''))
+    reads.push(fallbackRead.p)
+  } else vi.mocked(client.openThreadAt).mockReturnValueOnce(restoring.p)
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('other', { in_feed: false, root_id: 'rb' })).mockResolvedValueOnce(landed('root'))
+  const done = jumpToPost(1, 'a', 'other')
+  await vi.waitFor(() => expect(reject).toBeDefined())
+  await jumpToPost(1, 'a', 'root')
+  reject(new ApiError('cancelled', ''))
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalledTimes(3))
+  if (fallback) await vi.waitFor(() => expect(client.getThread).toHaveBeenCalledTimes(1))
+  return { root: 'ra', focus: fallback ? null : 'old-reply', answer: fallback ? fallbackRead.resolve : restoring.resolve, done }
+}
+
+const openPaths: Record<string, () => Promise<OpenPath>> = {
+  plain: async () => {
+    useStore.getState().setChannel(1, chan('a'))
+    const d = deferred<ThreadDTO>()
+    vi.mocked(client.openThread).mockReturnValueOnce(d.p)
+    const done = openThread(1, 'a', 'r1')
+    await vi.waitFor(() => expect(client.openThread).toHaveBeenCalled())
+    return { root: 'r1', focus: null, answer: d.resolve, done }
+  },
+  focused: async () => {
+    vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+    await openChannel(1, 'a')
+    vi.mocked(client.openThread).mockResolvedValueOnce(thread('r1'))
+    await openThread(1, 'a', 'r1')
+    const d = deferred<ThreadDTO>()
+    vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply', { in_feed: false, root_id: 'r1' }))
+    vi.mocked(client.openThreadAt).mockReturnValueOnce(d.p)
+    const done = jumpToPost(1, 'a', 'reply')
+    await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+    return { root: 'r1', focus: 'reply', answer: d.resolve, done }
+  },
+  restore: () => restoreOnItsWay(false),
+  'restore-fallback': () => restoreOnItsWay(true),
+}
+
+const cases = Object.keys(openPaths).flatMap((path) => [[path, 'completed'], [path, 'in flight']] as const)
+
+test.each(cases)('fix 4: %s open — a refresh %s during it: the answer never goes over a newer snapshot, one catch-up read follows', async (path, when) => {
+  queueReads()
+  const op = await openPaths[path]()
+  const snap = (...ids: string[]) => thread(op.root, { focus: op.focus ? focusAt(op.focus) : null, posts: ids.map((id) => post({ id })) })
+  const shown: string[][] = []
+  const unsub = useStore.subscribe((s, prev) => { if (s.thread !== prev.thread) shown.push(s.thread?.posts.map((p) => p.id) ?? []) })
+  const readsBefore = vi.mocked(client.getThread).mock.calls.length
+  const during = deferred<ThreadDTO>()
+  const catchUp = deferred<ThreadDTO>()
+  reads.push(during.p, catchUp.p)
+  const r = refreshThread(1, op.root) // thread_changed while the open is on its way
+  if (when === 'completed') {
+    during.resolve(snap('fresh'))
+    await r
+    expect(useStore.getState().thread?.posts.map((p) => p.id)).toEqual(['fresh'])
+  }
+  op.answer(snap()) // the open's answer, older than the change
+  await vi.waitFor(() => expect(client.getThread).toHaveBeenCalledTimes(readsBefore + 2)) // exactly one catch-up read
+  catchUp.resolve(snap('fresh', 'later'))
+  if (when === 'in flight') during.resolve(snap('fresh')) // answered after the open: dropped
+  await op.done
+  await r
+  unsub()
+  expect(useStore.getState().thread?.posts.map((p) => p.id)).toEqual(['fresh', 'later'])
+  expect(client.getThread).toHaveBeenCalledTimes(readsBefore + 2)
+  // Once the change was shown, nothing older replaced it.
+  const firstFresh = shown.findIndex((ids) => ids.includes('fresh'))
+  if (firstFresh >= 0) expect(shown.slice(firstFresh).every((ids) => ids.includes('fresh'))).toBe(true)
+  expect(useStore.getState().thread?.root_id).toBe(op.root)
+  expect(useStore.getState().thread?.focus?.target_id ?? null).toBe(op.focus)
+})
+
+test('fix 4: without a read during it an open does no catch-up read', async () => {
+  queueReads()
+  for (const path of Object.keys(openPaths)) {
+    resetChat()
+    for (const m of [client.getThread, client.openThread, client.openThreadAt]) vi.mocked(m).mockClear()
+    queueReads()
+    const op = await openPaths[path]()
+    const before = vi.mocked(client.getThread).mock.calls.length
+    op.answer(thread(op.root, { focus: op.focus ? focusAt(op.focus) : null }))
+    await op.done
+    expect(client.getThread, path).toHaveBeenCalledTimes(before)
+  }
+})
+
+test('fix 4: the catch-up read is ordered with other refreshes — a later refresh answered first wins over it', async () => {
+  queueReads()
+  const op = await openPaths.restore()
+  const during = deferred<ThreadDTO>()
+  const catchUp = deferred<ThreadDTO>()
+  const later = deferred<ThreadDTO>()
+  reads.push(during.p, catchUp.p, later.p)
+  const snap = (...ids: string[]) => thread('ra', { focus: focusAt('old-reply'), posts: ids.map((id) => post({ id })) })
+  const r = refreshThread(1, 'ra')
+  during.resolve(snap('fresh'))
+  await r
+  op.answer(snap())
+  await vi.waitFor(() => expect(client.getThread).toHaveBeenCalledTimes(2)) // the catch-up read is on its way
+  const r2 = refreshThread(1, 'ra') // another thread_changed
+  later.resolve(snap('fresh', 'x', 'y'))
+  await r2
+  catchUp.resolve(snap('fresh', 'x')) // older than r2's answer: dropped
+  await op.done
+  expect(useStore.getState().thread?.posts.map((p) => p.id)).toEqual(['fresh', 'x', 'y'])
+  expect(client.getThread).toHaveBeenCalledTimes(3)
+})
+
+test('fix 4: a failed read is reported only while nothing newer began after it', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  const first = deferred<ThreadDTO>()
+  let fail!: (e: unknown) => void
+  vi.mocked(client.getThread).mockReturnValueOnce(new Promise<ThreadDTO>((_, r) => { fail = r })).mockReturnValueOnce(first.p)
+  const a = refreshThread(1, 'r1')
+  const b = refreshThread(1, 'r1')
+  fail(new ApiError('offline', ''))
+  await a
+  expect(useStore.getState().lastError).toBeNull()
+  first.resolve(thread('r1'))
+  await b
+  vi.mocked(client.getThread).mockRejectedValueOnce(new ApiError('offline', ''))
+  await refreshThread(1, 'r1')
+  expect(useStore.getState().lastError).not.toBeNull()
+})
