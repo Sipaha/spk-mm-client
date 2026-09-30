@@ -163,6 +163,24 @@ test.each([537.9688720703125, 583.1544799804688, 497.22552490234375, 564.2781982
   expect(Call.ByName).toHaveBeenLastCalledWith(FQN + 'SetThreadWidth', Math.round(width))
 })
 
+test('openThreadAt: an abort cancels the Wails call; loadThreadFocus by FQN', async () => {
+  let resolve!: (v: unknown) => void
+  const cancel = vi.fn()
+  const p = Object.assign(new Promise((r) => (resolve = r)), { cancel })
+  vi.mocked(Call.ByName).mockReturnValue(p as never)
+  const ctl = new AbortController()
+  const res = wailsClient.openThreadAt(3, 'c1', 'r1', 'p1', ctl.signal)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'OpenThreadAt', 3, 'c1', 'r1', 'p1')
+  ctl.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  resolve({ root_id: 'r1' })
+  await expect(res).resolves.toEqual({ root_id: 'r1' })
+
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.loadThreadFocus(3, 'r1', true)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'LoadThreadFocus', 3, 'r1', true)
+})
+
 test('jumpToPost: an abort cancels the Wails call (its Go context); gap calls by FQN', async () => {
   let resolve!: (v: unknown) => void
   const cancel = vi.fn()

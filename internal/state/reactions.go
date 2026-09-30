@@ -105,8 +105,8 @@ func (s *Server) mineInCopiesLocked(postID, emoji string) (some, all bool) {
 		if t.root.ID == postID {
 			see(t.root)
 		}
-		if i := indexOf(t.replies, postID); i >= 0 {
-			see(t.replies[i])
+		if q := t.reply(postID); q != nil {
+			see(*q)
 		}
 	}
 	return some, all && n > 0

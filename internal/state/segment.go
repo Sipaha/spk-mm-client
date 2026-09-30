@@ -361,6 +361,28 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	if !ok || op.Gap != s.gapGen {
 		return false
 	}
+	s.older = s.rereadLocked(s.older, op.Low, op.High, op.Held, r, append([]Cursor{op.High}, r.Bounds...),
+		func(p model.Post) bool { return keep(p, op.CRT) },
+		func(p model.Post) bool { return indexOf(ch.Win.Posts, p.ID) < 0 })
+	if r.Covered {
+		s.segStale = false
+	}
+	s.histRev++
+	return true
+}
+
+// rereadLocked applies a reread r to held (oldest first), a range from low
+// to high whose posts had the update_at of at when it began, and returns
+// what is held after it — the channel's segment and a thread's focus share
+// it. Posts read (ok: of the kind held) refresh their held copies (newerOf);
+// those not held, inside the range and admitted (not held elsewhere, like
+// the window), fill it. Only r.Covered proves a held post missing from the
+// pages is gone: then it is removed and goes into the gone ring — unless its
+// copy changed after the start (a live edit or reaction), or it shares the
+// create_at of a bound (a page's cursor the pages cannot have returned it
+// past).
+func (s *Server) rereadLocked(held []model.Post, low, high Cursor, at map[string]int64, r Reread, bounds []Cursor,
+	ok, admit func(model.Post) bool) []model.Post {
 	var fresh []model.Post
 	if r.High != nil && !r.HighGone {
 		fresh = append(fresh, *r.High)
@@ -370,39 +392,36 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	var add []model.Post
 	for _, p := range fresh {
 		seen[p.ID] = true
-		if !keep(p, op.CRT) || s.gone.has(p.ID) {
+		if !ok(p) || s.gone.has(p.ID) {
 			continue
 		}
-		if i := indexOf(s.older, p.ID); i >= 0 {
-			s.older[i] = newerOf(p, s.older[i])
+		if i := indexOf(held, p.ID); i >= 0 {
+			held[i] = newerOf(p, held[i])
 			continue
 		}
-		if p.CreateAt >= op.Low.CreateAt && p.CreateAt <= op.High.CreateAt && indexOf(ch.Win.Posts, p.ID) < 0 && indexOf(add, p.ID) < 0 {
+		if p.CreateAt >= low.CreateAt && p.CreateAt <= high.CreateAt && admit(p) && indexOf(add, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
-	s.older = append(s.older, add...)
-	sortPosts(s.older)
-	if r.Covered {
-		bounds := append([]Cursor{op.High}, r.Bounds...)
-		tied := func(p model.Post) bool {
-			return slices.ContainsFunc(bounds, func(b Cursor) bool { return b.CreateAt == p.CreateAt && b.ID != p.ID })
-		}
-		s.older = slices.DeleteFunc(s.older, func(p model.Post) bool {
-			at, held := op.Held[p.ID]
-			gone := held && !seen[p.ID] && p.UpdateAt == at && !tied(p)
-			if gone {
-				// Into the gone ring, so a page read before cannot bring it
-				// back. Only the ring: a root re-read here already has its
-				// count, and replyGoneLocked would lower it again.
-				s.gone.add(p.ID)
-			}
-			return gone
-		})
-		s.segStale = false
+	held = append(held, add...)
+	sortPosts(held)
+	if !r.Covered {
+		return held
 	}
-	s.histRev++
-	return true
+	tied := func(p model.Post) bool {
+		return slices.ContainsFunc(bounds, func(b Cursor) bool { return b.CreateAt == p.CreateAt && b.ID != p.ID })
+	}
+	return slices.DeleteFunc(held, func(p model.Post) bool {
+		was, isHeld := at[p.ID]
+		gone := isHeld && !seen[p.ID] && p.UpdateAt == was && !tied(p)
+		if gone {
+			// Into the gone ring, so a page read before cannot bring it
+			// back. Only the ring: a root re-read here already has its
+			// count, and replyGoneLocked would lower it again.
+			s.gone.add(p.ID)
+		}
+		return gone
+	})
 }
 
 // contiguousPart: the posts of w known contiguous on the server — all of a

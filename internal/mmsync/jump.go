@@ -292,30 +292,37 @@ func (w *Worker) LoadNewer(ctx context.Context, channelID string) (closed bool, 
 // row's retry). A user's LoadOlder/LoadNewer pre-empts it like the
 // background reread: it then returns nil, the segment still stale.
 func (w *Worker) RetryRevalidation(ctx context.Context, channelID string) error {
-	return quietSuperseded(w.rereadOnce(ctx, channelID))
+	return quietSuperseded(w.rereadOnce(ctx, channelID, func(ctx context.Context) error { return w.revalidate(ctx, channelID) }))
 }
 
-// rereadOnce runs one reread of the channel under its history lock, as an
+// rereadOnce runs one reread (run) under a lane's history lock, as an
 // operation a user's one pre-empts (errPreempted).
-func (w *Worker) rereadOnce(ctx context.Context, channelID string) error {
-	l, ctx, end := w.histBegin(ctx, channelID, opReread)
+func (w *Worker) rereadOnce(ctx context.Context, lane string, run func(context.Context) error) error {
+	l, ctx, end := w.histBegin(ctx, lane, opReread)
 	defer end()
 	if err := l.lock(ctx); err != nil {
 		return w.histErr(ctx, err)
 	}
 	defer l.unlock()
-	return w.revalidate(ctx, channelID)
+	return run(ctx)
 }
 
 // scheduleRevalidation rereads the open channel's stale segment in the
-// background (after a catch-up overflow, after LoadNewer), one at a time; a
-// reread pre-empted by the user's history operations is begun again
-// revalIdle later. A failed one waits for the next trigger or the retry.
+// background (after a catch-up overflow, after LoadNewer).
 func (w *Worker) scheduleRevalidation(channelID string) {
-	if !w.st.SegmentStale(channelID) {
+	w.scheduleReread(channelID, func() bool { return w.st.SegmentStale(channelID) },
+		func(ctx context.Context) error { return w.revalidate(ctx, channelID) })
+}
+
+// scheduleReread runs a lane's reread (run) in the background while stale,
+// one at a time; a reread pre-empted by the user's history operations is
+// begun again revalIdle later. A failed one waits for the next trigger or
+// the retry.
+func (w *Worker) scheduleReread(lane string, stale func() bool, run func(context.Context) error) {
+	if !stale() {
 		return
 	}
-	l := w.lane(channelID)
+	l := w.lane(lane)
 	l.mu.Lock()
 	busy := l.reval
 	l.reval = true
@@ -330,8 +337,8 @@ func (w *Worker) scheduleRevalidation(channelID string) {
 	}
 	if !w.goBG(func(ctx context.Context) {
 		defer done()
-		for w.st.SegmentStale(channelID) {
-			if err := w.rereadOnce(ctx, channelID); !errors.Is(err, errPreempted) {
+		for stale() {
+			if err := w.rereadOnce(ctx, lane, run); !errors.Is(err, errPreempted) {
 				return
 			}
 			select {

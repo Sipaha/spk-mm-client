@@ -18,7 +18,7 @@ const town: ChannelDTO = {
 const aThread = {
   root_id: 'r1', channel_id: 'c-town', channel_name: 'Town Square', team_name: 'one', posts: [], has_more: false,
   capped: false, loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'u-alice', crt: false,
-  new_since: 0, gap_after: '',
+  new_since: 0, gap_after: '', focus: null,
 }
 
 vi.mock('./api/client', async (orig) => {
@@ -46,6 +46,8 @@ vi.mock('./api/client', async (orig) => {
       jumpToPost: vi.fn(),
       loadNewer: vi.fn().mockResolvedValue(undefined),
       retryRevalidation: vi.fn().mockResolvedValue(undefined),
+      openThreadAt: vi.fn(),
+      loadThreadFocus: vi.fn().mockResolvedValue(undefined),
       subscribeEvents: (fn: (e: ApiEvent) => void) => {
         h.emit = fn
         return () => {}

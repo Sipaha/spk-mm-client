@@ -276,6 +276,25 @@ export interface ThreadDTO {
   crt: boolean
   new_since: number
   gap_after: string
+  // focus: the segment around a reply opened with openThreadAt (null: a
+  // plain thread) — posts then hold the root, the segment and the tail
+  // (the latest ≤ 60 replies), each reply once.
+  focus: ThreadFocus | null
+}
+
+// ThreadFocus: the reply focused (its permalink is "open in browser");
+// has_older/has_newer: a page can be loaded that way (loadThreadFocus) —
+// the window holds ≤ 200 replies and lets go of the far edge; gap: between
+// the segment and the tail until a page proves they join (before_id: the
+// tail's first reply, '' while it is empty; gen: its row's key; stale: the
+// segment waits for a reread after a reconnect). rev moves with every page
+// or reread applied (anchors); centering is the UI's own nonce.
+export interface ThreadFocus {
+  target_id: string
+  has_older: boolean
+  has_newer: boolean
+  gap: HistGap
+  rev: number
 }
 
 export type EventType =

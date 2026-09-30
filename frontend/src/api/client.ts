@@ -64,6 +64,15 @@ export interface Client {
   retryRevalidation(id: number, channelId: string): Promise<void>
   /** Opens a thread in the panel (replacing the open one); may still be loading — thread_changed follows. Retry = open again. */
   openThread(id: number, channelId: string, rootId: string): Promise<ThreadDTO>
+  /**
+   * Opens rootId's thread showing replyId: a reply it holds as is, else the
+   * segment around it (ThreadDTO.focus) with a gap to the latest replies.
+   * Aborting `signal` cancels it in Go. Errors: post_gone, forbidden,
+   * invalid_argument (another channel's or thread's post), no_channel, cancelled.
+   */
+  openThreadAt(id: number, channelId: string, rootId: string, replyId: string, signal?: AbortSignal): Promise<ThreadDTO>
+  /** Loads a page into the focus: older, or newer into the gap (newer) — one at a time; no_progress: retry by hand. */
+  loadThreadFocus(id: number, rootId: string, newer: boolean): Promise<void>
   /** A cached thread's current view (no_post: not cached). */
   getThread(id: number, rootId: string): Promise<ThreadDTO>
   /** Closes the panel; the thread stays cached, trimmed. */
@@ -180,6 +189,8 @@ export const httpClient: Client = {
   loadNewer: (id, channel_id) => done(post('LoadNewer', { id, channel_id })),
   retryRevalidation: (id, channel_id) => done(post('RetryRevalidation', { id, channel_id })),
   openThread: (id, channel_id, root_id) => post('OpenThread', { id, channel_id, root_id }),
+  openThreadAt: (id, channel_id, root_id, reply_id, signal) => post('OpenThreadAt', { id, channel_id, root_id, reply_id }, signal),
+  loadThreadFocus: (id, root_id, newer) => done(post('LoadThreadFocus', { id, root_id, newer })),
   getThread: (id, root_id) => post('GetThread', { id, root_id }),
   closeThread: (id) => done(post('CloseThread', { id })),
   loadOlderReplies: (id, root_id) => done(post('LoadOlderReplies', { id, root_id })),
@@ -317,6 +328,9 @@ export const wailsClient: Client = {
   loadNewer: (id, channelId) => wcall('LoadNewer', id, channelId),
   retryRevalidation: (id, channelId) => wcall('RetryRevalidation', id, channelId),
   openThread: (id, channelId, rootId) => wcall('OpenThread', id, channelId, rootId),
+  openThreadAt: (id, channelId, rootId, replyId, signal) =>
+    cancellable<ThreadDTO>(signal, 'OpenThreadAt', id, channelId, rootId, replyId),
+  loadThreadFocus: (id, rootId, newer) => wcall('LoadThreadFocus', id, rootId, newer),
   getThread: (id, rootId) => wcall('GetThread', id, rootId),
   closeThread: (id) => wcall('CloseThread', id),
   loadOlderReplies: (id, rootId) => wcall('LoadOlderReplies', id, rootId),

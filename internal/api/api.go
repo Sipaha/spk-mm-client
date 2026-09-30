@@ -92,6 +92,19 @@ type API interface {
 	// then thread_changed as it loads and changes. Retrying a failed load
 	// is opening it again.
 	OpenThread(ctx context.Context, id int64, channelID, rootID string) (ThreadDTO, error)
+	// OpenThreadAt opens rootID's thread in the panel showing replyID (spec
+	// «Поиск», Секция 1б): a reply it holds as is (focus unchanged — the UI
+	// centers by its own nonce), else the segment around the reply becomes
+	// the thread's focus (ThreadDTO.focus), the latest replies its tail,
+	// with a gap between until proved closed. Cancels the focus operations
+	// begun before; runs under the caller's ctx. post_gone (404 or
+	// deleted), forbidden (403), invalid_argument (bad id, a post of
+	// another channel or thread), no_channel, cancelled.
+	OpenThreadAt(ctx context.Context, id int64, channelID, rootID, replyID string) (ThreadDTO, error)
+	// LoadThreadFocus loads a page into the open thread's focus: older
+	// replies, or newer ones into the gap to the tail (newer); the window
+	// slides past 200. no_progress: two pages in a row moved nothing.
+	LoadThreadFocus(ctx context.Context, id int64, rootID string, newer bool) error
 	// GetThread is a cached thread's current view (no_post: not cached).
 	GetThread(ctx context.Context, id int64, rootID string) (ThreadDTO, error)
 	// CloseThread closes the panel; the thread stays cached, trimmed.

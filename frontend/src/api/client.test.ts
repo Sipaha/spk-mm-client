@@ -201,6 +201,20 @@ test('jump and gap calls post their bodies; an abort cancels the jump', async ()
   ])
 })
 
+test('thread focus calls post their bodies; an abort cancels openThreadAt', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () => new Response(JSON.stringify({ root_id: 'r1' }), { headers: { 'content-type': 'application/json' } }),
+  )
+  const ctl = new AbortController()
+  expect(await httpClient.openThreadAt(3, 'c1', 'r1', 'p1', ctl.signal)).toEqual({ root_id: 'r1' })
+  expect(fetchMock.mock.calls[0][1]!.signal).toBe(ctl.signal)
+  await httpClient.loadThreadFocus(3, 'r1', false)
+  expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
+    ['/api/OpenThreadAt', { id: 3, channel_id: 'c1', root_id: 'r1', reply_id: 'p1' }],
+    ['/api/LoadThreadFocus', { id: 3, root_id: 'r1', newer: false }],
+  ])
+})
+
 test('a jump error keeps its code', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     new Response(JSON.stringify({ code: 'post_gone', detail: '' }), { status: 400, headers: { 'content-type': 'application/json' } }),

@@ -69,7 +69,7 @@ func histError(err error) error {
 		return coded(CodePostGone, err)
 	case errors.Is(err, mmsync.ErrForbidden):
 		return coded(CodeForbidden, err)
-	case errors.Is(err, mmsync.ErrWrongChannel):
+	case errors.Is(err, mmsync.ErrWrongChannel), errors.Is(err, mmsync.ErrWrongThread):
 		return coded(CodeInvalidArgument, err)
 	case errors.Is(err, mmsync.ErrNoChannel):
 		return coded(CodeNoChannel, nil)

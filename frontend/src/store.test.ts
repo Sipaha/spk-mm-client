@@ -176,7 +176,7 @@ test('patchDownloadProgress for an id not in the store is inert: no crash, no ph
 
 const thread = (rootId: string): import('./api/types').ThreadDTO => ({
   root_id: rootId, channel_id: 'a', channel_name: 'a', team_name: 'team', posts: [], has_more: false, capped: false,
-  loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'me', crt: false, new_since: 0, gap_after: '',
+  loaded: true, syncing: false, root_deleted: false, error: '', draft: '', me_id: 'me', crt: false, new_since: 0, gap_after: '', focus: null,
 })
 
 // Task 6: switching the channel closes the thread panel (chat.ts also

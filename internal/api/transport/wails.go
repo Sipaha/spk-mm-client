@@ -72,6 +72,14 @@ func (w *API) RetryRevalidation(id int64, channelID string) error {
 func (w *API) OpenThread(id int64, channelID, rootID string) (api.ThreadDTO, error) {
 	return w.a.OpenThread(context.Background(), id, channelID, rootID)
 }
+
+// OpenThreadAt takes Wails' call context, like JumpToPost.
+func (w *API) OpenThreadAt(ctx context.Context, id int64, channelID, rootID, replyID string) (api.ThreadDTO, error) {
+	return w.a.OpenThreadAt(ctx, id, channelID, rootID, replyID)
+}
+func (w *API) LoadThreadFocus(id int64, rootID string, newer bool) error {
+	return w.a.LoadThreadFocus(context.Background(), id, rootID, newer)
+}
 func (w *API) GetThread(id int64, rootID string) (api.ThreadDTO, error) {
 	return w.a.GetThread(context.Background(), id, rootID)
 }

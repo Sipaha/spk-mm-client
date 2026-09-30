@@ -141,6 +141,8 @@ func (w *Worker) fetchThread(ctx context.Context, rootID string, crt bool, epoch
 		w.requestStatuses()
 	}
 	w.changed(state.Change{Threads: []string{rootID}})
+	// A focus stale since a reconnect is reread once the tail was.
+	w.scheduleFocusRevalidation(rootID)
 	// A read sent at opening (ts = our clock) may not cover replies the
 	// page brought if the server's clock is ahead: they are newer than it.
 	w.readThread(rootID)

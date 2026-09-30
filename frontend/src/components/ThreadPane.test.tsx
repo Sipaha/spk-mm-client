@@ -51,7 +51,7 @@ const thread = (o: Partial<ThreadDTO> = {}): ThreadDTO => ({
   root_id: 'root', channel_id: 'c-town', channel_name: 'Town Square', team_name: 'team',
   posts: [post(), post({ id: 'r1', user_id: 'u-carol', author: 'carol', message: 'a reply', root_id: 'root', create_at: Date.now() - 30_000 })],
   has_more: false, capped: false, loaded: true, syncing: false, root_deleted: false, error: '', draft: '',
-  me_id: 'u-alice', crt: false, new_since: 0, gap_after: '', ...o,
+  me_id: 'u-alice', crt: false, new_since: 0, gap_after: '', focus: null, ...o,
 })
 
 beforeEach(() => {

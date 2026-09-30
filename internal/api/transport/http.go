@@ -206,6 +206,22 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/OpenThread", handle(func(ctx context.Context, r *threadReq) (any, error) {
 		return h.api.OpenThread(ctx, r.ID, r.ChannelID, r.RootID)
 	}))
+	// OpenThreadAt runs under the request's context, like JumpToPost.
+	h.mux.HandleFunc("POST /api/OpenThreadAt", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		RootID    string `json:"root_id"`
+		ReplyID   string `json:"reply_id"`
+	}) (any, error) {
+		return h.api.OpenThreadAt(ctx, r.ID, r.ChannelID, r.RootID, r.ReplyID)
+	}))
+	h.mux.HandleFunc("POST /api/LoadThreadFocus", handle(func(ctx context.Context, r *struct {
+		ID     int64  `json:"id"`
+		RootID string `json:"root_id"`
+		Newer  bool   `json:"newer"`
+	}) (any, error) {
+		return nil, h.api.LoadThreadFocus(ctx, r.ID, r.RootID, r.Newer)
+	}))
 	h.mux.HandleFunc("POST /api/GetThread", handle(func(ctx context.Context, r *threadReq) (any, error) {
 		return h.api.GetThread(ctx, r.ID, r.RootID)
 	}))

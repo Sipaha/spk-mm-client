@@ -83,11 +83,11 @@ func (s *Server) StatusTargets(limit int) []string {
 	}
 	if t := s.threads[s.openThread]; t != nil {
 		add(t.root.UserID)
-		for _, p := range t.replies {
+		t.eachReply(func(p *model.Post) {
 			if !p.IsSystem() {
 				add(p.UserID)
 			}
-		}
+		})
 	}
 	out := make([]string, 0, len(set)+1)
 	if s.me.ID != "" {

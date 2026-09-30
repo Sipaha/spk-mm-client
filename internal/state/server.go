@@ -131,10 +131,14 @@ type Server struct {
 	// Threads (see threads.go): the cache by root id, its LRU (most recent
 	// last), the thread open in the panel, the epoch pages are applied with
 	// (ResetThreads/MarkStale move it) and thread drafts (Task 4).
-	threads      map[string]*thread
-	threadLRU    []string
-	openThread   string
-	threadEpoch  uint64
+	threads     map[string]*thread
+	threadLRU   []string
+	openThread  string
+	threadEpoch uint64
+	// focusGen/focusRev: the open thread's focus generation (operations
+	// are applied in it) and revision (threadfocus.go).
+	focusGen     uint64
+	focusRev     uint64
 	threadDrafts map[string]string
 	// threadDraftOrder: threadDrafts by last update, least recent first —
 	// for ThreadDraftCap eviction — see SetThreadDraft.
@@ -537,9 +541,7 @@ func (s *Server) MissingUserIDs() []string {
 	}
 	for _, t := range s.threads {
 		need[t.root.UserID] = true
-		for _, p := range t.replies {
-			need[p.UserID] = true
-		}
+		t.eachReply(func(p *model.Post) { need[p.UserID] = true })
 	}
 	var out []string
 	for id := range need {

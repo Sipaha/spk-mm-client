@@ -23,6 +23,8 @@ function fakeClient(over: Partial<Client> = {}): Client {
     jumpToPost: vi.fn(),
     loadNewer: vi.fn().mockResolvedValue(undefined),
     retryRevalidation: vi.fn().mockResolvedValue(undefined),
+    openThreadAt: vi.fn(),
+    loadThreadFocus: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as Client
 }

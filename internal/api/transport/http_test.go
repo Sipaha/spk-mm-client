@@ -566,6 +566,33 @@ func (f *jumpAPI) RetryRevalidation(_ context.Context, id int64, channelID strin
 	return nil
 }
 
+func (f *jumpAPI) OpenThreadAt(_ context.Context, id int64, channelID, rootID, replyID string) (api.ThreadDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("focus %d/%s/%s/%s", id, channelID, rootID, replyID))
+	return api.ThreadDTO{RootID: rootID, Posts: []state.PostView{}, Focus: &state.ThreadFocusView{TargetID: replyID}}, nil
+}
+
+func (f *jumpAPI) LoadThreadFocus(_ context.Context, id int64, rootID string, newer bool) error {
+	f.calls = append(f.calls, fmt.Sprintf("focus-load %d/%s/%v", id, rootID, newer))
+	return nil
+}
+
+func TestThreadFocusRoutes(t *testing.T) {
+	f := &jumpAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	resp := call(t, h, ts.URL, "OpenThreadAt", `{"id":3,"channel_id":"c1","root_id":"r1","reply_id":"p1"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var v struct {
+		Focus map[string]any `json:"focus"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&v))
+	assert.Equal(t, "p1", v.Focus["target_id"])
+	assert.Equal(t, map[string]any{"open": false, "gen": float64(0), "before_id": "", "stale": false}, v.Focus["gap"])
+	assert.Equal(t, 200, call(t, h, ts.URL, "LoadThreadFocus", `{"id":3,"root_id":"r1","newer":true}`).StatusCode)
+	assert.Equal(t, []string{"focus 3/c1/r1/p1", "focus-load 3/r1/true"}, f.calls)
+}
+
 func TestJumpRoutes(t *testing.T) {
 	f := &jumpAPI{}
 	h := NewHTTP(f, events.NewEmitter())

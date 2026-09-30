@@ -35,6 +35,9 @@ type thread struct {
 	stale       bool // the event stream was lost: replies may be missing
 	rootDeleted bool
 	err         string // code of the last failed load
+	// focus: the open thread showing a reply beyond those it holds
+	// (threadfocus.go); replies are then its tail, ≤ ThreadPage.
+	focus *threadFocus
 }
 
 // ThreadView is the thread panel: the root, its replies (oldest first) and
@@ -57,6 +60,9 @@ type ThreadView struct {
 	CRT         bool       `json:"crt"`
 	NewSince    int64      `json:"new_since"`
 	GapAfter    string     `json:"gap_after"`
+	// Focus: the segment around a reply (OpenThreadAt), nil for a plain
+	// thread. Posts then holds the root, the segment and the tail.
+	Focus *ThreadFocusView `json:"focus"`
 }
 
 func (t *thread) needsFetch() bool { return !t.rootDeleted && (!t.loaded || t.stale || t.err != "") }
@@ -87,6 +93,7 @@ func (s *Server) openThreadLocked(channelID, rootID string) (epoch uint64, needF
 	if s.openThread != rootID {
 		s.openSeq++
 		s.openRead = threadRead{opening: s.openSeq} // a new opening
+		s.bumpFocusLocked(nil)                      // a focus begun before is not wanted
 	}
 	if t == nil {
 		t = &thread{channelID: channelID}
@@ -132,11 +139,12 @@ func (s *Server) dropThreadDraftLocked(rootID string) {
 }
 
 // trimThreadLocked keeps only the last page of a thread that is no longer
-// open, in a fresh slice (the old backing array goes).
+// open, in a fresh slice (the old backing array goes); its focus ends.
 func (s *Server) trimThreadLocked(t *thread) {
 	if t == nil {
 		return
 	}
+	s.dropFocusLocked(t)
 	if n := len(t.replies); n > ThreadPage {
 		t.replies = slices.Clone(t.replies[n-ThreadPage:])
 		t.complete = false
@@ -154,6 +162,7 @@ func (s *Server) CloseThread() {
 	}
 	s.trimThreadLocked(s.threads[s.openThread])
 	s.openThread, s.openRead = "", threadRead{}
+	s.bumpFocusLocked(nil) // a focus begun is not wanted either
 }
 
 // ThreadRootOf maps a held reply's id to its root's (a reply has no thread
@@ -287,8 +296,12 @@ func (s *Server) SetThreadPage(rootID string, epoch uint64, l model.PostList) {
 		}
 	}
 	sortPosts(merged)
-	t.replies, t.complete, t.capped = merged, !hasNext, false
-	s.capThreadLocked(t)
+	if t.focus != nil {
+		s.setTailLocked(t, merged, threadReplies(rootID, l), hasNext)
+	} else {
+		t.replies, t.complete, t.capped = merged, !hasNext, false
+		s.capThreadLocked(t)
+	}
 	if rootID != s.openThread { // closed while the page was in flight
 		s.trimThreadLocked(t)
 	}
@@ -304,7 +317,7 @@ func (s *Server) AppendOlderReplies(rootID string, epoch uint64, before string, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.threads[rootID]
-	if t == nil || epoch != s.threadEpoch || !t.loaded || t.capped || t.rootDeleted ||
+	if t == nil || epoch != s.threadEpoch || !t.loaded || t.capped || t.rootDeleted || t.focus != nil ||
 		len(t.replies) == 0 || t.replies[0].ID != before {
 		return
 	}
@@ -332,7 +345,7 @@ func (s *Server) ThreadHasMore(rootID string) (more, ok bool) {
 	if t == nil {
 		return false, false
 	}
-	return t.loaded && !t.complete && !t.capped, true
+	return t.loaded && !t.complete && !t.capped && t.focus == nil, true
 }
 
 // capThreadLocked keeps the newest ThreadMaxReplies; a thread at the cap
@@ -367,6 +380,7 @@ func (s *Server) FailThread(rootID string, epoch uint64, code string) {
 // rootGoneLocked: the root was deleted — its replies die with it. That is
 // final: nothing is left to load.
 func (s *Server) rootGoneLocked(t *thread) {
+	s.dropFocusLocked(t)
 	t.rootDeleted, t.loaded, t.stale, t.err = true, true, false, ""
 	t.root, t.replies = model.Post{}, nil
 	t.complete, t.capped = true, false
@@ -389,6 +403,9 @@ func (s *Server) MarkThreadStale(rootID string) (ok bool) {
 		return false
 	}
 	t.stale = true
+	if t.focus != nil {
+		s.bumpFocusLocked(t.focus)
+	}
 	return true
 }
 
@@ -409,6 +426,7 @@ func (s *Server) ResetThreads() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.threadEpoch++
+	s.bumpFocusLocked(nil)
 	open := s.threads[s.openThread]
 	clear(s.threads)
 	s.threadLRU = nil
@@ -426,6 +444,9 @@ func (s *Server) markThreadsStaleLocked() {
 	s.threadEpoch++
 	for _, t := range s.threads {
 		t.stale = true
+		if t.focus != nil {
+			s.staleFocusLocked(t)
+		}
 	}
 }
 
@@ -494,12 +515,12 @@ func (s *Server) ThreadReadTarget(rootID string) (ThreadReadReq, bool) {
 		team = s.navTeamLocked()
 	}
 	var newest, others int64
-	for _, p := range t.replies {
+	t.eachReply(func(p *model.Post) {
 		newest = max(newest, p.CreateAt)
 		if p.UserID != s.me.ID {
 			others = max(others, p.CreateAt)
 		}
-	}
+	})
 	if team == "" || (s.openRead.ts > 0 && others <= s.openRead.ts) {
 		return ThreadReadReq{}, false
 	}
@@ -545,16 +566,22 @@ func (s *Server) threadPostedLocked(p model.Post) {
 	if p.RootID == "" || t == nil || t.rootDeleted || p.DeleteAt != 0 {
 		return
 	}
-	if i := indexOf(t.replies, p.ID); i >= 0 {
-		if p.UpdateAt >= t.replies[i].UpdateAt {
+	if q := t.reply(p.ID); q != nil {
+		if p.UpdateAt >= q.UpdateAt {
 			if p.PendingPostID == "" {
-				p.PendingPostID = t.replies[i].PendingPostID
+				p.PendingPostID = q.PendingPostID
 			}
-			t.replies[i] = p
+			*q = p
 		}
 		return
 	}
 	if !t.complete && len(t.replies) > 0 && p.CreateAt < t.replies[0].CreateAt {
+		return
+	}
+	if t.focus != nil { // the tail: its oldest go (trimTailLocked)
+		t.replies = append(t.replies, p)
+		sortPosts(t.replies)
+		s.trimTailLocked(t)
 		return
 	}
 	// The open thread holds up to the cap; a recent one stays at its last
@@ -582,11 +609,11 @@ func (s *Server) threadUpdatedLocked(p model.Post) bool {
 		changed = true
 	}
 	if t := s.threads[p.RootID]; p.RootID != "" && t != nil {
-		if i := indexOf(t.replies, p.ID); i >= 0 && p.UpdateAt >= t.replies[i].UpdateAt {
+		if q := t.reply(p.ID); q != nil && p.UpdateAt >= q.UpdateAt {
 			if p.PendingPostID == "" {
-				p.PendingPostID = t.replies[i].PendingPostID
+				p.PendingPostID = q.PendingPostID
 			}
-			t.replies[i] = p
+			*q = p
 			changed = true
 		}
 	}
@@ -601,7 +628,11 @@ func (s *Server) threadRemovedLocked(d model.Post) {
 		s.rootGoneLocked(t)
 	}
 	if t := s.threads[d.RootID]; d.RootID != "" && t != nil {
-		t.replies = slices.DeleteFunc(t.replies, func(p model.Post) bool { return p.ID == d.ID })
+		gone := func(p model.Post) bool { return p.ID == d.ID }
+		t.replies = slices.DeleteFunc(t.replies, gone)
+		if t.focus != nil {
+			t.focus.replies = slices.DeleteFunc(t.focus.replies, gone)
+		}
 	}
 }
 
@@ -622,7 +653,7 @@ func (s *Server) threadsOfLocked(p model.Post) []string {
 func (s *Server) threadsHoldingLocked(postID string) []string {
 	var out []string
 	for id, t := range s.threads {
-		if t.root.ID == postID || indexOf(t.replies, postID) >= 0 {
+		if t.root.ID == postID || t.reply(postID) != nil {
 			out = append(out, id)
 		}
 	}
@@ -636,8 +667,8 @@ func (s *Server) threadPostLocked(postID string) (model.Post, *thread, bool) {
 		if t.root.ID == postID {
 			return t.root, t, true
 		}
-		if i := indexOf(t.replies, postID); i >= 0 {
-			return t.replies[i], t, true
+		if q := t.reply(postID); q != nil {
+			return *q, t, true
 		}
 	}
 	return model.Post{}, nil, false
@@ -653,7 +684,7 @@ func (s *Server) reactThreadsLocked(channelID, postID string, apply func(*model.
 		if t.root.ID == postID && apply(&t.root) {
 			changed = true
 		}
-		if i := indexOf(t.replies, postID); i >= 0 && apply(&t.replies[i]) {
+		if q := t.reply(postID); q != nil && apply(q) {
 			changed = true
 		}
 	}
@@ -696,7 +727,12 @@ func (s *Server) ThreadView(rootID string) (ThreadView, bool) {
 	if t.root.ID != "" {
 		v.Posts = append(v.Posts, s.postViewLocked(t.root))
 	}
-	replies := s.withEphemeralLocked(t.replies, func(p model.Post) bool { return p.RootID == rootID })
+	replies := t.replies
+	if t.focus != nil {
+		v.Focus, replies = focusViewLocked(t)
+		v.HasMore, v.Capped = false, false
+	}
+	replies = s.withEphemeralLocked(replies, func(p model.Post) bool { return p.RootID == rootID })
 	for _, p := range replies {
 		v.Posts = append(v.Posts, s.postViewLocked(p))
 	}
