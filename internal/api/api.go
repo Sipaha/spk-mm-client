@@ -105,6 +105,9 @@ type API interface {
 	// replies, or newer ones into the gap to the tail (newer); the window
 	// slides past 200. no_progress: two pages in a row moved nothing.
 	LoadThreadFocus(ctx context.Context, id int64, rootID string, newer bool) error
+	// RetryThreadRevalidation rereads the open thread's stale focus
+	// (focus.gap.stale) now.
+	RetryThreadRevalidation(ctx context.Context, id int64, rootID string) error
 	// GetThread is a cached thread's current view (no_post: not cached).
 	GetThread(ctx context.Context, id int64, rootID string) (ThreadDTO, error)
 	// CloseThread closes the panel; the thread stays cached, trimmed.

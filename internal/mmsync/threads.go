@@ -29,8 +29,9 @@ func (w *Worker) OpenThread(channelID, rootID string) (state.ThreadView, bool) {
 	if need {
 		w.loadThread(rootID)
 	}
-	w.readThread(rootID) // CRT, focused: it is on screen
-	w.requestStatuses()  // the thread's authors
+	w.readThread(rootID)                // CRT, focused: it is on screen
+	w.requestStatuses()                 // the thread's authors
+	w.scheduleFocusRevalidation(rootID) // the open thread's focus, if stale
 	return w.st.ThreadView(rootID)
 }
 

@@ -222,6 +222,9 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return nil, h.api.LoadThreadFocus(ctx, r.ID, r.RootID, r.Newer)
 	}))
+	h.mux.HandleFunc("POST /api/RetryThreadRevalidation", handle(func(ctx context.Context, r *threadReq) (any, error) {
+		return nil, h.api.RetryThreadRevalidation(ctx, r.ID, r.RootID)
+	}))
 	h.mux.HandleFunc("POST /api/GetThread", handle(func(ctx context.Context, r *threadReq) (any, error) {
 		return h.api.GetThread(ctx, r.ID, r.RootID)
 	}))

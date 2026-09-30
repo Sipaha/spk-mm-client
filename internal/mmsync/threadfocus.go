@@ -36,6 +36,9 @@ const focusPage = 30
 // thread's focus, the latest replies its tail. Either way every focus
 // operation begun before is cancelled.
 func (w *Worker) OpenThreadAt(ctx context.Context, channelID, rootID, replyID string) (state.ThreadView, error) {
+	// Last (after the lane is let go of): a stale focus — whose reread this
+	// cancelled, if one ran — is reread again.
+	defer w.scheduleFocusRevalidation(rootID)
 	l, ctx, end := w.histBegin(ctx, threadLane, opJump)
 	defer end()
 	op, held, ok := w.st.FocusThread(channelID, rootID, replyID)
@@ -75,6 +78,9 @@ func (w *Worker) OpenThreadAt(ctx context.Context, channelID, rootID, replyID st
 	wg.Wait()
 	if err := errors.Join(uerr, derr); err != nil {
 		return state.ThreadView{}, w.histErr(ctx, err)
+	}
+	if ctx.Err() != nil { // a newer navigation (the generation guards too)
+		return state.ThreadView{}, w.histErr(ctx, ctx.Err())
 	}
 	if !w.st.SetThreadFocus(op, p, up, down) {
 		return state.ThreadView{}, ErrSuperseded
@@ -137,9 +143,10 @@ func (w *Worker) LoadThreadFocus(ctx context.Context, rootID string, newer bool)
 }
 
 // scheduleFocusRevalidation rereads rootID's stale focus in the background
-// (after a reconnect, once the tail was read again; after LoadThreadFocus).
+// (after a reconnect, once the tail was read again; after LoadThreadFocus,
+// OpenThreadAt and OpenThread), a failed reread retried revalRetries times.
 func (w *Worker) scheduleFocusRevalidation(rootID string) {
-	w.scheduleReread(threadLane, func() bool { return w.st.FocusStale(rootID) },
+	w.scheduleReread(threadLane, revalRetries, func() bool { return w.st.FocusStale(rootID) },
 		func(ctx context.Context) error { return w.revalidateFocus(ctx, rootID) })
 }
 
@@ -210,4 +217,11 @@ func (w *Worker) rereadFocus(ctx context.Context, op state.FocusRevalOp) (state.
 		}
 		cur = state.Cursor{ID: oldest.ID, CreateAt: oldest.CreateAt}
 	}
+}
+
+// RetryThreadRevalidation rereads rootID's stale focus now (the gap row's
+// retry). A user's LoadThreadFocus pre-empts it like the background reread:
+// it then returns nil, the focus still stale.
+func (w *Worker) RetryThreadRevalidation(ctx context.Context, rootID string) error {
+	return quietSuperseded(w.rereadOnce(ctx, threadLane, func(ctx context.Context) error { return w.revalidateFocus(ctx, rootID) }))
 }

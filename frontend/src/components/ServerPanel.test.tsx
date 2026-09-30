@@ -25,6 +25,7 @@ function fakeClient(over: Partial<Client> = {}): Client {
     retryRevalidation: vi.fn().mockResolvedValue(undefined),
     openThreadAt: vi.fn(),
     loadThreadFocus: vi.fn().mockResolvedValue(undefined),
+    retryThreadRevalidation: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as Client
 }

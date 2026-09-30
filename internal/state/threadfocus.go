@@ -140,8 +140,8 @@ func (s *Server) touchFocusLocked(f *threadFocus) {
 // its tail its latest replies. Another thread's focus is not touched.
 func (s *Server) dropFocusLocked(t *thread) {
 	if t != nil && t.focus != nil {
-		t.focus = nil
-		t.complete, t.capped = false, false
+		t.focus = nil // the tail's own completeness stands (setTailLocked, trimTailLocked)
+		t.capped = false
 		s.bumpFocusLocked(nil)
 	}
 }
@@ -162,6 +162,9 @@ func (s *Server) FocusThread(channelID, rootID, replyID string) (op ThreadFocusO
 		if t.focus != nil {
 			t.focus.target = replyID
 		}
+		// A newer navigation: a focus begun before must not land (an
+		// existing one goes by its own generation).
+		s.bumpFocusLocked(nil)
 		return ThreadFocusOp{}, true, true
 	}
 	s.dropFocusLocked(t)
@@ -210,8 +213,9 @@ func (s *Server) SetThreadFocus(op ThreadFocusOp, target model.Post, up, down mo
 	}
 	if n := len(t.replies); n > ThreadPage {
 		t.replies = slices.Clone(t.replies[n-ThreadPage:])
+		t.complete = false
 	}
-	t.complete, t.capped = false, false
+	t.capped = false
 	s.placeFocusLocked(t, raw)
 	s.proveFocusLocked(t, raw, f.downDone, f.down)
 	s.slideFocusLocked(t, true)
@@ -382,12 +386,11 @@ func (s *Server) staleFocusLocked(t *thread) {
 	f.stale = true
 	if !f.gap {
 		tail := t.replies
-		t.replies = nil
-		s.absorbLocked(t, tail)
+		t.replies, t.complete = nil, false
+		s.absorbLocked(t, tail) // data moved: rev moves there
 		f.gap, f.downDone = true, false
 	}
 	s.bumpFocusLocked(f)
-	s.touchFocusLocked(f)
 }
 
 // BeginFocusLoad starts loading a page into rootID's focus: older (up) from
@@ -448,7 +451,9 @@ func (s *Server) AppendFocus(op ThreadFocusOp, newer bool, page model.PostList) 
 		closed = s.proveFocusLocked(t, raw, !more, *edge)
 	}
 	s.slideFocusLocked(t, newer)
-	s.touchFocusLocked(f)
+	if progressed || closed {
+		s.touchFocusLocked(f)
+	}
 	return !f.gap, progressed || closed
 }
 
@@ -470,9 +475,8 @@ func (s *Server) BeginFocusRevalidate(rootID string) (FocusRevalOp, bool) {
 		return FocusRevalOp{}, false
 	}
 	f := t.focus
-	if len(f.replies) == 0 { // nothing left to be wrong
+	if len(f.replies) == 0 { // nothing left to be wrong (no data applied: rev stays)
 		f.stale = false
-		s.touchFocusLocked(f)
 		return FocusRevalOp{}, false
 	}
 	op := FocusRevalOp{

@@ -407,3 +407,63 @@ func TestFocusSurvivesOtherThreadsEvents(t *testing.T) {
 	s.OpenThread("town", "R")
 	assert.False(t, s.SetThreadFocus(op, replies[20], upFrom(root, replies, 20, 30), downFrom(root, replies, 20, 30)))
 }
+
+// Fix round 1, item 1: a jump to a held reply while a focus's pages are in
+// flight is the newer navigation — the pending focus must not land.
+func TestHeldRetargetDropsPendingFocus(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 300)
+	openLoaded(t, s, root, replies)
+	op, held, _ := s.FocusThread("town", "R", replies[20].ID)
+	require.False(t, held)
+	_, held, _ = s.FocusThread("town", "R", replies[280].ID)
+	require.True(t, held)
+	assert.False(t, s.SetThreadFocus(op, replies[20], upFrom(root, replies, 20, 30), downFrom(root, replies, 20, 30)))
+	v := mustThread(t, s, "R")
+	assert.Nil(t, v.Focus)
+	assert.Contains(t, threadPostIDs(v), replies[280].ID)
+}
+
+// Fix round 1, item 3: rev moves only with data applied.
+func TestFocusRevOnlyOnAppliedData(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 300)
+	focusThread(t, s, root, replies, 99)
+	s.MarkThreadStale("R") // the tail not live: the gap cannot close
+	_, progressed := loadFocus(t, s, root, replies, true, 300)
+	require.True(t, progressed)
+	rev := mustThread(t, s, "R").Focus.Rev
+	_, progressed = loadFocus(t, s, root, replies, true, 60) // empty, has_next=false again
+	assert.False(t, progressed)
+	assert.Equal(t, rev, mustThread(t, s, "R").Focus.Rev, "nothing applied")
+
+	for _, p := range slices.Clone(s.threads["R"].focus.replies) {
+		s.ApplyEvent(deletedEv(p))
+	}
+	s.MarkStale(9000)
+	rev = mustThread(t, s, "R").Focus.Rev
+	_, ok := s.BeginFocusRevalidate("R")
+	assert.False(t, ok)
+	v := mustThread(t, s, "R")
+	assert.False(t, v.Focus.Gap.Stale)
+	assert.Equal(t, rev, v.Focus.Rev)
+}
+
+// Fix round 1, item 4: closing the focus of a short thread (read whole
+// meanwhile) leaves it complete — nothing older to load.
+func TestShortThreadCompleteAfterFocusClosed(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 50)
+	op, held, ok := s.FocusThread("town", "R", replies[10].ID) // cold: nothing held
+	require.True(t, ok)
+	require.False(t, held)
+	require.True(t, s.SetThreadFocus(op, replies[10], upFrom(root, replies, 10, 30), downFrom(root, replies, 10, 30)))
+	epoch, _, _ := s.OpenThread("town", "R")
+	s.SetThreadPage("R", epoch, latestPage(root, replies))
+	s.CloseThread()
+	s.OpenThread("town", "R")
+	v := mustThread(t, s, "R")
+	assert.Nil(t, v.Focus)
+	assert.Len(t, v.Posts, 51)
+	assert.False(t, v.HasMore)
+}

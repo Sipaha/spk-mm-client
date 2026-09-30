@@ -73,6 +73,8 @@ export interface Client {
   openThreadAt(id: number, channelId: string, rootId: string, replyId: string, signal?: AbortSignal): Promise<ThreadDTO>
   /** Loads a page into the focus: older, or newer into the gap (newer) — one at a time; no_progress: retry by hand. */
   loadThreadFocus(id: number, rootId: string, newer: boolean): Promise<void>
+  /** Rereads the open thread's stale focus (focus.gap.stale) now. */
+  retryThreadRevalidation(id: number, rootId: string): Promise<void>
   /** A cached thread's current view (no_post: not cached). */
   getThread(id: number, rootId: string): Promise<ThreadDTO>
   /** Closes the panel; the thread stays cached, trimmed. */
@@ -191,6 +193,7 @@ export const httpClient: Client = {
   openThread: (id, channel_id, root_id) => post('OpenThread', { id, channel_id, root_id }),
   openThreadAt: (id, channel_id, root_id, reply_id, signal) => post('OpenThreadAt', { id, channel_id, root_id, reply_id }, signal),
   loadThreadFocus: (id, root_id, newer) => done(post('LoadThreadFocus', { id, root_id, newer })),
+  retryThreadRevalidation: (id, root_id) => done(post('RetryThreadRevalidation', { id, root_id })),
   getThread: (id, root_id) => post('GetThread', { id, root_id }),
   closeThread: (id) => done(post('CloseThread', { id })),
   loadOlderReplies: (id, root_id) => done(post('LoadOlderReplies', { id, root_id })),
@@ -331,6 +334,7 @@ export const wailsClient: Client = {
   openThreadAt: (id, channelId, rootId, replyId, signal) =>
     cancellable<ThreadDTO>(signal, 'OpenThreadAt', id, channelId, rootId, replyId),
   loadThreadFocus: (id, rootId, newer) => wcall('LoadThreadFocus', id, rootId, newer),
+  retryThreadRevalidation: (id, rootId) => wcall('RetryThreadRevalidation', id, rootId),
   getThread: (id, rootId) => wcall('GetThread', id, rootId),
   closeThread: (id) => wcall('CloseThread', id),
   loadOlderReplies: (id, rootId) => wcall('LoadOlderReplies', id, rootId),

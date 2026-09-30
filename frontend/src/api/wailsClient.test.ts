@@ -179,6 +179,8 @@ test('openThreadAt: an abort cancels the Wails call; loadThreadFocus by FQN', as
   vi.mocked(Call.ByName).mockResolvedValue(undefined)
   await wailsClient.loadThreadFocus(3, 'r1', true)
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'LoadThreadFocus', 3, 'r1', true)
+  await wailsClient.retryThreadRevalidation(3, 'r1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'RetryThreadRevalidation', 3, 'r1')
 })
 
 test('jumpToPost: an abort cancels the Wails call (its Go context); gap calls by FQN', async () => {

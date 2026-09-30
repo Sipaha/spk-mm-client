@@ -209,9 +209,11 @@ test('thread focus calls post their bodies; an abort cancels openThreadAt', asyn
   expect(await httpClient.openThreadAt(3, 'c1', 'r1', 'p1', ctl.signal)).toEqual({ root_id: 'r1' })
   expect(fetchMock.mock.calls[0][1]!.signal).toBe(ctl.signal)
   await httpClient.loadThreadFocus(3, 'r1', false)
+  await httpClient.retryThreadRevalidation(3, 'r1')
   expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
     ['/api/OpenThreadAt', { id: 3, channel_id: 'c1', root_id: 'r1', reply_id: 'p1' }],
     ['/api/LoadThreadFocus', { id: 3, root_id: 'r1', newer: false }],
+    ['/api/RetryThreadRevalidation', { id: 3, root_id: 'r1' }],
   ])
 })
 

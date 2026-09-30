@@ -48,6 +48,7 @@ vi.mock('./api/client', async (orig) => {
       retryRevalidation: vi.fn().mockResolvedValue(undefined),
       openThreadAt: vi.fn(),
       loadThreadFocus: vi.fn().mockResolvedValue(undefined),
+      retryThreadRevalidation: vi.fn().mockResolvedValue(undefined),
       subscribeEvents: (fn: (e: ApiEvent) => void) => {
         h.emit = fn
         return () => {}

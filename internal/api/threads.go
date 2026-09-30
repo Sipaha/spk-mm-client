@@ -52,6 +52,19 @@ func (s *Service) LoadThreadFocus(ctx context.Context, id int64, rootID string, 
 	return histError(w.LoadThreadFocus(rctx, rootID, newer))
 }
 
+func (s *Service) RetryThreadRevalidation(ctx context.Context, id int64, rootID string) error {
+	if !validID(rootID) {
+		return coded(CodeInvalidArgument, errors.New("id"))
+	}
+	w, err := s.worker(ctx, id)
+	if err != nil {
+		return err
+	}
+	rctx, cancel := s.bounded(ctx)
+	defer cancel()
+	return histError(w.RetryThreadRevalidation(rctx, rootID))
+}
+
 func (s *Service) GetThread(ctx context.Context, id int64, rootID string) (ThreadDTO, error) {
 	w, err := s.worker(ctx, id)
 	if err != nil {

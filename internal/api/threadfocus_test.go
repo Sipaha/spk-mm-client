@@ -39,6 +39,7 @@ func TestOpenThreadAtThroughService(t *testing.T) {
 	}
 	assert.False(t, v.Focus.Gap.Open, "loaded up to the tail")
 	require.NoError(t, f.svc.LoadThreadFocus(ctx, id, root, false))
+	require.NoError(t, f.svc.RetryThreadRevalidation(ctx, id, root), "nothing stale: nothing to do")
 	v, _ = f.svc.GetThread(ctx, id, root)
 	assert.Equal(t, "Reply 1", v.Posts[1].Message)
 
@@ -57,5 +58,6 @@ func TestOpenThreadAtValidatesIDs(t *testing.T) {
 		assert.Equal(t, CodeInvalidArgument, codeOf(err), fmt.Sprint(c))
 	}
 	assert.Equal(t, CodeInvalidArgument, codeOf(f.svc.LoadThreadFocus(ctx, 1, "r/1", true)))
+	assert.Equal(t, CodeInvalidArgument, codeOf(f.svc.RetryThreadRevalidation(ctx, 1, "")))
 	assert.Equal(t, CodeInvalidArgument, codeOf(histError(mmsync.ErrWrongThread)))
 }

@@ -576,6 +576,11 @@ func (f *jumpAPI) LoadThreadFocus(_ context.Context, id int64, rootID string, ne
 	return nil
 }
 
+func (f *jumpAPI) RetryThreadRevalidation(_ context.Context, id int64, rootID string) error {
+	f.calls = append(f.calls, fmt.Sprintf("focus-reval %d/%s", id, rootID))
+	return nil
+}
+
 func TestThreadFocusRoutes(t *testing.T) {
 	f := &jumpAPI{}
 	h := NewHTTP(f, events.NewEmitter())
@@ -590,7 +595,8 @@ func TestThreadFocusRoutes(t *testing.T) {
 	assert.Equal(t, "p1", v.Focus["target_id"])
 	assert.Equal(t, map[string]any{"open": false, "gen": float64(0), "before_id": "", "stale": false}, v.Focus["gap"])
 	assert.Equal(t, 200, call(t, h, ts.URL, "LoadThreadFocus", `{"id":3,"root_id":"r1","newer":true}`).StatusCode)
-	assert.Equal(t, []string{"focus 3/c1/r1/p1", "focus-load 3/r1/true"}, f.calls)
+	assert.Equal(t, 200, call(t, h, ts.URL, "RetryThreadRevalidation", `{"id":3,"root_id":"r1"}`).StatusCode)
+	assert.Equal(t, []string{"focus 3/c1/r1/p1", "focus-load 3/r1/true", "focus-reval 3/r1"}, f.calls)
 }
 
 func TestJumpRoutes(t *testing.T) {

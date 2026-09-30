@@ -37,6 +37,7 @@ vi.mock('./api/client', () => ({
     retryRevalidation: vi.fn().mockResolvedValue(undefined),
     openThreadAt: vi.fn(),
     loadThreadFocus: vi.fn().mockResolvedValue(undefined),
+    retryThreadRevalidation: vi.fn().mockResolvedValue(undefined),
   },
   uploadAttachmentBrowser: vi.fn(),
   ApiError: class ApiError extends Error {

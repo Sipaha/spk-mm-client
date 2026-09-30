@@ -80,6 +80,9 @@ func (w *API) OpenThreadAt(ctx context.Context, id int64, channelID, rootID, rep
 func (w *API) LoadThreadFocus(id int64, rootID string, newer bool) error {
 	return w.a.LoadThreadFocus(context.Background(), id, rootID, newer)
 }
+func (w *API) RetryThreadRevalidation(id int64, rootID string) error {
+	return w.a.RetryThreadRevalidation(context.Background(), id, rootID)
+}
 func (w *API) GetThread(id int64, rootID string) (api.ThreadDTO, error) {
 	return w.a.GetThread(context.Background(), id, rootID)
 }

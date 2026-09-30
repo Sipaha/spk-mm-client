@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,4 +225,85 @@ func TestFocusChecksChannelAndRootID(t *testing.T) {
 	h.tailLoaded(root)
 	assert.Nil(t, h.thread(root).Focus)
 	assert.Len(t, h.thread(root).Posts, 1+state.ThreadPage, "the plain thread")
+}
+
+// staleFocusHarness: a focus on Reply 100 of a 500-reply thread, then an
+// offline edit inside it and a reconnect with a since overflow — the focus
+// is stale; its reread pages (perPage=200) go through the gate. revalIdle
+// is short.
+func staleFocusHarness(t *testing.T, beforeReconnect func(g *gate)) (*harness, *gate, string) {
+	t.Helper()
+	g := newGate()
+	h := newHarness(t, mmfake.Options{CRT: true, SinceLimit: 5, RequestHook: g.hook})
+	t.Cleanup(g.open)
+	h.tune = func(c *Config) { c.revalIdle = 100 * time.Millisecond }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	h.w.OpenChannel("c-town")
+	root := h.fake.SeedThread("c-town", "alice", 500)
+	h.focusAt(root, 100)
+	h.tailLoaded(root)
+	beforeReconnect(g)
+	offlineOverflow(h, func() { h.fake.EditAs(h.replyID(110), "edited offline") })
+	return h, g, root
+}
+
+func (h *harness) focusReread(root string) bool {
+	v := h.thread(root)
+	return v.Focus != nil && !v.Focus.Gap.Stale && h.threadHas(root, "edited offline") == 1
+}
+
+// Fix round 1, item 2: a held jump cancels the running reread (a new
+// navigation) — it is begun again, not abandoned.
+func TestFocusRereadCancelledByHeldJumpIsRescheduled(t *testing.T) {
+	h, g, root := staleFocusHarness(t, func(g *gate) { g.hold(query("perPage", "200")) })
+	g.wait(t)
+	v, err := h.w.OpenThreadAt(context.Background(), "c-town", root, h.replyID(105))
+	require.NoError(t, err)
+	require.NotNil(t, v.Focus, "held: the focus stays")
+	assert.True(t, v.Focus.Gap.Stale)
+	g.open()
+	h.eventually(func() bool { return h.focusReread(root) }, "the reread was begun again")
+}
+
+// Fix round 1, item 2: a failed reread is retried (bounded); past that the
+// user's RetryThreadRevalidation does it.
+func TestFocusRereadRetriedAfterFailure(t *testing.T) {
+	var mu sync.Mutex
+	fails := 1
+	h, g, root := staleFocusHarness(t, func(g *gate) {
+		g.failing(func(r *http.Request) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			if r.URL.Query().Get("perPage") != "200" || fails == 0 {
+				return false
+			}
+			fails--
+			return true
+		})
+	})
+	g.wait(t)
+	h.eventually(func() bool { return h.focusReread(root) }, "retried after the failure")
+
+	// Every read fails: the retries give up, the focus stays stale.
+	mu.Lock()
+	fails = 1000
+	mu.Unlock()
+	h.fake.SetDown(true)
+	h.fake.DropConnections(true)
+	h.eventually(func() bool { return h.w.Status() == StatusReconnecting }, "offline")
+	h.fake.SetDown(false)
+	for range 1 + revalRetries {
+		g.wait(t)
+	}
+	select {
+	case <-g.arrived:
+		t.Fatal("retried past the bound")
+	case <-time.After(500 * time.Millisecond):
+	}
+	assert.True(t, h.thread(root).Focus.Gap.Stale)
+	g.failing(nil)
+	require.NoError(t, h.w.RetryThreadRevalidation(context.Background(), root))
+	assert.False(t, h.thread(root).Focus.Gap.Stale)
 }
