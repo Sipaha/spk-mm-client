@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { chmodSync, existsSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { channel, fakeURL, feed, removeServerFromMenu, signInAlice, testGet } from './helpers'
+import { channel, fakeURL, feed, removeServerFromMenu, scrollUntilVisible, signInAlice, testGet } from './helpers'
 
 // Bottom-stick on a viewport resize: a feed sitting at its bottom stays there
 // when its own height changes for a reason that is not a new row — a download
@@ -279,7 +279,14 @@ test('a failed Download in the file viewer shows its toast over the viewer', asy
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
   await expect(page.getByRole('heading', { name: /Off-Topic/ })).toBeVisible()
-  await feed(page).getByRole('button', { name: 'View build.png' }).click()
+  // Pre-existing full-suite flake (review, fix round 1): Off-Topic
+  // accumulates posts across the whole e2e run, and build.png (a fixed
+  // early seed post) can scroll out of the feed's initial window by the
+  // time this test runs late in the full suite — scroll up until it's
+  // actually rendered instead of assuming it's near the bottom.
+  const shot = feed(page).getByRole('button', { name: 'View build.png' })
+  await scrollUntilVisible(page, shot)
+  await shot.click()
   const viewer = page.getByRole('dialog', { name: 'File viewer' })
   await expect(viewer.getByRole('img', { name: 'build.png' })).toBeVisible()
   await viewer.getByRole('button', { name: 'Download', exact: true }).click()

@@ -1,10 +1,11 @@
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { Attachment, ChannelDTO } from '../api/types'
+import type { Attachment, ChannelDTO, FileView } from '../api/types'
 import { formatDay } from '../format'
 import { t } from '../i18n'
 import { buildRows, type FeedVariant, type Row } from './feedRows'
+import { fileKind } from './files'
 import { IconArrowDown } from './icons'
 import { PostItem, type PostActions } from './PostItem'
 import { ScrollShift } from './scrollShift'
@@ -64,9 +65,39 @@ function attachmentEstimate(a: Attachment): number {
   if (a.footer) h += 18
   return h
 }
+
+// fileCardsEstimate: file-cards brief (2026-09-30) review, fix round 1 —
+// estimate() never accounted for post.files at all (images/video/audio/
+// text/markdown still don't; their own fixed-box sizes vary too much for a
+// cheap guess to be worth it, and they predate this brief). File **cards**
+// specifically (fileKind 'other'/'pdf' — Attachments.tsx's `others` group)
+// went from a cramped single ~40px row to a fixed 320x64 box that wraps,
+// so a post with several of them is now under-estimated by a much larger
+// margin than before this brief. FileCard.tsx/index.css own the real
+// rendering constants; these are only a coarse pre-mount guess
+// (measureElement corrects the real height after mount, same as every
+// other term in estimate()) — no ResizeObserver on the feed's actual width
+// (the brief's own "no new observers" ruling), just a nominal guess at a
+// typical feed content width to work out roughly how many cards wrap onto
+// one row.
+export const FILE_CARD_W = 320
+export const FILE_CARD_H = 64
+const FILE_CARD_GAP = 8
+const FEED_NOMINAL_WIDTH = 800
+function fileCardsEstimate(files: FileView[] | undefined): number {
+  if (!files || files.length === 0) return 0
+  const cards = files.filter((f) => fileKind(f) === 'other' || fileKind(f) === 'pdf').length
+  if (cards === 0) return 0
+  const perRow = Math.max(1, Math.floor((FEED_NOMINAL_WIDTH + FILE_CARD_GAP) / (FILE_CARD_W + FILE_CARD_GAP)))
+  const rows = Math.ceil(cards / perRow)
+  return rows * FILE_CARD_H + (rows - 1) * FILE_CARD_GAP
+}
+
 export const estimate = (r: Row) =>
   r.kind === 'post'
-    ? (r.head ? 64 : 28) + (r.post.attachments?.reduce((sum, a) => sum + attachmentEstimate(a), 0) ?? 0)
+    ? (r.head ? 64 : 28) +
+      (r.post.attachments?.reduce((sum, a) => sum + attachmentEstimate(a), 0) ?? 0) +
+      fileCardsEstimate(r.post.files)
     : 36
 
 // anchorNudge computes how far scrollTop must move to bring the anchor

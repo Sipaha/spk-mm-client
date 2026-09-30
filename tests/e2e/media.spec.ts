@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { channel, fakePost, fakeURL, feed, removeServerFromMenu, signInAlice, testGet, testPost, unique } from './helpers'
+import { channel, fakePost, fakeURL, feed, removeServerFromMenu, scrollUntilVisible, signInAlice, testGet, testPost, unique } from './helpers'
 
 const naturalWidth = (img: import('@playwright/test').Locator) => img.evaluate((i: HTMLImageElement) => i.naturalWidth)
 
@@ -95,11 +95,19 @@ test('a card\'s own name/icon area: pdf opens the viewer, a non-previewable kind
   // and this fake's downloads dir is shared for the whole run): non-previewable,
   // so its card has no "View" action at all, and its own name/icon area is
   // labelled by the bare file name — clicking it downloads directly.
+  //
+  // Posted to c-town, not c-offtopic (review, fix round 1): Off-Topic's
+  // build.png is a fixed early seed post that a later media.spec.ts test
+  // ("image viewer: wheel...") also looks up, and Off-Topic accumulates
+  // posts across the whole (shared, single-worker) e2e run — one more post
+  // here was enough to push that lookup past a pre-existing timing
+  // threshold. This test doesn't need Off-Topic specifically, so it leaves
+  // that channel's state alone.
   const fake = await fakeURL(page)
   const login = await page.request.post(`${fake}/api/v4/users/login`, { data: { login_id: 'alice', password: 'secret' } })
   expect(login.ok(), await login.text()).toBeTruthy()
   const auth = { Authorization: `Bearer ${login.headers()['token']}` }
-  const up = await page.request.post(`${fake}/api/v4/files?channel_id=c-offtopic&filename=card-click-archive.zip`, {
+  const up = await page.request.post(`${fake}/api/v4/files?channel_id=c-town&filename=card-click-archive.zip`, {
     headers: { ...auth, 'Content-Type': 'application/zip' },
     data: Buffer.alloc(4096, 7),
   })
@@ -107,9 +115,10 @@ test('a card\'s own name/icon area: pdf opens the viewer, a non-previewable kind
   const fileId = ((await up.json()).file_infos[0] as { id: string }).id
   const post = await page.request.post(`${fake}/api/v4/posts`, {
     headers: auth,
-    data: { channel_id: 'c-offtopic', message: 'card click zip test', file_ids: [fileId] },
+    data: { channel_id: 'c-town', message: 'card click zip test', file_ids: [fileId] },
   })
   expect(post.ok(), await post.text()).toBeTruthy()
+  await channel(page, /Town Square/).click()
 
   // A card's own name button is never ALSO labelled "View" for a
   // non-previewable kind — exact:true above already proves its accessible
@@ -144,7 +153,13 @@ test('text viewer: search finds a match beyond 64 KiB, with a counter', async ({
 test('image viewer: wheel changes the zoom indicator', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
-  await feed(page).getByRole('button', { name: 'View build.png' }).click()
+  // Off-Topic accumulates posts across the whole (shared, single-worker) e2e
+  // run — build.png is a fixed early seed post that can scroll out of the
+  // feed's initial window by the time this test runs late in the full suite
+  // (review, fix round 1): scroll up until the virtualizer has it rendered.
+  const shot = feed(page).getByRole('button', { name: 'View build.png' })
+  await scrollUntilVisible(page, shot)
+  await shot.click()
   const viewer = page.getByRole('dialog', { name: 'File viewer' })
   const percent = viewer.getByTestId('viewer-zoom-percent')
   await expect(percent).toHaveText('100 %')

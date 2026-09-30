@@ -1,10 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { vi } from 'vitest'
-import type { Attachment, AttachmentField, ChannelDTO, PostView } from '../api/types'
+import type { Attachment, AttachmentField, ChannelDTO, FileView, PostView } from '../api/types'
 import { setLocale } from '../i18n'
 import type { Row } from './feedRows'
-import { anchorNudge, CARD_CHROME, estimate, Feed, pickAnchor } from './Feed'
+import { anchorNudge, CARD_CHROME, estimate, Feed, FILE_CARD_H, pickAnchor } from './Feed'
 import { Toast, TOAST_HOST } from './Toast'
 
 // jsdom has no layout: give the scroller and rows sizes so the virtualizer renders.
@@ -165,6 +165,38 @@ test('estimate: several attachments on one post sum their individual estimates',
   const a: Attachment = { title: 'one' } // 36 + 20 = 56
   const b: Attachment = { title: 'two', footer: 'f' } // 36 + 20 + 18 = 74
   expect(estimate(postRow(post({ attachments: [a, b] }), false))).toBe(28 + 56 + 74)
+})
+
+// estimate: file-cards brief (2026-09-30) review, fix round 1 — estimate()
+// never accounted for post.files at all; a file **card** (fileKind 'other'/
+// 'pdf', Attachments.tsx's `others` group — the kind FileCard.tsx now
+// renders at a fixed 320x64, wrapping) needs its own term, the same way an
+// AttachmentView card does above. Images/video/audio/text/markdown are
+// deliberately still not estimated (their own fixed-box sizes vary too much
+// for a cheap guess, and this gap predates the brief) — only the plain
+// "everything else" card, which is what changed height here.
+const zip = (id: string): FileView => ({ id, name: `${id}.zip`, ext: 'zip', mime: 'application/zip', size: 100 })
+const pdf = (id: string): FileView => ({ id, name: `${id}.pdf`, ext: 'pdf', mime: 'application/pdf', size: 100 })
+const png = (id: string): FileView => ({ id, name: `${id}.png`, ext: 'png', mime: 'image/png', size: 100 }) // not a card
+
+test('estimate: file cards add FILE_CARD_H per wrapped row (2 per row at the nominal feed width), not the flat base alone', () => {
+  expect(estimate(postRow(post({ files: [zip('a')] })))).toBe(64 + FILE_CARD_H) // 1 card: 1 row
+  expect(estimate(postRow(post({ files: [zip('a'), pdf('b')] })))).toBe(64 + FILE_CARD_H) // 2 cards: still 1 row
+  // 3 cards: 2 rows (2 + 1), with the row gap (8px) between them.
+  expect(estimate(postRow(post({ files: [zip('a'), pdf('b'), zip('c')] })))).toBe(64 + 2 * FILE_CARD_H + 8)
+  // 4 cards: 2 full rows, same gap.
+  expect(estimate(postRow(post({ files: [zip('a'), zip('b'), zip('c'), zip('d')] })))).toBe(64 + 2 * FILE_CARD_H + 8)
+})
+
+test('estimate: files that are not cards (e.g. an image, rendered as a thumbnail) add nothing', () => {
+  expect(estimate(postRow(post({ files: [png('a')] })))).toBe(64)
+  expect(estimate(postRow(post({ files: [] })))).toBe(64)
+  expect(estimate(postRow(post({ files: undefined })))).toBe(64)
+})
+
+test('estimate: file cards and message_attachments on the same post both add their own term', () => {
+  const a: Attachment = { title: 'one' } // 36 + 20 = 56
+  expect(estimate(postRow(post({ attachments: [a], files: [zip('a')] })))).toBe(64 + 56 + FILE_CARD_H)
 })
 
 // ---- history loads that leave the feed at the very top ----
