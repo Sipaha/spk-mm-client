@@ -37,9 +37,10 @@ vi.mock('../chat', () => ({
   retryPost: vi.fn(), saveThreadDraft: vi.fn(), sendReply: vi.fn().mockResolvedValue(undefined), setPostSaved: vi.fn(),
   uploadAttachments: vi.fn().mockResolvedValue(undefined),
   loadThreadFocus: vi.fn().mockResolvedValue(true), retryThreadRevalidation: vi.fn().mockResolvedValue(undefined),
+  backToResults: vi.fn(),
 }))
 
-const { loadOlderReplies, loadThreadFocus, openThread, retryThreadRevalidation } = await import('../chat')
+const { backToResults, loadOlderReplies, loadThreadFocus, openThread, retryThreadRevalidation } = await import('../chat')
 
 const server = (o: Partial<ServerDTO> = {}): ServerDTO => ({
   id: 5, name: 'Acme', url: 'https://mm', signed_in: true, username: 'alice', gitlab: false,
@@ -57,7 +58,7 @@ const thread = (o: Partial<ThreadDTO> = {}): ThreadDTO => ({
 
 beforeEach(() => {
   setLocale('en')
-  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null, threadFocus: null })
+  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null, threadFocus: null, search: null })
   vi.mocked(loadThreadFocus).mockReset().mockResolvedValue(true)
   vi.mocked(retryThreadRevalidation).mockReset().mockResolvedValue(undefined)
   vi.mocked(loadOlderReplies).mockReset().mockResolvedValue(true)
@@ -386,4 +387,21 @@ test('ThreadPane focus: "open in browser" goes to the target reply\'s permalink'
   expect(screen.getByText('Showing the replies around the one found')).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Open in browser' }))
   expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/s2')
+})
+
+test('a thread with search results kept: "← Back to results" instead of "Back to channel", in a narrow window too', async () => {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })) as unknown as typeof window.matchMedia
+  useStore.setState({ search: { serverId: 5, gen: 1 } as never })
+  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  expect(screen.queryByRole('button', { name: 'Back to channel' })).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'Back to results' }))
+  expect(backToResults).toHaveBeenCalled()
+})
+
+test('no search results kept (or of another server): no way back to them', () => {
+  useStore.setState({ search: { serverId: 9, gen: 1 } as never })
+  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  expect(screen.queryByRole('button', { name: 'Back to results' })).toBeNull()
 })

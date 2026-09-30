@@ -1,7 +1,8 @@
 import { ApiError, client, uploadAttachmentBrowser } from './api/client'
-import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, SidebarDTO, ThreadDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, SearchHit, SidebarDTO, ThreadDTO } from './api/types'
 import { errorMessage } from './errors'
 import { t } from './i18n'
+import { parseSearchTerms } from './search/terms'
 import { useStore } from './store'
 
 // findChannelItem: the sidebar's own record for channelId, if the given
@@ -77,6 +78,7 @@ export function resetChat() {
   again = false
   downloadsSeq++
   dropJump()
+  dropSearch()
 }
 
 function dropJump() {
@@ -421,6 +423,110 @@ export async function retryThreadRevalidation(serverId: number, rootId: string):
   } catch (e) {
     if (!cancelled(e)) report(e)
   }
+}
+
+// --- Message search (spec «Поиск», Секция 2) ------------------------------
+
+// searchGen: the latest session; searchAbort lets go of its page request.
+// A page answer lands only while its session is the store's (patchSearch
+// checks gen): a newer submit, a close, another team or server drop it.
+let searchGen = 0
+let searchAbort: AbortController | null = null
+
+function dropSearch() {
+  searchGen++
+  searchAbort?.abort()
+  searchAbort = null
+}
+
+const errCode = (e: unknown) => (e instanceof ApiError ? e.code : 'internal')
+
+// submitSearch runs q in the open team and shows its first page in the
+// right panel — which shows one thing at a time: an open thread is closed
+// (in Go too). An empty query asks nothing.
+export async function submitSearch(q: string): Promise<void> {
+  const submitted = q.trim()
+  const s = useStore.getState()
+  const serverId = s.selectedId
+  const teamId = s.sidebar?.team_id
+  if (!submitted || serverId === null || !teamId) return
+  dropSearch()
+  const gen = searchGen
+  closeThread(serverId)
+  s.setSearch({
+    serverId, teamId, submitted, terms: parseSearchTerms(submitted), hits: [], page: 0, hasNext: false, limitReached: false,
+    loading: true, error: null, gen, anchor: null,
+  })
+  await fetchSearchPage(gen)
+}
+
+// fetchSearchPage asks session gen's next page (search.page). page moves by
+// the answer whatever dedup kept (the server's offset is not a snapshot: a
+// new post shifts it and repeats a hit — kept once, by id).
+async function fetchSearchPage(gen: number) {
+  const cur = useStore.getState().search
+  if (!cur || cur.gen !== gen) return
+  const ctl = new AbortController()
+  searchAbort = ctl
+  const { serverId, teamId, submitted, page } = cur
+  useStore.getState().patchSearch(gen, { loading: true, error: null })
+  try {
+    const r = await client.searchPosts(serverId, teamId, submitted, page, -new Date().getTimezoneOffset() * 60, ctl.signal)
+    useStore.getState().patchSearch(gen, (s) => {
+      const have = new Set(s.hits.map((h) => h.id))
+      const fresh = (r.hits ?? []).filter((h) => !have.has(h.id) && have.add(h.id))
+      return { hits: [...s.hits, ...fresh], page: page + 1, hasNext: r.has_next, limitReached: r.limit_reached, loading: false }
+    })
+  } catch (e) {
+    if (cancelled(e)) {
+      useStore.getState().patchSearch(gen, { loading: false })
+      return
+    }
+    useStore.getState().patchSearch(gen, { loading: false, error: errCode(e) })
+  } finally {
+    if (searchAbort === ctl) searchAbort = null
+  }
+}
+
+// loadMoreSearch: the next page, as the list nears its end — one at a
+// time, while there is one, never past a failure (retrySearch is the
+// user's).
+export async function loadMoreSearch(): Promise<void> {
+  const s = useStore.getState().search
+  if (!s || s.loading || !s.hasNext || s.error) return
+  await fetchSearchPage(s.gen)
+}
+
+// retrySearch: "Retry" — the page that failed, again.
+export async function retrySearch(): Promise<void> {
+  const s = useStore.getState().search
+  if (!s || s.loading) return
+  await fetchSearchPage(s.gen)
+}
+
+// closeSearch: the results' "×"/Esc — the session ends with its request.
+export function closeSearch() {
+  dropSearch()
+  useStore.getState().setSearch(null)
+}
+
+// backToResults: "← Back to results" from a thread — the thread is closed
+// in Go (closeThread: threadSeq moves, an open on its way is dropped) and
+// the panel shows the results again, where the list was (its anchor).
+export function backToResults() {
+  const s = useStore.getState().search
+  if (!s) return
+  closeThread(s.serverId)
+  useStore.getState().setRhs('search')
+}
+
+// openHit: a result's click — the jump to its post (jumpToPost: quiet when
+// overtaken, a real failure thrown for the card to show).
+export function openHit(hit: SearchHit): Promise<void> {
+  const s = useStore.getState().search
+  const serverId = s?.serverId ?? useStore.getState().selectedId
+  if (serverId === null) return Promise.resolve()
+  return jumpToPost(serverId, hit.channel_id, hit.id, hit.root_id || undefined)
 }
 
 // --- Thread panel (Task 6) -----------------------------------------------

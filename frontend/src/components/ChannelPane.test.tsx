@@ -37,6 +37,7 @@ vi.mock('../chat', () => ({
   revealDownload: vi.fn(), revealSavedFile: vi.fn(), fileKey: (s: number, f: string) => `${s}/${f}`, saveDraft: vi.fn(), sendPost: vi.fn(), uploadAttachments: vi.fn().mockResolvedValue(undefined),
   attachFromClipboard: vi.fn(), pickAttachments: vi.fn(), removeAttachment: vi.fn(), retryAttachment: vi.fn(),
   loadNewer: vi.fn().mockResolvedValue(undefined), retryRevalidation: vi.fn().mockResolvedValue(undefined),
+  submitSearch: vi.fn().mockResolvedValue(undefined),
 }))
 
 const { uploadAttachments } = await import('../chat')
@@ -167,4 +168,13 @@ test('header: a markdown channel header renders as inline markdown — link elem
 test('header: no channel header means no header-text element at all', () => {
   const { container } = render(<ChannelPane server={server()} channel={channel({ header: '' })} onReauth={() => {}} />)
   expect(container.querySelector('header .text-xs.text-fg-muted')).toBeNull()
+})
+
+test('the header has the search field right before the downloads button', () => {
+  const { container } = render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
+  const header = container.querySelector('header')!
+  const box = within(header).getByRole('combobox', { name: 'Search messages' })
+  const downloads = within(header).getByRole('button', { name: 'Downloads' })
+  expect(box.compareDocumentPosition(downloads) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(box).toHaveClass('h-6')
 })

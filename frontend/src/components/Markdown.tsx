@@ -11,9 +11,11 @@ import { emojiNames, isEmojiOnlyText, remarkEmoji } from './remarkEmoji'
 import { openChannel } from '../chat'
 import { useStore } from '../store'
 import { remarkChannelMentions } from './remarkChannelMentions'
+import { remarkHighlight } from './remarkHighlight'
 import { remarkMentions } from './remarkMentions'
 
 const plugins = [remarkGfm, remarkBreaks, remarkMentions, remarkChannelMentions, remarkEmoji]
+const NO_HIGHLIGHT: string[] = []
 
 // ChannelMention: a ~name the selected server's sidebar knows (the team on
 // screen, like the webapp's current-team lookup) links to that channel by
@@ -115,6 +117,7 @@ export const Markdown = memo(function Markdown({
   serverId = 0,
   emojiInfo,
   inline = false,
+  highlight = NO_HIGHLIGHT,
 }: {
   text: string
   me: string
@@ -134,7 +137,12 @@ export const Markdown = memo(function Markdown({
   // Root wraps in <span>, not <div>, so it never breaks its parent's own
   // inline/flex flow.
   inline?: boolean
+  // highlight: a search result's terms to <mark> (remarkHighlight — last,
+  // after the mention/channel/emoji plugins). Keep the array stable: it
+  // keys the plugin list.
+  highlight?: string[]
 }) {
+  const remarkPlugins = useMemo(() => (highlight.length > 0 ? [...plugins, [remarkHighlight, highlight] as const] : plugins), [highlight])
   // The whole-message jumbo rule (mm-10.11): only ":name:" shortcodes and
   // whitespace, AND every one of them resolves (standard or known-custom) —
   // fix round 1 #2. isEmojiOnlyText is just the cheap shape pre-check: most
@@ -194,6 +202,7 @@ export const Markdown = memo(function Markdown({
         </span>
       )
     },
+    mark: ({ children }) => <mark className="rounded-sm bg-mention-bg text-mention-fg">{children}</mark>,
     table: ({ children }) => (
       <div className="overflow-x-auto">
         <table>{children}</table>
@@ -225,7 +234,7 @@ export const Markdown = memo(function Markdown({
   const Wrapper: 'span' | 'div' = inline ? 'span' : 'div'
   return (
     <Wrapper className={inline ? undefined : 'md break-words'}>
-      <ReactMarkdown remarkPlugins={plugins} skipHtml components={inline ? { ...components, ...inlineComponents } : components}>
+      <ReactMarkdown remarkPlugins={remarkPlugins as never} skipHtml components={inline ? { ...components, ...inlineComponents } : components}>
         {text}
       </ReactMarkdown>
     </Wrapper>

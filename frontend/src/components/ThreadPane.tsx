@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FileView, ServerDTO, ThreadDTO } from '../api/types'
 import { errorMessage } from '../errors'
 import {
-  copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, loadThreadFocus,
+  backToResults, copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, loadThreadFocus,
   markUnread, openFile, openLink, openThread, react, reactionUsers, retryPost, retryThreadRevalidation, saveThreadDraft, sendReply,
   setPostSaved, uploadAttachments,
 } from '../chat'
@@ -28,6 +28,9 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const editingId = useStore((s) => s.editingId)
   const threadAttachments = useStore((s) => s.threadAttachments)
   const threadFocus = useStore((s) => s.threadFocus)
+  // A kept search session: the way back to its results replaces "← Back
+  // to channel" (spec «Поиск», Секция 2 — one right panel at a time).
+  const hasResults = useStore((s) => s.search?.serverId === server.id)
   const narrow = useNarrow()
   const paneRef = useRef<HTMLElement>(null)
   const [viewer, setViewer] = useState<{ rootId: string; files: FileView[]; index: number } | null>(null)
@@ -176,7 +179,18 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           by side when this panel is open next to the channel — see that
           file's header comment for the full before/after measurement. */}
       <header className="flex h-8 items-center gap-2 border-b border-line bg-panel px-3">
-        {narrow && (
+        {hasResults ? (
+          <button
+            type="button"
+            aria-label={t('search.backToResults')}
+            title={t('search.backToResults')}
+            onClick={backToResults}
+            className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-sm text-fg-muted hover:bg-hover hover:text-fg"
+          >
+            <IconChevronLeft size={18} />
+            {t('search.backToResults')}
+          </button>
+        ) : narrow && (
           <button
             type="button"
             aria-label={t('thread.backToChannel')}

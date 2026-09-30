@@ -18,6 +18,7 @@ import { fileKind } from './files'
 import { ChannelTypeMarker, IconDownload } from './icons'
 import { Markdown } from './Markdown'
 import type { PostActions } from './PostItem'
+import { SearchBox } from './SearchBox'
 import { TOAST_HOST } from './Toast'
 import { Viewer } from './Viewer'
 
@@ -181,13 +182,16 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
             <Markdown text={channel.header} me={me.username} onLink={actions.link} serverId={server.id} emojiInfo={actions.emojiInfo} inline />
           </div>
         )}
+        <div className="ml-auto flex min-w-0 shrink items-center">
+          <SearchBox variant="header" />
+        </div>
         <button
           ref={downloadsBtnRef}
           type="button"
           title={downloadsLabel}
           aria-label={downloadsLabel}
           onClick={() => (downloadsOpen ? closeDownloadsPanel() : openDownloadsPanel())}
-          className="relative ml-auto flex shrink-0 items-center justify-center rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
+          className="relative flex shrink-0 items-center justify-center rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
         >
           <IconDownload size={16} />
           {activeDownloads > 0 && (

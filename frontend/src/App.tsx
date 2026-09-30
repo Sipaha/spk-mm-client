@@ -14,6 +14,7 @@ import { Splitter } from './components/Splitter'
 import {
   RAIL_WIDTH, SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
 } from './components/splitter'
+import { SearchPane } from './components/SearchPane'
 import { ThreadPane } from './components/ThreadPane'
 import { Announcer, Toast } from './components/Toast'
 import { IconClose } from './components/icons'
@@ -44,7 +45,8 @@ function useWindowWidth(): number {
 
 export function App() {
   const {
-    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, heldChannel, setError, loginFailed, setInfo, showSignIn,
+    servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, rhs, search, heldChannel, setError, loginFailed, setInfo,
+    showSignIn,
   } = useStore()
 
   // Sidebar/thread-panel splitter widths (theme brief 2026-09-28 scope 3a):
@@ -55,7 +57,10 @@ export function App() {
   const [threadWidth, setThreadWidthState] = useState(THREAD_DEFAULT)
   const windowWidth = useWindowWidth()
   const narrow = useNarrow()
-  const threadOpen = Boolean(thread) && !narrow
+  // The right panel shows one thing at a time (rhs): a thread or the
+  // search results — the same width, splitter and narrow overlay.
+  const panel = rhs === 'thread' && thread ? 'thread' : rhs === 'search' && search ? 'search' : null
+  const threadOpen = panel !== null && !narrow
 
   const selected = servers.find((s) => s.id === selectedId)
   const chat = selected && selected.signed_in && signInFor !== selected.id
@@ -224,7 +229,7 @@ export function App() {
             {banner}
             <div className="relative flex min-h-0 flex-1">
               <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />
-              {thread && (
+              {panel && (
                 <>
                   {!narrow && (
                     <Splitter
@@ -237,7 +242,11 @@ export function App() {
                       onCommit={commitThreadWidth}
                     />
                   )}
-                  <ThreadPane server={selected} thread={thread} onClose={() => closeThread(selected.id)} />
+                  {panel === 'thread' && thread ? (
+                    <ThreadPane server={selected} thread={thread} onClose={() => closeThread(selected.id)} />
+                  ) : (
+                    search && <SearchPane server={selected} search={search} />
+                  )}
                 </>
               )}
             </div>

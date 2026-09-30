@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { AttachmentView, ChannelDTO, DownloadView, PostView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, DownloadView, PostView, SearchHit, SearchPageDTO, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
 import { setLocale } from './i18n'
 import { useStore } from './store'
 
@@ -56,6 +56,7 @@ const {
   openDownloadsPanel, openFile, openFromNotification, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
   react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, revealSavedFile, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
   jumpToPost, loadNewer, retryRevalidation, loadThreadFocus, retryThreadRevalidation,
+  submitSearch, loadMoreSearch, retrySearch, closeSearch, backToResults, openHit,
 } = await import('./chat')
 const { ApiError } = await import('./api/client')
 
@@ -125,7 +126,9 @@ beforeEach(() => {
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
     editingId: null, downloads: [], downloadsOpen: false, attachments: [], attachError: null,
     thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null,
+    rhs: null, search: null, searchDraft: '',
   })
+  vi.mocked(client.searchPosts).mockReset().mockResolvedValue({ hits: [], has_next: false, limit_reached: false })
 })
 
 const thread = (rootId: string, over: Partial<ThreadDTO> = {}): ThreadDTO => ({
@@ -1326,4 +1329,201 @@ test('fix 4: a failed read is reported only while nothing newer began after it',
   vi.mocked(client.getThread).mockRejectedValueOnce(new ApiError('offline', ''))
   await refreshThread(1, 'r1')
   expect(useStore.getState().lastError).not.toBeNull()
+})
+
+// --- Search session (Task 7) ---------------------------------------------
+
+const hit = (id: string, over: Partial<SearchHit> = {}): SearchHit => ({
+  ...post({ id, message: 'hello ' + id }), channel_id: 'a', channel_name: 'a', channel_display: 'A', channel_type: 'O',
+  jumpable: true, matches: [], ...over,
+})
+const page = (ids: string[], has_next = false, limit_reached = false): SearchPageDTO => ({ hits: ids.map((id) => hit(id)), has_next, limit_reached })
+const searchReady = () => useStore.getState().setSidebar(1, sidebar())
+
+test('search: a submit asks page 0 of the team, shows the results in the panel with the terms to highlight', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1', 'h2'], true))
+  await submitSearch('  hello from:bob ')
+  expect(client.searchPosts).toHaveBeenCalledWith(1, 't1', 'hello from:bob', 0, expect.any(Number), expect.any(AbortSignal))
+  const s = useStore.getState()
+  expect(s.rhs).toBe('search')
+  expect(s.search).toMatchObject({ serverId: 1, teamId: 't1', submitted: 'hello from:bob', terms: ['hello'], page: 1, hasNext: true, loading: false, error: null })
+  expect(s.search?.hits.map((h) => h.id)).toEqual(['h1', 'h2'])
+})
+
+test('search: an empty query asks nothing', async () => {
+  searchReady()
+  await submitSearch('   ')
+  expect(client.searchPosts).not.toHaveBeenCalled()
+  expect(useStore.getState().search).toBeNull()
+})
+
+test('search: a submit closes an open thread (one panel), in Go too', async () => {
+  searchReady()
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  await submitSearch('hello')
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  expect(useStore.getState().thread).toBeNull()
+  expect(useStore.getState().rhs).toBe('search')
+})
+
+test('search: more pages — page moves by the answer, new hits between pages are deduplicated, the end stops asking', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts)
+    .mockResolvedValueOnce(page(['h1', 'h2'], true))
+    // a new post shifted the offset: h2 comes again
+    .mockResolvedValueOnce(page(['h2', 'h3'], true))
+    .mockResolvedValueOnce(page(['h3'], false))
+  await submitSearch('hello')
+  await loadMoreSearch()
+  expect(client.searchPosts).toHaveBeenLastCalledWith(1, 't1', 'hello', 1, expect.any(Number), expect.any(AbortSignal))
+  expect(useStore.getState().search).toMatchObject({ page: 2, hasNext: true })
+  expect(useStore.getState().search?.hits.map((h) => h.id)).toEqual(['h1', 'h2', 'h3'])
+  await loadMoreSearch()
+  expect(useStore.getState().search).toMatchObject({ page: 3, hasNext: false })
+  expect(useStore.getState().search?.hits.map((h) => h.id)).toEqual(['h1', 'h2', 'h3'])
+  await loadMoreSearch()
+  expect(client.searchPosts).toHaveBeenCalledTimes(3)
+})
+
+test('search: one page at a time', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1'], true))
+  await submitSearch('hello')
+  const d = deferred<SearchPageDTO>()
+  vi.mocked(client.searchPosts).mockReturnValueOnce(d.p)
+  const a = loadMoreSearch()
+  const b = loadMoreSearch()
+  d.resolve(page(['h2']))
+  await Promise.all([a, b])
+  expect(client.searchPosts).toHaveBeenCalledTimes(2)
+})
+
+test('search: the limit reached is kept apart from the end', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1'], false, true))
+  await submitSearch('hello')
+  expect(useStore.getState().search).toMatchObject({ hasNext: false, limitReached: true })
+})
+
+test('search: a failure is kept as its code with the hits so far; retry asks the same page again', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1'], true)).mockRejectedValueOnce(new ApiError('offline', ''))
+  await submitSearch('hello')
+  await loadMoreSearch()
+  expect(useStore.getState().search).toMatchObject({ error: 'offline', loading: false, page: 1 })
+  expect(useStore.getState().search?.hits.map((h) => h.id)).toEqual(['h1'])
+  expect(useStore.getState().lastError).toBeNull()
+  await loadMoreSearch() // no automatic retry past an error
+  expect(client.searchPosts).toHaveBeenCalledTimes(2)
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h2']))
+  await retrySearch()
+  expect(client.searchPosts).toHaveBeenLastCalledWith(1, 't1', 'hello', 1, expect.any(Number), expect.any(AbortSignal))
+  expect(useStore.getState().search).toMatchObject({ error: null, hasNext: false })
+  expect(useStore.getState().search?.hits.map((h) => h.id)).toEqual(['h1', 'h2'])
+})
+
+test('search: a newer submit drops the older answer and lets go of its request', async () => {
+  searchReady()
+  const first = deferred<SearchPageDTO>()
+  vi.mocked(client.searchPosts).mockReturnValueOnce(first.p).mockResolvedValueOnce(page(['new']))
+  const a = submitSearch('old')
+  await submitSearch('new')
+  const signal = vi.mocked(client.searchPosts).mock.calls[0][5] as AbortSignal
+  expect(signal.aborted).toBe(true)
+  first.resolve(page(['old']))
+  await a
+  expect(useStore.getState().search).toMatchObject({ submitted: 'new' })
+  expect(useStore.getState().search?.hits.map((h) => h.id)).toEqual(['new'])
+})
+
+test('search: closing ends the session and its request', async () => {
+  searchReady()
+  const d = deferred<SearchPageDTO>()
+  vi.mocked(client.searchPosts).mockReturnValueOnce(d.p)
+  const a = submitSearch('hello')
+  closeSearch()
+  expect(useStore.getState().search).toBeNull()
+  expect(useStore.getState().rhs).toBeNull()
+  d.resolve(page(['h1']))
+  await a
+  expect(useStore.getState().search).toBeNull()
+})
+
+test('search: a channel switch closes the thread but not the search; the panel goes back to the results', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
+  await submitSearch('hello')
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  expect(useStore.getState().rhs).toBe('thread')
+  vi.mocked(client.openChannel).mockResolvedValue(chan('b'))
+  await openChannel(1, 'b')
+  expect(useStore.getState().thread).toBeNull()
+  expect(useStore.getState().rhs).toBe('search')
+  expect(useStore.getState().search?.hits).toHaveLength(1)
+})
+
+test('search: back to the results closes the thread in Go and keeps the list position', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
+  await submitSearch('hello')
+  const gen = useStore.getState().search!.gen
+  useStore.getState().patchSearch(gen, { anchor: { id: 'h1', offset: -40 } })
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  vi.mocked(client.closeThread).mockClear()
+  backToResults()
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  expect(useStore.getState()).toMatchObject({ rhs: 'search', thread: null })
+  expect(useStore.getState().search?.anchor).toEqual({ id: 'h1', offset: -40 })
+})
+
+test('search: another team ends the search; a refresh of the same team keeps it and makes a hit of a new channel jumpable', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({
+    hits: [hit('h1'), hit('h2', { channel_id: 'c-new', channel_name: '', channel_display: '', channel_type: '', jumpable: false })],
+    has_next: false, limit_reached: false,
+  })
+  await submitSearch('hello')
+  const cats = [{ id: 'x', type: 'channels', name: 'Channels', collapsed: false, channels: [{ id: 'c-new', name: 'New One', slug: 'new-one', type: 'O', unread: false, mentions: 0, muted: false }] }]
+  useStore.getState().setSidebar(1, sidebar({ categories: cats }))
+  expect(useStore.getState().search?.hits[1]).toMatchObject({ jumpable: true, channel_name: 'new-one', channel_display: 'New One', channel_type: 'O' })
+  expect(useStore.getState().search?.hits[0]).toMatchObject({ jumpable: true, channel_name: 'a' })
+  useStore.getState().setSidebar(1, sidebar({ team_id: 't2' }))
+  expect(useStore.getState().search).toBeNull()
+  expect(useStore.getState().rhs).toBeNull()
+})
+
+test('search: a server switch ends it', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
+  await submitSearch('hello')
+  vi.mocked(client.sidebar).mockResolvedValue(sidebar())
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  selectServer(2)
+  expect(useStore.getState().search).toBeNull()
+  expect(useStore.getState().rhs).toBeNull()
+})
+
+test('search: opening a hit jumps to its post; a failure is thrown for the card, a cancelled one is quiet', async () => {
+  searchReady()
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
+  await submitSearch('hello')
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce({ post_id: 'h1', root_id: '', in_feed: true })
+  await openHit(hit('h1'))
+  expect(client.jumpToPost).toHaveBeenCalledWith(1, 'a', 'h1', expect.any(AbortSignal))
+  expect(useStore.getState().focus?.postId).toBe('h1')
+  expect(useStore.getState().rhs).toBe('search') // the results stay open beside the feed
+  vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('post_gone', ''))
+  await expect(openHit(hit('h1'))).rejects.toMatchObject({ code: 'post_gone' })
+  vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('cancelled', ''))
+  await expect(openHit(hit('h1'))).resolves.toBeUndefined()
 })

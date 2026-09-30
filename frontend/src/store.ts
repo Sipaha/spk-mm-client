@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, AttachmentView, ChannelDTO, DownloadView, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
+import type { AppInfo, AttachmentView, ChannelDTO, ChannelItem, DownloadView, SearchHit, ServerDTO, SidebarDTO, ThreadDTO } from './api/types'
 import type { HeldChannel } from './components/sidebarSections'
 import { forgetRecent } from './emoji/recent'
 
@@ -34,6 +34,57 @@ export interface Focus {
   nonce: number
 }
 let focusSeq = 0
+
+// SearchSession: a search's results (spec «Поиск», Секция 2), kept apart
+// from the panel on screen (rhs) and from the field's draft: editing the
+// field changes neither the results nor their highlighting. serverId/teamId:
+// where it ran (another server or team ends it); submitted: the query;
+// terms: its words to highlight (parseSearchTerms); page: the next page to
+// ask (moves by the server's answer, whatever dedup kept); hasNext: ask it;
+// limitReached: more exists but the session's last page was asked;
+// error: the code of the last page's failure; gen: the session (a late
+// answer of another is dropped); anchor: the list's scroll position (the
+// first hit on screen and its offset — survives a width change and the
+// panel's unmount while a thread shows).
+export interface SearchSession {
+  serverId: number
+  teamId: string
+  submitted: string
+  terms: string[]
+  hits: SearchHit[]
+  page: number
+  hasNext: boolean
+  limitReached: boolean
+  loading: boolean
+  error: string | null
+  gen: number
+  anchor: { id: string; offset: number } | null
+}
+
+export type Rhs = 'thread' | 'search' | null
+
+// withSidebar: the session's hits as the fresh sidebar of its team knows
+// their channels — a hit whose channel the client did not know yet
+// (jumpable false: its metadata lagged) becomes jumpable once the channel
+// is there; a known one takes its current name. Hits are kept either way.
+function withSidebar(search: SearchSession, sb: SidebarDTO): SearchSession {
+  const items = new Map<string, ChannelItem>()
+  for (const c of sb.categories ?? []) for (const it of c.channels ?? []) items.set(it.id, it)
+  let changed = false
+  const hits = search.hits.map((h) => {
+    const it = items.get(h.channel_id)
+    if (!it) return h
+    const name = it.slug || h.channel_name
+    if (h.jumpable && h.channel_display === it.name && h.channel_name === name && h.channel_type === it.type) return h
+    changed = true
+    return { ...h, jumpable: true, channel_display: it.name, channel_name: name, channel_type: it.type }
+  })
+  return changed ? { ...search, hits } : search
+}
+
+// afterThread: the panel once the thread is gone — the search results if a
+// session is kept (a thread opened from them goes back to them), else none.
+const afterThread = (s: { rhs: Rhs; search: SearchSession | null }): Rhs => (s.rhs === 'thread' ? (s.search ? 'search' : null) : s.rhs)
 
 interface State {
   servers: ServerDTO[]
@@ -96,6 +147,11 @@ interface State {
   // panel's (a CRT reply jumped to) — each gone with its channel/thread.
   focus: Focus | null
   threadFocus: Focus | null
+  // rhs: what the right panel shows — one at a time, sharing its width,
+  // splitter and narrow overlay (App.tsx).
+  rhs: Rhs
+  search: SearchSession | null
+  searchDraft: string // the search field's text
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -121,6 +177,13 @@ interface State {
   setHeldChannel(h: HeldChannel | null): void
   setFocus(postId: string | null): void
   setThreadFocus(postId: string | null): void
+  setRhs(rhs: Rhs): void
+  // setSearch: a new session shows in the panel; null ends it.
+  setSearch(search: SearchSession | null): void
+  // patchSearch: applies to session gen only (a late answer of an ended
+  // or replaced one is dropped).
+  patchSearch(gen: number, patch: Partial<SearchSession> | ((s: SearchSession) => Partial<SearchSession>)): void
+  setSearchDraft(q: string): void
 }
 
 const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
@@ -128,6 +191,7 @@ const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state ===
 const cleared = {
   sidebar: null, channel: null, editingId: null, attachments: [], attachError: null,
   thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null, focus: null, threadFocus: null,
+  rhs: null, search: null, searchDraft: '',
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -157,6 +221,9 @@ export const useStore = create<State>((set, get) => ({
   heldChannel: null,
   focus: null,
   threadFocus: null,
+  rhs: null,
+  search: null,
+  searchDraft: '',
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -193,7 +260,15 @@ export const useStore = create<State>((set, get) => ({
   setFormattingBarHidden: (hidden) => set({ formattingBarHidden: hidden, formattingBarLoaded: true }),
   showSignIn: (id) => set({ signInFor: id }),
   setSidebar(serverId, sb) {
-    if (get().selectedId === serverId) set({ sidebar: sb })
+    const s = get()
+    if (s.selectedId !== serverId) return
+    // Another team ends the search (it ran in its team); a refresh of the
+    // same team keeps it, with its hits' channels as the sidebar knows them now.
+    if (s.search && s.search.teamId !== sb.team_id) {
+      set({ sidebar: sb, search: null, rhs: s.rhs === 'search' ? null : s.rhs })
+      return
+    }
+    set({ sidebar: sb, ...(s.search ? { search: withSidebar(s.search, sb) } : {}) })
   },
   setChannel(serverId, ch) {
     if (get().selectedId !== serverId) return
@@ -206,7 +281,10 @@ export const useStore = create<State>((set, get) => ({
     set({
       channel: ch,
       ...(switchedChannel
-        ? { editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null, focus: null, threadFocus: null }
+        ? {
+            editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null, focus: null,
+            threadFocus: null, rhs: afterThread(get()),
+          }
         : {}),
     })
   },
@@ -237,12 +315,27 @@ export const useStore = create<State>((set, get) => ({
   setAttachments: (list) => set({ attachments: list }),
   setAttachError: (msg) => set({ attachError: msg }),
   // Another thread (or none) takes its focus with it.
-  setThread: (thread) => set((s) => ({ thread, ...(thread?.root_id !== s.thread?.root_id ? { threadFocus: null } : {}) })),
+  // A thread shows in the panel; the thread gone, the panel goes back to
+  // the search results if a session is kept.
+  setThread: (thread) =>
+    set((s) => ({
+      thread,
+      rhs: thread ? 'thread' : afterThread(s),
+      ...(thread?.root_id !== s.thread?.root_id ? { threadFocus: null } : {}),
+    })),
   setThreadAttachments: (list) => set({ threadAttachments: list }),
   setThreadAttachError: (msg) => set({ threadAttachError: msg }),
   setHeldChannel: (h) => set({ heldChannel: h }),
   setFocus: (postId) => set({ focus: postId === null ? null : { postId, nonce: ++focusSeq } }),
   setThreadFocus: (postId) => set({ threadFocus: postId === null ? null : { postId, nonce: ++focusSeq } }),
+  setRhs: (rhs) => set({ rhs }),
+  setSearch: (search) => set((s) => ({ search, rhs: search ? 'search' : s.rhs === 'search' ? null : s.rhs })),
+  patchSearch(gen, patch) {
+    const cur = get().search
+    if (!cur || cur.gen !== gen) return
+    set({ search: { ...cur, ...(typeof patch === 'function' ? patch(cur) : patch) } })
+  },
+  setSearchDraft: (q) => set({ searchDraft: q }),
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).

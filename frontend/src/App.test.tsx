@@ -72,7 +72,7 @@ beforeEach(() => {
   resetChat()
   useStore.setState({
     servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null,
-    thread: null, threadAttachments: [], threadAttachError: null,
+    thread: null, threadAttachments: [], threadAttachError: null, rhs: null, search: null, searchDraft: '',
   })
 })
 
@@ -224,4 +224,71 @@ test('a downloads_changed event refreshes the list and the header badge shows th
   ])
   await act(async () => h.emit!({ type: 'downloads_changed', payload: { id: 1 } }))
   expect(await screen.findByRole('button', { name: 'Downloads — active: 1' })).toBeInTheDocument()
+})
+
+// --- Search results in the right panel (Task 7) ---------------------------
+
+const searchHit = (o: Record<string, unknown> = {}) => ({
+  id: 'h1', user_id: 'u-bob', author: 'bob', message: 'привет мир', create_at: Date.now(), channel_id: 'c-town',
+  channel_name: 'town-square', channel_display: 'Town Square', channel_type: 'O', jumpable: true, matches: [], ...o,
+})
+
+async function searchFor(q: string) {
+  const box = screen.getByRole('combobox', { name: 'Search messages' })
+  await userEvent.clear(box)
+  await userEvent.type(box, q + '{Enter}')
+  return screen.findByRole('complementary', { name: 'Search results' })
+}
+
+test('search: the results and a thread share the right panel — a thread from them goes back to them; a channel switch keeps them', async () => {
+  const { client } = await import('./api/client')
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({ hits: [searchHit()], has_next: false, limit_reached: false })
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  const pane = await searchFor('привет')
+  expect(client.searchPosts).toHaveBeenCalledWith(1, 't1', 'привет', 0, expect.any(Number), expect.any(AbortSignal))
+  expect(pane.querySelector('mark')).toHaveTextContent('привет')
+
+  await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))
+  expect(await screen.findByRole('complementary', { name: 'Thread' })).toBeInTheDocument()
+  expect(screen.queryByRole('complementary', { name: 'Search results' })).toBeNull()
+  vi.mocked(client.closeThread).mockClear()
+  await userEvent.click(screen.getByRole('button', { name: 'Back to results' }))
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  expect(screen.getByRole('complementary', { name: 'Search results' })).toBeInTheDocument()
+  expect(screen.queryByRole('complementary', { name: 'Thread' })).toBeNull()
+
+  await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))
+  await screen.findByRole('complementary', { name: 'Thread' })
+  await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town' } }))
+  expect(screen.queryByRole('complementary', { name: 'Thread' })).toBeNull()
+  expect(screen.getByRole('complementary', { name: 'Search results' })).toBeInTheDocument()
+})
+
+test('search: another team closes the results; a refresh of the same team keeps them and makes a hit of a new channel jumpable', async () => {
+  const { client } = await import('./api/client')
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({
+    hits: [searchHit({ channel_id: 'c-new', channel_name: '', channel_display: '', channel_type: '', jumpable: false })],
+    has_next: false, limit_reached: false,
+  })
+  h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+  render(<App />)
+  await screen.findByRole('heading', { name: /Town Square/ })
+  const pane = await searchFor('привет')
+  expect(pane.querySelector('[data-hit-id="h1"]')).toHaveAttribute('aria-disabled', 'true')
+
+  const withNew: SidebarDTO = {
+    ...sb,
+    categories: [{ ...sb.categories![0], channels: [...sb.categories![0].channels!, { id: 'c-new', name: 'New One', slug: 'new-one', type: 'O', unread: false, mentions: 0, muted: false }] }],
+  }
+  vi.mocked(client.sidebar).mockResolvedValueOnce(withNew)
+  await act(async () => h.emit!({ type: 'sidebar_changed', payload: { server_id: 1 } }))
+  const card = screen.getByRole('complementary', { name: 'Search results' }).querySelector('[data-hit-id="h1"]')!
+  expect(card).not.toHaveAttribute('aria-disabled')
+  expect(card).toHaveTextContent('~new-one')
+
+  vi.mocked(client.sidebar).mockResolvedValueOnce({ ...sb, team_id: 't2' })
+  await act(async () => h.emit!({ type: 'sidebar_changed', payload: { server_id: 1 } }))
+  expect(screen.queryByRole('complementary', { name: 'Search results' })).toBeNull()
 })
