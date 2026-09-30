@@ -82,11 +82,16 @@ type Options struct {
 	// "" keeps them in memory (tests).
 	FilesDir string
 
-	// SearchSQLEngine answers POST /teams/{id}/posts/search exactly like the
-	// server's database engine: page > 0 is always empty and page 0 holds up
-	// to 100 hits whatever per_page says. Unset, the fake pages by offset
-	// (page × per_page), like a search engine (search.go).
+	// POST /teams/{id}/posts/search answers like Bleve by default — the
+	// engine of the target server: offset pages (page × per_page) and
+	// matches {} (search.go). SearchSQLEngine answers like the database
+	// fallback instead: page > 0 always empty, page 0 up to 100 hits
+	// whatever per_page says, matches null, Postgres matching.
 	SearchSQLEngine bool
+	// SearchMatches fills matches per hit — post id → the words of its
+	// message the query matched — as Elasticsearch does; neither Bleve nor
+	// the database engine ever fill it.
+	SearchMatches bool
 }
 
 // DefaultMaxFileSize mirrors the real server's default (model/config.go,

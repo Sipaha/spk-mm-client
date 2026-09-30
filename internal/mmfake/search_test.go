@@ -47,36 +47,91 @@ func seedQuokka(s *Server) quokkaPosts {
 	}
 }
 
-func TestSearchWordsAndPhrase(t *testing.T) {
-	s := Start(Options{})
-	defer s.Close()
-	q := seedQuokka(s)
-	a := loginAs(t, s, "alice")
+// Both engines, where they agree.
+func TestSearchWords(t *testing.T) {
+	for _, sql := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sql=%v", sql), func(t *testing.T) {
+			s := Start(Options{SearchSQLEngine: sql})
+			defer s.Close()
+			q := seedQuokka(s)
+			a := loginAs(t, s, "alice")
 
-	assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("zephyr quokka", false), "AND of words, newest first")
-	assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("ZEPHYR", false), "case-insensitive")
-	assert.Equal(t, []string{q.p3.ID, q.p2.ID, q.p1.ID}, a.search("zephyr green", true), "is_or_search: OR of words")
-	assert.Empty(t, a.search("zephyr green", false))
-	assert.Empty(t, a.search("zeph", false), "whole words only, no substring")
-	assert.Equal(t, []string{q.p1.ID}, a.search(`"quokka rollout"`, false), "phrase: adjacent words")
-	assert.Empty(t, a.search(`"rollout quokka"`, false), "phrase keeps word order")
-	assert.Equal(t, []string{q.p4.ID}, a.search("квокка", false), "Unicode case folding")
-	assert.Equal(t, []string{q.p4.ID}, a.search("мир!", false), "punctuation is not part of a word")
+			assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("zephyr quokka", false), "AND of words, newest first")
+			assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("ZEPHYR", false), "case-insensitive")
+			assert.Equal(t, []string{q.p3.ID, q.p2.ID, q.p1.ID}, a.search("zephyr green", true), "is_or_search: OR of words")
+			assert.Empty(t, a.search("zephyr green", false))
+			assert.Empty(t, a.search("zeph", false), "whole words only, no substring")
+			assert.Equal(t, []string{q.p1.ID}, a.search(`"quokka rollout"`, false))
+			assert.Equal(t, []string{q.p4.ID}, a.search("квокка", false), "Unicode case folding")
+			assert.Equal(t, []string{q.p4.ID}, a.search("мир!", false), "punctuation is not part of a word")
+			assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("zeph*", false), "word* is a word prefix")
+			assert.Equal(t, []string{q.p3.ID}, a.search("quokka -zephyr", false), "-word excludes")
+			assert.Empty(t, a.search("*", false), "a bare * is never searched")
+			assert.Empty(t, a.search("!!!", false), "a term without letters or digits is dropped")
+		})
+	}
 }
 
-func TestSearchPrefixAndExclusion(t *testing.T) {
+// Postgres (the database fallback): phrases, analysed wildcards, OR-ed
+// exclusions, and only-exclusions as an invalid tsquery.
+func TestSearchSQLPhraseAndExclusion(t *testing.T) {
+	s := Start(Options{SearchSQLEngine: true})
+	defer s.Close()
+	q := seedQuokka(s)
+	a := loginAs(t, s, "alice")
+
+	assert.Empty(t, a.search(`"rollout quokka"`, false), "a phrase: adjacent words in order")
+	assert.Equal(t, []string{q.p4.ID}, a.search("КВОК*", false), "the prefix is lower-cased like the rest")
+	assert.Equal(t, []string{q.p1.ID}, a.search(`quokka -"zephyr fix" -green`, false), "any exclusion excludes; -\"phrase\" too")
+	assert.Empty(t, a.search("-zephyr", false), "only excluded words: the server's tsquery is invalid, empty result")
+}
+
+// Bleve (the target server's engine, bleveengine/search.go SearchPosts).
+func TestSearchBleveQuirks(t *testing.T) {
 	s := Start(Options{})
 	defer s.Close()
 	q := seedQuokka(s)
 	a := loginAs(t, s, "alice")
 
-	assert.Equal(t, []string{q.p2.ID, q.p1.ID}, a.search("zeph*", false), "word* is a word prefix")
-	assert.Equal(t, []string{q.p4.ID}, a.search("КВОК*", false))
-	assert.Equal(t, []string{q.p3.ID}, a.search("quokka -zephyr", false), "-word excludes")
-	assert.Equal(t, []string{q.p1.ID}, a.search(`quokka -"zephyr fix" -green`, false), "-\"phrase\" excludes too")
-	assert.Empty(t, a.search("-zephyr", false), "only excluded words: the server's tsquery is invalid, empty result")
-	assert.Empty(t, a.search("*", false), "a bare * is never searched")
-	assert.Empty(t, a.search("!!!", false), "a term without letters or digits is dropped")
+	assert.Equal(t, []string{q.p1.ID}, a.search(`"rollout quokka"`, false), "quotes make no phrase: just the words")
+	assert.Empty(t, a.search("КВОК*", false), "a WildcardQuery is not analysed: upper case never matches")
+	assert.Equal(t, []string{q.p4.ID}, a.search("квок*", false))
+	assert.Equal(t, []string{q.p3.ID, q.p2.ID, q.p1.ID}, a.search("quokka -zephyr -green", false),
+		"the exclusions are one AND MatchQuery: only a post with both is excluded")
+	assert.Equal(t, []string{q.p3.ID, q.p1.ID}, a.search("quokka -zephyr -fix", false), "p2 has both")
+	assert.Equal(t, []string{q.p4.ID, q.p3.ID, q.p2.ID, q.p1.ID}, a.search("quokka квокка", true), "is_or_search")
+	assert.Equal(t, []string{q.p3.ID}, a.search("quokka -zephyr -fix", true), "…and with is_or_search any exclusion excludes")
+	only := a.search("-quokka in:town-square", false)
+	assert.NotEmpty(t, only, "only exclusions: everything else in scope")
+	assert.NotContains(t, only, q.p1.ID)
+	assert.NotContains(t, only, q.p2.ID)
+	assert.Contains(t, only, q.p4.ID)
+
+	tagged := s.PostAs("c-town", "bob", "quokka news #release")
+	s.PostAs("c-town", "bob", "no quokka here, #release only")
+	assert.Equal(t, []string{tagged.ID}, a.search("news #release", false), "word and hashtag groups are one AND query")
+
+	s.mu.Lock()
+	typed := &fpost{Post: model.Post{ID: newID(), ChannelID: "c-town", UserID: "u-bob", Type: "custom_plugin",
+		Message: "quokka from a plugin", CreateAt: s.nowLocked()}}
+	typed.UpdateAt = typed.CreateAt
+	s.insertPostLocked(typed)
+	s.mu.Unlock()
+	assert.NotContains(t, a.search("quokka", false), typed.ID, "Bleve keeps Type \"\" only")
+}
+
+func TestSearchMatches(t *testing.T) {
+	s := Start(Options{SearchMatches: true})
+	defer s.Close()
+	q := seedQuokka(s)
+	a := loginAs(t, s, "alice")
+	res := a.searchPage("t-fake", "zeph* QUOKKA", false, 0, 20)
+	assert.Equal(t, map[string][]string{
+		q.p2.ID: {"zephyr", "quokka"},
+		q.p1.ID: {"Zephyr", "Quokka"},
+	}, res.Matches, "per hit: its own matched words, as written, in query order")
+	res = a.searchPage("t-fake", "from:bob in:off-topic", false, 0, 20)
+	assert.Empty(t, res.Matches, "filters alone match no words")
 }
 
 func TestSearchFromAndIn(t *testing.T) {
@@ -182,7 +237,7 @@ func TestSearchPagesNewestFirst(t *testing.T) {
 	var got []string
 	for page := 0; page < 4; page++ {
 		res := a.searchPage("t-fake", "pagetest", false, page, 10)
-		assert.Nil(t, res.Matches, "the database engine never fills matches")
+		assert.Equal(t, map[string][]string{}, res.Matches, "Bleve sends an empty matches object")
 		assert.Len(t, res.Order, []int{10, 10, 5, 0}[page])
 		got = append(got, res.Order...)
 	}
@@ -192,10 +247,10 @@ func TestSearchPagesNewestFirst(t *testing.T) {
 	}
 	assert.Equal(t, want, got, "offset pages, newest first, no gaps or repeats")
 
-	// matches is present and null on the wire, like the database engine.
+	// matches is {} on the wire, like Bleve's PostSearchMatches{}.
 	var raw map[string]json.RawMessage
 	require.Equal(t, 200, a.call("POST", "/api/v4/teams/t-fake/posts/search", model.SearchParams{Terms: "pagetest", PerPage: 5}, &raw))
-	assert.JSONEq(t, "null", string(raw["matches"]))
+	assert.JSONEq(t, "{}", string(raw["matches"]))
 
 	calls := s.SearchCalls()
 	require.Len(t, calls, 5)
@@ -210,6 +265,9 @@ func TestSearchSQLEnginePaging(t *testing.T) {
 		s.PostAs("c-town", "bob", fmt.Sprintf("sqlpage %d", i))
 	}
 	a := loginAs(t, s, "alice")
+	var raw map[string]json.RawMessage
+	require.Equal(t, 200, a.call("POST", "/api/v4/teams/t-fake/posts/search", model.SearchParams{Terms: "sqlpage", PerPage: 5}, &raw))
+	assert.JSONEq(t, "null", string(raw["matches"]), "the database engine: MakePostSearchResults(posts, nil)")
 	assert.Len(t, a.searchPage("t-fake", "sqlpage", false, 0, 20).Order, 100,
 		"page 0 ignores per_page and returns at most 100 (post_store.go search: Limit(100))")
 	assert.Empty(t, a.searchPage("t-fake", "sqlpage", false, 1, 20).Order,

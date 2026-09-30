@@ -50,7 +50,14 @@ func TestSearchPostsDecodesMatches(t *testing.T) {
 	})
 	res, err := c.SearchPosts(context.Background(), "t1", model.SearchParams{Terms: "deploy"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string][]string{"p1": {"deploy", "deployed"}}, res.Matches, "a search engine's matches, when there are any")
+	assert.Equal(t, map[string][]string{"p1": {"deploy", "deployed"}}, res.Matches, "Elasticsearch's matches, when there are any")
+
+	c, _ = newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"order":["p1"],"posts":{"p1":{"id":"p1"}},"matches":{}}`))
+	})
+	res, err = c.SearchPosts(context.Background(), "t1", model.SearchParams{Terms: "deploy"})
+	require.NoError(t, err)
+	assert.Empty(t, res.Matches["p1"], "Bleve: an empty object, no words for any hit")
 }
 
 func TestSearchPostsIsNeverRetried(t *testing.T) {

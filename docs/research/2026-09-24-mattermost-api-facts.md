@@ -606,8 +606,19 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
 `server/channels/api4/post.go:900–998` (`searchPostsInTeam` → `searchPosts`),
 `server/channels/app/post.go:1739–1796` (`SearchPostsForUser`),
 `server/public/model/search_params.go` (`ParseSearchParams`),
-`server/channels/store/sqlstore/post_store.go:2112–2280` (`search`) и
-`:2976–3018` (`SearchPostsForUser`).
+`server/channels/store/searchlayer/post_layer.go:149–204` (выбор движка),
+`server/platform/services/searchengine/bleveengine/search.go:32–229`
+(Bleve, `SearchPosts`), `server/channels/store/sqlstore/post_store.go:2112–2280`
+(`search`) и `:2976–3018` (`SearchPostsForUser`, SQL-запасной путь).
+
+**Движки.** `searchlayer.SearchPostsForUser` (`post_layer.go:187–204`) берёт
+первый активный движок с `IsSearchEnabled()`, а если такого нет —
+SQL-хранилище (или пустой ответ при `DisableDatabaseSearch`). Bleve
+регистрируется всегда, без лицензии (`channels/app/platform/service.go:222–226`),
+и включается `BleveSettings.EnableSearching`. **Целевой сервер
+(mm.citeck.ru, `docs/specs/2026-09-24-spk-mattermost-design.md:56`) работает
+на Bleve** — ниже это основное поведение; SQL — запасной путь (Bleve
+выключен). Elasticsearch — enterprise, его кода в открытом дереве нет.
 
 - Порядок проверок: нет права `view_team` на команду → **403**
   (`api.context.permissions.app_error`) — до чтения тела; тело не JSON → 400
@@ -621,63 +632,81 @@ mention_keys:"", first_name:"false", desktop_threads:"all", desktop_sound:"true"
   `ExperimentalViewArchivedChannels`), `page` (0), `per_page` (**60**, если
   поля нет). Наш `rest.SearchPosts`: `per_page` 0 → 20, `> 200` → 200.
 - Ответ — `PostSearchResults`: `PostList` (`order`, `posts`,
-  `next_post_id`/`prev_post_id` пустые) + `matches`. **У SQL-движка
-  `matches` всегда `null`** — `MakePostSearchResults(posts, nil)`
-  (`post_store.go:3018`, и `:2979` для `page > 0`); `matches` наполняют только
-  Elasticsearch/Bleve (enterprise search layer, в клоне его нет). Подсветку
-  клиент строит сам по терминам запроса.
-- `order` — **новые первыми** (`posts.SortByCreateAt()`: `CreateAt` по
-  убыванию, `public/model/post_list.go:156`).
-- **Пагинация SQL-движка — не offset**: `page > 0` → всегда пусто («we don't
-  support paging for DB search», `post_store.go:2977–2980`), а `page 0`
-  возвращает **до 100 hits на группу запроса** (`Limit(100)`,
-  `post_store.go:2128`) **независимо от `per_page`**; групп до двух (обычные
-  слова и хэштеги — `ParseSearchParams` разбивает; результаты сливаются), то
-  есть до 200. У ES/Bleve — offset `page × per_page`, и между страницами
-  снимок не атомарен (новый пост сдвигает страницы → повторы: дедуп по id).
-  Следствие для клиента: конец результатов — **сырая страница короче
-  `per_page`** (SQL: `page 0` короче — конец; длиннее — один лишний запрос
-  `page 1`, пустой). Веб-клиент 10.11 считает концом пустую страницу
+  `next_post_id`/`prev_post_id` пустые) + `matches`, `order` — **новые
+  первыми**.
+- **`matches`:** у Bleve — **всегда пустой объект `{}`**: `matches :=
+  model.PostSearchMatches{}` (`bleveengine/search.go:222`) создаётся и
+  возвращается (`:228`) без единой записи; у SQL — **`null`**
+  (`MakePostSearchResults(posts, nil)`, `post_store.go:3018`, `:2979`).
+  Заполняет `matches` (post id → найденные слова) только Elasticsearch.
+  **Подсветку клиент строит сам по терминам запроса**; `matches` берёт, только
+  если в нём есть запись для этого hit.
+- **Пагинация Bleve — offset:** `NewSearchRequestOptions(query, perPage,
+  page*perPage, …)`, сортировка `-CreateAt` (`search.go:214–215`); затем посты
+  читаются по id (`GetPostsByIds`, `ORDER BY CreateAt DESC`) и отбрасываются с
+  `DeleteAt ≠ 0` (`post_layer.go:169–182`) — сырая страница может оказаться
+  короче `per_page`, если индекс ещё держит удалённый пост. Снимок между
+  страницами не атомарен: новый пост сдвигает offset — **повторы между
+  страницами, дедуп по id**.
+- **Пагинация SQL — не offset:** `page > 0` → всегда пусто («we don't support
+  paging for DB search», `post_store.go:2977–2980`); `page 0` — **до 100 hits
+  на группу** (`Limit(100)`, `:2128`) **независимо от `per_page`**; групп до
+  двух (слова и хэштеги), результаты сливаются — до 200.
+- **Правило клиента для обоих:** `has_next = длина сырой страницы ≥ per_page`
+  (дальше `page + 1`). Bleve: точное offset-листание (короткая страница
+  из-за удалённого — ранний конец, редкость). SQL: `page 0` короче — конец;
+  длиннее — один лишний запрос `page 1`, пустой; длина страницы **не
+  ограничена `per_page`**. Веб-клиент 10.11 считает концом пустую страницу
   (`isEnd: posts.order.length === 0`, `mattermost-redux/src/actions/search.ts:103`),
-  `per_page: 20` (`WEBAPP_SEARCH_PER_PAGE`, `:21`). Длина `page 0` у SQL не
-  ограничена `per_page` — клиент не должен предполагать `≤ per_page`.
-- Область: каналы, где пользователь **член**, этой команды **и** его DM/GM
-  (`TeamId = team OR TeamId = ''`), неархивные (`inQuery`,
-  `post_store.go:2238–2255`, `buildSearchTeamFilterClause` `:2029–2038`).
-  Посты: `DeleteAt = 0` (удалённые и строки истории правок — у них тоже
-  `DeleteAt ≠ 0` — не ищутся), **без системных** (`Type NOT LIKE 'system_%'`,
-  `:2126`); ответы в тредах ищутся наравне с корнями, CRT не влияет.
-- Синтаксис (`search_params.go`): слова через пробел; `"фраза"` — одно
-  слово (с `-` перед кавычкой — исключение фразы); `имя:значение` или
+  `per_page: 20` (`WEBAPP_SEARCH_PER_PAGE`, `:21`).
+- Область (оба движка): каналы, где пользователь **член**, этой команды **и**
+  его DM/GM (`TeamId = team OR TeamId = ''`), неархивные (Bleve —
+  `Channel().GetChannels`, `post_layer.go:154–162`; SQL — `inQuery`,
+  `post_store.go:2238–2255`). Посты: `DeleteAt = 0` (удалённые и строки
+  истории правок не ищутся); ответы в тредах — наравне с корнями, CRT не
+  влияет. Тип: Bleve — только `Type = ""` (`search.go:46–48`: плагинные и
+  системные исключены); SQL — без `system_*` (`post_store.go:2126`).
+- Синтаксис (общий, `search_params.go`): слова через пробел; `"фраза"` —
+  одно слово (с `-` перед кавычкой — исключение); `имя:значение` или
   `имя: значение` для `from`, `in`/`channel`, `before`, `after`, `on`, `ext`,
   с `-` — исключающий фильтр; у прочих слов срезается пунктуация по краям
-  (хвостовая `*` остаётся); слово вида `#тег` — отдельная группа хэштегов.
-  Пустое после разбора (`*`, `!!!`) — пустой ответ 200 (`app/post.go:1754`,
-  `sqlstore/utils.go` `removeNonAlphaNumericUnquotedTerms`).
-- Сопоставление (PostgreSQL, `post_store.go:2149–2195`): символы
-  `< > + - ( ) ~ :` — пробелы; `слово*` → префикс (`:*`); `"a b"` → `a<->b`
-  (соседние слова в этом порядке); слова через `&` (AND), при `is_or_search`
-  через `|`; исключения — `&!(x|y)`. **Только исключения** (`-foo` без
-  положительных слов) дают `' &!(foo)'` — синтаксическая ошибка `to_tsquery`,
-  которую `search` глотает (`:2263–2266`) → пустой ответ. Слова
-  `to_tsvector` со стеммингом (`english` по умолчанию) и без учёта регистра.
+  (хвостовая `*` остаётся); `#тег` — отдельная группа хэштегов. Пустое после
+  разбора (`*`, `!!!`) — пустой ответ 200 (`app/post.go:1754`).
+- **Сопоставление Bleve** (`search.go:50–212`, поле `Message` со `standard`
+  analyzer — unicode-токены, нижний регистр, английские стоп-слова, **без
+  стемминга**, `bleve.go:52–53`, `:80`): термины, оканчивающиеся на `*`, —
+  `WildcardQuery` **на сырой строке** (не анализируется: `Zeph*` с
+  заглавной никогда не совпадёт); остальные — одна `MatchQuery` с оператором
+  AND (`is_or_search` → OR); **кавычки фразы не делают** — `"a b"` = слова a
+  и b где угодно. Исключения — одна `MatchQuery` из всех `-слов` с **тем же
+  оператором**: без `is_or_search` пост исключается, только если содержит
+  **все** исключённые слова; с ним — любое. Группы слов и хэштегов — один
+  запрос (AND между ними, не объединение). Только исключения — допустимо:
+  всё в области, кроме исключённого.
+- **Сопоставление SQL** (PostgreSQL, `post_store.go:2149–2195`): символы
+  `< > + - ( ) ~ :` — пробелы; `слово*` → префикс; `"a b"` → `a<->b`
+  (соседние, по порядку); AND/OR; исключения `&!(x|y)` — любое исключает;
+  **только исключения** → синтаксическая ошибка `to_tsquery`, проглоченная
+  (`:2263–2266`) → пусто. Стемминг `english`. Группы — отдельные запросы,
+  результаты объединяются.
 - `from:user` (`@` срезается) → id по username; `in:name` (`~` срезается) →
   канал команды по `name` (slug); `in:@user` — DM с ним, `in:@a,b,c` — GM
-  **ровно этих** пользователей (веб-клиент перечисляет всех участников,
-  себя тоже: `getChannelNameForSearch`, `mattermost-redux/src/selectors/entities/channels.ts:246–264`)
+  **ровно этих** пользователей (веб-клиент перечисляет всех, себя тоже:
+  `getChannelNameForSearch`, `mattermost-redux/src/selectors/entities/channels.ts:246–264`)
   — `app/post.go:1528–1565`, `:1620–1630`. Неизвестное имя остаётся строкой
   и ничего не совпадает — пустой ответ, не ошибка. Несколько `from:`/`in:` —
-  ИЛИ. `from:` — только члены команды (`buildSearchPostFilterClause`, `:2076`).
-- Даты (`buildCreateDateFilterClause`, `:1990–2027`; `search_params.go`
-  `Get*Millis`): дни в поясе `time_zone_offset`; `on:D` — весь день D
-  (перекрывает прочие даты); `after:D` — с начала **следующего** дня;
-  `before:D` — до конца **предыдущего**. Нераспознанная дата: `after:` —
-  «сегодня», `before:`/`on:` — ничего не совпадает.
-- Фейк (`internal/mmfake/search.go`) повторяет разбор и SQL-сопоставление без
-  стемминга; по умолчанию листает offset-страницами (`page × per_page`, как
-  поисковый движок) — чтобы тесты могли проверить дедуп и новые hits между
-  страницами; `Options.SearchSQLEngine` включает точное поведение SQL-движка
-  (`page > 0` пусто, до 100 на `page 0`). `matches` у фейка всегда `null`.
+  ИЛИ.
+- Даты (`search_params.go` `Get*Millis`; SQL `buildCreateDateFilterClause`
+  `:1990–2027`, Bleve `search.go:100–147`): дни в поясе `time_zone_offset`;
+  `on:D` — весь день D (перекрывает прочие); `after:D` — с начала
+  **следующего** дня; `before:D` — до конца **предыдущего**.
+- Фейк (`internal/mmfake/search.go`): **по умолчанию — Bleve** (offset,
+  `matches: {}`, правила сопоставления Bleve выше, только `Type = ""`);
+  `Options.SearchSQLEngine` — SQL (`page > 0` пусто, до 100 на `page 0`,
+  `matches: null`, сопоставление PostgreSQL); `Options.SearchMatches` —
+  заполняет `matches` как Elasticsearch (post id → слова сообщения, как они
+  написаны, совпавшие с положительными терминами; формат ES по коду не
+  проверен — его в дереве нет). Без стемминга и стоп-слов в обоих режимах.
 
 ### 9.2 Посты канала вокруг поста: `after=` / `before=`
 

@@ -13,12 +13,23 @@ import (
 	"github.com/spk/spk-mm-client/internal/mm/model"
 )
 
-// Post search, as the server's database engine (PostgreSQL full-text search)
-// answers it — docs/research/2026-09-24-mattermost-api-facts.md §9. The
+// Post search — docs/research/2026-09-24-mattermost-api-facts.md §9. The
 // query is parsed like model.ParseSearchParams (public/model/search_params.go)
-// and matched like SqlPostStore.search (store/sqlstore/post_store.go), with
-// two simplifications: words are not stemmed (Postgres' english config
-// would match "deploys" to "deploy"), and the MySQL dialect is not modelled.
+// and matched by one of two engines:
+//
+//   - by default like Bleve, the engine the target server runs
+//     (platform/services/searchengine/bleveengine/search.go SearchPosts):
+//     offset pages (page × per_page), matches an empty object, quotes do not
+//     make phrases, word* is an unanalysed (case-sensitive) wildcard, and the
+//     word groups are one query;
+//   - with Options.SearchSQLEngine like the database fallback
+//     (store/sqlstore/post_store.go search/SearchPostsForUser, PostgreSQL):
+//     page > 0 empty, up to 100 per group on page 0, matches null.
+//
+// Simplifications: no stemming (Postgres' english config) and no stop words
+// (Bleve's standard analyzer); the MySQL dialect is not modelled.
+// Options.SearchMatches fills matches the way Elasticsearch does (not
+// verifiable in the open-source tree).
 
 // SearchCall is one POST /teams/{id}/posts/search the fake answered
 // (PerPage as the server used it: 60 when the body had none).
@@ -84,36 +95,71 @@ func (s *Server) searchPosts(w http.ResponseWriter, r *http.Request, u User) {
 	s.chat.searches = append(s.chat.searches, SearchCall{TeamID: tid, UserID: u.ID, Terms: *in.Terms,
 		IsOrSearch: in.IsOrSearch, Page: in.Page, PerPage: perPage})
 
+	sql := s.opts.SearchSQLEngine
 	channels := s.searchChannelsLocked(u.ID, tid, in.IncludeDeletedChannels)
-	hits := map[string]*fpost{}
-	if !s.opts.SearchSQLEngine || in.Page == 0 {
-		for _, g := range parseSearchGroups(strings.TrimSpace(*in.Terms), in.TimeZoneOffset, in.IsOrSearch) {
-			found := s.searchGroupLocked(g, u.ID, tid, channels, in.IncludeDeletedChannels)
-			if s.opts.SearchSQLEngine && len(found) > sqlSearchLimit {
-				found = found[:sqlSearchLimit]
-			}
-			for _, p := range found {
+	groups := parseSearchGroups(strings.TrimSpace(*in.Terms), in.TimeZoneOffset, in.IsOrSearch, !sql)
+	var all []*fpost
+	switch {
+	case sql && in.Page > 0:
+		// "we don't support paging for DB search": always empty.
+	case sql:
+		// One query per group, each LIMIT 100, merged.
+		hits := map[string]*fpost{}
+		for _, g := range groups {
+			found := s.searchScopeLocked(g, u.ID, tid, channels, in.IncludeDeletedChannels, g.sqlMatch)
+			for _, p := range found[:min(len(found), sqlSearchLimit)] {
 				hits[p.ID] = p
 			}
 		}
-	}
-	all := make([]*fpost, 0, len(hits))
-	for _, p := range hits {
-		all = append(all, p)
-	}
-	sortNewestFirst(all)
-	if !s.opts.SearchSQLEngine {
-		// A search engine's offset pages: page × per_page.
+		for _, p := range hits {
+			all = append(all, p)
+		}
+		sortNewestFirst(all)
+	case len(groups) > 0:
+		// Bleve: the groups are one boolean query — terms of every group
+		// are ANDed (ORed with is_or_search), any exclusion excludes; the
+		// filters come from the first group (they are the same in each).
+		all = s.searchScopeLocked(groups[0], u.ID, tid, channels, in.IncludeDeletedChannels,
+			func(msg string) bool { return bleveMatch(groups, in.IsOrSearch, msg) })
 		per := max(perPage, 0)
 		start := min(max(in.Page, 0)*per, len(all))
 		all = all[start:min(start+per, len(all))]
 	}
 	res := model.PostSearchResults{PostList: model.PostList{Order: []string{}, Posts: map[string]model.Post{}}}
+	if !sql {
+		// Bleve answers an empty (never filled) PostSearchMatches{}; the
+		// database engine nil, which is null on the wire.
+		res.Matches = map[string][]string{}
+	}
 	for _, p := range all {
 		res.Order = append(res.Order, p.ID)
 		res.Posts[p.ID] = p.Post
+		if s.opts.SearchMatches {
+			var words []string
+			for _, g := range groups {
+				words = append(words, g.matchedWords(p.Message)...)
+			}
+			if len(words) > 0 {
+				if res.Matches == nil {
+					res.Matches = map[string][]string{}
+				}
+				res.Matches[p.ID] = uniqueStrings(words)
+			}
+		}
 	}
-	writeJSON(w, 200, res) // matches: null — the database engine never fills it
+	writeJSON(w, 200, res)
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func sortNewestFirst(ps []*fpost) {
@@ -142,13 +188,11 @@ func (s *Server) searchChannelsLocked(userID, teamID string, includeDeleted bool
 	return out
 }
 
-// searchGroupLocked answers one query group, newest first.
-func (s *Server) searchGroupLocked(g *searchGroup, userID, teamID string, channels map[string]bool, includeDeleted bool) []*fpost {
-	if g.onlyExcludedText() {
-		// Postgres: to_tsquery(' &!(…)') is a syntax error, which search()
-		// logs and answers with an empty list.
-		return nil
-	}
+// searchScopeLocked lists, newest first, the posts in scope that pass g's
+// channel, user and date filters and textMatch. Both engines search regular
+// posts only: the database one skips type system_*, Bleve indexes Type and
+// keeps "" alone.
+func (s *Server) searchScopeLocked(g *searchGroup, userID, teamID string, channels map[string]bool, includeDeleted bool, textMatch func(string) bool) []*fpost {
 	inChannels := s.resolveSearchChannelsLocked(g.inChannels, userID, teamID, includeDeleted)
 	exChannels := s.resolveSearchChannelsLocked(g.exChannels, userID, teamID, includeDeleted)
 	fromUsers := s.resolveSearchUsers(g.fromUsers)
@@ -159,13 +203,13 @@ func (s *Server) searchGroupLocked(g *searchGroup, userID, teamID string, channe
 			continue
 		}
 		for _, p := range s.chat.posts[cid] {
-			if p.DeleteAt != 0 || p.OriginalID != "" || strings.HasPrefix(p.Type, "system_") {
+			if p.DeleteAt != 0 || p.OriginalID != "" || strings.HasPrefix(p.Type, "system_") || (g.bleve && p.Type != "") {
 				continue
 			}
 			if (len(fromUsers) > 0 && !slices.Contains(fromUsers, p.UserID)) || slices.Contains(exUsers, p.UserID) {
 				continue
 			}
-			if !g.dates.match(p.CreateAt) || !g.matchText(p.Message) {
+			if !g.dates.match(p.CreateAt) || !textMatch(p.Message) {
 				continue
 			}
 			out = append(out, p)
@@ -353,6 +397,7 @@ func parseSearchFlags(input []string) ([]searchWordTok, []searchFlagTok) {
 // hashtags, or (neither) filters only.
 type searchGroup struct {
 	hashtag              bool
+	bleve                bool // matched like Bleve, not Postgres
 	or                   bool
 	terms, excluded      []searchUnit
 	inChannels           []string
@@ -362,18 +407,16 @@ type searchGroup struct {
 	hasTerms, hasExclude bool
 }
 
-// searchUnit is one tsquery operand: a word (prefix if it ended in *) or a
-// phrase of adjacent words.
+// searchUnit is one query operand: a word (prefix if it ended in *) or,
+// for Postgres, a phrase of adjacent words.
 type searchUnit struct {
-	words  []string // lower-cased
+	words  []string // lower-cased, except a Bleve wildcard's (unanalysed)
 	prefix bool     // the last word is a prefix
 }
 
-func (g *searchGroup) onlyExcludedText() bool { return !g.hasTerms && g.hasExclude }
-
-func parseSearchGroups(text string, tz int, or bool) []*searchGroup {
+func parseSearchGroups(text string, tz int, or, bleve bool) []*searchGroup {
 	words, flags := parseSearchFlags(splitSearchWords(text))
-	base := searchGroup{or: or, dates: searchDates{tz: tz}}
+	base := searchGroup{or: or, bleve: bleve, dates: searchDates{tz: tz}}
 	for _, f := range flags {
 		switch f.name {
 		case "in", "channel":
@@ -413,8 +456,13 @@ func parseSearchGroups(text string, tz int, or bool) []*searchGroup {
 	var out []*searchGroup
 	if len(plain) > 0 || len(exPlain) > 0 {
 		g := base
-		g.terms = plainUnits(removeNonAlphaNumericUnquoted(strings.Join(plain, " ")))
-		g.excluded = plainUnits(strings.Join(exPlain, " "))
+		if bleve {
+			g.terms = bleveUnits(plain, true)
+			g.excluded = bleveUnits(exPlain, false)
+		} else {
+			g.terms = plainUnits(removeNonAlphaNumericUnquoted(strings.Join(plain, " ")))
+			g.excluded = plainUnits(strings.Join(exPlain, " "))
+		}
 		g.hasTerms, g.hasExclude = len(g.terms) > 0, len(g.excluded) > 0
 		if g.hasTerms || g.hasExclude {
 			out = append(out, &g)
@@ -489,6 +537,25 @@ func plainUnits(terms string) []searchUnit {
 	return out
 }
 
+// bleveUnits mirrors bleveengine SearchPosts: every space-separated term
+// ending in * is a WildcardQuery on the raw (not lower-cased, not
+// analysed) term, the rest one MatchQuery whose standard analyzer splits
+// them into lower-cased words — quotes make no phrase. Excluded terms are a
+// MatchQuery too, wildcards included (the analyzer drops the *).
+func bleveUnits(terms []string, wildcards bool) []searchUnit {
+	var out []searchUnit
+	for _, t := range strings.Split(strings.Join(terms, " "), " ") {
+		if wildcards && strings.HasSuffix(t, "*") {
+			out = append(out, searchUnit{words: []string{strings.TrimSuffix(t, "*")}, prefix: true})
+			continue
+		}
+		for _, w := range messageWords(t) {
+			out = append(out, searchUnit{words: []string{w}})
+		}
+	}
+	return out
+}
+
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) }
 
 // messageWords splits text into lower-cased words of letters, marks and
@@ -508,26 +575,92 @@ func messageHashtags(text string) []string {
 	return out
 }
 
-func (g *searchGroup) matchText(msg string) bool {
+func (g *searchGroup) words(msg string) []string {
+	if g.hashtag {
+		return messageHashtags(msg)
+	}
+	return messageWords(msg)
+}
+
+// all reports whether every unit is found (any, with or) in words.
+func allUnits(units []searchUnit, or bool, words []string) bool {
+	found := func(u searchUnit) bool { return u.in(words) }
+	if or {
+		return slices.ContainsFunc(units, found)
+	}
+	for _, u := range units {
+		if !found(u) {
+			return false
+		}
+	}
+	return true
+}
+
+// sqlMatch is one Postgres group: `terms &!(excluded|…)`. Only exclusions
+// make ' &!(…)', a to_tsquery syntax error that search() swallows into an
+// empty result.
+func (g *searchGroup) sqlMatch(msg string) bool {
 	if !g.hasTerms && !g.hasExclude {
 		return true // filters only
 	}
-	var words []string
-	if g.hashtag {
-		words = messageHashtags(msg)
-	} else {
-		words = messageWords(msg)
+	if !g.hasTerms {
+		return false
 	}
-	found := func(u searchUnit) bool { return u.in(words) }
-	ok := true
-	if g.or {
-		ok = slices.ContainsFunc(g.terms, found)
+	words := g.words(msg)
+	return allUnits(g.terms, g.or, words) && !slices.ContainsFunc(g.excluded, func(u searchUnit) bool { return u.in(words) })
+}
+
+// bleveMatch is Bleve's single boolean query over every group: the term
+// queries Must (Should with is_or_search) match; each group's exclusion
+// MatchQuery — its words joined by the same AND/OR operator — MustNot.
+// Only exclusions match everything else.
+func bleveMatch(groups []*searchGroup, or bool, msg string) bool {
+	matched, hasTerms := false, false
+	for _, g := range groups {
+		words := g.words(msg)
+		if g.hasExclude && allUnits(g.excluded, or, words) {
+			return false
+		}
+		if !g.hasTerms {
+			continue
+		}
+		hasTerms = true
+		hit := allUnits(g.terms, or, words)
+		if !or && !hit {
+			return false
+		}
+		matched = matched || hit
+	}
+	return !hasTerms || matched
+}
+
+// matchedWords lists the message's own words (as written) that some
+// positive unit matched — what Options.SearchMatches puts in matches.
+func (g *searchGroup) matchedWords(msg string) []string {
+	var raw []string
+	if g.hashtag {
+		for _, w := range strings.Fields(msg) {
+			if w = searchTermPuncEnd.ReplaceAllString(w, ""); searchValidHashtag.MatchString(w) {
+				raw = append(raw, w)
+			}
+		}
 	} else {
-		for _, u := range g.terms {
-			ok = ok && found(u)
+		raw = strings.FieldsFunc(msg, func(r rune) bool { return !isWordRune(r) })
+	}
+	lower := make([]string, len(raw))
+	for i, w := range raw {
+		lower[i] = strings.ToLower(w)
+	}
+	var out []string
+	for _, u := range g.terms {
+		n := len(u.words)
+		for i := 0; i+n <= len(lower); i++ {
+			if u.in(lower[i : i+n]) {
+				out = append(out, raw[i:i+n]...)
+			}
 		}
 	}
-	return ok && !slices.ContainsFunc(g.excluded, found)
+	return out
 }
 
 // in reports whether the unit's words occur adjacently in words.

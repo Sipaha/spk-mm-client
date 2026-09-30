@@ -18,10 +18,10 @@ const (
 
 // SearchPosts is POST /teams/{id}/posts/search. Like every POST it is never
 // retried (do: a transport error or 5xx is returned as is). The answer's
-// order is newest first; pages are offsets for a search engine, while the
-// database engine ignores PerPage and answers page > 0 with nothing
-// (docs/research/2026-09-24-mattermost-api-facts.md §9) — so the end of the
-// results is a raw page shorter than PerPage, whatever its length.
+// order is newest first. Bleve (the target server's engine) pages by offset
+// (page × PerPage); the database fallback ignores PerPage and answers
+// page > 0 with nothing (docs/research/2026-09-24-mattermost-api-facts.md
+// §9.1) — on both, more may follow only while a raw page holds ≥ PerPage.
 func (c *Client) SearchPosts(ctx context.Context, teamID string, p model.SearchParams) (model.PostSearchResults, error) {
 	if p.PerPage <= 0 {
 		p.PerPage = SearchPageDefault
