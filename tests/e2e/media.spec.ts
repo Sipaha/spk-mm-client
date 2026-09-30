@@ -38,7 +38,12 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
   const shot = feed(page).getByRole('button', { name: 'View build.png' })
-  await expect(shot).toBeVisible()
+  // Not a plain toBeVisible(): build.png is Off-Topic's second seed post and
+  // needn't be mounted at the bottom — e.g. in the ~2.5 h after midnight the
+  // seed (stamped from 160 min before the fake started) straddles two days,
+  // and the day separator plus the regrouping push it out of the mounted
+  // range (seen in the search task's final runs at 00:02 and 00:06).
+  await scrollUntilVisible(page, shot)
   const img = shot.locator('img')
   await expect(img).toHaveAttribute('width', '480')
   await expect(img).toHaveAttribute('height', '270')
