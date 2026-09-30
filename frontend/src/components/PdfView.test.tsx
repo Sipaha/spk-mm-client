@@ -478,3 +478,24 @@ test('root and scroller are marked as the viewer\'s empty area, page boxes are n
   expect(container.firstElementChild).toHaveAttribute('data-viewer-empty', 'true')
   for (const b of Array.from(container.querySelectorAll('[data-page]'))) expect(b).not.toHaveAttribute('data-viewer-empty')
 })
+
+// Review N1 (probe A): with the viewport top inside the gap below a page, a
+// resize that leaves the scale alone must not nudge the scroll position.
+test('default zoom: a resize with the viewport top in the gap between pages does not move it', async () => {
+  stubClientWidth = 548
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('175%')
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  // Page 1 is 175 px, then a 12 px gap (175..187): 180 is in the gap.
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 180 })
+  await act(async () => {
+    fireEvent.scroll(scroller)
+  })
+  scrollToSpy.mockClear()
+  stubClientWidth = 748
+  await act(async () => {
+    roCallback?.()
+  })
+  expect(screen.getByText('175%')).toBeInTheDocument()
+  expect(scrollToSpy).not.toHaveBeenCalled()
+})

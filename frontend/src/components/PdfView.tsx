@@ -101,7 +101,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   const pool = useRef<HTMLCanvasElement[]>([])
   // The scroll anchor's reading position (page + fraction of it scrolled
   // past) — see the scroll-anchor effect below.
-  const anchor = useRef({ page: 1, frac: 0 })
+  const anchor = useRef({ page: 1, frac: 0, gap: 0 })
   const onFailRef = useRef(onFail)
   onFailRef.current = onFail
 
@@ -238,7 +238,11 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   // round 1). `<=` matches the old floor-based formula's boundary exactly
   // in the uniform case: a page's slot is treated as reaching up to (but
   // not including) the next page's offset.
-  useEffect(() => {
+  // A layout effect (review O1): the listener must be re-subscribed with the
+  // new layout before the browser can deliver a scroll event against it —
+  // with a passive effect, a scroll between commit and the effect (e.g.
+  // scrollTop clamped by a zoom-out) was read with the old offsets.
+  useLayoutEffect(() => {
     const el = scroller.current
     if (!el || !n) return
     const update = (e?: Event) => {
@@ -252,9 +256,13 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
       // The reading position within the page, for the scroll anchor below.
       // Only from real scroll events: on a layout change this effect's own
       // first call pairs the *new* layout with the *old* scrollTop.
+      // A viewport top in the GAP below the page (which `first` owns too)
+      // is kept as pixels into the gap (review N1: clamping it to the
+      // page's bottom made an unchanged-scale resize nudge it by up to GAP).
       if (e) {
         const h = layout.heights[first] || 1
-        anchor.current = { page: first, frac: Math.min(1, Math.max(0, (top - layout.offsets[first]) / h)) }
+        const into = Math.max(0, top - layout.offsets[first])
+        anchor.current = { page: first, frac: Math.min(1, into / h), gap: Math.min(GAP, Math.max(0, into - h)) }
       }
       const s = new Set<number>()
       for (let i = Math.max(1, first - KEEP); i <= Math.min(n, last + KEEP); i++) s.add(i)
@@ -298,12 +306,14 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   // (it used to jump to the page's top). Skipped on mount (prevAnchorKey
   // starts null): nothing to anchor to yet.
   const prevAnchorKey = useRef<string | null>(null)
-  useEffect(() => {
+  // A layout effect too (review O1): restore the position before paint, so
+  // no frame shows the old scrollTop against the new layout.
+  useLayoutEffect(() => {
     const key = `${mode}|${zoom}|${width}`
     const el = scroller.current
     if (el && n && prevAnchorKey.current !== null && prevAnchorKey.current !== key) {
-      const { page, frac } = anchor.current
-      const top = Math.round((layout.offsets[page] ?? 0) + frac * (layout.heights[page] ?? 0))
+      const { page, frac, gap } = anchor.current
+      const top = Math.round((layout.offsets[page] ?? 0) + frac * (layout.heights[page] ?? 0) + gap)
       if (Math.abs(top - el.scrollTop) > 1) el.scrollTo({ top })
     }
     prevAnchorKey.current = key
