@@ -963,7 +963,9 @@ async function channelRig(height: number, o: Partial<ChannelDTO> = {}, extra: Pa
   }
   const view = render(<Feed {...p} />)
   const log = screen.getByRole('log')
-  const st = { top: 0 }
+  // skew: rows drawn this many px lower than the virtualizer's own offsets —
+  // what an estimated height above does to a restore's first scroll.
+  const st = { top: 0, skew: 0 }
   const content = () => Math.max(height, parseFloat((log.lastElementChild as HTMLElement).style.height) || 0)
   const clamp = (v: number) => Math.max(0, Math.min(v, content() - height))
   Object.defineProperties(log, {
@@ -973,10 +975,12 @@ async function channelRig(height: number, o: Partial<ChannelDTO> = {}, extra: Pa
   })
   const scrollToSpy = vi.fn((o: ScrollToOptions) => void (st.top = clamp(o.top ?? st.top)))
   log.scrollTo = scrollToSpy as unknown as typeof log.scrollTo
+  // A ScrollShift pending mid-gesture is the sizer's negative margin.
+  const margin = () => parseFloat((log.lastElementChild as HTMLElement).style.marginTop) || 0
   const rowTop = (el: HTMLElement) => {
     const range = el.parentElement!
     const start = Number(/translateY\((-?[\d.]+)px\)/.exec(range.style.transform)?.[1] ?? 0)
-    return start + [...range.children].indexOf(el) * 40 - st.top
+    return start + [...range.children].indexOf(el) * 40 - st.top + margin() + st.skew
   }
   const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     const row = this.closest<HTMLElement>('[data-kind]')
@@ -1148,11 +1152,14 @@ test('keeps the visible post when rows are inserted above it (from below)', asyn
 // post out (into the gap). When that post is on screen under the gap row,
 // the rows below it moved up by its height until the page landed and put
 // them back. The post the reader is at stays put across such an update too.
-test('a live post trimming the window under the gap row while its page loads does not move the post on screen', async () => {
+test.each([false, true])('a live post trimming the window under the gap row while its page loads does not move the post on screen (wheel before: %s)', async (wheel) => {
   const page = pending()
   const onLoadNewer = vi.fn(() => page.promise)
   const r = await channelRig(400, {}, { onLoadNewer })
   try {
+    // A wheel gesture since the last restore (review: holdAnchor skipped
+    // any feed wheeled since then — the reader's usual way up to the row).
+    if (wheel) fireEvent.wheel(r.log, { deltaY: -100 })
     await r.scrollTo(380) // came up from the window: the gap row in the upper part, the bottom out of reach
     expect(r.onScreen('gap:1')).toBe(60)
     expect(onLoadNewer).toHaveBeenCalledTimes(1)
@@ -1160,11 +1167,84 @@ test('a live post trimming the window under the gap row while its page loads doe
     await r.update({ posts: [...seg(1, 10), ...win(2, 11)], gap: openGap({ before_id: 'w2' }) }) // w11 arrives, w1 leaves the window
     expect(r.onScreen('w1')).toBeNull()
     expect(r.onScreen('w3')).toBe(seen)
+    if (wheel) expect(r.st.top).toBe(380) // mid-gesture: held by the shift, scrollTop left to the wheel animation
     page.resolve()
     await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 11)], gap: openGap({ open: false, before_id: '' }), hist_rev: 2 })
     expect(r.onScreen('w3')).toBe(seen)
   } finally {
     r.restore()
+  }
+})
+
+// Review (Task 8 fix 1): the next gap page asked for while the last one's
+// restore still converges anchors on that restore's target; if the target
+// itself then leaves the window (a live post trims it into the gap), the
+// other posts on screen must still hold.
+test('a chained gap page: the anchored post leaving the window keeps the rest on screen', async () => {
+  const pages = [pending(), pending()]
+  let call = 0
+  const onLoadNewer = vi.fn(() => pages[Math.min(call++, 1)].promise)
+  const r = await channelRig(400, {}, { onLoadNewer })
+  try {
+    await r.scrollTo(380) // came up from the window: w1, under the row, anchors
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    // The request settles first (the load flag clears), then the page lands;
+    // the restore's first scroll misses by 10 px (an estimate above), so the
+    // next page is asked for while it still corrects.
+    pages[0].resolve()
+    await act(async () => {})
+    r.st.skew = 10
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(onLoadNewer).toHaveBeenCalledTimes(2) // the row is still on screen: the next page, chained
+    const seen = r.onScreen('w3')!
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(2, 11)], gap: openGap({ before_id: 'w2' }) })
+    expect(r.onScreen('w1')).toBeNull()
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
+// Fix c1efe70: a gap row the virtualizer mounts later than the scroll's own
+// check still loads, with no scroll event and no rows change. Here the
+// virtualizer's viewport (its ResizeObserver) grows while the feed's box
+// (the rig's layout) already shows the row: only the mounted range changes.
+test('a gap row mounted after its scroll check loads without another scroll event', async () => {
+  const observers: { cb: ResizeObserverCallback; els: Element[] }[] = []
+  vi.stubGlobal('ResizeObserver', class {
+    o: { cb: ResizeObserverCallback; els: Element[] }
+    constructor(cb: ResizeObserverCallback) {
+      this.o = { cb, els: [] }
+      observers.push(this.o)
+    }
+    observe(el: Element) { this.o.els.push(el) }
+    unobserve() {}
+    disconnect() {}
+  })
+  // Pages that change nothing (Go dropped them): the load flag clears.
+  const onLoadNewer = vi.fn((): Promise<unknown> => Promise.resolve())
+  const r = await channelRig(500, {}, { onLoadNewer })
+  let seen = 600
+  Object.defineProperty(r.log, 'offsetHeight', { configurable: true, get: () => seen })
+  const resized = async (h: number) => {
+    seen = h
+    await act(async () => {
+      for (const o of observers) if (o.els.includes(r.log)) o.cb([{ target: r.log } as unknown as ResizeObserverEntry], {} as ResizeObserver)
+    })
+    await r.flush()
+  }
+  try {
+    await resized(40) // the virtualizer mounts only the first rows
+    fireEvent.wheel(r.log, { deltaY: -100 }) // a fresh auto-load budget (the open spent it at the bottom)
+    await r.scrollTo(0)
+    expect(r.row('gap:1')).toBeNull() // on screen for the rig's layout (440 < 500), not mounted
+    onLoadNewer.mockClear()
+    await resized(600)
+    expect(r.onScreen('gap:1')).toBe(440)
+    expect(onLoadNewer).toHaveBeenCalled() // (then more: each empty page is followed by the next, within the budget)
+  } finally {
+    r.restore()
+    vi.unstubAllGlobals()
   }
 })
 

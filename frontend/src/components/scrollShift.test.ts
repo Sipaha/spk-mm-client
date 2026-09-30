@@ -182,3 +182,15 @@ test('the idle hook runs once a user gesture has gone idle, not after a programm
   vi.advanceTimersByTime(SCROLL_IDLE_MS)
   expect(idle).toHaveBeenCalledTimes(1)
 })
+
+test('absorb moves the content without writing scrollTop and lands once scrolling is idle', () => {
+  vi.useFakeTimers()
+  const { shift, sizer, scroller } = setup()
+  shift.absorb(40)
+  expect(sizer.style.marginTop).toBe('-40px')
+  expect(scroller.scrollTop).toBe(1000)
+  vi.advanceTimersByTime(SCROLL_IDLE_MS)
+  expect(sizer.style.marginTop).toBe('')
+  expect(scroller.scrollTop).toBe(1040)
+  expect(shift.gesturing).toBe(false)
+})

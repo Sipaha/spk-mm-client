@@ -98,6 +98,16 @@ export class ScrollShift {
     return false
   }
 
+  // Moves the content by delta px (as scrollTop += delta would) without
+  // writing scrollTop: for a correction that must happen mid-gesture (the
+  // feed's pending history anchor held across a rows update). It lands with
+  // the rest of the shift once scrolling is idle.
+  absorb(delta: number) {
+    this.shift += delta
+    this.apply()
+    this.landWhenIdle()
+  }
+
   // Writes the shift to the rows' container. Call after every commit: the
   // rows' positions and the shift must reach the screen together.
   apply() {

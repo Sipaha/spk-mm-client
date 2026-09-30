@@ -493,17 +493,25 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     }
     anchor.current = found?.key ?? null
     anchorOffset.current = found?.offset ?? 0
-    // holdAnchor's fallbacks: the other posts on screen — first those under
-    // the anchor, nearest first, then those above it, nearest first.
+    captureRefs(0)
+  }
+
+  // captureRefs: holdAnchor's fallbacks — the other posts on screen, first
+  // those under the anchor, nearest first, then those above it, nearest
+  // first. `error`: how far the rows are from where they will be put (a
+  // restore still correcting — beginAnchor); 0 for rows measured as they are.
+  const captureRefs = (error: number) => {
+    const el = scroller.current
+    const key = anchor.current
     const view = el?.getBoundingClientRect().top ?? 0
     const at = anchorOffset.current // under the anchor: past its top (or bottom) edge
     const refs = el
       ? [...el.querySelectorAll<HTMLElement>('[data-kind="post"]')]
           .map((r) => {
             const b = r.getBoundingClientRect()
-            return { key: r.dataset.key ?? '', top: b.top - view, bottom: b.bottom - view }
+            return { key: r.dataset.key ?? '', top: b.top - view - error, bottom: b.bottom - view - error }
           })
-          .filter((b) => b.key !== found?.key && b.bottom > 0 && b.top < el.clientHeight)
+          .filter((b) => b.key !== key && b.bottom > 0 && b.top < el.clientHeight)
       : []
     anchorRefs.current = [
       ...refs.filter((b) => b.top >= at).sort((a, b) => a.top - b.top),
@@ -520,12 +528,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     // asked for in the frame the last one landed): its row is where the
     // restore puts it, not where the estimated first scroll left it —
     // measuring now let every page of a long fill drift by the estimate.
+    // The fallbacks are the posts on screen too, measured from where the
+    // restore will put them (its row's error applied to all): the anchored
+    // post may itself leave the window before this page lands.
     const t = restoreTarget.current
-    if (restoring.current && t !== null && t.side === side && scroller.current?.querySelector(`[data-key="${CSS.escape(t.key)}"]`)) {
+    const el = scroller.current
+    const row = t !== null ? el?.querySelector(`[data-key="${CSS.escape(t.key)}"]`) : null
+    if (restoring.current && t !== null && t.side === side && el && row) {
       anchor.current = t.key
       anchorOffset.current = t.offset
       anchorEdge.current = t.edge
-      anchorRefs.current = []
+      const b = row.getBoundingClientRect()
+      captureRefs((t.edge === 'bottom' ? b.bottom : b.top) - el.getBoundingClientRect().top - t.offset)
       return
     }
     captureAnchor()
@@ -707,16 +721,25 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // that header takes the freed space instead of pushing the posts below
   // down — else the nearest one above, by its top. The anchor is then taken
   // again from there.
+  // Mid-gesture (a wheel/touch scroll still animating) the correction goes
+  // into ScrollShift — a scrollTop write would cancel WebKitGTK's wheel
+  // animation; otherwise any pending shift lands first, then scrollTop moves.
+  // (Not the latched userScrolling flag: that means "a gesture since the last
+  // restore", and the reader usually wheels up to the gap row.)
   const holdAnchor = () => {
     const el = scroller.current
     const key = anchor.current
-    if (!el || key === null || userScrolling.current) return
+    if (!el || key === null) return
+    if (!shift.gesturing) shift.flush()
     const view = el.getBoundingClientRect().top
     const hold = (k: string, measure: (b: DOMRect) => number, target: number) => {
       const rowEl = el.querySelector(`[data-key="${CSS.escape(k)}"]`)
       if (!rowEl) return false
       const nudge = anchorNudge(measure(rowEl.getBoundingClientRect()) - view, target)
-      if (nudge !== null) el.scrollTop += nudge
+      if (nudge !== null) {
+        if (shift.gesturing) shift.absorb(nudge)
+        else el.scrollTop += nudge
+      }
       return true
     }
     if (hold(key, (b) => (anchorEdge.current === 'bottom' ? b.bottom : b.top), anchorOffset.current)) return
