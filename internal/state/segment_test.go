@@ -421,7 +421,8 @@ func TestSetWindowOverflowKeepsSegmentAsStale(t *testing.T) {
 		s.SetWindow("town", run("n", 0, 5, 90_000), false, 9, 0)
 		check(t, s)
 		v := townView(t, s)
-		assert.Equal(t, []string{"o1", "n0", "n1", "n2", "n3", "n4"}, townIDs(t, s), "the reader is not thrown down")
+		assert.Equal(t, append(append([]string{"o1"}, wIDs(0, 9)...), "n0", "n1", "n2", "n3", "n4"), townIDs(t, s),
+			"the reader is not thrown down: the old window joins the history (R9a)")
 		assert.True(t, v.Gap.Open)
 		assert.Greater(t, v.Gap.Gen, gen)
 		assert.True(t, v.Gap.Stale, "edits in the history may have been missed")
@@ -429,7 +430,7 @@ func TestSetWindowOverflowKeepsSegmentAsStale(t *testing.T) {
 		assert.False(t, v.HasMore, "the history still reaches the first post")
 		op, ok := s.BeginLoadNewer("town")
 		require.True(t, ok)
-		assert.Equal(t, "o1", op.Cursor.ID, "the gap is loaded from the newest held post")
+		assert.Equal(t, "w9", op.Cursor.ID, "the gap is loaded from the newest held post")
 	})
 	t.Run("segment", func(t *testing.T) {
 		s := segFixture(t, 10)
@@ -726,4 +727,64 @@ func TestGapViewJSON(t *testing.T) {
 	assert.Contains(t, gap, "gen")
 	assert.Contains(t, gap, "stale")
 	assert.Contains(t, m, "hist_rev")
+}
+
+// R9a: an overflow while the gap was closed keeps the old window — it is
+// contiguous with the history — as history, up to where the window was
+// live (GapAfter): posts after it arrived across a lost stream.
+func TestOverflowKeepsOldWindowAsHistory(t *testing.T) {
+	s := segFixture(t, 10)
+	appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 5000)}, true)
+	s.MarkStale(9)
+	s.ApplyEvent(postedEv(mkPost("x", "town", "u2", 20_000))) // after the stream loss: not contiguous
+	check(t, s)
+	s.SetWindow("town", run("n", 0, 5, 90_000), false, 9, 0)
+	check(t, s)
+	assert.Equal(t, append([]string{"o1"}, wIDs(0, 9)...), olderIDs(s))
+	v := townView(t, s)
+	assert.True(t, v.Gap.Open)
+	assert.True(t, v.Gap.Stale)
+	op, ok := s.BeginLoadNewer("town")
+	require.True(t, ok)
+	assert.Equal(t, "w9", op.Cursor.ID)
+}
+
+// R9b: with the gap open and the window empty, a since= row of a post not
+// held and created before the window's sync point is an edit of a post
+// inside the gap — it does not enter the window, so it cannot pass for an
+// intersection proof when the gap is loaded.
+func TestSinceRowInsideGapStaysOutOfEmptyWindow(t *testing.T) {
+	s := segFixture(t, 3)
+	stdJump(t, s)
+	for _, id := range wIDs(0, 2) {
+		s.RemovePost(id)
+	}
+	s.MergeSince("town", nil, 20_000, 0)
+	stray := mkPost("s20", "town", "u2", 1200)
+	stray.EditAt, stray.UpdateAt, stray.Message = 25_000, 25_000, "edited in the gap"
+	fresh := mkPost("n0", "town", "u2", 30_000)
+	s.MergeSince("town", []model.Post{stray, fresh}, 31_000, 0)
+	check(t, s)
+	assert.Equal(t, append(sIDs(0, 10), "n0"), townIDs(t, s), "the edit inside the gap waits for the gap's loading")
+	op, ok := s.BeginLoadNewer("town")
+	require.True(t, ok)
+	closed, progressed := s.AppendNewer(op, plist("s10", "s21", append(run("s", 11, 9, 1000), stray)...))
+	check(t, s)
+	assert.True(t, progressed)
+	assert.False(t, closed, "s20 was never in the window: no intersection")
+	assert.True(t, townView(t, s).Gap.Open)
+}
+
+// R9c: a post removed by a covered revalidation goes into the gone ring: a
+// page read before (a lagging replica) cannot bring it back.
+func TestRevalidationRemovalsAreGone(t *testing.T) {
+	s := staleSegment(t)
+	op, ok := s.BeginRevalidate("town")
+	require.True(t, ok)
+	high := mkPost("s10", "town", "u2", 1100)
+	page := slices.DeleteFunc(run("s", 0, 10, 1000), func(p model.Post) bool { return p.ID == "s3" })
+	require.True(t, s.ApplyRevalidation(op, &high, false, []model.PostList{plist("", "s10", page...)}, true))
+	assert.NotContains(t, olderIDs(s), "s3")
+	stdJump(t, s) // its pages still hold s3
+	assert.NotContains(t, olderIDs(s), "s3", "a removed post is not resurrected")
 }

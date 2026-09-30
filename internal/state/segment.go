@@ -316,13 +316,13 @@ func (s *Server) BeginRevalidate(channelID string) (RevalOp, bool) {
 // changed after the start (a live edit or reaction), or it shares High's
 // create_at (before=High cannot return it) — and the segment is no longer
 // stale. Dropped after a reconnect (gapGen) too: the pages may predate what
-// it missed.
-func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, pages []model.PostList, covered bool) {
+// it missed. applied: false when dropped — the worker begins it again.
+func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, pages []model.PostList, covered bool) (applied bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.histCurrentLocked(op.HistOp)
 	if !ok || op.Gap != s.gapGen {
-		return
+		return false
 	}
 	var fresh []model.Post
 	if high != nil && !highGone {
@@ -349,18 +349,37 @@ func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, 
 	if covered {
 		s.older = slices.DeleteFunc(s.older, func(p model.Post) bool {
 			at, held := op.Held[p.ID]
-			return held && !seen[p.ID] && p.UpdateAt == at && (p.ID == op.High.ID || p.CreateAt != op.High.CreateAt)
+			gone := held && !seen[p.ID] && p.UpdateAt == at && (p.ID == op.High.ID || p.CreateAt != op.High.CreateAt)
+			if gone {
+				// Into the gone ring, so a page read before cannot bring it
+				// back. Only the ring: a root re-read here already has its
+				// count, and replyGoneLocked would lower it again.
+				s.gone.add(p.ID)
+			}
+			return gone
 		})
 		s.segStale = false
 	}
 	s.histRev++
+	return true
+}
+
+// contiguousPart: the posts of w known contiguous on the server — all of a
+// live window, those up to GapAfter of a stale one.
+func contiguousPart(w Window) []model.Post {
+	if !w.Stale {
+		return w.Posts
+	}
+	return w.Posts[:indexOf(w.Posts, w.GapAfter)+1]
 }
 
 // windowReplacedLocked keeps the held history in step with a new latest
 // page (merged) replacing the window old. A page that no longer reaches the
 // old window's first post (a catch-up overflow) leaves a hole: held history
 // stays where the reader is, behind a new gap, and is stale — the catch-up
-// covered only the latest page. With nothing held, it goes as before.
+// covered only the latest page. The old window joins it when the history
+// reached it (no gap), so a reader in it keeps their place too. With
+// nothing held, it goes as before.
 // Held posts the page holds go (the window has them), and so do those newer
 // than its first post that it lacks (gone on the server); a held post in the
 // page proves the history joins it.
@@ -373,6 +392,11 @@ func (s *Server) windowReplacedLocked(old Window, merged []model.Post) {
 		return
 	case !reaches && old.Loaded:
 		if !s.olderGap {
+			// The old window joins the history: it stays where the reader
+			// is, as history, up to where it was live (GapAfter: what came
+			// after arrived across a lost stream, not contiguous).
+			s.older = append(s.older, contiguousPart(old)...)
+			sortPosts(s.older)
 			s.newerCursor = cursorOf(s.older[len(s.older)-1])
 		}
 		s.olderGap, s.segStale = true, true

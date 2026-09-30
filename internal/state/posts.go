@@ -284,8 +284,17 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 	}
 	crt := s.crtLocked()
 	var oldest int64
-	if len(ch.Win.Posts) > 0 && !ch.Win.Complete {
+	switch {
+	case len(ch.Win.Posts) > 0 && !ch.Win.Complete:
 		oldest = ch.Win.Posts[0].CreateAt
+	case len(ch.Win.Posts) == 0 && channelID == s.active && s.olderGap:
+		// An empty window behind the history's gap has no first post to
+		// bound it: a row created before the window's sync point is an edit
+		// of a post inside the gap. It is left to the gap's loading — in the
+		// window it would pass for an intersection proof (joinsWindowLocked).
+		// Only rows created since go in (new posts); a new one left out by
+		// clock skew (SyncedAt is our clock) comes with the gap's loading.
+		oldest = ch.Win.SyncedAt
 	}
 	for _, p := range posts {
 		switch {
