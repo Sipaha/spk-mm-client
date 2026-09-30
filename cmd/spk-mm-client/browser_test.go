@@ -398,6 +398,34 @@ func TestTestAPIThreadControls(t *testing.T) {
 	assert.Empty(t, readList, "no PUT read calls were made in this test")
 }
 
+// fake/search-calls lists every search the fake answered (e2e: which pages
+// the client asked for, and with which terms).
+func TestTestAPISearchCalls(t *testing.T) {
+	ts, token, fake := setup(t, true)
+	login, err := http.Post(fake.URL()+"/api/v4/users/login", "application/json", strings.NewReader(`{"login_id":"alice","password":"secret"}`))
+	require.NoError(t, err)
+	login.Body.Close()
+	req, _ := http.NewRequest(http.MethodPost, fake.URL()+"/api/v4/teams/t-fake/posts/search",
+		strings.NewReader(`{"terms":"message from:bob","page":1,"per_page":20}`))
+	req.Header.Set("Authorization", "Bearer "+login.Header.Get("Token"))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/_test/fake/search-calls", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var calls []map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&calls))
+	require.Len(t, calls, 1)
+	assert.Equal(t, map[string]any{"team_id": "t-fake", "user_id": "u-alice", "terms": "message from:bob",
+		"is_or_search": false, "page": float64(1), "per_page": float64(20)}, calls[0])
+}
+
 // fake/webhook posts as an incoming webhook: from_webhook plus the given
 // overrides (e2e: a GitLab-like post with its own name and icon).
 func TestTestAPIWebhookPost(t *testing.T) {

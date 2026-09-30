@@ -49,6 +49,7 @@ type chatData struct {
 	threadTries   int                                     // those calls, 404s included
 
 	commands []ExecutedCommand // every accepted POST /commands/execute (autocomplete.go)
+	searches []SearchCall      // every answered POST /teams/{id}/posts/search (search.go)
 }
 
 type RecordedEvent struct {
@@ -85,6 +86,7 @@ func (s *Server) chatRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/channels/{cid}/posts", s.handleAuthed(s.channelPosts))
 	mux.HandleFunc("POST /api/v4/posts", s.handleAuthed(s.createPost))
 	mux.HandleFunc("PUT /api/v4/posts/{pid}/patch", s.handleAuthed(s.patchPost))
+	mux.HandleFunc("GET /api/v4/posts/{pid}", s.handleAuthed(s.getPost))
 	mux.HandleFunc("DELETE /api/v4/posts/{pid}", s.handleAuthed(s.deletePost))
 	mux.HandleFunc("POST /api/v4/channels/members/me/view", s.handleAuthed(s.viewChannel))
 	mux.HandleFunc("POST /api/v4/users/me/posts/{pid}/set_unread", s.handleAuthed(s.setUnread))
@@ -321,27 +323,79 @@ func (s *Server) channelPosts(w http.ResponseWriter, r *http.Request, u User) {
 			vis = append(vis, p)
 		}
 	}
-	end := len(vis)
-	if before := q.Get("before"); before != "" {
-		end = slices.IndexFunc(vis, func(p *fpost) bool { return p.ID == before })
-		if end < 0 {
-			end = 0
-		}
-	}
 	per, _ := strconv.Atoi(q.Get("per_page"))
 	if per <= 0 {
 		per = 60
 	}
 	per = min(per, 200)
-	start := max(0, end-per)
+	// The page is vis[start:end], answered newest first. after= wins over
+	// before= (api4/post.go getPostsForChannel). A cursor is compared by
+	// its create_at, read from the post whatever its delete_at or channel
+	// (post_store.go getPostsAround: `CreateAt > (SELECT CreateAt FROM
+	// Posts WHERE Id = ?)`); an unknown one selects nothing.
+	after, before := q.Get("after"), q.Get("before")
+	start, end := max(0, len(vis)-per), len(vis)
+	switch {
+	case after != "":
+		start = len(vis)
+		if c := s.chat.byID[after]; c != nil {
+			start = sort.Search(len(vis), func(i int) bool { return vis[i].CreateAt > c.CreateAt })
+		}
+		end = min(start+per, len(vis))
+	case before != "":
+		end = 0
+		if c := s.chat.byID[before]; c != nil {
+			end = sort.Search(len(vis), func(i int) bool { return vis[i].CreateAt >= c.CreateAt })
+		}
+		start = max(0, end-per)
+	}
 	for i := end - 1; i >= start; i-- {
 		list.Order = append(list.Order, vis[i].ID)
 		list.Posts[vis[i].ID] = vis[i].Post
 	}
-	if start > 0 {
-		list.PrevPostID = vis[start-1].ID
+	// Cursors as app/post.go AddCursorIdsForPostList sets them (page 0):
+	// after= names itself as prev_post_id, before= as next_post_id; the
+	// other end is empty after a short page, otherwise the next visible
+	// post beyond the page (none → empty), as GetPostIdAfterTime /
+	// GetPostIdBeforeTime find it.
+	short := len(list.Order) < per
+	switch {
+	case after != "":
+		list.PrevPostID = after
+		if !short && end < len(vis) {
+			list.NextPostID = vis[end].ID
+		}
+	case before != "":
+		list.NextPostID = before
+		if !short && start > 0 {
+			list.PrevPostID = vis[start-1].ID
+		}
+	default:
+		if start > 0 {
+			list.PrevPostID = vis[start-1].ID
+		}
 	}
 	writeJSON(w, 200, list)
+}
+
+// getPost is GET /api/v4/posts/{id} (api4/post.go getPost →
+// GetPostIfAuthorized): 404 for an unknown or deleted post (edit-history
+// rows are deleted ones); readable from a channel the caller is in, or from
+// any open channel of a team they belong to; 403 otherwise.
+func (s *Server) getPost(w http.ResponseWriter, r *http.Request, u User) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.chat.byID[r.PathValue("pid")]
+	if p == nil || p.DeleteAt != 0 || p.OriginalID != "" {
+		appError(w, 404, "app.post.get.app_error", "not found")
+		return
+	}
+	c := s.chat.channels[p.ChannelID]
+	if !s.isMemberLocked(p.ChannelID, u.ID) && (c == nil || c.Type != model.ChannelOpen || !s.inTeamLocked(c.TeamID)) {
+		appError(w, 403, "api.context.permissions.app_error", "no permission")
+		return
+	}
+	writeJSON(w, 200, p.Post)
 }
 
 var mentionRe = regexp.MustCompile(`@([a-zA-Z0-9][a-zA-Z0-9._-]*)`)

@@ -19,21 +19,22 @@ const (
 )
 
 // ThreadQuery is GET .../posts/{root}/thread's parameters. Direction is
-// always "up" (newest replies first) — the client only ever pages upward
-// (scrolling to older history); PerPage 0 becomes ThreadPageDefault and is
-// capped at ThreadPageMax, so the server is never asked for perPage=0
-// (whole-thread) by construction.
+// "up" (older replies, newest first) unless Down: "down" pages to newer
+// replies, oldest first (a thread opened around one reply). PerPage 0
+// becomes ThreadPageDefault and is capped at ThreadPageMax, so the server
+// is never asked for perPage=0 (whole-thread) by construction.
 type ThreadQuery struct {
 	PerPage          int
 	FromCreateAt     int64
 	FromPost         string
 	CollapsedThreads bool
+	Down             bool
 }
 
 // PostThread fetches one page of a thread: the root (always order[0]) plus
-// up to PerPage replies, newest first. FromCreateAt/FromPost page further
-// back (older) in a later call once the caller knows the oldest reply seen
-// so far.
+// up to PerPage replies beyond the cursor FromCreateAt/FromPost — older
+// ones newest first, or with Down newer ones oldest first. has_next tells
+// whether more exist in that direction.
 func (c *Client) PostThread(ctx context.Context, rootID string, q ThreadQuery) (model.PostList, error) {
 	per := q.PerPage
 	if per <= 0 {
@@ -42,9 +43,13 @@ func (c *Client) PostThread(ctx context.Context, rootID string, q ThreadQuery) (
 	if per > ThreadPageMax {
 		per = ThreadPageMax
 	}
+	dir := "up"
+	if q.Down {
+		dir = "down"
+	}
 	v := url.Values{
 		"perPage":          {strconv.Itoa(per)},
-		"direction":        {"up"},
+		"direction":        {dir},
 		"collapsedThreads": {strconv.FormatBool(q.CollapsedThreads)},
 	}
 	if q.FromCreateAt > 0 {

@@ -298,6 +298,9 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		tm.HandleFunc("GET /api/_test/fake/thread-reads", withFake(func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, fake.ThreadReads())
 		}))
+		tm.HandleFunc("GET /api/_test/fake/search-calls", withFake(func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, fake.SearchCalls())
+		}))
 		tm.HandleFunc("POST /api/_test/fake/post-latency", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				MS int `json:"ms"`

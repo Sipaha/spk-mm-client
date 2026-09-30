@@ -36,10 +36,14 @@ func TestPostThreadDefaultsAndCapsPerPage(t *testing.T) {
 	_, err = c.PostThread(ctx, "r1", ThreadQuery{PerPage: 60, FromCreateAt: 1000, FromPost: "p9"})
 	require.NoError(t, err)
 
+	_, err = c.PostThread(ctx, "r1", ThreadQuery{PerPage: 60, FromCreateAt: 1000, FromPost: "p9", Down: true})
+	require.NoError(t, err)
+
 	assert.Equal(t, []string{
 		"collapsedThreads=false&direction=up&perPage=60",
 		"collapsedThreads=true&direction=up&perPage=200",
 		"collapsedThreads=false&direction=up&fromCreateAt=1000&fromPost=p9&perPage=60",
+		"collapsedThreads=false&direction=down&fromCreateAt=1000&fromPost=p9&perPage=60",
 	}, queries, "perPage never omitted (0 would ask the server for the whole thread); capped at 200")
 }
 

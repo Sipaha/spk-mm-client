@@ -204,6 +204,30 @@ func (l PostList) Ascending() []Post {
 	return out
 }
 
+// SearchParams is the body of POST /teams/{id}/posts/search (the server's
+// model.SearchParameter). Terms carries the whole query — from:, in:,
+// before:/after:/on:, "phrases", -exclusions and word* are parsed by the
+// server. TimeZoneOffset is in seconds east of UTC (day bounds of the date
+// filters). Page/PerPage are offsets for a search engine; the database
+// engine ignores PerPage and answers page > 0 with nothing
+// (docs/research/2026-09-24-mattermost-api-facts.md §9).
+type SearchParams struct {
+	Terms                  string `json:"terms"`
+	IsOrSearch             bool   `json:"is_or_search"`
+	TimeZoneOffset         int    `json:"time_zone_offset"`
+	IncludeDeletedChannels bool   `json:"include_deleted_channels"`
+	Page                   int    `json:"page"`
+	PerPage                int    `json:"per_page"`
+}
+
+// PostSearchResults is the search answer: a PostList (order newest first)
+// plus matches — the matched words per post id, filled only by the
+// Elasticsearch/Bleve engines; the database engine always sends null.
+type PostSearchResults struct {
+	PostList
+	Matches map[string][]string `json:"matches"`
+}
+
 type ChannelUnreadAt struct {
 	TeamID             string `json:"team_id"`
 	ChannelID          string `json:"channel_id"`

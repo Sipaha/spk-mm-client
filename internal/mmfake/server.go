@@ -81,6 +81,12 @@ type Options struct {
 	// check of the client must not measure the fake keeping every upload.
 	// "" keeps them in memory (tests).
 	FilesDir string
+
+	// SearchSQLEngine answers POST /teams/{id}/posts/search exactly like the
+	// server's database engine: page > 0 is always empty and page 0 holds up
+	// to 100 hits whatever per_page says. Unset, the fake pages by offset
+	// (page × per_page), like a search engine (search.go).
+	SearchSQLEngine bool
 }
 
 // DefaultMaxFileSize mirrors the real server's default (model/config.go,
@@ -161,6 +167,7 @@ func Start(o Options) *Server {
 	s.threadRoutes(mux)
 	s.webhookRoutes(mux)
 	s.autocompleteRoutes(mux)
+	s.searchRoutes(mux)
 	s.ts = httptest.NewServer(s.conditions(mux))
 	return s
 }

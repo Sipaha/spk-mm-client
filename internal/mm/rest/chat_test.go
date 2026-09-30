@@ -73,12 +73,22 @@ func TestChannelPostsQueryParams(t *testing.T) {
 	l, err := c.ChannelPosts(ctx, "c1", PostsQuery{Since: 1234, CollapsedThreads: true})
 	require.NoError(t, err)
 	assert.Equal(t, "p1", l.Order[0])
+	_, err = c.ChannelPosts(ctx, "c1", PostsQuery{PerPage: 30, After: "p3"})
+	require.NoError(t, err)
+	_, err = c.ChannelPosts(ctx, "c1", PostsQuery{PerPage: 30, After: "p3", Before: "p9"})
+	require.NoError(t, err)
+	_, err = c.ChannelPosts(ctx, "c1", PostsQuery{Since: 99, After: "p3", Before: "p9"})
+	require.NoError(t, err)
 	assert.Equal(t, []string{
 		// skipFetchThreads in page mode too: reply_count filled in, no
 		// extra thread posts (the server's COUNT subquery needs it).
 		"collapsedThreads=true&collapsedThreadsExtended=false&page=0&per_page=60&skipFetchThreads=true",
 		"before=p9&collapsedThreads=false&collapsedThreadsExtended=false&page=0&per_page=60&skipFetchThreads=true",
 		"collapsedThreads=true&collapsedThreadsExtended=false&since=1234&skipFetchThreads=true",
+		"after=p3&collapsedThreads=false&collapsedThreadsExtended=false&page=0&per_page=30&skipFetchThreads=true",
+		// Only one cursor is ever sent: After wins over Before, Since over both.
+		"after=p3&collapsedThreads=false&collapsedThreadsExtended=false&page=0&per_page=30&skipFetchThreads=true",
+		"collapsedThreads=false&collapsedThreadsExtended=false&since=99&skipFetchThreads=true",
 	}, q)
 }
 

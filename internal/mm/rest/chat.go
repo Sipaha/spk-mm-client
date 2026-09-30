@@ -91,9 +91,15 @@ func (c *Client) UsersByIDsSince(ctx context.Context, ids []string, since int64)
 	return all, nil
 }
 
+// PostsQuery selects one GET /channels/{id}/posts. Only one cursor is sent,
+// in the server's own priority (api4/post.go getPostsForChannel): Since
+// wins over After, After over Before. Page-mode answers are newest first;
+// prev_post_id/next_post_id carry the server's end cursors
+// (docs/research/2026-09-24-mattermost-api-facts.md §9).
 type PostsQuery struct {
 	PerPage          int    // page mode; 0 → 60
 	Before           string // page mode: posts older than this id
+	After            string // page mode: posts newer than this id (the PerPage oldest of them)
 	Since            int64  // ms; >0 switches to since mode (edits/deletes included, ≤ SinceLimit)
 	CollapsedThreads bool   // CRT: root posts only
 }
@@ -118,7 +124,10 @@ func (c *Client) ChannelPosts(ctx context.Context, channelID string, q PostsQuer
 		}
 		v.Set("page", "0")
 		v.Set("per_page", strconv.Itoa(per))
-		if q.Before != "" {
+		switch {
+		case q.After != "":
+			v.Set("after", q.After)
+		case q.Before != "":
 			v.Set("before", q.Before)
 		}
 	}
