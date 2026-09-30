@@ -130,3 +130,128 @@ export async function expectSent(post: Locator) {
   await post.hover()
   await expect(post.getByRole('button', { name: 'More actions' })).toBeVisible()
 }
+
+// ---- search ----
+
+export const searchBox = (page: Page) => page.getByRole('combobox', { name: 'Search messages' })
+export const searchPane = (page: Page) => page.getByRole('complementary', { name: 'Search results', exact: true })
+// hitCard: a result card by its exact message text (the markdown's <p>; the
+// card's own text also holds the author, the time and the channel).
+export const hitCard = (page: Page, text: string) =>
+  searchPane(page).locator('article[data-hit-id]').filter({ has: page.getByText(text, { exact: true }) })
+
+// search: submits terms in the header field and waits for the answer.
+export async function search(page: Page, terms: string) {
+  await searchBox(page).fill(terms)
+  await searchBox(page).press('Enter')
+  await expect(searchPane(page).locator('[data-search-results][aria-busy="false"]')).toBeVisible()
+}
+
+// jumpedPost: the feed row a jump highlighted (Feed.tsx: .post--focus on
+// the row around the target's article).
+export const focusedRow = (log: Locator) => log.locator('[data-kind="post"].post--focus')
+
+// offsetFromCenter: the row's centre minus the feed viewport's, as a
+// fraction of the viewport's height (0 = centred).
+export async function offsetFromCenter(log: Locator, row: Locator) {
+  const [f, r] = await Promise.all([log.boundingBox(), row.boundingBox()])
+  if (!f || !r) return Number.NaN
+  return (r.y + r.height / 2 - (f.y + f.height / 2)) / f.height
+}
+
+// frames: two animation frames — a scroll's rows are laid out and painted.
+export const frames = (page: Page) => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))))
+
+// walkFeed checks a virtualized feed's completeness the way a reader would:
+// from its first post (history loaded by scrolling to the top until `first`
+// shows) down to its very end, one step of ~⅔ viewport at a time, merging
+// the mounted posts' data-post-id of every step into one ordered list — the
+// DOM holds only the mounted range, so a count of rows proves nothing. On
+// the way, an open gap row loads itself when it comes on screen (as for a
+// user), and every step checks that the mounted range has no post twice and
+// keeps the order of what was seen before. `label` extracts a post's label
+// (e.g. its number) from the article's text; posts it doesn't match are
+// still walked, only not returned.
+export async function walkFeed(page: Page, log: Locator, first: string, label: RegExp, timeout = 90_000) {
+  await expect
+    .poll(
+      async () => {
+        await log.evaluate((el) => el.scrollTo({ top: 0 }))
+        return log.getByText(first, { exact: true }).count()
+      },
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0)
+  const order: string[] = []
+  const labels = new Map<string, string>()
+  const problems: string[] = []
+  const deadline = Date.now() + timeout
+  let still = 0
+  for (;;) {
+    await frames(page)
+    // A reader waits for a page that is loading on screen before reading on.
+    await expect.poll(() => gapLoading(log), { timeout: 15_000 }).toBe(false)
+    const snap = await log.evaluate((el) => {
+      const arts = [...el.querySelectorAll<HTMLElement>('article[data-post-id]')]
+      return {
+        posts: arts.map((a) => ({ id: a.dataset.postId!, text: a.innerText })),
+        top: el.scrollTop,
+        end: el.scrollHeight - el.clientHeight,
+        gap: el.querySelector('[data-gap-open]') !== null,
+      }
+    })
+    const ids = snap.posts.map((p) => p.id)
+    if (new Set(ids).size !== ids.length) problems.push(`duplicate rows mounted: ${ids.filter((id, i) => ids.indexOf(id) !== i).join(',')}`)
+    let prev: string | null = null
+    let lastAt = -1
+    for (const [i, p] of snap.posts.entries()) {
+      const at = order.indexOf(p.id)
+      if (at >= 0) {
+        if (at < lastAt) problems.push(`order changed around ${p.id}`)
+        lastAt = at
+      } else {
+        let insertAt = order.length
+        if (prev !== null) insertAt = order.indexOf(prev) + 1
+        else {
+          const next = snap.posts.slice(i + 1).find((q) => order.includes(q.id))
+          if (next) insertAt = order.indexOf(next.id)
+        }
+        order.splice(insertAt, 0, p.id)
+        lastAt = insertAt
+        const m = label.exec(p.text)
+        if (m) labels.set(p.id, m[1])
+      }
+      prev = p.id
+    }
+    const atEnd = snap.top >= snap.end - 1 && !snap.gap
+    still = atEnd ? still + 1 : 0
+    if (still >= 3) break // the end, three steps in a row: nothing more comes
+    if (Date.now() > deadline) throw new Error(`walkFeed: no end within ${timeout} ms (top ${snap.top}/${snap.end}, gap ${snap.gap})`)
+    if (!atEnd) await log.evaluate((el) => el.scrollBy({ top: Math.round(el.clientHeight * 0.66) }))
+    else await page.waitForTimeout(100)
+  }
+  expect(problems, problems.join('\n')).toEqual([])
+  return order.filter((id) => labels.has(id)).map((id) => labels.get(id)!)
+}
+
+// gapOnScreen: the feed's open gap row is inside its viewport (Playwright's
+// isVisible() is true for a row mounted in the overscan, off screen).
+export const gapOnScreen = (log: Locator) =>
+  log.evaluate((el) => {
+    const row = el.querySelector('[data-gap-open]')
+    if (!row) return false
+    const v = el.getBoundingClientRect()
+    const b = row.getBoundingClientRect()
+    return b.bottom > v.top && b.top < v.bottom
+  })
+
+// gapLoading: the gap row on screen is loading its page (a gap row that
+// comes on screen loads on its own within a frame — Feed.tsx checkGap).
+export const gapLoading = (log: Locator) =>
+  log.evaluate((el) => {
+    const row = el.querySelector('[data-gap-open]')
+    if (!row) return false
+    const v = el.getBoundingClientRect()
+    const b = row.getBoundingClientRect()
+    return b.bottom > v.top && b.top < v.bottom && row.querySelector('button[disabled]') !== null
+  })

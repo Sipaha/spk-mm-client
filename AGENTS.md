@@ -882,7 +882,138 @@
   последние посты Town Square). Фейк: `/users/autocomplete`, `/teams/{id}/channels/autocomplete`,
   `/emoji/autocomplete`, `/teams/{id}/commands/autocomplete`, `/commands/execute` (`/echo`, `/shrug`,
   `/away` — эфемерный ответ; остальное — 404 `not_found`), `ExecutedCommands()`; публичный канал
-  «Offices», где alice нет. Поиск по сообщениям и Ctrl+K не согласованы (`docs/backlog.md`).
+  «Offices», где alice нет. Ctrl+K не согласован (`docs/backlog.md`); поиск — ниже.
+
+### Переход к сообщению и поиск (спека `docs/specs/2026-09-30-search-design.md`)
+
+- **Сегмент и разрыв.** У активного канала в Go — окно `Win` (последние ≤ 60, живое) и
+  удерживаемая история `s.older`; `s.olderGap` — между ними незагруженная дыра. Инварианты:
+  `s.older` непрерывен и без дублей с `Win`; дыра только между `s.older` и `Win`;
+  `olderGap == false` ⇒ примыкание. Следствия: при открытом разрыве вытесненные из окна посты
+  выбрасываются (вернутся догрузкой), а не переносятся в `s.older`; `MergeSince` обновляет все
+  удерживаемые копии, но пост изнутри дыры в `s.older` не добавляет; overflow в `SetWindow`
+  сохраняет сегмент как stale (прежнее окно — в историю, если непрерывно). Потолка у сегмента
+  нет (R4): растёт прокруткой и догрузкой, сбрасывается уходом из канала / сменой CRT.
+  Разрыв закрывается **только доказательством** под lock: сырой ID страницы есть в `Win` или
+  `next_post_id == ""` при `Win.Loaded && !Win.Stale`; отфильтрованные посты и время —
+  не доказательство. Проверка инвариантов после каждой операции — `checkHistoryInvariantsLocked`
+  в `internal/state/segment_test.go` (`TestSegmentReplacesHistoryAndOpensGap`,
+  `TestGapTrimDoesNotLeakIntoOlder`, `TestAppendNewerClosesGapOnlyOnProof`,
+  `TestAppendNewerKeepsUnknownIDAtWindowBoundary`, `TestMergeSinceUpdatesSegmentCopies`,
+  `TestSinceRowInsideGapStaysOutOfEmptyWindow`, `TestOverflowKeepsOldWindowAsHistory`,
+  `TestEmptyWindowKeepsGapOpen`, `TestResetsClearSegmentAtomically`).
+- **Поколения.** `histGen` (смена канала, переход, сброс, CRT), `gapGen` (каждое открытие
+  разрыва и `MarkStale`), `winGen`; каждая операция (`BeginJump`/`BeginLoadNewer`/
+  `BeginLoadOlder`/`BeginRevalidate`) захватывает `HistOp{поколения, CRT, курсор}` и применяется,
+  только если под lock всё совпадает; `hist_rev` растёт на каждой применённой странице (UI
+  привязывает к нему якорь). Ответ перехода, прочитанный до реконнекта, применяется, но сегмент
+  остаётся stale и перечитывается. — `TestAppendNewerFromOldGapGenIsDropped`,
+  `TestMarkStaleInvalidatesInFlightLoadNewer`, `TestBeginJumpAlwaysBumpsHistGen`,
+  `TestHistRevBumpsOnEveryAppliedPage`, `TestSegmentReadBeforeReconnectIsStale`,
+  `TestOverlappingJumpKeepsLiveEdit`, `TestStalePagesAreDroppedAcrossJumps` (A→B→A, jump1→jump2),
+  `TestJumpAcrossReconnectIsReread`.
+- **Сырые курсоры.** Курсор `LoadOlder`/`LoadNewer` — самый старый/новый **сырой** пост
+  страницы после нормализации порядка (не последний видимый): отфильтрованная страница тоже
+  двигает его; удалённый курсор листается сервером по `create_at`. Страница без новых сырых ID
+  повторяется один раз, затем `no_progress` в строке разрыва (без автоповтора). —
+  `TestAppendOlderUsesRawCursor`, `TestLoadNewerNoProgress`, `TestJumpThenBurstThenFillGapLosesNothing`.
+- **Перепроверка stale-сегмента — только по покрытию.** Диапазон `[Low, High]` и `UpdateAt`
+  удерживаемых фиксируются на старте; `GET /posts/{High}`, затем `before=` до поста старше
+  `Low` или `prev_post_id == ""` — лишь тогда отсутствующие удаляются (в gone-ring), кроме
+  изменённых после старта и деливших `create_at` с границей страницы; пустая страница от
+  неизвестно-живого курсора покрытием не считается. Фоновая перепроверка вытесняется любой
+  операцией пользователя и перезапускается (`revalIdle`). — `TestRevalidationDropsOnlyWhenCovered`,
+  `TestStaleSegmentIsRevalidated`, `TestRevalidationPartialFailureKeepsSegment`,
+  `TestRevalidationSurvivesPermanentlyDeletedHigh`, `TestRevalidationSurvivesPermanentlyDeletedCursor`,
+  `TestRevalidationKeepsTiesAtPageBoundaries`, `TestRevalidationRemovalsAreGone`,
+  `TestUserHistoryOpPreemptsBackgroundReread`.
+- **Навигация отменяет предыдущую, одна операция истории за раз.** `histLane` на канал (и один
+  на тред-фокус): `histBegin(ctx, lane, kind, begin)` в одной критической секции регистрирует
+  операцию, отменяет прежние (`opJump` — все, `ErrSuperseded`; `opUser` — только перепроверку) и
+  вызывает state-`Begin*` — иначе отменённая навигация, начавшая позже, перебивала бы новую.
+  `histMu` — канал на 1 слот (ожидание отменяемо). Переход к уже удерживаемому посту — без
+  запросов, но поколение двигает. Устаревший переход отвечает кодом `cancelled` — UI молчит. —
+  `TestJumpRegistrationAndBeginAreOneStep`, `TestOpenThreadAtRegistrationAndBeginAreOneStep`,
+  `TestJumpCancelsHolderOfHistMu`, `TestHistoryOperationsRunOneAtATime`,
+  `TestJumpToHeldPostMakesNoRequestsButInvalidates`, `TestJumpToGoneOrForeignPost`, `TestHistErrorCodes`.
+- **Ответ при CRT — фокус треда, скользящее окно.** `OpenThreadAt`: целевой ответ из
+  `GET /posts/{id}` (проверка `channel_id` **и** `root_id`), страницы `direction=up/down` по 30;
+  сегмент ≤ `ThreadMaxReplies` (200) скользит — догрузка вниз отпускает верхний край и наоборот
+  (курсоры краёв сохраняются); хвост последних — это `t.replies` (≤ `ThreadPage` = 60), живые
+  ответы копятся в нём, не в сегменте; разрыв к хвосту закрывается тем же доказательством.
+  Порядок ответов везде (create_at, id), как `getPostThread` сервера. Своё поколение у каждого
+  фокуса (`f.gen`) и общий `focusGen` для ещё не применённого. — `TestFocusBeyond200LoadsAroundTarget`,
+  `TestFocusSlidingWindowBothWays`, `TestFocusTailSeededAndBounded`,
+  `TestFocusGapClosesOnProofOnlyForCurrentGen`, `TestFocusChecksChannelAndRootID`,
+  `TestHeldRetargetDropsPendingFocus`, `TestHeldRetargetInvalidatesExistingFocusPage`,
+  `TestFocusSameTimestampSlidesInServerOrder`, `TestFocusRevalidatedAfterReconnect`,
+  `TestFocusRereadRetriedAfterFailure`, `TestFocusRevOnlyOnAppliedData`.
+- **UI: переход.** `jumpToPost` — `jumpSeq` + `AbortController`, проверка после каждого await;
+  канал открывается, только если не открыт; `in_feed=false` → `openThreadAt`. В `Feed` новый
+  nonce фокуса синхронно снимает `atBottom`, старый якорь и коррекции, центрирует
+  (`scrollToIndex` + DOM-коррекция `centerOn`) и подсвечивает (`.post--focus`, ~3 с); сама
+  ревизия данных никогда не центрирует. — `frontend/src/chat.test.ts` («jump superseded by another
+  jump does nothing», «CRT reply opens the thread focus»), `Feed.test.tsx` («jump centers and
+  highlights the target, beats the initial scroll», «same target again re-centers (nonce)»).
+- **UI: строка разрыва и якорь.** Строка грузит сама, пока на экране (≤ 5 страниц подряд без
+  жеста, дальше кнопка; одна операция истории за раз — общий флаг с `loadOlder`); проверка —
+  после прокрутки **и** после смены смонтированного диапазона (виртуализатор монтирует строку
+  своим рендером уже после кадра прокрутки — одиночный прыжок оставлял её на экране незагруженной). Якорь
+  страницы восстанавливается только рендером с `hist_rev` новее захваченного (WS-строки и
+  выброшенные страницы его не съедают); до того он следует за прокруткой читателя, а
+  обновления строк до страницы держат читаемый пост на месте (`holdAnchor`; если он сам ушёл в
+  разрыв — ближайший под ним, нижним краем). Сторона — откуда читатель подошёл к строке
+  (`readerSide`: где строка была, пока была вне экрана; собственные прокрутки восстановления не
+  считаются): сверху — держится верхний пост, снизу — пост под строкой (нижним краем: страница
+  может присоединить его к группе автора). Линия «новые» за открытым разрывом — только если
+  граница известна. — `Feed.test.tsx` («anchor applies on hist_rev, not on an earlier
+  channel_changed», «keeps the visible post when rows are inserted above it (from below)»,
+  «keeps the top post when the reader came down to the gap row, even with the row in the upper
+  half», «a live post trimming the window under the gap row while its page loads does not move
+  the post on screen», «auto-loads the gap within a budget»), `feedRows.test.ts` («new line
+  hidden when new_since falls into the gap»), e2e `tests/e2e/search.spec.ts` (проходы
+  прокруткой `walkFeed`).
+- **UI: один путь снимка треда — `viewThread`.** Каждый снимок треда (открытие, фокус,
+  restore, его запасное чтение, refresh) идёт через `viewThread`: поколение на старте, ответ
+  применяется, только если операция ещё текущая и панель не показывает более новый снимок того
+  же треда; после открытия, если за время него началось чтение, — ровно одно догоняющее. Что Go
+  держит открытым — `goThread` (владелец — команда треда); `reconcileGoThread` возвращает Go к
+  панели, только пока владеет. — `chat.test.ts` («fix 4: %s open — …» ×8, «Codex round3:
+  restoring focus does not overwrite a newer completed refresh», «fix 2: …»).
+- **Поиск: движки и страницы.** `SearchPosts` — POST без повтора; `has_next` = сырая длина
+  ≥ 20 (bleve — offset, SQL — всё на странице 0, дальше пусто), не больше 25 страниц →
+  `limit_reached` («уточните запрос»); удалённые/отсутствующие посты пропускаются, но в сырую
+  длину входят; дедуп по id — на фронте; 401 → `signalAuth`, офлайн — `offline` без запроса;
+  `matches` — только строго своего hit. Подсказки — team-scope: `from:` все участники команды,
+  `in:` slug / `@user` / `@a,b,c` (GM из display_name; ≥ 64 байт — не предлагается). —
+  `internal/mmsync/search_test.go` (`TestSearchHasNextByRawLength`, `TestSearchLimitReachedOnLastPage`,
+  `TestSearchMatchesBelongToTheirHit`, `TestSearchOfflineAsksNothing`, `TestSearchSuggestIsTeamScoped`,
+  `TestSearchProfileWaitHonorsCancellation`), `internal/api/search_test.go`, `chat.test.ts`
+  («search: more pages — page moves by the answer, new hits between pages are deduplicated, the
+  end stops asking», «search: the limit reached is kept apart from the end»).
+- **Поиск: сессия и панель.** Сессия (`search`: server, team, terms, hits, page, gen) отдельно
+  от черновика поля и от видимой панели (`rhs: 'thread'|'search'|null`, одна за раз, общие
+  ширина/сплиттер/оверлей). Смена канала закрывает тред, не поиск; смена команды/сервера и
+  выход завершают сессию — `endSession` (подписка на store) обрывает её запрос и её переход.
+  `jumpable` только повышается обновлением сайдбара той же команды (R14): сайдбар —
+  отфильтрованный вид, покинутый канал проявится ошибкой в карточке. Позиция списка — якорем
+  (первый hit на экране + смещение). — `chat.test.ts` («search: a channel switch closes the
+  thread but not the search…», «Codex search7 fix: hidden DM search hit stays jumpable after
+  sidebar refresh», «a new search while a jump from the old results is opening its thread…»),
+  `SearchPane.test.tsx`, `SearchBox.test.tsx` («Ctrl+F … by the physical key», «Esc: closes the
+  suggestions, then clears the text, then leaves the field»).
+- **Подсветка (R7).** remark-плагин `remarkHighlight` по текстовым узлам (последним — после
+  упоминаний/эмодзи; код, inline-код, html и URL ссылок не трогает), границы слов по Unicode
+  (`(?<![\p{L}\p{N}_])…`, флаг `u`), `слово*` — по префиксу без учёта регистра; фраза в кавычках —
+  целиком, где встречается в одном узле, иначе по словам (bleve фраз не знает); фильтры и
+  отрицания не подсвечиваются; непустые `matches` своего hit важнее терминов. —
+  `frontend/src/components/highlight.test.tsx`, `frontend/src/search/terms.test.ts`.
+- **Тестовые швы mmsync.** Все mmsync-тесты идут через `harness` с неограниченным `Config.limiter`
+  (иначе боевые 10 req/s делали пакет > 120 с) и короткими `revalIdle`/`refreshRetry`/
+  `metaDebounce`/`resumeSettle`; гонки — через `mmfake.Options.RequestHook` (`gate`: держать или
+  ответить запрос) и `Config.histBegun` (пауза между регистрацией и Begin). Ждать условий
+  (`require.Eventually`), не спать; держать **все** параллельные запросы операции (переход шлёт
+  `before=` и `after=` одновременно). — `internal/mmsync/harness_test.go`, `jump_test.go`.
 
 ## Things that bite
 
@@ -924,8 +1055,12 @@ time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTime
 - Never raise Wails' `LogLevel` to `Debug` in a build that ships (or in a screenshot/soak session with a real server): Wails logs binding results at Debug (`messageprocessor_call.go`), and `MediaStreamBase`'s result is the loopback stream server's base URL — which carries its session token. Default (Info) is safe; only raise it briefly with a fake server if you must, never with a live one. — `internal/desktop/run.go`.
 - The header's downloads button (`⬇`) folds the active-download count into its own accessible name, the same trap as `ServerRail`'s badge (see above): `t('downloads.button')` is exactly `"Downloads"`, `t('downloads.buttonActive', {n})` is `"Downloads — active: N"` — both change at once as downloads start/finish, so an e2e `getByRole('button', { name: 'Downloads' })` with `exact: true` can miss the button mid-download, and a loose substring match (no `exact`) can also hit unrelated buttons whose name merely contains "Downloads". Match with `{ name: /^Downloads/ }` (or query right after the panel is already known to be idle). — `frontend/src/components/ChannelPane.tsx` (`downloadsLabel`), `frontend/src/i18n.ts`, `tests/e2e/media.spec.ts`.
 - e2e-only trap, not an app bug: `Composer` is `key={channel.id}` (a fresh instance per channel), so a synthetic `paste`/`drop` built with a raw `document.querySelector('textarea…')`/`'[data-file-drop-target]'` right after `channel(...).click()` can still find the **outgoing** channel's not-yet-unmounted node — Playwright's `.click()` resolving doesn't guarantee React has committed the channel switch first. The attachment lands on the wrong channel with no error (both channels have a composer, so nothing looks broken until you check which channel the upload's `channel_id` query param named). Fix: wait for the new channel's heading to be visible before dispatching the synthetic event — `tests/e2e/attachments.spec.ts` (`openOffTopic`). Locators like `post.locator('img')` are a second trap in the same file: a post's own avatar is also an `<img>` in the same `<article>` — match by accessible name (`post.getByRole('img', { name })`) instead.
-- Post search (`POST /teams/{id}/posts/search`): the target server (mm.citeck.ru) runs **Bleve** — offset pages (`page × per_page`), `matches` **always `{}`** (bleveengine never fills it; only Elasticsearch does), quotes make no phrase, `word*` is an unanalysed case-sensitive wildcard, `-a -b` excludes only posts with both. The database fallback (Bleve off) **does not page**: `page > 0` is always empty, `page 0` returns up to 100 hits per group whatever `per_page` says, `matches` `null`. Client rule for both: more may follow only while a raw page holds `≥ per_page`; never assume a page is `≤ per_page`; highlight from the query terms. The fake is Bleve-like by default; `mmfake.Options.SearchSQLEngine` switches to the database engine, `SearchMatches` fills `matches` like Elasticsearch. `GET /channels/{id}/posts?after=X` answers **newest first** like `before=` (the `per_page` posts right after X), an unknown cursor is `200` with an empty page, and a deleted cursor still pages by its `create_at`. — `internal/mmfake/search.go`, `chat.go` (`channelPosts`), `docs/research/2026-09-24-mattermost-api-facts.md` §9.
+- Post search (`POST /teams/{id}/posts/search`): the target server (mm.citeck.ru) runs **Bleve** — offset pages (`page × per_page`), `matches` **always `{}`** (bleveengine never fills it; only Elasticsearch does), quotes make no phrase, `word*` is an unanalysed case-sensitive wildcard, `-a -b` excludes only posts with both. The database fallback (Bleve off) **does not page**: `page > 0` is always empty, `page 0` returns up to 100 hits per group whatever `per_page` says, `matches` `null`. Client rule for both: more may follow only while a raw page holds `≥ per_page`; never assume a page is `≤ per_page`; highlight from the query terms. The fake is Bleve-like by default; `mmfake.Options.SearchSQLEngine` switches to the database engine, `SearchMatches` fills `matches` like Elasticsearch. `GET /channels/{id}/posts?after=X` answers **newest first** like `before=` (the `per_page` posts right after X), an unknown cursor is `200` with an empty page, and a deleted cursor still pages by its `create_at`. A Bleve page can come back shorter than `per_page` while more exist (the search layer drops posts deleted since indexing) — never treat "short" as "the end" beyond the one rule above. `GET /posts/{id}` answers **200 to a non-member for an open channel of their team** (403 only for private channels, DMs, GMs) — a jump must check the post's `channel_id` itself, and a thread focus its `root_id` too. — `internal/mmfake/search.go`, `chat.go` (`channelPosts`), `docs/research/2026-09-24-mattermost-api-facts.md` §9.
 - `GET /api/v4/posts/{id}/thread` **without `perPage` returns the whole thread** (every reply, however many) — always pass `perPage=60&direction=up` (newest first; `order[0]` is the root itself, `has_next` means "older exist"); older pages need `fromCreateAt` **and** `fromPost` (the server ignores `fromPost` alone). With `collapsedThreads=true` the id must be a root: for a reply the server's `RootId = id` filter matches nothing (the fake answers 400 to catch client bugs). `ThreadQuery.Down` pages the other way (`direction=down`: newer replies, oldest first after `order[0]`; `has_next` means "newer exist" — §9.4). — `internal/mm/rest` (`PostThread`), `internal/mmfake/threads.go`, `docs/research/2026-09-24-mattermost-api-facts.md` §8.
 - `GET /users/me/teams/unread?include_collapsed_threads=true` gives `thread_mention_count` per team **without DM/GM threads** — their part is `GET …/teams/{team}/threads?totalsOnly=true` minus the same with `excludeDirect=true` (not below 0). Counting only `teams/unread` silently drops mentions in DM threads from the badge. — `internal/mmsync` (`fetchMeta`), `TestDMThreadMentionsCountOnce`.
 - e2e trap for the thread panel, same as the channel composer's (above): the panel's `Composer` is keyed by `channel+root`, so a synthetic `paste`/`drop` right after opening a thread can land in the previous thread's (or the channel's) composer. Wait for `[data-file-drop-target][data-root="<root>"]` and query the textarea inside it. And the channel feed and the panel both have a `role="log"` named "Messages": `feed(page)` in `tests/e2e/helpers.ts` is `[data-feed="channel"]`, the panel's is `threadFeed(page)`. Under CRT, alice follows only threads she started, replied to or was mentioned in — a `PUT read` of any other thread is a 404 (and the client stops reading it), so a test that waits for `fake/thread-reads` must use a thread alice follows. — `tests/e2e/threads.spec.ts`.
 - The virtualized feed's "follow the bottom" runs in a layout effect on every rows change while `atBottom` is set, and `atBottom` is only updated by `onScroll` — which fires asynchronously, one frame after the scroll. A rows update committed in between undoes the scroll (right after sign-in several updates arrive in a row). e2e that scrolls away from the bottom right after a channel opens must retry the scroll until the effect it waits for shows (`chat.spec.ts`, "jump-to-latest button…"); the product side is in `docs/backlog.md`. The opposite end bit too: at `scrollTop` 0 neither `scrollTo(0)` nor the wheel fires a `scroll` event, so a history page that landed without moving the feed off the top (anchor restore that could not apply) left it stuck with `has_more` forever — `fillViewportIfShort` now applies `onScroll`'s "within `NEAR_TOP` → load" rule after every rows change (`Feed.test.tsx`, "a page that lands with the feed still at the top…"; it was the `chat.spec.ts` "history loads up to the first message" flake). Thread-cache memory is measured, not only counted: `SPK_MM_CLIENT_MEMCHECK=1 go test ./internal/api -run TestThreadCacheHeapReturnsToBaseline -count=1 -v` (30 threads × 200 replies opened and closed — heap back to baseline ±0.5 MB; skipped otherwise).
+- e2e hover on a feed post: hover only a post that is **fully on screen** (`toBeInViewport({ ratio: 1 })`, e.g. a fresh post at the bottom). A post half above the feed's top edge makes Playwright scroll it into view; right after sign-in that scroll is less than `NEAR_BOTTOM` (48 px), the feed still counts as "at its bottom", the next update (read state, sidebar) pins it back, the post slides from under the pointer and its toolbar — rendered only while hovered — is gone: `click()` on a toolbar button then waits its whole timeout. This was the long-standing `chat.spec.ts` flake («mark as unread…», «save a post…», which hovered the seed «Message #140» whose place depended on how much earlier specs had posted into Town Square). — `tests/e2e/chat.spec.ts` (`latestPost`).
+- e2e on the virtualized feed: completeness is proven by walking it (`walkFeed` in `tests/e2e/helpers.ts`: from the first post down, ~⅔ viewport per step, waiting for an on-screen gap page, merging every step's `data-post-id`s, checking no duplicates/order changes in each mounted range) — never by counting DOM rows. Playwright's `isVisible()` is true for a row mounted in the overscan **off screen**: use `gapOnScreen`/`toBeInViewport` when "on screen" matters (a gap row loads itself only when really on screen). To hold a UI→Go call (`/api/LoadNewer`, `/api/JumpToPost`), `page.route` it — `hold(page, method, 'request' | 'answer')` in `tests/e2e/search.spec.ts`.
+- e2e and the clock: the fake stamps its seed from `now − 160 min` (`internal/mmfake/seed.go`, `base`), so for about 2 h 40 min after local midnight the seed straddles two days — a «Today» separator and a new author group appear among the seed posts and push rows around. Never assume a seed post is mounted just because the feed opened: `scrollUntilVisible` (Off-Topic's `build.png` in `media.spec.ts` failed twice at 00:02/00:06 before it used it).
+- e2e shared-fake budget: `tests/e2e/search.spec.ts` adds a lot to Town Square (70 burst posts, a 250-reply thread, 450 long-list posts). It runs after `chat.spec.ts`, the only spec that reads the seed's tail («Message #150» on screen); any new spec that relies on Town Square's last seed posts must run before it (file order) or post its own posts. And leave nothing unread: a post by someone else into a channel alice is not viewing stays unread on the fake for every later spec (`sidebar-unread.spec.ts` checks the Unreads section and the "more unreads" pill) — post into the channel on screen, or open the channel before the test ends.
