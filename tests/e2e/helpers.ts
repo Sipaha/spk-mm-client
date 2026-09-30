@@ -200,6 +200,14 @@ export async function walkFeed(page: Page, log: Locator, first: string, label: R
         gap: el.querySelector('[data-gap-open]') !== null,
       }
     })
+    // The walk starts at the first post: a gap page still landing from before
+    // the walk (the row loads on its own while on screen) restores its anchor
+    // — the reader's place at the gap — and takes the feed off the top.
+    if (order.length === 0 && !snap.posts.some((p) => p.text.split('\n').some((l) => l.trim() === first))) {
+      if (Date.now() > deadline) throw new Error(`walkFeed: ${first} not on screen at the start`)
+      await log.evaluate((el) => el.scrollTo({ top: 0 }))
+      continue
+    }
     const ids = snap.posts.map((p) => p.id)
     if (new Set(ids).size !== ids.length) problems.push(`duplicate rows mounted: ${ids.filter((id, i) => ids.indexOf(id) !== i).join(',')}`)
     let prev: string | null = null
