@@ -607,6 +607,16 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       else gapAutoLoads.current = 0
     })
   }
+  // The gap row is mounted by the virtualizer's own render after a scroll —
+  // often after that scroll's checkGap frame found no row. A single jump
+  // (PageUp, End then a scrollbar drag) fires no further scroll event, so
+  // the row sat on screen without loading (e2e search.spec, Task 8): check
+  // again whenever the mounted range changes.
+  const mountedRange = `${visibleRows[0]?.index ?? -1}:${visibleRows[visibleRows.length - 1]?.index ?? -1}`
+  useLayoutEffect(() => {
+    if (gapOpen) checkGap()
+  }, [mountedRange, gapOpen]) // checkGap reads refs and the current rows
+
   // A new gap (another generation): its own budget, no old error.
   const gapGen = data.gap?.gen
   useEffect(() => {
