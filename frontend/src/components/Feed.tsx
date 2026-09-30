@@ -40,6 +40,10 @@ interface Props {
   onRetryStale?(): void
   // focus: a jump's target — centered and highlighted once per nonce.
   focus?: Focus | null
+  // onFocusShown: focus (its nonce) was centered — the owner drops it, so a
+  // remounted feed (its nonce memory is per instance) does not center it
+  // again, nor keep waiting for it.
+  onFocusShown?(nonce: number): void
   // toastHost: this feed's priority as a toast host (Toast.tsx's
   // TOAST_HOST) — the toast then floats over the feed's visible box, like the
   // jump-to-latest button. Without it the feed hosts no toast.
@@ -175,7 +179,7 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, onLoadNewer, onRetryStale, focus, toastHost }: Props) {
+export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, onLoadNewer, onRetryStale, focus, onFocusShown, toastHost }: Props) {
   const rows = useMemo(() => buildRows(data, variant), [data, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
@@ -221,6 +225,8 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // taken, the highlighted post (seq restarts the fade for the same post).
   const focusPending = useRef<string | null>(null)
   const focusNonce = useRef<number | null>(null)
+  const focusShown = useRef(onFocusShown)
+  focusShown.current = onFocusShown
   const [highlight, setHighlight] = useState<{ id: string; seq: number } | null>(null)
   const frame = useFrames()
   // Jump-to-latest button: visible once the feed is far enough from the
@@ -795,6 +801,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     scrollToIndex(i, { align: 'center' })
     centerOn(rows[i].key, 1)
     setHighlight({ id: id!, seq: ++highlightSeq.current })
+    if (focusNonce.current !== null) focusShown.current?.(focusNonce.current)
     return true
   }
 

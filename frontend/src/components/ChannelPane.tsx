@@ -30,6 +30,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloadsOpen = useStore((s) => s.downloadsOpen)
   const attachments = useStore((s) => s.attachments)
   const focus = useStore((s) => s.focus)
+  const focusShown = useStore((s) => s.focusShown)
   const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
   const downloadsLabel = activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
@@ -227,6 +228,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
         onLoadNewer={() => loadNewer(server.id, channel.id)}
         onRetryStale={() => void retryRevalidation(server.id, channel.id)}
         focus={focus}
+        onFocusShown={focusShown}
         toastHost={TOAST_HOST.channel}
       />
       {/* pt-2 (8px): feed↔composer gap (density-brief 2026-09-29) — the

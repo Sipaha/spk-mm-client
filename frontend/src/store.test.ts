@@ -13,6 +13,7 @@ const srv = (o: Partial<ServerDTO> = {}): ServerDTO => ({
 beforeEach(() =>
   useStore.setState({
     servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null, heldChannel: null,
+    thread: null, rhs: null, threadFrom: null, search: null,
   }),
 )
 
@@ -214,4 +215,37 @@ test('switching servers (select) clears the held channel too', () => {
   useStore.getState().setHeldChannel({ id: 'a', hadMentions: true })
   useStore.getState().select(2)
   expect(useStore.getState().heldChannel).toBeNull()
+})
+
+// The right panel after a thread: back to the search results only if they
+// were the panel right before the thread opened (final review, finding 2).
+test('a closed thread goes back to the results only if it was opened from them', () => {
+  const s = () => useStore.getState()
+  s().setServers([srv()])
+  s().setChannel(1, chan('a'))
+  s().setSearch({ serverId: 1, gen: 1 } as never)
+  expect(s().rhs).toBe('search')
+
+  s().setThread(thread('r1')) // opened from the results
+  expect(s().threadFrom).toBe('search')
+  s().setThread(thread('r2')) // another thread in its place keeps the way back
+  s().setThread(null)
+  expect(s().rhs).toBe('search')
+
+  s().setRhs(null) // a narrow window's «Back to channel» dismissed the results
+  s().setThread(thread('r3')) // a thread from the feed
+  expect(s().threadFrom).toBeNull()
+  s().setThread(null)
+  expect(s().rhs).toBeNull() // the results do not come back over the feed
+  expect(s().search).not.toBeNull() // still kept
+
+  s().setThread(thread('r4'))
+  s().setChannel(1, chan('b')) // a channel switch with that thread open
+  expect(s().rhs).toBeNull()
+
+  s().setRhs('search')
+  s().setThread(thread('r5'))
+  s().setChannel(1, chan('a')) // from the results: a channel switch goes back to them
+  expect(s().rhs).toBe('search')
+  expect(s().threadFrom).toBeNull()
 })

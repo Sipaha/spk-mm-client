@@ -28,9 +28,11 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const editingId = useStore((s) => s.editingId)
   const threadAttachments = useStore((s) => s.threadAttachments)
   const threadFocus = useStore((s) => s.threadFocus)
-  // A kept search session: the way back to its results replaces "← Back
-  // to channel" (spec «Поиск», Секция 2 — one right panel at a time).
-  const hasResults = useStore((s) => s.search?.serverId === server.id)
+  const focusShown = useStore((s) => s.focusShown)
+  // Opened from the kept search results: the way back to them (spec
+  // «Поиск», Секция 2 — one right panel at a time); a narrow window keeps
+  // "← Back to channel" too (it dismisses the results as well).
+  const hasResults = useStore((s) => s.search?.serverId === server.id && s.threadFrom === 'search')
   const narrow = useNarrow()
   const paneRef = useRef<HTMLElement>(null)
   const [viewer, setViewer] = useState<{ rootId: string; files: FileView[]; index: number } | null>(null)
@@ -50,6 +52,12 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const close = () => {
     onCloseRef.current()
     document.querySelector<HTMLElement>('[data-feed="channel"]')?.focus()
+  }
+  // toChannel: "← Back to channel" (narrow) — the channel's feed, not the
+  // results the thread may have been opened from.
+  const toChannel = () => {
+    close()
+    useStore.getState().setRhs(null)
   }
 
   // Esc closes the panel — but only while focus is actually inside it and
@@ -179,7 +187,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           by side when this panel is open next to the channel — see that
           file's header comment for the full before/after measurement. */}
       <header className="flex h-8 items-center gap-2 border-b border-line bg-panel px-3">
-        {hasResults ? (
+        {hasResults && (
           <button
             type="button"
             aria-label={t('search.backToResults')}
@@ -190,12 +198,13 @@ export function ThreadPane({ server, thread, onClose }: Props) {
             <IconChevronLeft size={18} />
             {t('search.backToResults')}
           </button>
-        ) : narrow && (
+        )}
+        {narrow && (
           <button
             type="button"
             aria-label={t('thread.backToChannel')}
             title={t('thread.backToChannel')}
-            onClick={close}
+            onClick={toChannel}
             className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-sm text-fg-muted hover:bg-hover hover:text-fg"
           >
             <IconChevronLeft size={18} />
@@ -244,6 +253,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         onLoadNewer={() => loadThreadFocus(server.id, thread.root_id, true)}
         onRetryStale={() => void retryThreadRevalidation(server.id, thread.root_id)}
         focus={threadFocus}
+        onFocusShown={focusShown}
         toastHost={TOAST_HOST.thread}
       />
       {thread.root_deleted && (

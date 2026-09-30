@@ -58,7 +58,7 @@ const thread = (o: Partial<ThreadDTO> = {}): ThreadDTO => ({
 
 beforeEach(() => {
   setLocale('en')
-  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null, threadFocus: null, search: null })
+  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null, threadFocus: null, search: null, threadFrom: null, rhs: null })
   vi.mocked(loadThreadFocus).mockReset().mockResolvedValue(true)
   vi.mocked(retryThreadRevalidation).mockReset().mockResolvedValue(undefined)
   vi.mocked(loadOlderReplies).mockReset().mockResolvedValue(true)
@@ -389,19 +389,35 @@ test('ThreadPane focus: "open in browser" goes to the target reply\'s permalink'
   expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/s2')
 })
 
-test('a thread with search results kept: "← Back to results" instead of "Back to channel", in a narrow window too', async () => {
+const narrowWindow = () => {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
   })) as unknown as typeof window.matchMedia
-  useStore.setState({ search: { serverId: 5, gen: 1 } as never })
-  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
-  expect(screen.queryByRole('button', { name: 'Back to channel' })).toBeNull()
+}
+
+test('a thread opened from the kept results: "← Back to results"; a narrow window keeps "Back to channel", which leaves the results closed', async () => {
+  narrowWindow()
+  useStore.setState({ search: { serverId: 5, gen: 1 } as never, threadFrom: 'search', rhs: 'thread' })
+  const onClose = vi.fn(() => useStore.setState({ rhs: 'search', threadFrom: null })) // closeThread → afterThread
+  render(<ThreadPane server={server()} thread={thread()} onClose={onClose} />)
   await userEvent.click(screen.getByRole('button', { name: 'Back to results' }))
   expect(backToResults).toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: 'Back to channel' }))
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(useStore.getState().rhs).toBeNull() // the feed, not the results over it
+  expect(useStore.getState().search).not.toBeNull() // the session is kept
+})
+
+test('a thread opened from the feed while results are kept (not on screen): no way back to them, "Back to channel" in a narrow window', () => {
+  narrowWindow()
+  useStore.setState({ search: { serverId: 5, gen: 1 } as never, threadFrom: null, rhs: 'thread' })
+  render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  expect(screen.queryByRole('button', { name: 'Back to results' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Back to channel' })).toBeInTheDocument()
 })
 
 test('no search results kept (or of another server): no way back to them', () => {
-  useStore.setState({ search: { serverId: 9, gen: 1 } as never })
+  useStore.setState({ search: { serverId: 9, gen: 1 } as never, threadFrom: 'search' })
   render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
   expect(screen.queryByRole('button', { name: 'Back to results' })).toBeNull()
 })

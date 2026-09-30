@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { ApiEvent, ChannelDTO, ServerDTO, SidebarDTO } from './api/types'
@@ -72,7 +72,7 @@ beforeEach(() => {
   resetChat()
   useStore.setState({
     servers: [], selectedId: null, adding: false, lastError: null, signInFor: null, sidebar: null, channel: null,
-    thread: null, threadAttachments: [], threadAttachError: null, rhs: null, search: null, searchDraft: '',
+    thread: null, threadAttachments: [], threadAttachError: null, rhs: null, threadFrom: null, search: null, searchDraft: '',
   })
 })
 
@@ -265,6 +265,40 @@ test('search: the results and a thread share the right panel — a thread from t
   await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town' } }))
   expect(screen.queryByRole('complementary', { name: 'Thread' })).toBeNull()
   expect(screen.getByRole('complementary', { name: 'Search results' })).toBeInTheDocument()
+})
+
+test('search, narrow window: results dismissed with «Back to channel» stay closed after a thread from the feed; a thread from them goes back to them', async () => {
+  const { client } = await import('./api/client')
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({ hits: [searchHit()], has_next: false, limit_reached: false })
+  const saved = window.matchMedia
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })) as unknown as typeof window.matchMedia
+  try {
+    h.list = [srv({ signed_in: true, username: 'alice', state: 'live' })]
+    render(<App />)
+    await screen.findByRole('heading', { name: /Town Square/ })
+    await searchFor('привет')
+    // A thread opened over the results: back to them, or to the channel.
+    await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))
+    const pane = await screen.findByRole('complementary', { name: 'Thread' })
+    expect(within(pane).getByRole('button', { name: 'Back to results' })).toBeInTheDocument()
+    await userEvent.click(within(pane).getByRole('button', { name: 'Back to channel' }))
+    expect(screen.queryByRole('complementary', { name: 'Thread' })).toBeNull()
+    expect(screen.queryByRole('complementary', { name: 'Search results' })).toBeNull() // the feed
+
+    // The results dismissed; a thread from the feed, then closed: the feed again.
+    await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))
+    const again = await screen.findByRole('complementary', { name: 'Thread' })
+    expect(within(again).queryByRole('button', { name: 'Back to results' })).toBeNull()
+    expect(within(again).getByRole('button', { name: 'Back to channel' })).toBeInTheDocument()
+    await userEvent.click(within(again).getByRole('button', { name: 'Close thread' }))
+    expect(screen.queryByRole('complementary', { name: 'Thread' })).toBeNull()
+    expect(screen.queryByRole('complementary', { name: 'Search results' })).toBeNull()
+    expect(useStore.getState().search).not.toBeNull() // the session is kept
+  } finally {
+    window.matchMedia = saved
+  }
 })
 
 test('search: another team closes the results; a refresh of the same team keeps them and makes a hit of a new channel jumpable', async () => {

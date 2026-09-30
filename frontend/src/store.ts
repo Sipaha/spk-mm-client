@@ -88,9 +88,13 @@ function withSidebar(search: SearchSession, sb: SidebarDTO): SearchSession {
   return changed ? { ...search, hits } : search
 }
 
-// afterThread: the panel once the thread is gone — the search results if a
-// session is kept (a thread opened from them goes back to them), else none.
-const afterThread = (s: { rhs: Rhs; search: SearchSession | null }): Rhs => (s.rhs === 'thread' ? (s.search ? 'search' : null) : s.rhs)
+// afterThread: the panel once the thread is gone — the search results if
+// they were the panel right before the thread opened (threadFrom) and the
+// session is still kept, else none: a thread opened from the feed with the
+// results dismissed (a narrow window's «Back to channel») does not bring
+// them back over the feed.
+const afterThread = (s: { rhs: Rhs; threadFrom: Rhs; search: SearchSession | null }): Rhs =>
+  s.rhs === 'thread' ? (s.threadFrom === 'search' && s.search ? 'search' : null) : s.rhs
 
 interface State {
   servers: ServerDTO[]
@@ -156,6 +160,9 @@ interface State {
   // rhs: what the right panel shows — one at a time, sharing its width,
   // splitter and narrow overlay (App.tsx).
   rhs: Rhs
+  // threadFrom: the panel right before the open thread took it (the way
+  // back when it closes — afterThread); null without a thread.
+  threadFrom: Rhs
   search: SearchSession | null
   searchDraft: string // the search field's text
   setServers(list: ServerDTO[]): void
@@ -183,6 +190,9 @@ interface State {
   setHeldChannel(h: HeldChannel | null): void
   setFocus(postId: string | null): void
   setThreadFocus(postId: string | null): void
+  // focusShown: the feed centered the focus (or thread focus) of nonce —
+  // it is done: dropped, so a remounted feed does not center it again.
+  focusShown(nonce: number): void
   setRhs(rhs: Rhs): void
   // setSearch: a new session shows in the panel; null ends it.
   setSearch(search: SearchSession | null): void
@@ -197,7 +207,7 @@ const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state ===
 const cleared = {
   sidebar: null, channel: null, editingId: null, attachments: [], attachError: null,
   thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null, focus: null, threadFocus: null,
-  rhs: null, search: null, searchDraft: '',
+  rhs: null, threadFrom: null, search: null, searchDraft: '',
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -228,6 +238,7 @@ export const useStore = create<State>((set, get) => ({
   focus: null,
   threadFocus: null,
   rhs: null,
+  threadFrom: null,
   search: null,
   searchDraft: '',
   setServers(list) {
@@ -289,7 +300,7 @@ export const useStore = create<State>((set, get) => ({
       ...(switchedChannel
         ? {
             editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null, focus: null,
-            threadFocus: null, rhs: afterThread(get()),
+            threadFocus: null, rhs: afterThread(get()), threadFrom: null,
           }
         : {}),
     })
@@ -321,12 +332,14 @@ export const useStore = create<State>((set, get) => ({
   setAttachments: (list) => set({ attachments: list }),
   setAttachError: (msg) => set({ attachError: msg }),
   // Another thread (or none) takes its focus with it.
-  // A thread shows in the panel; the thread gone, the panel goes back to
-  // the search results if a session is kept.
+  // A thread shows in the panel (what it replaced is remembered: threadFrom;
+  // another thread in its place keeps that); the thread gone, the panel goes
+  // back to it (afterThread).
   setThread: (thread) =>
     set((s) => ({
       thread,
       rhs: thread ? 'thread' : afterThread(s),
+      threadFrom: !thread ? null : s.rhs === 'thread' ? s.threadFrom : s.rhs,
       ...(thread?.root_id !== s.thread?.root_id ? { threadFocus: null } : {}),
     })),
   setThreadAttachments: (list) => set({ threadAttachments: list }),
@@ -334,6 +347,11 @@ export const useStore = create<State>((set, get) => ({
   setHeldChannel: (h) => set({ heldChannel: h }),
   setFocus: (postId) => set({ focus: postId === null ? null : { postId, nonce: ++focusSeq } }),
   setThreadFocus: (postId) => set({ threadFocus: postId === null ? null : { postId, nonce: ++focusSeq } }),
+  focusShown: (nonce) =>
+    set((s) => ({
+      ...(s.focus?.nonce === nonce ? { focus: null } : {}),
+      ...(s.threadFocus?.nonce === nonce ? { threadFocus: null } : {}),
+    })),
   setRhs: (rhs) => set({ rhs }),
   setSearch: (search) => set((s) => ({ search, rhs: search ? 'search' : s.rhs === 'search' ? null : s.rhs })),
   patchSearch(gen, patch) {

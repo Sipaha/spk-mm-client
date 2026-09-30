@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Profiler, StrictMode } from 'react'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
@@ -1311,6 +1311,42 @@ test('a jump whose target is not loaded yet centers it once it arrives', async (
     expect(r.row('s8')).toHaveClass('post--focus')
   } finally {
     r.restore()
+  }
+})
+
+// Final review, finding 3: the nonce memory is per Feed instance — a
+// remount of the same channel's feed must not center an old jump again.
+test('a centered jump is dropped from the store: a remounted feed opens at the bottom, not on the old target', async () => {
+  const { useStore } = await import('../store')
+  const data: Partial<ChannelDTO> = { gap: openGap({ open: false, before_id: '' }) }
+  const shown = (n: number) => useStore.getState().focusShown(n)
+  useStore.getState().setFocus('s8')
+  const first = await channelRig(600, data, { focus: useStore.getState().focus, onFocusShown: shown })
+  try {
+    expect(first.onScreen('s8')).toBe(280)
+    expect(useStore.getState().focus).toBeNull()
+  } finally {
+    first.restore()
+    cleanup()
+  }
+  // The same channel's feed remounted: the store no longer asks for s8.
+  const again = await channelRig(600, data, { focus: useStore.getState().focus, onFocusShown: shown })
+  try {
+    expect(again.st.top).toBe(again.log.scrollHeight - 600) // at the bottom
+    expect(again.log.querySelector('.post--focus')).toBeNull()
+  } finally {
+    again.restore()
+    cleanup()
+  }
+  // A target not loaded yet is not shown: the store keeps asking for it.
+  useStore.getState().setFocus('s5')
+  const nonce = useStore.getState().focus!.nonce
+  const pending = await channelRig(600, { ...data, posts: win(1, 10) }, { focus: useStore.getState().focus, onFocusShown: shown })
+  try {
+    expect(useStore.getState().focus?.nonce).toBe(nonce)
+  } finally {
+    pending.restore()
+    useStore.getState().setFocus(null)
   }
 })
 
