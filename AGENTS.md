@@ -839,6 +839,17 @@
   `ScrollShift` не откладывает компенсацию (см. «Компенсация ленты» выше) — она уходит сразу в
   `scrollTop`; ленту, стоящую внизу, держит внизу bottom-stick (правило выше). — `frontend/src/components/splitter.test.ts`, `Splitter.test.tsx`,
   `internal/store/uiprefs_test.go`, `internal/api/layout_test.go`, `tests/e2e/layout.spec.ts`.
+- Ничто в посте не шире колонки контента: открытая панель треда сужает ленту (окно ≈1035 px →
+  колонка ≈340 px), и любой элемент с фиксированной шириной в px или неразрывным min-content
+  растягивает скроллер ленты (`overflow-y-auto` ⇒ `overflow-x: auto`) — горизонтальный скролл
+  (репорт 2026-09-30: картинка `fitBox` до 480 px и постер видео `VIDEO_BOX` 480 px). Боксы
+  медиа — `boxStyle` (`files.ts`): `width` + `max-width: 100%` + `aspect-ratio`, без
+  фиксированной `height` (размер по-прежнему известен до загрузки). `max-width: 100%` работает,
+  только если у родителя ширина колонки, а не shrink-to-fit по самому боксу: ряды медиа/карточек
+  в `Attachments.tsx` — `w-full min-w-0`. Неразрывный текст внутри `inline-flex` (ссылка
+  markdown-картинки — это её URL) — `max-w-full` на боксе + `min-w-0 [overflow-wrap:anywhere]` на
+  тексте. — `Attachments.test.tsx`, `MediaPlayer.test.tsx`, `files.test.ts` (`boxStyle`),
+  `layout.spec.ts` («an open thread panel narrows the feed…», проверяет `scrollWidth` обеих лент).
 - Автодополнение композера `@ ~ : /` (brief 2026-09-29): все запросы к серверу — в Go
   (`api.Autocomplete(srv, kind, channel, root, prefix)`, `mmsync.Worker.Autocomplete`); UI передаёт
   только вид, id и слово после триггера. Проверки: вид из четырёх, id — `[A-Za-z0-9_-]{1,64}`, префикс

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { FileView } from '../api/types'
-import { cardSizeLabel, cardType, cardTypeLabel, fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
+import { boxStyle, cardSizeLabel, cardType, cardTypeLabel, fileKind, fitBox, imageSrc, PDF_MAX, videoBox } from './files'
 
 const F = (o: Partial<FileView>): FileView => ({ id: 'f', name: 'x', size: 100, mime: '', ...o })
 
@@ -116,4 +116,8 @@ test('cardSizeLabel: webapp-style rounding — whole KB/MB, one decimal only und
   expect(cardSizeLabel(1536)).toBe('2KB')
   expect(cardSizeLabel(9.4 * 1024 * 1024)).toBe('9.4MB')
   expect(cardSizeLabel(20 * 1024 * 1024)).toBe('20MB')
+})
+
+test('boxStyle: the box\'s width at most, never wider than its column, height from the aspect ratio', () => {
+  expect(boxStyle({ width: 480, height: 270 })).toEqual({ width: 480, maxWidth: '100%', aspectRatio: '480 / 270' })
 })

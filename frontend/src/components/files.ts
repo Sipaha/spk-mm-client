@@ -158,6 +158,16 @@ export function cardSizeLabel(bytes: number): string {
   return bytes + 'B'
 }
 
+// boxStyle: a media box (fitBox/videoBox) as CSS — its width at most, but
+// never wider than its column (max-width: 100%), the height following from
+// the aspect ratio. Still known before the picture/stream loads, so the feed
+// never shifts; a fixed px height instead made a box wider than the content
+// column — a 480 px picture in a feed narrowed by the open thread panel —
+// overflow the feed scroller sideways (user report 2026-09-30).
+export function boxStyle(box: { width: number; height: number }) {
+  return { width: box.width, maxWidth: '100%', aspectRatio: `${box.width} / ${box.height}` }
+}
+
 // fitBox: the box an image is shown in — known before it loads, so the
 // feed never shifts. Unknown dimensions get a fixed box (object-contain).
 export function fitBox(w: number | undefined, h: number | undefined, maxW: number, maxH: number) {

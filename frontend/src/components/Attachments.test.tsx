@@ -28,7 +28,10 @@ test('the image box has its final size before the image loads', async () => {
   expect(img).not.toHaveAttribute('loading')
   expect(img).toHaveAttribute('alt', 'build.png')
   const box = screen.getByRole('button', { name: 'View build.png' })
-  expect(box).toHaveStyle({ width: '480px', height: '270px' })
+  // Its final size up to the column: 480 px wide at most, scaled down with
+  // the column (an open thread panel narrows it) — height by aspect-ratio.
+  expect(box).toHaveStyle({ width: '480px', maxWidth: '100%', aspectRatio: '480 / 270' })
+  expect(box.style.height).toBe('')
   await userEvent.click(box)
   expect(h.onView).toHaveBeenCalledWith(png())
 })
@@ -134,7 +137,7 @@ test('video and audio: fixed-box poster (video) and a compact row (audio), prelo
   const { container } = render(<Attachments serverId={1} files={[clip, tone]} {...h} />)
   const videoEl = container.querySelector('video')!
   expect(videoEl).toHaveAttribute('preload', 'none')
-  expect(videoEl.parentElement).toHaveStyle({ width: '480px', height: '270px' })
+  expect(videoEl.parentElement).toHaveStyle({ width: '480px', maxWidth: '100%', aspectRatio: '480 / 270' })
   expect(screen.getByRole('button', { name: 'Play clip.webm' })).toBeInTheDocument()
   const audioEl = container.querySelector('audio')!
   expect(audioEl).toHaveAttribute('preload', 'none')

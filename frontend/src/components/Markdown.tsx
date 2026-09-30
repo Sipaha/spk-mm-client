@@ -169,9 +169,13 @@ export const Markdown = memo(function Markdown({
     img: ({ src, alt }) => {
       const href = typeof src === 'string' ? src : ''
       return (
-        <a href={href} title={href} className="inline-flex items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
-          <IconImage size={14} />
-          {alt || href}
+        // max-w-full + a wrapping, shrinkable text item: the text is often
+        // the bare URL, an unbreakable run whose min-content width an
+        // inline-flex box keeps — it pushed the feed scroller sideways once
+        // the open thread panel narrowed the feed (2026-09-30).
+        <a href={href} title={href} className="inline-flex max-w-full items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
+          <IconImage size={14} className="shrink-0" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{alt || href}</span>
         </a>
       )
     },
