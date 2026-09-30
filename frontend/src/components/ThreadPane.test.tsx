@@ -65,6 +65,16 @@ beforeEach(() => {
   })) as unknown as typeof window.matchMedia
 })
 
+// header-markdown-brief 2026-09-30, fix round 1: the thread panel's header
+// must use the same h-8/items-center as ChannelPane.tsx's so the two bars
+// line up side by side when the panel is open next to the channel.
+test('header: h-8, items-center, no vertical padding — matches ChannelPane.tsx\'s header height', () => {
+  const { container } = render(<ThreadPane server={server()} thread={thread()} onClose={() => {}} />)
+  const header = container.querySelector('header')!
+  expect(header).toHaveClass('items-center', 'h-8')
+  expect(header).not.toHaveClass('py-2', 'py-1.5')
+})
+
 // Fix round 2 (review): the non-narrow panel must establish its own
 // positioning context (`relative`), like ChannelPane's <section> does —
 // otherwise the drop-target overlay (`.file-drop-target-active::after`,

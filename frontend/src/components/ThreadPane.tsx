@@ -157,7 +157,12 @@ export function ThreadPane({ server, thread, onClose }: Props) {
       style={narrow ? undefined : { width: 'var(--spk-thread-width, 420px)' }}
       className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 shrink-0 flex-col border-l border-line bg-app'} ${dragActive ? 'file-drop-target-active' : ''}`}
     >
-      <header className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
+      {/* h-8, no vertical padding (fix round 1, header-markdown-brief
+          2026-09-30): matches ChannelPane.tsx's header exactly (32px, border
+          included via box-sizing border-box) so the two bars line up side
+          by side when this panel is open next to the channel — see that
+          file's header comment for the full before/after measurement. */}
+      <header className="flex h-8 items-center gap-2 border-b border-line bg-panel px-3">
         {narrow && (
           <button
             type="button"

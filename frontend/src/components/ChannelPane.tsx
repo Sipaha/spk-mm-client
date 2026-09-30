@@ -126,30 +126,37 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       data-drop-label={t('composer.dropHint')}
     >
       {/* header height/alignment (header-markdown-brief 2026-09-30, user
-          report): was items-baseline with the type icon as an inline-flex
-          span inside the <h1>'s own text flow — an inline-flex box's
-          vertical-align is its own baseline synthesized from its content
-          (browser-dependent, and different from the text's baseline next to
-          it), so the icon sat visibly off-centre from "Town Square"'s
-          x-height. Fixed the same way Sidebar.tsx's channel row already
-          does it (ChannelTypeMarker there has the identical icon+name
-          pattern and was never affected): the icon lives in its own
-          fixed-width flex box (`w-4`, `items-center justify-center`) and the
-          name in its own span, both laid out by the *h1 itself* being a flex
-          row with items-center — flexbox centres each child's margin box on
-          the row's cross axis directly, no baseline synthesis involved.  The
-          outer header row switched items-baseline -> items-center for the
-          same reason, now that its own first child (h1) is itself a flex
-          container (a flex container's own baseline is its first item's
-          baseline, one more layer of the same synthesis problem). Height:
-          py-2 -> py-1.5 and the icon 18px -> 16px (matching Sidebar.tsx's own
-          channel-row size) together take the measured header from 44px to
-          39px (Playwright boundingBox() on a real render, header-shots/
-          before-header.png vs after-header.png) -- inside the ~40-44px range
-          the user asked for, and still >= the downloads button's own
-          rendered height (16px icon + py-1's 4px+4px = 24px), with room to
-          spare. */}
-      <header className="flex min-w-0 items-center gap-3 border-b border-line bg-panel px-4 py-1.5">
+          report + fix round 1 follow-up): was items-baseline with the type
+          icon as an inline-flex span inside the <h1>'s own text flow — an
+          inline-flex box's vertical-align is its own baseline synthesized
+          from its content (browser-dependent, and different from the
+          text's baseline next to it), so the icon sat visibly off-centre
+          from "Town Square"'s x-height. Fixed the same way Sidebar.tsx's
+          channel row already does it (ChannelTypeMarker there has the
+          identical icon+name pattern and was never affected): the icon
+          lives in its own fixed-width flex box (`w-4`,
+          `items-center justify-center`) and the name in its own span, both
+          laid out by the *h1 itself* being a flex row with items-center —
+          flexbox centres each child's margin box on the row's cross axis
+          directly, no baseline synthesis involved. The outer header row
+          switched items-baseline -> items-center for the same reason, now
+          that its own first child (h1) is itself a flex container (a flex
+          container's own baseline is its first item's baseline, one more
+          layer of the same synthesis problem).
+
+          Height (fix round 1: 44px -> 39px read as "not noticeably
+          smaller" — user, 2026-09-30): a fixed `h-8` (32px, box-sizing
+          border-box so the 1px bottom border is *included* in that 32px,
+          not added on top) replaces the padding-driven height entirely —
+          `items-center` alone centres both the name (h1, ~20px tall) and
+          the shrunk downloads button (24px hit box: icon 18px -> 16px,
+          same `py-1` = 4px+4px) inside it, no vertical padding of its own
+          needed. Measured via Playwright boundingBox() on a real render:
+          header-shots/before2-header.png (39px, previous round) vs
+          after2-header.png (32px). ThreadPane.tsx's header uses the same
+          `h-8` + `items-center` so the two panels' bars line up side by
+          side when the thread panel is open. */}
+      <header className="flex h-8 min-w-0 items-center gap-3 border-b border-line bg-panel px-4">
         <h1 className="flex shrink-0 items-center gap-1.5 font-semibold text-fg">
           <span className="flex w-4 shrink-0 items-center justify-center text-fg-subtle">
             <ChannelTypeMarker type={channel.type} size={16} />
@@ -180,7 +187,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           onClick={() => (downloadsOpen ? closeDownloadsPanel() : openDownloadsPanel())}
           className="relative ml-auto flex shrink-0 items-center justify-center rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"
         >
-          <IconDownload />
+          <IconDownload size={16} />
           {activeDownloads > 0 && (
             <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-accent-fg">
               {activeDownloads}

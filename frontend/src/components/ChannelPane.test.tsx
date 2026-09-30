@@ -135,11 +135,19 @@ test('header: the type icon and channel name are both flex children of the h1, c
   expect(nameSpan.textContent).toBe('Town Square')
 })
 
-test('header: the row is compact (py-1.5, not the old py-2) and still items-center for consistent vertical centring', () => {
+test('header: the row is a fixed h-8 (32px) with no vertical padding, still items-center for consistent vertical centring (fix round 1: py-1.5/39px read as "not noticeably smaller")', () => {
   const { container } = render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
   const header = container.querySelector('header')!
-  expect(header).toHaveClass('items-center', 'py-1.5')
-  expect(header).not.toHaveClass('items-baseline', 'py-2')
+  expect(header).toHaveClass('items-center', 'h-8')
+  expect(header).not.toHaveClass('items-baseline', 'py-2', 'py-1.5')
+})
+
+test('header: the downloads button shrinks to a compact hit box (16px icon, same py-1) so it fits comfortably inside h-8', () => {
+  const { container } = render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
+  const button = container.querySelector('header button')!
+  const svg = button.querySelector('svg')!
+  expect(svg).toHaveAttribute('width', '16')
+  expect(svg).toHaveAttribute('height', '16')
 })
 
 test('header: a markdown channel header renders as inline markdown — link element present, no raw brackets, title keeps the raw text', () => {
