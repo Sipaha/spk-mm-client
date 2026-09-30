@@ -489,7 +489,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     } finally {
       loading.current = false
       setLoadingOlder(false)
-      checkGap()
+      afterHistoryOp()
     }
   }
 
@@ -498,8 +498,13 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // button waits for the user), or on the user's click (a fresh budget).
   // One history operation at a time: the same flag as loadOlder's.
   const gapOpen = !!data.gap?.open
+  const gapQueued = useRef(false) // the user clicked while another page loaded: runs right after it
   const loadGap = async (auto: boolean) => {
-    if (loading.current || !onLoadNewer || !gapOpen) return
+    if (!onLoadNewer || !gapOpen) return
+    if (loading.current) {
+      if (!auto) gapQueued.current = true
+      return
+    }
     if (auto) {
       if (gapError !== null || gapAutoLoads.current >= MAX_GAP_AUTO_LOADS) return
       gapAutoLoads.current++
@@ -518,6 +523,17 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     } finally {
       loading.current = false
       setLoadingGap(false)
+      afterHistoryOp()
+    }
+  }
+
+  // afterHistoryOp: a page settled — a click queued meanwhile runs now,
+  // else the gap is checked.
+  const afterHistoryOp = () => {
+    if (gapQueued.current) {
+      gapQueued.current = false
+      void loadGapRef.current(false)
+    } else {
       checkGap()
     }
   }
@@ -639,6 +655,8 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     focusPending.current = null
     ready.current = true
     userScrolling.current = false
+    anchor.current = null // a history anchor taken before the target arrived must not move it later
+    anchorRev.current = undefined
     atBottom.current = false
     bottomTop.current = null
     scrollToIndex(i, { align: 'center' })
@@ -647,8 +665,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     return true
   }
 
+  // The own posts being sent as of the last rows: a send follows the bottom
+  // when it appears — not on every later update while it is still pending
+  // (after a jump that would undo it).
+  const pendingKeys = useRef<Set<string>>(new Set())
+
   useLayoutEffect(() => {
     if (!rows.length) return
+    const sending = new Set<string>()
+    for (const r of rows) if (r.kind === 'post' && r.post.pending) sending.add(r.key)
+    const last = rows[rows.length - 1]
+    const newSend = last.kind === 'post' && !!last.post.pending && !pendingKeys.current.has(last.key)
+    pendingKeys.current = sending
     if (focusPending.current !== null && applyFocus()) {
       // A jump wins over the initial scroll, a pending anchor and the bottom.
       fillViewportIfShort()
@@ -692,8 +720,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       checkGap()
       return
     }
-    const last = rows[rows.length - 1]
-    if (atBottom.current || (last.kind === 'post' && last.post.pending)) scrollToIndex(rows.length - 1, { align: 'end' })
+    if (atBottom.current || newSend) scrollToIndex(rows.length - 1, { align: 'end' })
     fillViewportIfShort()
     checkGap()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
@@ -941,7 +968,7 @@ function GapRow({ row, variant, loading, error, onLoad, onRetryStale }: {
     <div role="status" className="flex items-center justify-center gap-2 text-fg-muted">
       <span>{t('feed.gap.checking')}</span>
       {onRetryStale && (
-        <button type="button" className="underline hover:text-fg" onClick={onRetryStale}>
+        <button type="button" aria-label={t('feed.gap.retryChecking')} title={t('feed.gap.retryChecking')} className="underline hover:text-fg" onClick={onRetryStale}>
           {t('feed.gap.retry')}
         </button>
       )}
@@ -955,7 +982,13 @@ function GapRow({ row, variant, loading, error, onLoad, onRetryStale }: {
         {error !== null ? (
           <span className="flex items-center gap-2 px-3">
             <span role="alert" className="text-danger">{error}</span>
-            <button type="button" className="font-semibold text-accent underline hover:text-fg" onClick={onLoad}>
+            <button
+              type="button"
+              aria-label={t(variant === 'thread' ? 'thread.gap.retryLoading' : 'feed.gap.retryLoading')}
+              title={t(variant === 'thread' ? 'thread.gap.retryLoading' : 'feed.gap.retryLoading')}
+              className="font-semibold text-accent underline hover:text-fg"
+              onClick={onLoad}
+            >
               {t('feed.gap.retry')}
             </button>
           </span>

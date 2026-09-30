@@ -19,6 +19,13 @@ let sidebarSeq = 0
 let channelSeq = 0
 let attachmentsSeq = 0
 let threadSeq = 0
+// threadViewSeq orders the thread snapshots applied to the panel: every
+// read (refreshThread) takes one, and an open (plain or focused) moves it
+// when it starts and when it lands — an answer older than the latest read
+// or than an open is never applied over it. threadReads: reads in flight.
+let threadViewSeq = 0
+let threadReads = 0
+let lastRead = 0 // threadViewSeq of the latest read begun
 let threadAttachmentsSeq = 0
 let wanted: { serverId: number; channelId: string } | null = null
 // threadWanted: the server/root the panel is open for — mirrors `wanted`
@@ -211,7 +218,7 @@ export async function jumpToPost(serverId: number, channelId: string, postId: st
     const r = await client.jumpToPost(serverId, channelId, postId, ctl.signal)
     if (!live()) return
     if (!r.in_feed) {
-      await openThreadFocused(serverId, channelId, r.root_id || rootId || '', r.post_id, ctl.signal)
+      await openThreadFocused(serverId, channelId, r.root_id || rootId || '', r.post_id, live, ctl.signal)
       return
     }
     useStore.getState().setFocus(r.post_id)
@@ -226,18 +233,44 @@ export async function jumpToPost(serverId: number, channelId: string, postId: st
 
 // openThreadFocused opens rootId's thread in the panel around replyId (Go's
 // thread focus: a segment around it when it is beyond the replies held)
-// and asks the panel to center and highlight it. threadSeq drops it once
-// another thread is opened or the panel closed meanwhile.
-async function openThreadFocused(serverId: number, channelId: string, rootId: string, replyId: string, signal?: AbortSignal) {
-  threadWanted = { serverId, rootId }
+// and asks the panel to center and highlight it. It lands only while its
+// jump is still the latest (live) and no other thread was opened or the
+// panel closed meanwhile (threadSeq); the panel's thread (threadWanted)
+// changes only when it lands. An answer that does not land has still
+// opened rootId in Go: Go is put back to the panel's thread, or none.
+async function openThreadFocused(
+  serverId: number, channelId: string, rootId: string, replyId: string, live: () => boolean, signal?: AbortSignal,
+) {
   const my = ++threadSeq
+  const began = ++threadViewSeq
   const th = await client.openThreadAt(serverId, channelId, rootId, replyId, signal)
-  if (my !== threadSeq) return
   const s = useStore.getState()
-  if (s.selectedId !== serverId) return
+  if (my !== threadSeq || !live() || s.selectedId !== serverId) {
+    resyncThread(serverId, rootId)
+    return
+  }
+  threadWanted = { serverId, rootId }
+  threadViewSeq++ // reads begun before this snapshot are older than it
   s.setThread(th)
   s.setThreadFocus(replyId)
   void refreshThreadAttachments(serverId, channelId, rootId)
+  // A read begun during the open may carry a change newer than its answer:
+  // read again (reads begun before the open are simply older).
+  if (threadReads > 0 && lastRead > began) void refreshThread(serverId, rootId)
+}
+
+// resyncThread: Go opened rootId for an answer the panel did not take —
+// put Go back to the thread the panel shows (none: closed).
+function resyncThread(serverId: number, rootId: string) {
+  const s = useStore.getState()
+  if (threadWanted?.serverId !== serverId) {
+    client.closeThread(serverId).catch(() => {})
+    return
+  }
+  const cur = s.thread
+  if (threadWanted.rootId !== rootId && cur && cur.root_id === threadWanted.rootId) {
+    client.openThread(serverId, cur.channel_id, cur.root_id).catch(() => {})
+  }
 }
 
 // loadNewer loads one page of the gap between the held history and the
@@ -301,9 +334,11 @@ export async function openThread(serverId: number, channelId: string, rootId: st
   dropJump() // the user opened a thread: a jump on its way must not replace it
   threadWanted = { serverId, rootId }
   const my = ++threadSeq
+  threadViewSeq++
   try {
     const th = await client.openThread(serverId, channelId, rootId)
     if (my !== threadSeq) return
+    threadViewSeq++
     const s = useStore.getState()
     if (s.selectedId === serverId) s.setThread(th)
     void refreshThreadAttachments(serverId, channelId, rootId)
@@ -333,15 +368,23 @@ export function closeThread(serverId: number) {
 // refreshThread re-reads serverId's open thread (a thread_changed event, or
 // after loadOlderReplies) — ignored once a different thread (or none) is
 // open by the time it resolves.
+// Only the latest read lands, and none begun before an open that landed
+// since (threadViewSeq) — an older snapshot never replaces a newer one.
 export async function refreshThread(serverId: number, rootId: string) {
   if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
+  const my = ++threadViewSeq
+  lastRead = my
+  threadReads++
   try {
     const th = await client.getThread(serverId, rootId)
+    if (my !== threadViewSeq) return
     if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
     const s = useStore.getState()
     if (s.selectedId === serverId) s.setThread(th)
   } catch (e) {
-    report(e)
+    if (my === threadViewSeq) report(e)
+  } finally {
+    threadReads--
   }
 }
 

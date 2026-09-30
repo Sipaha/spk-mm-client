@@ -846,3 +846,84 @@ test('loadThreadFocus loads a page either way and re-reads the thread; older res
   vi.mocked(client.loadThreadFocus).mockRejectedValueOnce(new ApiError('cancelled', ''))
   await expect(loadThreadFocus(1, 'r1', true)).resolves.toBe(false)
 })
+
+// --- Codex review (Task 6 fix round 1) repros ---
+
+test('Codex: old thread jump cannot land after a newer channel-post jump', async () => {
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true})); await openChannel(1,'a');
+ vi.mocked(client.getChannel).mockResolvedValue(chan('a',{crt:true}));
+ vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply',{in_feed:false,root_id:'r1'})).mockResolvedValueOnce(landed('new-root'));
+ const slow=deferred<ThreadDTO>(); vi.mocked(client.openThreadAt).mockReturnValueOnce(slow.p);
+ const first=jumpToPost(1,'a','reply');
+ await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalled());
+ await jumpToPost(1,'a','new-root');
+ slow.resolve(thread('r1')); await first;
+ expect(useStore.getState().focus?.postId).toBe('new-root');
+ expect(useStore.getState().thread).toBeNull();
+ expect(useStore.getState().threadFocus).toBeNull();
+});
+
+test('Codex: old thread refresh cannot erase a newly focused reply', async()=>{
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true}));await openChannel(1,'a');
+ vi.mocked(client.openThread).mockResolvedValue(thread('r1'));await openThread(1,'a','r1');
+ const old=deferred<ThreadDTO>();vi.mocked(client.getThread).mockReturnValueOnce(old.p);
+ const refreshing=refreshThread(1,'r1');
+ vi.mocked(client.jumpToPost).mockResolvedValue(landed('reply',{in_feed:false,root_id:'r1'}));
+ const focused=thread('r1',{focus:{target_id:'reply',has_older:true,has_newer:true,gap:{open:true,gen:1,before_id:'tail',stale:false},rev:1}});
+ vi.mocked(client.openThreadAt).mockResolvedValue(focused);
+ await jumpToPost(1,'a','reply');
+ old.resolve(thread('r1'));await refreshing;
+ expect(useStore.getState().thread?.focus?.target_id).toBe('reply');
+});
+
+test('fix: a thread refresh started during a focused open and answered after it cannot erase the focus; a fresh one follows', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  vi.mocked(client.jumpToPost).mockResolvedValue(landed('reply', { in_feed: false, root_id: 'r1' }))
+  const focused = thread('r1', { focus: { target_id: 'reply', has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'tail', stale: false }, rev: 1 } })
+  const open = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(open.p)
+  const j = jumpToPost(1, 'a', 'reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  const during = deferred<ThreadDTO>()
+  vi.mocked(client.getThread).mockReturnValueOnce(during.p).mockResolvedValue({ ...focused, posts: [post({ id: 'fresh' })] })
+  const r = refreshThread(1, 'r1') // thread_changed while the focused open is in flight
+  open.resolve(focused)
+  await j
+  during.resolve(thread('r1')) // a plain snapshot, older than the focus
+  await r
+  await vi.waitFor(() => expect(useStore.getState().thread?.posts).toEqual([post({ id: 'fresh' })]))
+  expect(useStore.getState().thread?.focus?.target_id).toBe('reply')
+  expect(useStore.getState().threadFocus?.postId).toBe('reply')
+})
+
+test('fix: two refreshes of the same thread out of order — the older answer is dropped', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  const first = deferred<ThreadDTO>()
+  vi.mocked(client.getThread).mockReturnValueOnce(first.p).mockResolvedValueOnce(thread('r1', { posts: [post({ id: 'new' })] }))
+  const a = refreshThread(1, 'r1')
+  await refreshThread(1, 'r1')
+  first.resolve(thread('r1', { posts: [post({ id: 'old' })] }))
+  await a
+  expect(useStore.getState().thread?.posts).toEqual([post({ id: 'new' })])
+})
+
+test('fix: an overtaken focused open that already reached Go puts Go back to the panel\'s thread (or none)', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply', { in_feed: false, root_id: 'r1' })).mockResolvedValueOnce(landed('root2'))
+  const slow = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(slow.p)
+  const first = jumpToPost(1, 'a', 'reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  await jumpToPost(1, 'a', 'root2')
+  vi.mocked(client.closeThread).mockClear()
+  slow.resolve(thread('r1'))
+  await first
+  expect(client.closeThread).toHaveBeenCalledWith(1) // Go opened r1; no panel shows it
+})

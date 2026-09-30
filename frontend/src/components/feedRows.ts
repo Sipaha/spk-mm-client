@@ -57,8 +57,9 @@ function isFirstReplyOfSeries(prev: PostView | null, p: PostView): boolean {
 // gap (the history gap; absent: none): its row goes right before
 // before_id's post — ahead of that post's day separator — or after the
 // last post while before_id is '' (or not shown). The "new messages" line
-// is not drawn after an open gap: its true place may be among the posts
-// not loaded yet.
+// is not drawn after an open gap when new_since is older than the window's
+// first post (before_id): its true place may then be among the posts not
+// loaded yet. A boundary inside the window itself is known and drawn.
 export function buildRows(
   ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'crt'> & { gap?: HistGap },
   variant: FeedVariant = 'channel',
@@ -72,6 +73,9 @@ export function buildRows(
   let broken = false // a gap row (or the thread divider) ended the previous group
   let firstPost = true
   let gapDone = !gap?.open
+  // new_since before the window's first post: the boundary may be in the gap.
+  const gapFirst = gap?.open ? ch.posts.find((p) => p.id === gap.before_id) : undefined
+  const lineInGap = !!gapFirst && ch.new_since < gapFirst.create_at
   const pushGap = () => {
     rows.push({ kind: 'gap', key: `gap:${gap!.gen}`, open: true, stale: gap!.stale })
     gapDone = true
@@ -96,7 +100,7 @@ export function buildRows(
     }
     if (!lineDone && ch.new_since > 0 && p.create_at > ch.new_since && p.user_id !== ch.me_id && !p.pending && !p.failed) {
       lineDone = true
-      if (!afterGap) {
+      if (!(afterGap && lineInGap)) {
         rows.push({ kind: 'new', key: 'new' })
         head = true
       }

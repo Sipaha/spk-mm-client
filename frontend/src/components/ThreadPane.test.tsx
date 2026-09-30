@@ -375,7 +375,7 @@ test('ThreadPane focus: older replies load through the focus, not the plain thre
 test('ThreadPane focus: a stale segment offers Retry of the reread', async () => {
   render(<ThreadPane server={server()} thread={focused({ gap: { open: true, gen: 2, before_id: 't1', stale: true } })} onClose={() => {}} />)
   expect(screen.getByText('Checking messages…')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Retry checking messages' }))
   expect(retryThreadRevalidation).toHaveBeenCalledWith(5, 'root')
 })
 

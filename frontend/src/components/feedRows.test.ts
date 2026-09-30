@@ -237,3 +237,16 @@ test('thread divider count reflects a reply deletion (reply_count shrinks)', () 
   const after = buildRows(ch([rootAfterDelete, replies[0], replies[2]]), 'thread')
   expect(divider(after).count).toBe(2)
 })
+
+// --- Codex review (Task 6 fix round 1) repros ---
+
+test('Codex: unread boundary inside the loaded window is shown despite an older gap',()=>{
+ const rows=buildRows(ch([P('old','bob',0),P('w1','bob',10),P('w2','bob',11)],{new_since:base+10*60000,gap:{open:true,gen:1,before_id:'w1',stale:false}}));
+ expect(rows.filter(r=>r.kind==='new')).toHaveLength(1);
+});
+
+test('review: an unread boundary between window posts is drawn even with a gap above the window', () => {
+  const g = { open: true, gen: 1, before_id: 'w1', stale: false }
+  const rows = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 10), P('w2', 'bob', 11), P('w3', 'bob', 12)], { gap: g, new_since: base + 11.5 * 60_000 }))
+  expect(shape(rows)).toEqual(['day', 's1*', 'gap', 'w1*', 'w2', 'new', 'w3*'])
+})

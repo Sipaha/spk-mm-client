@@ -1204,7 +1204,7 @@ test('stale indicator with retry', async () => {
   const view = render(<Feed {...props({ posts: [...seg(1, 2), ...win(1, 2)], gap: openGap({ stale: true }), hist_rev: 1 })} onLoadNewer={vi.fn().mockResolvedValue(undefined)} onRetryStale={onRetryStale} />)
   const gapRow = screen.getByRole('log').querySelector<HTMLElement>('[data-key="gap:1"]')!
   expect(within(gapRow).getByText('Checking messages…')).toBeInTheDocument()
-  fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry' }))
+  fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry checking messages' }))
   expect(onRetryStale).toHaveBeenCalledTimes(1)
 
   // A closed gap whose history is still stale: a thin indicator row of its own.
@@ -1212,7 +1212,7 @@ test('stale indicator with retry', async () => {
   expect(screen.queryByRole('button', { name: 'Load newer messages' })).not.toBeInTheDocument()
   const thin = screen.getByRole('log').querySelector<HTMLElement>('[data-key="gap-stale:1"]')!
   expect(within(thin).getByText('Checking messages…')).toBeInTheDocument()
-  fireEvent.click(within(thin).getByRole('button', { name: 'Retry' }))
+  fireEvent.click(within(thin).getByRole('button', { name: 'Retry checking messages' }))
   expect(onRetryStale).toHaveBeenCalledTimes(2)
 })
 
@@ -1226,10 +1226,86 @@ test('a failed gap page shows the error with Retry and stops loading on its own'
     await r.scrollTo(r.st.top - 10)
     expect(onLoadNewer).toHaveBeenCalledTimes(1)
     onLoadNewer.mockImplementation(() => new Promise(() => {}))
-    fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry' }))
+    fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry loading newer messages' }))
     await r.flush()
     expect(onLoadNewer).toHaveBeenCalledTimes(2)
     expect(within(r.row('gap:1')!).queryByText('Could not load newer messages')).not.toBeInTheDocument()
+  } finally {
+    r.restore()
+  }
+})
+
+// --- Codex review (Task 6 fix round 1) repros ---
+
+test('Codex: an existing pending send cannot undo a jump on a later refresh', async ()=>{
+ const pendingPost={...P('pending','me',0),pending:true};
+ const posts=[...seg(1,10),...win(1,10),pendingPost];
+ const r=await channelRig(600,{posts,gap:openGap({open:false,before_id:''})});
+ try {
+  await r.update({}, {focus:{postId:'s8',nonce:1}});
+  expect(r.onScreen('s8')).toBe(280);
+  await r.update({posts:posts.map(p=>({...p}))});
+  expect(r.onScreen('s8')).toBe(280);
+ } finally {r.restore()}
+});
+
+test('fix: a new own send after a jump still goes to the bottom', async () => {
+  const posts = [...seg(1, 10), ...win(1, 10)]
+  const r = await channelRig(600, { posts, gap: openGap({ open: false, before_id: '' }) })
+  try {
+    await r.update({}, { focus: { postId: 's8', nonce: 1 } })
+    expect(r.onScreen('s8')).toBe(280)
+    await r.update({ posts: [...posts, { ...P('mine', 'me', 0), pending: true }] })
+    expect(r.st.top).toBe(r.log.scrollHeight - 600)
+  } finally {
+    r.restore()
+  }
+})
+
+test('fix: a jump clears a history anchor pending since before its target arrived', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(600, { posts: [...seg(1, 3), ...win(1, 10)] }, { focus: { postId: 's8', nonce: 1 }, onLoadNewer })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(1) // a gap page (and its anchor) began after the jump, before its target arrived
+    await r.scrollTo(r.st.top - 30) // the user moves: the pending anchor follows
+    page.resolve()
+    const closed = openGap({ open: false, before_id: '' }) // the page closed the gap: nothing loads after it
+    await r.update({ posts: [...seg(1, 10), ...win(1, 10)], hist_rev: 2, gap: closed })
+    expect(r.onScreen('s8')).toBe(280)
+    await r.update({ posts: [...seg(1, 10), ...win(1, 11)], hist_rev: 2, gap: closed }) // a WS post
+    expect(r.onScreen('s8')).toBe(280)
+  } finally {
+    r.restore()
+  }
+})
+
+test('fix: a click on the gap button while history loads is kept and runs after it', async () => {
+  const older = pending<boolean>()
+  const onLoadOlder = vi.fn(() => older.promise)
+  const onLoadNewer = vi.fn((): Promise<unknown> => Promise.resolve()) // pages Go dropped: the budget runs out
+  const r = await channelRig(600, { has_more: true }, { onLoadOlder, onLoadNewer })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(5)
+    await r.scrollTo(0) // history starts loading; the gap row is still on screen
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(r.row('gap:1')!).getByRole('button', { name: 'Load newer messages' }))
+    await r.flush()
+    expect(onLoadNewer).toHaveBeenCalledTimes(5) // one history operation at a time…
+    older.resolve(true)
+    await r.flush()
+    expect(onLoadNewer.mock.calls.length).toBeGreaterThan(5) // …but the click was kept, not dropped
+  } finally {
+    r.restore()
+  }
+})
+
+test('fix: open + stale + error — the two Retry buttons have distinct names', async () => {
+  const r = await channelRig(600, { gap: openGap({ stale: true }) }, { onLoadNewer: vi.fn((): Promise<unknown> => Promise.reject(new ApiError('no_progress', ''))) })
+  try {
+    const row = r.row('gap:1')!
+    expect(within(row).getByRole('button', { name: 'Retry loading newer messages' })).toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Retry checking messages' })).toBeInTheDocument()
   } finally {
     r.restore()
   }
