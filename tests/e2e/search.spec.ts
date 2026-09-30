@@ -31,13 +31,19 @@ async function townGap(page: Page) {
 // hold: the UI's next request to `method` waits until release(). 'request'
 // keeps the request itself from Go until then (the UI waits, Go knows
 // nothing yet); 'answer' sends it on at once and holds only Go's answer —
-// Go has done the work, the UI hears of it late (a slow link).
+// Go has done the work, the UI hears of it late (a slow link). The request
+// is sent on by Playwright (route.fetch), not by the page: it reaches Go
+// some time after `seen`, and a later UI call may overtake it — to Go the
+// last jump to arrive is the newest navigation. A test that means "Go has
+// done it" waits for `answered`.
 async function hold(page: Page, method: string, what: 'request' | 'answer') {
   let release!: () => void
   const gate = new Promise<void>((r) => (release = r))
   let taken = false
   let arrived!: () => void
   const seen = new Promise<void>((r) => (arrived = r))
+  let fetched!: () => void
+  const answered = new Promise<void>((r) => (fetched = r))
   let finished!: () => void
   const done = new Promise<void>((r) => (finished = r))
   const handler = async (route: Route) => {
@@ -51,6 +57,7 @@ async function hold(page: Page, method: string, what: 'request' | 'answer') {
       return
     }
     const response = await route.fetch().catch(() => null)
+    fetched()
     await gate
     if (response) await route.fulfill({ response }).catch(() => {})
     else await route.abort().catch(() => {})
@@ -63,6 +70,8 @@ async function hold(page: Page, method: string, what: 'request' | 'answer') {
     // UI aborted it meanwhile).
     done,
     seen: () => Promise.race([seen, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`hold: the UI never called ${method}`)), 10_000))]),
+    // answered ('answer' only): Go has answered the held call (the UI has not heard yet).
+    answered: () => Promise.race([answered, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`hold: Go never answered ${method}`)), 10_000))]),
     release: async () => {
       release()
       await page.unroute(`**/api/${method}`, handler)
@@ -288,6 +297,11 @@ test('races: of two quick jumps the second is shown; a second click on the same 
   const held = await hold(page, 'JumpToPost', 'answer')
   await hitCard(page, 'Message #10').click()
   await held.seen()
+  // Go has jumped to #10 (its segment applied); the UI still waits for the
+  // answer. Clicking #150 before that would race Playwright's own resend of
+  // the held request (route.fetch) — Go would take the late #10 as the newer
+  // jump, rightly, and the UI would wait for #150 forever.
+  await held.answered()
   await hitCard(page, 'Message #150').click()
   await expect(focusedRow(log)).toContainText('Message #150')
   await held.release()
