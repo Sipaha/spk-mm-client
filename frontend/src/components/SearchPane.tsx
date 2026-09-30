@@ -120,12 +120,14 @@ export function SearchPane({ server, search }: { server: ServerDTO; search: Sear
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // A hit opened over the feed (narrow) lets the feed show it.
+  // A hit opened over the feed (narrow) lets the feed show it — only a jump
+  // that landed: one ended quietly (another search, a close) leaves the
+  // panel as it is.
   const onOpen = useCallback(
     async (hit: SearchHit) => {
-      await openHit(hit)
+      const landed = await openHit(hit)
       const s = useStore.getState()
-      if (narrow && s.search?.gen === gen && s.rhs === 'search') s.setRhs(null)
+      if (landed && narrow && s.search?.gen === gen && s.rhs === 'search') s.setRhs(null)
     },
     [narrow, gen],
   )
@@ -145,8 +147,11 @@ export function SearchPane({ server, search }: { server: ServerDTO; search: Sear
       ref={paneRef}
       role="complementary"
       aria-label={t('search.title')}
+      // Focusable itself: the query field's last Esc hands focus here, so a
+      // next Esc closes the panel (SearchBox).
+      tabIndex={-1}
       style={narrow ? undefined : { width: 'var(--spk-thread-width, 420px)' }}
-      className={narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 shrink-0 flex-col border-l border-line bg-app'}
+      className={`${narrow ? 'absolute inset-0 z-20 flex min-h-0 flex-col bg-app' : 'relative flex min-h-0 shrink-0 flex-col border-l border-line bg-app'} focus:outline-none`}
     >
       <header className="flex h-8 items-center gap-2 border-b border-line bg-panel px-3">
         {narrow && (

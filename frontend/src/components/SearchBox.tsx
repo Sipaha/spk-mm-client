@@ -149,7 +149,10 @@ export function SearchBox({ variant }: Props) {
       ctl.current = c
       client.searchSuggest(serverId, teamId, tok.kind, tok.prefix, c.signal).then(
         (dto) => {
-          if (id !== seq.current) return
+          // Only the latest word, and only while it is still this
+          // server's team being searched (the abort may come too late).
+          const st = useStore.getState()
+          if (id !== seq.current || st.selectedId !== serverId || (st.sidebar?.team_id ?? '') !== teamId) return
           const rows: Row[] =
             tok.kind === 'users'
               ? [...(dto.users ?? []), ...(dto.others ?? [])].map((u) => ({ key: 'u:' + u.id, kind: 'user' as const, user: u }))
@@ -160,6 +163,40 @@ export function SearchBox({ variant }: Props) {
       )
     }, AUTOCOMPLETE_DEBOUNCE)
   }
+
+  // Another server or team: whatever was asked or shown for the old one
+  // goes (the request aborted, a late answer dropped by seq and scope), and
+  // the word at the caret is asked again of the new team.
+  const updateRef = useRef(update)
+  updateRef.current = update
+  const scope = `${serverId}/${teamId}`
+  const lastScope = useRef(scope)
+  useEffect(() => {
+    if (lastScope.current === scope) return
+    lastScope.current = scope
+    stop()
+    seq.current++
+    current.current = null
+    dismissed.current = null
+    setOpen(null)
+    const el = inputRef.current
+    if (el && document.activeElement === el) updateRef.current(el.value, el.selectionStart)
+  }, [scope, stop])
+
+  // The results panel's field over the feed (narrow): the header's field is
+  // under it — focus, with its caret and selection, moves up here whenever
+  // the panel appears while the header's field has it (Ctrl+F, a click or
+  // Enter there showed the panel).
+  useLayoutEffect(() => {
+    if (variant !== 'pane') return
+    const header = document.activeElement
+    if (!(header instanceof HTMLInputElement) || header.dataset.searchInput !== 'header') return
+    const el = inputRef.current
+    if (!el) return
+    const { selectionStart: a, selectionEnd: b } = header
+    el.focus()
+    if (a !== null && b !== null) el.setSelectionRange(a, b)
+  }, [variant])
 
   // The caret after an insertion lands once React has put the new value in.
   const pendingCaret = useRef<number | null>(null)
@@ -217,7 +254,12 @@ export function SearchBox({ variant }: Props) {
         close()
         setDraft('')
       } else {
-        e.currentTarget.blur()
+        // Out of the field. The results panel's own field hands focus to
+        // its panel (a next Esc closes it — focus on <body> would be a dead
+        // end); the header's lets go.
+        const pane = variant === 'pane' ? e.currentTarget.closest<HTMLElement>('[role="complementary"]') : null
+        if (pane) pane.focus()
+        else e.currentTarget.blur()
       }
     }
   }

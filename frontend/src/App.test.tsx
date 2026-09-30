@@ -248,6 +248,7 @@ test('search: the results and a thread share the right panel — a thread from t
   await screen.findByRole('heading', { name: /Town Square/ })
   const pane = await searchFor('привет')
   expect(client.searchPosts).toHaveBeenCalledWith(1, 't1', 'привет', 0, expect.any(Number), expect.any(AbortSignal))
+  expect(screen.getByRole('separator', { name: 'Resize search results panel' })).toBeInTheDocument()
   expect(pane.querySelector('mark')).toHaveTextContent('привет')
 
   await act(async () => h.emit!({ type: 'open_channel', payload: { server_id: 1, channel_id: 'c-town', root_id: 'r1' } }))

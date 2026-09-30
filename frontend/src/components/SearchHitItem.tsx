@@ -29,7 +29,7 @@ interface Props {
   terms: string[] // the session's (a hit's own matches win — hitTerms)
   me: string
   locale: string
-  onOpen(hit: SearchHit): Promise<void>
+  onOpen(hit: SearchHit): Promise<unknown>
   onLink(href: string): void
   emojiInfo(): Promise<EmojiDTO>
 }
@@ -63,11 +63,17 @@ export const SearchHitItem = memo(function SearchHitItem({ serverId, hit, terms,
   return (
     <article
       data-hit-id={hit.id}
+      // The card is the jump's button; links in its text stay links (their
+      // clicks are not the card's — see onClick).
+      role="button"
       tabIndex={0}
       aria-disabled={!hit.jumpable || undefined}
       aria-label={`${hit.author}, ${formatTime(hit.create_at, locale)}${label ? `, ${label}` : ''}`}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('a, button')) return
+        // Text selected with the mouse inside the card: a copy, not a jump.
+        const sel = window.getSelection()
+        if (sel && !sel.isCollapsed && sel.toString() !== '' && e.currentTarget.contains(sel.anchorNode)) return
         void open()
       }}
       onKeyDown={(e) => {

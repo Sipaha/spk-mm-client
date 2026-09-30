@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import type { AutocompleteDTO } from '../api/types'
@@ -140,4 +140,50 @@ test('focusing the header field shows a kept session the narrow overlay left', (
   render(<SearchBox variant="header" />)
   field().focus()
   expect(useStore.getState().rhs).toBe('search')
+})
+
+test('Codex search7: team switch invalidates a pending suggestion response', async () => {
+  let resolve!: (d: AutocompleteDTO) => void
+  vi.mocked(client.searchSuggest).mockReturnValueOnce(new Promise<AutocompleteDTO>((r) => (resolve = r)))
+  render(<SearchBox variant="header" />)
+  await userEvent.type(field(), 'from:al')
+  await waitFor(() => expect(client.searchSuggest).toHaveBeenCalled())
+  const signal = vi.mocked(client.searchSuggest).mock.calls[0][4]!
+  await act(async () => {
+    useStore.getState().setSidebar(1, { team_id: 't2', selected_channel_id: '', teams: [], categories: [] })
+    resolve(dto({ users: [{ id: 'old-user', username: 'alice-old-team' }] }))
+  })
+  expect(screen.queryByRole('option', { name: /alice-old-team/ })).toBeNull()
+  expect(signal.aborted).toBe(true)
+})
+
+test('a team switch closes an open suggestion list and asks the new team for the same word', async () => {
+  vi.mocked(client.searchSuggest).mockResolvedValueOnce(dto({ users: [{ id: 'u1', username: 'alice-old-team' }] }))
+  render(<SearchBox variant="header" />)
+  await userEvent.type(field(), 'from:al')
+  await screen.findByRole('option', { name: /alice-old-team/ })
+  vi.mocked(client.searchSuggest).mockResolvedValueOnce(dto({ users: [{ id: 'u2', username: 'alice-new-team' }] }))
+  act(() => useStore.getState().setSidebar(1, { team_id: 't2', selected_channel_id: '', teams: [], categories: [] }))
+  expect(screen.queryByRole('option', { name: /alice-old-team/ })).toBeNull()
+  await screen.findByRole('option', { name: /alice-new-team/ })
+  expect(client.searchSuggest).toHaveBeenLastCalledWith(1, 't2', 'users', 'al', expect.any(AbortSignal))
+})
+
+test('narrow: the header field under the overlay hands focus, text and caret to the panel field', async () => {
+  render(
+    <>
+      <SearchBox variant="header" />
+    </>,
+  )
+  act(() => useStore.setState({ searchDraft: 'привет мир' }))
+  const header = field() as HTMLInputElement
+  expect(header).toHaveValue('привет мир')
+  header.focus()
+  header.setSelectionRange(3, 3)
+  const { unmount } = render(<SearchBox variant="pane" />)
+  const pane = document.querySelector<HTMLInputElement>('input[data-search-input="pane"]')!
+  expect(pane).toHaveFocus()
+  expect(pane.value).toBe('привет мир')
+  expect(pane.selectionStart).toBe(3)
+  unmount()
 })

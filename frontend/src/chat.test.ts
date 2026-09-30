@@ -747,7 +747,7 @@ test('jump superseded by another jump does nothing', async () => {
   await jumpToPost(1, 'a', 'p2')
   expect(firstSignal.aborted).toBe(true) // the older request is let go of
   slow.resolve(landed('p1', { in_feed: false, root_id: 'r1' })) // …and even if it lands, nothing follows
-  await expect(first).resolves.toBeUndefined()
+  await expect(first).resolves.toBe(false) // ended quietly
   expect(useStore.getState().focus?.postId).toBe('p2')
   expect(client.openThreadAt).not.toHaveBeenCalled()
 })
@@ -769,7 +769,7 @@ test('a cancelled (superseded in Go) jump is silent; a real failure is thrown fo
   vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
   await openChannel(1, 'a')
   vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('cancelled', ''))
-  await expect(jumpToPost(1, 'a', 'p1')).resolves.toBeUndefined()
+  await expect(jumpToPost(1, 'a', 'p1')).resolves.toBe(false)
   vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('post_gone', ''))
   await expect(jumpToPost(1, 'a', 'p1')).rejects.toMatchObject({ code: 'post_gone' })
   expect(useStore.getState().lastError).toBeNull() // not the global banner
@@ -1490,7 +1490,7 @@ test('search: another team ends the search; a refresh of the same team keeps it 
     has_next: false, limit_reached: false,
   })
   await submitSearch('hello')
-  const cats = [{ id: 'x', type: 'channels', name: 'Channels', collapsed: false, channels: [{ id: 'c-new', name: 'New One', slug: 'new-one', type: 'O', unread: false, mentions: 0, muted: false }] }]
+  const cats = [{ id: 'x', type: 'channels', name: 'Channels', collapsed: false, channels: [{ id: 'c-new', name: 'New One', slug: 'new-one', type: 'O', unread: false, mentions: 0, muted: false }, { id: 'a', name: 'A', slug: 'a', type: 'O', unread: false, mentions: 0, muted: false }] }]
   useStore.getState().setSidebar(1, sidebar({ categories: cats }))
   expect(useStore.getState().search?.hits[1]).toMatchObject({ jumpable: true, channel_name: 'new-one', channel_display: 'New One', channel_type: 'O' })
   expect(useStore.getState().search?.hits[0]).toMatchObject({ jumpable: true, channel_name: 'a' })
@@ -1525,5 +1525,88 @@ test('search: opening a hit jumps to its post; a failure is thrown for the card,
   vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('post_gone', ''))
   await expect(openHit(hit('h1'))).rejects.toMatchObject({ code: 'post_gone' })
   vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('cancelled', ''))
-  await expect(openHit(hit('h1'))).resolves.toBeUndefined()
+  await expect(openHit(hit('h1'))).resolves.toBe(false)
+})
+
+// Fix round 1 (Codex search7): a navigation from the results belongs to
+// their session — a new search, a close, another team end it too.
+test.each(['replace', 'close', 'team'])('Codex search7: %s ends navigation from old results', async (action) => {
+  searchReady()
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.searchPosts).mockResolvedValue(page(['h1']))
+  await submitSearch('old')
+  const pending = deferred<{ post_id: string; root_id: string; in_feed: boolean }>()
+  vi.mocked(client.jumpToPost).mockReturnValueOnce(pending.p)
+  vi.mocked(client.openThreadAt).mockResolvedValue(thread('r1'))
+  const jumping = openHit(hit('h1'))
+  await vi.waitFor(() => expect(client.jumpToPost).toHaveBeenCalled())
+  const signal = vi.mocked(client.jumpToPost).mock.calls[0][3] as AbortSignal
+  if (action === 'replace') await submitSearch('new')
+  else if (action === 'close') closeSearch()
+  else useStore.getState().setSidebar(1, sidebar({ team_id: 't2' }))
+  expect(signal.aborted).toBe(true)
+  pending.resolve(landed('h1', { root_id: 'r1', in_feed: false }))
+  await jumping
+  expect(client.openThreadAt).not.toHaveBeenCalled()
+  expect(useStore.getState().rhs).toBe(action === 'replace' ? 'search' : null)
+})
+
+test('a new search while a jump from the old results is opening its thread: the thread lands nowhere, Go is reconciled', async () => {
+  searchReady()
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.searchPosts).mockResolvedValue(page(['h1']))
+  await submitSearch('old')
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('h1', { root_id: 'r1', in_feed: false }))
+  const opening = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(opening.p)
+  const jumping = openHit(hit('h1'))
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  vi.mocked(client.closeThread).mockClear()
+  await submitSearch('new')
+  opening.resolve(thread('r1'))
+  await jumping
+  expect(useStore.getState().thread).toBeNull()
+  expect(useStore.getState().rhs).toBe('search')
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+})
+
+test('openHit resolves whether the jump landed: false when it was ended quietly', async () => {
+  searchReady()
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.searchPosts).mockResolvedValue(page(['h1']))
+  await submitSearch('old')
+  const pending = deferred<{ post_id: string; root_id: string; in_feed: boolean }>()
+  vi.mocked(client.jumpToPost).mockReturnValueOnce(pending.p)
+  const jumping = openHit(hit('h1'))
+  await submitSearch('new')
+  pending.resolve(landed('h1'))
+  await expect(jumping).resolves.toBe(false)
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('h1'))
+  await expect(openHit(hit('h1'))).resolves.toBe(true)
+})
+
+test('a team change aborts the search request in flight', async () => {
+  searchReady()
+  const d = deferred<SearchPageDTO>()
+  vi.mocked(client.searchPosts).mockReturnValueOnce(d.p)
+  const a = submitSearch('hello')
+  const signal = vi.mocked(client.searchPosts).mock.calls[0][5] as AbortSignal
+  useStore.getState().setSidebar(1, sidebar({ team_id: 't2' }))
+  expect(signal.aborted).toBe(true)
+  d.resolve(page(['h1']))
+  await a
+  expect(useStore.getState().search).toBeNull()
+})
+
+test('a sidebar refresh without a hit\'s channel (left it) makes the hit not jumpable', async () => {
+  const cats = [{ id: 'x', type: 'channels', name: 'Channels', collapsed: false, channels: [{ id: 'a', name: 'A', slug: 'a', type: 'O', unread: false, mentions: 0, muted: false }] }]
+  useStore.getState().setSidebar(1, sidebar({ categories: cats }))
+  vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
+  await submitSearch('hello')
+  expect(useStore.getState().search?.hits[0].jumpable).toBe(true)
+  useStore.getState().setSidebar(1, sidebar({ categories: [] }))
+  expect(useStore.getState().search?.hits[0].jumpable).toBe(false)
 })

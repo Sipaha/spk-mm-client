@@ -238,7 +238,7 @@ export function App() {
                       defaultValue={THREAD_DEFAULT}
                       sign={-1}
                       cssVar="--spk-thread-width"
-                      label={t('layout.resizeThread')}
+                      label={t(panel === 'search' ? 'layout.resizeSearch' : 'layout.resizeThread')}
                       onCommit={commitThreadWidth}
                     />
                   )}

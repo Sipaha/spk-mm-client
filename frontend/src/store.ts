@@ -66,14 +66,20 @@ export type Rhs = 'thread' | 'search' | null
 // withSidebar: the session's hits as the fresh sidebar of its team knows
 // their channels — a hit whose channel the client did not know yet
 // (jumpable false: its metadata lagged) becomes jumpable once the channel
-// is there; a known one takes its current name. Hits are kept either way.
+// is there; a known one takes its current name; one whose channel is gone
+// from the sidebar (left) is not jumpable any more. Hits are kept either way.
 function withSidebar(search: SearchSession, sb: SidebarDTO): SearchSession {
   const items = new Map<string, ChannelItem>()
   for (const c of sb.categories ?? []) for (const it of c.channels ?? []) items.set(it.id, it)
   let changed = false
   const hits = search.hits.map((h) => {
     const it = items.get(h.channel_id)
-    if (!it) return h
+    if (!it) {
+      // Left (or never known): no jump until the sidebar has it again.
+      if (!h.jumpable) return h
+      changed = true
+      return { ...h, jumpable: false }
+    }
     const name = it.slug || h.channel_name
     if (h.jumpable && h.channel_display === it.name && h.channel_name === name && h.channel_type === it.type) return h
     changed = true

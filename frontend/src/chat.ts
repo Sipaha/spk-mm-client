@@ -224,7 +224,8 @@ export async function openFromNotification(serverId: number, channelId: string, 
 // goes on only while this is still the latest jump (jumpSeq). Resolves
 // quietly when overtaken or cancelled; any other failure (post_gone,
 // forbidden, offline…) is thrown for the caller to show where it asked.
-export async function jumpToPost(serverId: number, channelId: string, postId: string, rootId?: string): Promise<void> {
+// Resolves true when it landed (the post shown), false when it ended quietly.
+export async function jumpToPost(serverId: number, channelId: string, postId: string, rootId?: string): Promise<boolean> {
   // Another server first (its reset drops jumps in flight too); its
   // sidebar then finds this channel wanted and leaves it be.
   if (useStore.getState().selectedId !== serverId) selectServer(serverId)
@@ -236,18 +237,16 @@ export async function jumpToPost(serverId: number, channelId: string, postId: st
   try {
     if (wanted?.serverId !== serverId || wanted.channelId !== channelId || useStore.getState().channel?.id !== channelId) {
       await enterChannel(serverId, channelId)
-      if (!live()) return
+      if (!live()) return false
     }
     const r = await client.jumpToPost(serverId, channelId, postId, ctl.signal)
-    if (!live()) return
-    if (!r.in_feed) {
-      await openThreadFocused(serverId, channelId, r.root_id || rootId || '', r.post_id, live, ctl.signal)
-      return
-    }
+    if (!live()) return false
+    if (!r.in_feed) return await openThreadFocused(serverId, channelId, r.root_id || rootId || '', r.post_id, live, ctl.signal)
     useStore.getState().setFocus(r.post_id)
     await refreshChannel(serverId, channelId)
+    return true
   } catch (e) {
-    if (!live() || cancelled(e)) return
+    if (!live() || cancelled(e)) return false
     throw e
   } finally {
     if (jumpAbort === ctl) jumpAbort = null
@@ -264,7 +263,7 @@ export async function jumpToPost(serverId: number, channelId: string, postId: st
 // reconciles Go with the panel — if it still owns goThread.
 async function openThreadFocused(
   serverId: number, channelId: string, rootId: string, replyId: string, live: () => boolean, signal?: AbortSignal,
-) {
+): Promise<boolean> {
   const my = ++threadSeq
   goThread = { serverId, channelId, rootId, focus: replyId, owner: my }
   let landed: boolean
@@ -282,6 +281,7 @@ async function openThreadFocused(
     throw e
   }
   if (!landed) await reconcileGoThread(my)
+  return landed
 }
 
 // viewThread is the one way a thread snapshot reaches the panel — every
@@ -430,14 +430,38 @@ export async function retryThreadRevalidation(serverId: number, rootId: string):
 // searchGen: the latest session; searchAbort lets go of its page request.
 // A page answer lands only while its session is the store's (patchSearch
 // checks gen): a newer submit, a close, another team or server drop it.
+// hitJump: the jump a result started (openHit) — its session and its
+// jumpSeq; it is the session's too: the session ending ends it.
 let searchGen = 0
-let searchAbort: AbortController | null = null
+let searchAbort: { gen: number; ctl: AbortController } | null = null
+let hitJump: { gen: number; seq: number } | null = null
 
 function dropSearch() {
   searchGen++
-  searchAbort?.abort()
+  searchAbort?.ctl.abort()
   searchAbort = null
 }
+
+// endSession: session gen is over — however it ended (a new submit, the
+// close, another team in setSidebar, a server switch or sign-out in the
+// store): its page request is let go of, and a jump from its results that
+// is still on its way stops (dropJump: every await of jumpToPost and of its
+// thread open checks it; a thread already opened in Go is reconciled by
+// openThreadFocused).
+function endSession(gen: number) {
+  if (searchAbort?.gen === gen) {
+    searchAbort.ctl.abort()
+    searchAbort = null
+  }
+  if (hitJump?.gen === gen) {
+    if (hitJump.seq === jumpSeq) dropJump()
+    hitJump = null
+  }
+}
+
+useStore.subscribe((s, prev) => {
+  if (prev.search && s.search?.gen !== prev.search.gen) endSession(prev.search.gen)
+})
 
 const errCode = (e: unknown) => (e instanceof ApiError ? e.code : 'internal')
 
@@ -467,7 +491,7 @@ async function fetchSearchPage(gen: number) {
   const cur = useStore.getState().search
   if (!cur || cur.gen !== gen) return
   const ctl = new AbortController()
-  searchAbort = ctl
+  searchAbort = { gen, ctl }
   const { serverId, teamId, submitted, page } = cur
   useStore.getState().patchSearch(gen, { loading: true, error: null })
   try {
@@ -484,7 +508,7 @@ async function fetchSearchPage(gen: number) {
     }
     useStore.getState().patchSearch(gen, { loading: false, error: errCode(e) })
   } finally {
-    if (searchAbort === ctl) searchAbort = null
+    if (searchAbort?.ctl === ctl) searchAbort = null
   }
 }
 
@@ -520,13 +544,23 @@ export function backToResults() {
   useStore.getState().setRhs('search')
 }
 
-// openHit: a result's click — the jump to its post (jumpToPost: quiet when
-// overtaken, a real failure thrown for the card to show).
-export function openHit(hit: SearchHit): Promise<void> {
+// openHit: a result's click — the jump to its post (jumpToPost), bound to
+// the session: its end ends the jump. Resolves true when the jump landed,
+// false when it was ended quietly (overtaken, cancelled, the session gone);
+// a real failure (post_gone, forbidden, offline…) is thrown for the card.
+export async function openHit(hit: SearchHit): Promise<boolean> {
   const s = useStore.getState().search
-  const serverId = s?.serverId ?? useStore.getState().selectedId
-  if (serverId === null) return Promise.resolve()
-  return jumpToPost(serverId, hit.channel_id, hit.id, hit.root_id || undefined)
+  if (!s) return false
+  const p = jumpToPost(s.serverId, hit.channel_id, hit.id, hit.root_id || undefined)
+  const mine = { gen: s.gen, seq: jumpSeq } // jumpToPost took its seq before its first await
+  hitJump = mine
+  let landed: boolean
+  try {
+    landed = await p
+  } finally {
+    if (hitJump === mine) hitJump = null
+  }
+  return landed && useStore.getState().search?.gen === mine.gen
 }
 
 // --- Thread panel (Task 6) -----------------------------------------------
