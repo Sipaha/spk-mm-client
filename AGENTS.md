@@ -760,17 +760,32 @@
   `internal/mmsync/saved_test.go`, `internal/api/saved_test.go`
   (`TestSetPostSavedSessionExpired`), `frontend/src/components/PostItem.test.tsx` («save button:
   not-saved and saved states, and the click it sends»).
-- Тема (theme brief 2026-09-28) — одна, Catppuccin Macchiato, без переключателя и без
-  `prefers-color-scheme`: 23 токена всего в `frontend/src/index.css`'ном `@theme`-блоке —
-  исходные 18, плюс `--color-danger-fg` (используется и для бейджа упоминаний — отдельный
-  `mention-badge`-токен не понадобился), плюс 4 сайдбар-токена (`--color-sidebar-fg[-unread]`,
-  `--color-sidebar-active-bg/-border`).
-  Компонент никогда не хардкодит hex — единственное исключение технически неизбежно:
-  `frontend/index.html`'ный предзагрузочный `<style>` красит `html,body` до того, как загрузится
-  Tailwind-стиль (нет белой вспышки на старте), и должен вручную повторять `--color-app` — при
-  смене темы его тоже надо поправить, иначе стартовая заливка на миг не совпадает с настоящей
-  (так и было упущено при переходе на Macchiato, нашли скриншотом, не грепом). Свитчер тем или
-  синхронизация с темой сервера Mattermost — на будущее (`docs/backlog.md`).
+- Клик по тексту существующего треда в ленте (2026-09-30): `PostItem` открывает панель
+  для ответа (`root_id`) и корня с `reply_count > 0`. Раньше обработчик был только у
+  «Ответов…», строки контекста и кнопки тулбара; текст ответа прямо под корнем ничего
+  не делал. Обработчик только на тексте сообщения: не на вложениях/реакциях/шапке.
+  Ссылки, элементы управления, код, выделение текста, клики с модификаторами, режим
+  редактирования, ожидающие/ошибочные/системные/эфемерные посты и сама панель исключены.
+  Кнопки открытия остаются для клавиатуры. — `PostItem.test.tsx`, `threads.spec.ts`
+  («clicking thread message text…»). Проверка чтения треда в e2e допускает `null`
+  от фейка до первого PUT read, но всё равно ждёт ненулевой счётчик чтений.
+- Тема — одна, нейтральный тёмный графит (обновление 2026-09-30 по просьбе пользователя:
+  прежние сине-фиолетовые цвета не понравились; подтверждена тёмная тема). Фон `#202225`,
+  текст `#d3d6db`, акцент `#82b4f2`; Catppuccin Macchiato заменена. Все 32 цветовых токена
+  находятся в `frontend/src/index.css` в одном `@theme`-блоке, включая 4 сайдбар-токена
+  и 9 цветов типов файлов. Прочитанные каналы остаются хорошо читаемыми, непрочитанные —
+  ярче и жирным. `danger-fg` используется также на бейджах упоминаний.
+  Компоненты не хардкодят hex; исключение — предзагрузочный `<style>` в `frontend/index.html`:
+  фон `html,body` должен совпадать с `--color-app`, чтобы при запуске не мелькала другая тема.
+  Без переключателя и `prefers-color-scheme`; свитчер или тема сервера — `docs/backlog.md`.
+  Шрифт — встроенный Open Sans (обычный и курсивный variable TrueType, кириллица),
+  `frontend/src/fonts/`; лицензия поставляется в `frontend/public/licenses/`. `text-sm` —
+  14 px при высоте строки 20 px, `text-xs` — 12/16 px, как в оригинальном клиенте.
+  Source Sans 3 отвергнут пользователем как сжатый по горизонтали. Аватар поста — 32 px
+  (был 36 px); правое выравнивание в прежней колонке сохраняет положение текста. Не включать CSS-сглаживание принудительно: эффект зависит от
+  платформы; проверять именно системный WebKitGTK, не только Chromium.
+  Контраст: текст/фон 10.94:1, вторичный текст/фон 8.72:1, подписи/панель 5.96:1,
+  прочитанный канал/сайдбар 10.08:1, текст кнопки/акцент 8.20:1.
 - Ширина сайдбара и панели треда — сплиттеры (`frontend/src/components/Splitter.tsx`, `role=
   separator`, стрелки на 16 px, Home/End, двойной клик — сброс), сохраняются один раз на всё
   приложение (не на сервер): `internal/store`'ная таблица `ui_prefs` (плоский key-value,
@@ -833,6 +848,11 @@
   «Offices», где alice нет. Поиск по сообщениям и Ctrl+K не согласованы (`docs/backlog.md`).
 
 ## Things that bite
+
+- Для UI-smoke на Xvfb задавать `LANG=en_US.UTF-8 LANGUAGE=en_US LC_ALL=en_US.UTF-8`:
+  при локали `C` системный WebKitGTK отдаёт её как язык, и форматирование дат падает
+  с `RangeError: invalid language tag: C` — пустое окно ещё до проверки темы. Найдено
+  при обновлении темы 2026-09-30; окружение со штатной локалью отображается нормально.
 
 - **A `fetch()` to `wails://` with a `Blob`, `File` or `FormData` body crashes the whole desktop app** (SIGSEGV in `webkit_uri_scheme_request_get_http_body`, WebKitGTK 2.52 — Wails reads every scheme request's body). Only `Uint8Array`/`ArrayBuffer` bodies are safe there. The desktop UI never sends file bytes at all (Go reads the clipboard/dialog/drop itself); browser mode posts a `File` only to `/api/attachments` over plain HTTP. — `docs/spikes/2026-09-27-attachments-spike.md` §2.6.
 - WebKitGTK never gives the page pasted or dropped file contents (`clipboardData.files`/`dataTransfer.files` are always empty — `DataTransfer::allowsFileAccess()` is `false` off Cocoa): a pasted picture is an empty `paste`, copied files a hidden `text/uri-list` whose default action inserts the paths as text. Hence the native sources in Go. — spike doc §2.1, §3.

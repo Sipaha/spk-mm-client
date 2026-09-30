@@ -1,78 +1,71 @@
 @import "tailwindcss";
 
-/* Dark theme, out of the box, no setting: Catppuccin Macchiato (user
-   decision, 2026-09-28 — see .superpowers/sdd/fixes-2026-09-28/theme-brief.md
-   and its source material's token_table.md/report.md). Body-text contrast
-   (--color-fg on --color-app) is ~9.9:1 — comfortable, down from the
-   previous theme's ~16:1. No light theme and no prefers-color-scheme block
-   exist in this file — one theme only, by the same brief's ruling (a
-   switcher, or following the MM server theme, is future work — see
-   docs/backlog.md). Token *values* only change here: component code never
-   hard-codes a hex, so a future theme/switcher only touches this block plus
-   the sidebar tokens below. */
+/* Local variable fonts include Cyrillic; no dependency on system fallback
+   or a font CDN. Preserve real italics and weights in message markdown. */
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url("./fonts/OpenSans-Variable.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Open Sans";
+  font-style: italic;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url("./fonts/OpenSans-Italic-Variable.ttf") format("truetype");
+}
+
+/* Graphite dark theme (2026-09-30): neutral surfaces and text, blue only
+   for links, selection and focus. One theme, no switcher or system-theme
+   override. Components use semantic tokens; the preload background in
+   index.html must stay in sync with --color-app. */
 @theme {
-  --color-app: #24273a;
-  --color-panel: #363a4f;
-  --color-sidebar: #1e2030;
-  --color-rail: #181926;
-  --color-fg: #cad3f5;
-  --color-fg-muted: #b8c0e0;
-  --color-fg-subtle: #a5adcb;
-  --color-line: #494d64;
-  --color-hover: #303347;
-  --color-accent: #8aadf4;
-  --color-accent-fg: #0a0a0c;
-  --color-mention-bg: #504d50;
-  --color-mention-fg: #eed49f;
-  --color-danger: #ed8796;
-  /* danger-fg: paired with --color-danger the same way accent-fg pairs with
-     --color-accent (Macchiato's danger is a light pink — a dark foreground
-     reads far better on it than white, 8.0:1 vs 2.5:1). Also backs the
-     mention/unread-count badge (Sidebar.tsx, ServerRail.tsx): a dedicated
-     mention-badge token was not needed — it is the same "urgent count" red
-     as danger, just a different shape. */
-  --color-danger-fg: #0a0a0c;
-  --color-code-bg: #363a4f;
-  --color-online: #a6da95;
-  --color-away: #f5a97f;
-  --color-dnd: #ed8796;
+  --font-sans: "Open Sans", ui-sans-serif, system-ui, sans-serif;
+  /* Open Sans at the official client's body size and existing line heights. */
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --color-app: #202225;
+  --color-panel: #27292d;
+  --color-sidebar: #191b1e;
+  --color-rail: #141619;
+  --color-fg: #d3d6db;
+  --color-fg-muted: #bbc0c8;
+  --color-fg-subtle: #a1a6af;
+  --color-line: #3b3e44;
+  --color-hover: #303338;
+  --color-accent: #82b4f2;
+  --color-accent-fg: #15191e;
+  --color-mention-bg: #40382b;
+  --color-mention-fg: #e5c38b;
+  --color-danger: #e58d94;
+  /* Light semantic fills need a dark foreground, including mention badges. */
+  --color-danger-fg: #15191e;
+  --color-code-bg: #292c31;
+  --color-online: #8cc79b;
+  --color-away: #e0b874;
+  --color-dnd: #e58d94;
 
-  /* Sidebar tones (Mattermost-style, theme brief scope 2; brightened per
-     sidebar-unread-brief.md ruling 1, 2026-09-29 user correction). The
-     original #939ab6 read tone (5.78:1 contrast) read as "grey and
-     washed out" once actually rendered — the official webapp barely dims
-     read rows at all relative to unread ones, it just leaves unread bold.
-     --color-sidebar-fg now matches --color-fg-muted's value (8.93:1,
-     "normal and readable", same tone used for the aside's own base text
-     colour) so read rows look like ordinary sidebar text; unread channels
-     stay the full, bold --color-sidebar-fg-unread (10.85:1) so they still
-     clearly pop, just by a slighter margin than before. Muted channels
-     (ChannelRow's opacity-50, independent of this token) are the actually
-     dim/grey tier now, whether read or unread. */
-  --color-sidebar-fg: #b8c0e0;
-  --color-sidebar-fg-unread: #cad3f5;
-  --color-sidebar-active-bg: #2f374f;
-  --color-sidebar-active-border: #8aadf4;
+  /* Read channels remain ordinary readable text; unread channels are
+     brighter and bold. Only explicitly muted channels use opacity-50. */
+  --color-sidebar-fg: #c2c6ce;
+  --color-sidebar-fg-unread: #eceef2;
+  --color-sidebar-active-bg: #293747;
+  --color-sidebar-active-border: #82b4f2;
 
-  /* File card type colours (file-cards brief, 2026-09-30): the official
-     client tints its file-type icon per kind (red PDF, green spreadsheet,
-     etc. — mm-10.11 webapp/channels/src/sass/components/_files.scss's
-     per-extension file-icon images); these are the same idea on our own
-     Catppuccin Macchiato accents (https://catppuccin.com/palette — full
-     hex list) rather than copying the webapp's bespoke artwork colours.
-     Deliberately separate from the semantic tokens above (danger/online/
-     away) even where the swatch matches (file-pdf and danger are both
-     Macchiato "red") — a future re-theme may want to move file-type colour
-     independently of status colour. */
-  --color-file-pdf: #ed8796; /* red */
-  --color-file-document: #8aadf4; /* blue */
-  --color-file-spreadsheet: #a6da95; /* green */
-  --color-file-presentation: #f5a97f; /* peach */
-  --color-file-archive: #eed49f; /* yellow */
-  --color-file-audio: #c6a0f6; /* mauve */
-  --color-file-video: #7dc4e4; /* sapphire */
-  --color-file-image: #8bd5ca; /* teal */
-  --color-file-text: #91d7e3; /* sky */
+  /* File-kind colours remain independent of semantic status colours. */
+  --color-file-pdf: #e58d94;
+  --color-file-document: #82b4f2;
+  --color-file-spreadsheet: #8cc79b;
+  --color-file-presentation: #dfa77f;
+  --color-file-archive: #e5c38b;
+  --color-file-audio: #b8a1d9;
+  --color-file-video: #85b9d5;
+  --color-file-image: #85bdb2;
+  --color-file-text: #94bdc9;
 }
 
 /* Message markdown: Tailwind's preflight resets these elements. */

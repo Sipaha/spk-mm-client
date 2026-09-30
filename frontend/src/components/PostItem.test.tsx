@@ -809,3 +809,47 @@ test('the server\'s own ephemeral answer is from "System", never from me', () =>
   expect(screen.queryByText('alice')).toBeNull()
   expect(screen.getByTestId('system-avatar')).toBeInTheDocument()
 })
+
+test('clicking the text of an existing thread root or inline reply opens its thread', async () => {
+  const a = actions()
+  const props = { serverId: 1, head: true, me, locale: 'en-US', actions: a, editing: false, crt: false }
+  const { rerender } = render(<PostItem {...props} post={post({ root_id: 'root' })} isInlineReply />)
+  await userEvent.click(screen.getByText('hello'))
+  expect(a.openThread).toHaveBeenCalledWith(expect.objectContaining({ root_id: 'root' }))
+  a.openThread = vi.fn()
+  rerender(<PostItem {...props} actions={a} post={post({ reply_count: 2 })} />)
+  await userEvent.click(screen.getByText('hello'))
+  expect(a.openThread).toHaveBeenCalledTimes(1)
+})
+
+test('thread text clicks do not hijack links, code, selection, modified clicks or editing', async () => {
+  const a = actions()
+  const p = post({ root_id: 'root', message: 'hello [website](https://example.com) `sample`' })
+  const props = { serverId: 1, post: p, head: true, me, locale: 'en-US', actions: a, editing: false, crt: false, isInlineReply: true }
+  const { rerender } = render(<PostItem {...props} />)
+  await hover(screen.getByText(/hello/).closest('article')!)
+  await userEvent.click(screen.getByRole('link', { name: 'website' }))
+  expect(a.link).toHaveBeenCalledWith('https://example.com')
+  await userEvent.click(screen.getByText('sample'))
+  fireEvent.click(screen.getByText(/hello/), { ctrlKey: true })
+  const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection)
+  fireEvent.click(screen.getByText(/hello/))
+  selection.mockRestore()
+  expect(a.openThread).not.toHaveBeenCalled()
+  rerender(<PostItem {...props} editing />)
+  await userEvent.click(screen.getByRole('textbox'))
+  expect(a.openThread).not.toHaveBeenCalled()
+})
+
+test.each([
+  { variant: 'thread' as const, root_id: 'root' },
+  { pending: true, root_id: 'root' },
+  { failed: true, root_id: 'root' },
+  { system: true, root_id: 'root' },
+  {},
+])('text clicks ignore non-actionable posts %j', async ({ variant, ...fields }) => {
+  const a = actions()
+  render(<PostItem serverId={1} post={post(fields)} head me={me} locale="en-US" actions={a} editing={false} crt={false} variant={variant} />)
+  await userEvent.click(screen.getByText('hello'))
+  expect(a.openThread).not.toHaveBeenCalled()
+})

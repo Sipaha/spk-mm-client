@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useLayoutEffect, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { Attachment, EmojiDTO, FileView, PostView, ReactionUsersDTO } from '../api/types'
 import { invalidateRecent, useQuickReactions } from '../emoji/recent'
@@ -300,6 +300,16 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
   const canReact = !post.system && !post.pending && !post.failed
   const canReply = variant === 'channel' && !post.system && !post.pending && !post.failed
   const openThread = () => actions.openThread(post)
+  const openThreadFromText = (e: MouseEvent<HTMLDivElement>) => {
+    // Text is an additional shortcut for existing threads. Keep dedicated
+    // buttons for keyboard access and leave selection/embedded controls alone.
+    if (!canReply || post.ephemeral || editing || (!post.root_id && !post.reply_count)) return
+    if (e.defaultPrevented || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    if ((e.target as Element).closest('a, button, input, textarea, select, [role="button"], [contenteditable], pre, code, img, video, audio')) return
+    const selection = window.getSelection()
+    if (selection && !selection.isCollapsed) return
+    openThread()
+  }
   const openPicker = (el: HTMLElement) => {
     trigger.current = el
     setPicker({ anchor: el.getBoundingClientRect(), info: null })
@@ -418,9 +428,9 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
         if (!next || !articleRef.current?.contains(next)) setHot(false)
       }}
     >
-      <div className="w-9 shrink-0 pt-0.5">
+      <div className="flex w-9 shrink-0 justify-end pt-0.5">
         {head ? (
-          <PostAvatar serverId={serverId} post={post} size={36} />
+          <PostAvatar serverId={serverId} post={post} size={32} />
         ) : (
           <time className="invisible block pt-1 text-right text-[10px] text-fg-subtle group-hover:visible">{time}</time>
         )}
@@ -473,7 +483,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           {editing ? (
             <EditBox post={post} actions={actions} />
           ) : (
-            <div className={post.system ? 'italic text-fg-muted' : ''}>
+            <div className={post.system ? 'italic text-fg-muted' : ''} onClick={openThreadFromText}>
               {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
               {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
               {post.ephemeral ? <span className="text-xs not-italic text-fg-subtle">{t('post.onlyVisibleToYou')}</span> : null}

@@ -81,7 +81,7 @@ test('a live reply shows up in the open panel, and the thread is marked read on 
   await expect(threadFeed(page).getByText(live)).toBeVisible()
   await expect(repliesLink(page, root, 2)).toBeVisible()
   await expect
-    .poll(async () => ((await testGet(page, 'fake/thread-reads')) as { RootID: string }[]).filter((r) => r.RootID === rootId).length)
+    .poll(async () => (((await testGet(page, 'fake/thread-reads')) as { RootID: string }[] | null) ?? []).filter((r) => r.RootID === rootId).length)
     .toBeGreaterThan(0)
 })
 
@@ -272,4 +272,23 @@ test('CRT switched on while signed in: replies leave the feed, "Replies: N" stay
   await expect(feed(page).getByText(r1)).toHaveCount(0)
   await expect(feed(page).getByText(r2)).toHaveCount(0)
   await expect(repliesLink(page, root, 2)).toBeVisible()
+})
+
+test('clicking thread message text opens the panel for roots and inline replies without a context link', async ({ page }) => {
+  await signInWithCRT(page, 'disabled')
+  const root = unique('text click root')
+  const reply = unique('text click reply')
+  await seedThread(page, root, [reply])
+  const row = rootRow(page, reply)
+  // The reply directly follows its root, so it has no "Commented on" link.
+  await expect(row.getByRole('button', { name: /Commented on/ })).toHaveCount(0)
+  await row.getByText(reply, { exact: true }).click()
+  await expect(threadFeed(page).getByText(root, { exact: true })).toBeVisible()
+  await expect(threadFeed(page).getByText(reply, { exact: true })).toBeVisible()
+  await expect(threadComposer(page)).toBeFocused()
+  await page.screenshot({ path: `${shots}/threads-text-click.png` })
+  await threadComposer(page).press('Escape')
+  await expect(threadPane(page)).toBeHidden()
+  await feed(page).getByText(root, { exact: true }).click()
+  await expect(threadFeed(page).getByText(reply, { exact: true })).toBeVisible()
 })
