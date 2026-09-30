@@ -35,7 +35,7 @@ const P = (id: string, user: string, minAgo: number): PostView => ({ id, user_id
 const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   id: 'c1', name: 'C', type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team',
   posts: [P('a', 'bob', 30), P('b', 'bob', 29), P('c', 'carol', 5)],
-  new_since: now - 10 * 60_000, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false,
+  new_since: now - 10 * 60_000, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0,
   ...o,
 })
 const props = (o: Partial<ChannelDTO> = {}, onLoadOlder = vi.fn().mockResolvedValue(true)) => ({

@@ -13,7 +13,7 @@ const sb: SidebarDTO = {
 }
 const town: ChannelDTO = {
   id: 'c-town', name: 'Town Square', type: 'O', header: 'Everything', purpose: '', team_id: 't1', team_name: 'one', posts: [],
-  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false,
+  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0,
 }
 const aThread = {
   root_id: 'r1', channel_id: 'c-town', channel_name: 'Town Square', team_name: 'one', posts: [], has_more: false,
@@ -43,6 +43,9 @@ vi.mock('./api/client', async (orig) => {
       getThread: vi.fn(async () => aThread),
       closeThread: vi.fn().mockResolvedValue(undefined),
       attachments: vi.fn(async () => []),
+      jumpToPost: vi.fn(),
+      loadNewer: vi.fn().mockResolvedValue(undefined),
+      retryRevalidation: vi.fn().mockResolvedValue(undefined),
       subscribeEvents: (fn: (e: ApiEvent) => void) => {
         h.emit = fn
         return () => {}

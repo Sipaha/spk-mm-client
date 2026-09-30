@@ -20,6 +20,9 @@ function fakeClient(over: Partial<Client> = {}): Client {
     loginWithPassword: vi.fn().mockResolvedValue({ ...base, signed_in: true, username: 'alice' }),
     logout: vi.fn().mockResolvedValue(undefined),
     subscribeEvents: vi.fn(),
+    jumpToPost: vi.fn(),
+    loadNewer: vi.fn().mockResolvedValue(undefined),
+    retryRevalidation: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as Client
 }

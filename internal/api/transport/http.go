@@ -183,6 +183,21 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/LoadOlder", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return nil, h.api.LoadOlder(ctx, r.ID, r.ChannelID)
 	}))
+	// JumpToPost runs under the request's context: the UI aborts a stale
+	// jump, which cancels its server calls.
+	h.mux.HandleFunc("POST /api/JumpToPost", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		PostID    string `json:"post_id"`
+	}) (any, error) {
+		return h.api.JumpToPost(ctx, r.ID, r.ChannelID, r.PostID)
+	}))
+	h.mux.HandleFunc("POST /api/LoadNewer", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return nil, h.api.LoadNewer(ctx, r.ID, r.ChannelID)
+	}))
+	h.mux.HandleFunc("POST /api/RetryRevalidation", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return nil, h.api.RetryRevalidation(ctx, r.ID, r.ChannelID)
+	}))
 	type threadReq struct {
 		ID        int64  `json:"id"`
 		ChannelID string `json:"channel_id"`

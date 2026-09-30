@@ -183,3 +183,27 @@ test('layout JSON uses integer pixels for both Go handlers', async () => {
   await httpClient.setThreadWidth(537.9688720703125)
   expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string)).toEqual({ width: 538 })
 })
+
+test('jump and gap calls post their bodies; an abort cancels the jump', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () => new Response(JSON.stringify({ post_id: 'p1', root_id: '', in_feed: true }), { headers: { 'content-type': 'application/json' } }),
+  )
+  const ctl = new AbortController()
+  const r = await httpClient.jumpToPost(3, 'c1', 'p1', ctl.signal)
+  expect(r).toEqual({ post_id: 'p1', root_id: '', in_feed: true })
+  expect(fetchMock.mock.calls[0][1]!.signal).toBe(ctl.signal)
+  await httpClient.loadNewer(3, 'c1')
+  await httpClient.retryRevalidation(3, 'c1')
+  expect(fetchMock.mock.calls.map(([p, i]) => [p, JSON.parse(i!.body as string)])).toEqual([
+    ['/api/JumpToPost', { id: 3, channel_id: 'c1', post_id: 'p1' }],
+    ['/api/LoadNewer', { id: 3, channel_id: 'c1' }],
+    ['/api/RetryRevalidation', { id: 3, channel_id: 'c1' }],
+  ])
+})
+
+test('a jump error keeps its code', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ code: 'post_gone', detail: '' }), { status: 400, headers: { 'content-type': 'application/json' } }),
+  )
+  await expect(httpClient.jumpToPost(3, 'c1', 'p1')).rejects.toEqual(new ApiError('post_gone', ''))
+})

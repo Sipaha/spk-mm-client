@@ -68,27 +68,6 @@ func (w *Worker) view(channelID string) {
 	}
 }
 
-// LoadOlder loads a page of history above the open channel from the raw
-// cursor BeginLoadOlder captures with the history generations; a page that
-// no longer fits (a jump, a reset, another page applied) is dropped.
-func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
-	op, ok := w.st.BeginLoadOlder(channelID)
-	if !ok {
-		return nil
-	}
-	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: op.Cursor.ID, CollapsedThreads: op.CRT})
-	if err != nil {
-		return w.actionErr(err)
-	}
-	w.st.AppendOlder(op, l)
-	w.loadUsers(ctx)
-	if channelID == w.st.Active() {
-		w.requestStatuses() // authors of the older posts
-	}
-	w.changed(state.Change{Channels: []string{channelID}})
-	return nil
-}
-
 // Send shows the post at once (with its attachments' local files) and
 // sends it in the background: once every attachment is uploaded, the post
 // is created with their file ids. A text is needed only without files.

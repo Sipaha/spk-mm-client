@@ -46,7 +46,7 @@ const server = (o: Partial<ServerDTO> = {}): ServerDTO => ({
 })
 const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   id: 'c-town', name: 'Town Square', type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team', posts: [],
-  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false,
+  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0,
   ...o,
 })
 

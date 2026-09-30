@@ -143,6 +143,10 @@ func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
 	w.loadUsers(ctx)
 	if it.ChannelID == w.st.Active() {
 		w.requestStatuses() // authors the open channel did not have yet
+		// A catch-up overflow left the held history stale (only the latest
+		// page was reloaded): reread it. Also retries one a reconnect
+		// dropped.
+		w.scheduleRevalidation(it.ChannelID)
 	}
 	w.changed(state.Change{Sidebar: true, Channels: []string{it.ChannelID}})
 }

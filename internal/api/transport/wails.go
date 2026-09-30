@@ -57,6 +57,18 @@ func (w *API) GetChannel(id int64, channelID string) (api.ChannelDTO, error) {
 func (w *API) LoadOlder(id int64, channelID string) error {
 	return w.a.LoadOlder(context.Background(), id, channelID)
 }
+
+// JumpToPost takes Wails' call context: cancelling the JS promise (a
+// stale jump) cancels the server calls.
+func (w *API) JumpToPost(ctx context.Context, id int64, channelID, postID string) (api.JumpDTO, error) {
+	return w.a.JumpToPost(ctx, id, channelID, postID)
+}
+func (w *API) LoadNewer(id int64, channelID string) error {
+	return w.a.LoadNewer(context.Background(), id, channelID)
+}
+func (w *API) RetryRevalidation(id int64, channelID string) error {
+	return w.a.RetryRevalidation(context.Background(), id, channelID)
+}
 func (w *API) OpenThread(id int64, channelID, rootID string) (api.ThreadDTO, error) {
 	return w.a.OpenThread(context.Background(), id, channelID, rootID)
 }

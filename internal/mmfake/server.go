@@ -92,6 +92,13 @@ type Options struct {
 	// message the query matched — as Elasticsearch does; neither Bleve nor
 	// the database engine ever fill it.
 	SearchMatches bool
+
+	// RequestHook (tests only): called with every request after it is
+	// counted (Hits) and before the simulated conditions and the handler,
+	// outside the fake's lock. It may block to hold the request in flight
+	// (ending with r.Context() when the client gives up), or answer it
+	// itself and return true — then nothing else serves it.
+	RequestHook func(w http.ResponseWriter, r *http.Request) (answered bool)
 }
 
 // DefaultMaxFileSize mirrors the real server's default (model/config.go,

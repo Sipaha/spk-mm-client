@@ -9,3 +9,12 @@ test('maps known codes to localized text and unknown ones to the generic message
   expect(errorMessage(new Error('boom'))).toBe('Something went wrong (boom)')
   setLocale('ru')
 })
+
+test('jump and gap codes have their own text', () => {
+  setLocale('en')
+  expect(errorMessage(new ApiError('post_gone', ''))).toBe('The message was deleted or is not available')
+  expect(errorMessage(new ApiError('no_progress', ''))).toBe('Could not load newer messages')
+  expect(errorMessage(new ApiError('cancelled', ''))).toBe('Cancelled')
+  setLocale('ru')
+  expect(errorMessage(new ApiError('post_gone', ''))).toBe('Сообщение удалено или недоступно')
+})

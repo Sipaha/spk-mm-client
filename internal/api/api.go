@@ -72,6 +72,21 @@ type API interface {
 	OpenChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error
+	// JumpToPost shows postID of the open channel channelID: a post it
+	// holds as is, else the segment around it replaces the held history,
+	// behind a gap (ChannelDTO.gap) until proved to join the window. A new
+	// navigation: history operations begun before are cancelled. Runs under
+	// the caller's ctx (the UI aborts a stale jump). in_feed=false: a
+	// collapsed reply (CRT) — the UI opens its thread. post_gone (404 or
+	// deleted), forbidden (403), invalid_argument (bad id, another
+	// channel's post), no_channel (not the open channel), cancelled.
+	JumpToPost(ctx context.Context, id int64, channelID, postID string) (JumpDTO, error)
+	// LoadNewer loads a page into the gap between the held history and the
+	// window (ChannelDTO.gap); a stale segment is reread first. no_progress:
+	// two pages in a row moved nothing — the user retries.
+	LoadNewer(ctx context.Context, id int64, channelID string) error
+	// RetryRevalidation rereads a stale segment (gap.stale) now.
+	RetryRevalidation(ctx context.Context, id int64, channelID string) error
 	// OpenThread opens a thread in the panel (replacing the open one): the
 	// cached view at once — Loaded=false while the first page is read —
 	// then thread_changed as it loads and changes. Retrying a failed load
@@ -220,6 +235,9 @@ const (
 	CodeTooManyReactions = "too_many_reactions"
 	CodeInvalidArgument  = "invalid_argument"
 	CodeCommandNotFound  = "command_not_found" // no slash command with that trigger (the UI offers to send it as text)
+	CodePostGone         = "post_gone"         // the post jumped to was deleted or does not exist
+	CodeNoProgress       = "no_progress"       // loading newer posts moved nothing twice in a row
+	CodeCancelled        = "cancelled"         // a newer navigation (or the caller) cancelled it
 	// CodeCommandUnsupportedInThread: /leave from a thread composer (the
 	// server would leave the whole channel) — refused, nothing sent.
 	CodeCommandUnsupportedInThread = "command_unsupported_in_thread"

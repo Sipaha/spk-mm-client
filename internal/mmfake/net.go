@@ -42,6 +42,9 @@ func (s *Server) conditions(next http.Handler) http.Handler {
 		}
 		s.hits[r.Method+" "+r.URL.Path]++
 		s.mu.Unlock()
+		if h := s.opts.RequestHook; h != nil && h(w, r) {
+			return
+		}
 		if down {
 			http.Error(w, "fake server is down", http.StatusServiceUnavailable)
 			return

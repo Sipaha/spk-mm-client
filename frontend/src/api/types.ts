@@ -226,6 +226,32 @@ export interface ChannelDTO {
   me_avatar?: string // my own picture version; absent/'' = not loaded yet
   crt: boolean
   muted: boolean
+  // gap: the held history (above the window: scrolled up to, or the segment
+  // around a post jumped to) may not join the window — open until a page
+  // proves it (loadNewer). before_id: the window's first post, the gap row
+  // goes before it ('' while the window is empty: at the end of the
+  // history). gen moves with each gap opened and each reconnect (a row's
+  // key). stale: the history may miss edits/deletions after a catch-up
+  // overflow until reread (retryRevalidation) — independent of open.
+  gap: HistGap
+  // hist_rev moves with every history page applied (anchors tie a pending
+  // correction to it).
+  hist_rev: number
+}
+
+export interface HistGap {
+  open: boolean
+  gen: number
+  before_id: string
+  stale: boolean
+}
+
+// JumpDTO is where a jump landed; in_feed=false: a reply of a collapsed
+// thread (CRT) — the feed does not show it, its thread does.
+export interface JumpDTO {
+  post_id: string
+  root_id: string
+  in_feed: boolean
 }
 
 // ThreadDTO is a thread in the side panel (Go's bounded thread cache): the

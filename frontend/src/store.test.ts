@@ -58,7 +58,7 @@ test('views of another server are ignored', () => {
 
 const chan = (id: string) => ({
   id, name: id, type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team', posts: [],
-  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false,
+  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0,
 })
 
 test('switching to a different channel drops an in-progress edit; refreshing the same one does not', () => {

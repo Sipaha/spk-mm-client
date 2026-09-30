@@ -201,7 +201,9 @@ type Worker struct {
 	missMu      sync.Mutex
 	emojiMiss   map[string]time.Time // custom emoji names the server does not have
 	usersMu     sync.Mutex
-	ac          *acCache // composer autocomplete answers (aclru.go); cleared when Run ends
+	lanesMu     sync.Mutex
+	lanes       map[string]*histLane // channel id → its history operations (jump.go)
+	ac          *acCache             // composer autocomplete answers (aclru.go); cleared when Run ends
 	bg          sync.WaitGroup
 	live        liveMark
 
@@ -243,6 +245,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		reactPoke:  make(chan struct{}, 1),
 		reactNow:   make(chan struct{}, 1),
 		ac:         newACCache(cfg.Now),
+		lanes:      map[string]*histLane{},
 	}
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)

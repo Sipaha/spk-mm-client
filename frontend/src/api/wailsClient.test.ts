@@ -162,3 +162,26 @@ test.each([537.9688720703125, 583.1544799804688, 497.22552490234375, 564.2781982
   await wailsClient.setThreadWidth(width)
   expect(Call.ByName).toHaveBeenLastCalledWith(FQN + 'SetThreadWidth', Math.round(width))
 })
+
+test('jumpToPost: an abort cancels the Wails call (its Go context); gap calls by FQN', async () => {
+  let resolve!: (v: unknown) => void
+  const cancel = vi.fn()
+  const p = Object.assign(new Promise((r) => (resolve = r)), { cancel })
+  vi.mocked(Call.ByName).mockReturnValue(p as never)
+  const ctl = new AbortController()
+  const res = wailsClient.jumpToPost(3, 'c1', 'p1', ctl.signal)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'JumpToPost', 3, 'c1', 'p1')
+  ctl.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  resolve({ post_id: 'p1', root_id: '', in_feed: true })
+  await expect(res).resolves.toEqual({ post_id: 'p1', root_id: '', in_feed: true })
+
+  vi.mocked(Call.ByName).mockRejectedValue(new Error('post_gone: 404'))
+  await expect(wailsClient.jumpToPost(3, 'c1', 'p2')).rejects.toMatchObject({ code: 'post_gone', detail: '404' })
+
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.loadNewer(3, 'c1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'LoadNewer', 3, 'c1')
+  await wailsClient.retryRevalidation(3, 'c1')
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'RetryRevalidation', 3, 'c1')
+})

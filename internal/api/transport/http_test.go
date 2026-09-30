@@ -534,3 +534,82 @@ func TestAPIBodyIsCapped(t *testing.T) {
 	ok := `{"id":3,"channel_id":"c1","command":"/echo ` + strings.Repeat("я", 16383) + `"}`
 	assert.Equal(t, 200, call(t, h, ts.URL, "ExecuteCommand", ok).StatusCode)
 }
+
+type jumpAPI struct {
+	api.API
+	calls   []string
+	blocked chan struct{} // JumpToPost waits for its ctx to end when set
+	ended   chan error
+}
+
+func (f *jumpAPI) JumpToPost(ctx context.Context, id int64, channelID, postID string) (api.JumpDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("jump %d/%s/%s", id, channelID, postID))
+	if f.blocked != nil {
+		close(f.blocked)
+		<-ctx.Done()
+		f.ended <- ctx.Err()
+		return api.JumpDTO{}, ctx.Err()
+	}
+	if postID == "gone" {
+		return api.JumpDTO{}, &api.CodedError{Code: api.CodePostGone}
+	}
+	return api.JumpDTO{PostID: postID, RootID: "r1"}, nil
+}
+
+func (f *jumpAPI) LoadNewer(_ context.Context, id int64, channelID string) error {
+	f.calls = append(f.calls, fmt.Sprintf("newer %d/%s", id, channelID))
+	return &api.CodedError{Code: api.CodeNoProgress}
+}
+
+func (f *jumpAPI) RetryRevalidation(_ context.Context, id int64, channelID string) error {
+	f.calls = append(f.calls, fmt.Sprintf("reval %d/%s", id, channelID))
+	return nil
+}
+
+func TestJumpRoutes(t *testing.T) {
+	f := &jumpAPI{}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp := call(t, h, ts.URL, "JumpToPost", `{"id":3,"channel_id":"c1","post_id":"p1"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var v map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&v))
+	assert.Equal(t, map[string]any{"post_id": "p1", "root_id": "r1", "in_feed": false}, v)
+	code := func(resp *http.Response) string {
+		var e map[string]string
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&e))
+		return e["code"]
+	}
+	assert.Equal(t, "post_gone", code(call(t, h, ts.URL, "JumpToPost", `{"id":3,"channel_id":"c1","post_id":"gone"}`)))
+	assert.Equal(t, "no_progress", code(call(t, h, ts.URL, "LoadNewer", `{"id":3,"channel_id":"c1"}`)))
+	assert.Equal(t, 200, call(t, h, ts.URL, "RetryRevalidation", `{"id":3,"channel_id":"c1"}`).StatusCode)
+	assert.Equal(t, []string{"jump 3/c1/p1", "jump 3/c1/gone", "newer 3/c1", "reval 3/c1"}, f.calls)
+}
+
+// An aborted fetch (the UI dropped a stale jump) cancels the request
+// context the jump runs under.
+func TestAbortedJumpCancelsItsContext(t *testing.T) {
+	f := &jumpAPI{blocked: make(chan struct{}), ended: make(chan error, 1)}
+	h := NewHTTP(f, events.NewEmitter())
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/JumpToPost",
+		strings.NewReader(`{"id":3,"channel_id":"c1","post_id":"p1"}`))
+	req.Header.Set("Authorization", "Bearer "+h.AuthToken())
+	req.Header.Set("Origin", ts.URL)
+	go func() {
+		<-f.blocked
+		cancel()
+	}()
+	_, err := http.DefaultClient.Do(req)
+	require.Error(t, err)
+	select {
+	case err := <-f.ended:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the jump never saw the abort")
+	}
+}

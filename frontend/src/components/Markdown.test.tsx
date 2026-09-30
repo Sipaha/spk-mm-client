@@ -247,7 +247,7 @@ test('~channel link: clicking it opens the channel and holds it (fix round 1: ca
   useStore.setState({ selectedId: 1, sidebar: sb, channel: null, heldChannel: null })
   const ch: ChannelDTO = {
     id: 'town', name: 'Town Square', type: 'O', header: '', purpose: '', team_id: 't1', team_name: 'team', posts: [],
-    new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false,
+    new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0,
   }
   vi.mocked(client.openChannel).mockResolvedValue(ch)
 

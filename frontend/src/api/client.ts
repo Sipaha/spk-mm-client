@@ -9,6 +9,7 @@ import type {
   DownloadView,
   EmojiDTO,
   EventType,
+  JumpDTO,
   LayoutDTO,
   ReactionUsersDTO,
   SavedFile,
@@ -49,6 +50,18 @@ export interface Client {
   openChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
   loadOlder(id: number, channelId: string): Promise<void>
+  /**
+   * Shows postId of the open channel: held already → as is; else the segment
+   * around it replaces the held history, behind ChannelDTO.gap. A new
+   * navigation (earlier history loads are cancelled). Aborting `signal`
+   * cancels it in Go. in_feed=false: a collapsed reply — open its thread.
+   * Errors: post_gone, forbidden, invalid_argument, no_channel, cancelled.
+   */
+  jumpToPost(id: number, channelId: string, postId: string, signal?: AbortSignal): Promise<JumpDTO>
+  /** Loads a page into the gap (ChannelDTO.gap) — one at a time; no_progress: retry by hand. */
+  loadNewer(id: number, channelId: string): Promise<void>
+  /** Rereads a stale history segment (gap.stale) now. */
+  retryRevalidation(id: number, channelId: string): Promise<void>
   /** Opens a thread in the panel (replacing the open one); may still be loading — thread_changed follows. Retry = open again. */
   openThread(id: number, channelId: string, rootId: string): Promise<ThreadDTO>
   /** A cached thread's current view (no_post: not cached). */
@@ -163,6 +176,9 @@ export const httpClient: Client = {
   openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
+  jumpToPost: (id, channel_id, post_id, signal) => post('JumpToPost', { id, channel_id, post_id }, signal),
+  loadNewer: (id, channel_id) => done(post('LoadNewer', { id, channel_id })),
+  retryRevalidation: (id, channel_id) => done(post('RetryRevalidation', { id, channel_id })),
   openThread: (id, channel_id, root_id) => post('OpenThread', { id, channel_id, root_id }),
   getThread: (id, root_id) => post('GetThread', { id, root_id }),
   closeThread: (id) => done(post('CloseThread', { id })),
@@ -246,6 +262,22 @@ async function wcall<T>(method: string, ...args: unknown[]): Promise<T> {
   }
 }
 
+// cancellable is wcall for a binding that takes Wails' call context: Call.ByName's
+// promise is a CancellablePromise, and aborting signal cancels it — the Go
+// method's context (transport/wails.go).
+async function cancellable<T>(signal: AbortSignal | undefined, method: string, ...args: unknown[]): Promise<T> {
+  const p = Call.ByName(FQN + method, ...args)
+  const onAbort = () => void (p as { cancel?: () => unknown }).cancel?.()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    return (await p) as T
+  } catch (e) {
+    throw parseWailsError(e)
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
 const EVENT_TYPES: EventType[] = [
   'servers_changed',
   'login_failed',
@@ -281,6 +313,9 @@ export const wailsClient: Client = {
   openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
+  jumpToPost: (id, channelId, postId, signal) => cancellable<JumpDTO>(signal, 'JumpToPost', id, channelId, postId),
+  loadNewer: (id, channelId) => wcall('LoadNewer', id, channelId),
+  retryRevalidation: (id, channelId) => wcall('RetryRevalidation', id, channelId),
   openThread: (id, channelId, rootId) => wcall('OpenThread', id, channelId, rootId),
   getThread: (id, rootId) => wcall('GetThread', id, rootId),
   closeThread: (id) => wcall('CloseThread', id),
@@ -312,20 +347,8 @@ export const wailsClient: Client = {
   retryAttachment: (id, attachmentId) => wcall('RetryAttachment', id, attachmentId),
   attachFromClipboard: (id, channelId, rootId) => wcall('AttachFromClipboard', id, channelId, rootId),
   pickAttachments: (id, channelId, rootId) => wcall('PickAttachments', id, channelId, rootId),
-  async autocomplete(id, kind, channelId, rootId, prefix, signal) {
-    // Call.ByName's promise is a CancellablePromise: cancel() cancels the
-    // Go method's context (it takes a context.Context — transport/wails.go).
-    const p = Call.ByName(FQN + 'Autocomplete', id, kind, channelId, rootId, prefix)
-    const onAbort = () => void (p as { cancel?: () => unknown }).cancel?.()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    try {
-      return (await p) as AutocompleteDTO
-    } catch (e) {
-      throw parseWailsError(e)
-    } finally {
-      signal?.removeEventListener('abort', onAbort)
-    }
-  },
+  autocomplete: (id, kind, channelId, rootId, prefix, signal) =>
+    cancellable<AutocompleteDTO>(signal, 'Autocomplete', id, kind, channelId, rootId, prefix),
   executeCommand: (id, channelId, rootId, command) => wcall('ExecuteCommand', id, channelId, rootId, command),
   subscribeEvents(onEvent) {
     const offs = EVENT_TYPES.map((type) =>

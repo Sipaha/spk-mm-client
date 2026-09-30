@@ -60,3 +60,32 @@ func TestSetFailureFailsMatchingPaths(t *testing.T) {
 	s.SetFailure("/users/me", 0)
 	assert.Equal(t, http.StatusOK, a.call("GET", "/api/v4/users/me", nil, nil))
 }
+
+func TestRequestHookHoldsOrAnswersRequests(t *testing.T) {
+	held := make(chan struct{})
+	release := make(chan struct{})
+	s := Start(Options{RequestHook: func(w http.ResponseWriter, r *http.Request) bool {
+		switch r.URL.Query().Get("hook") {
+		case "hold":
+			close(held)
+			<-release
+		case "answer":
+			w.WriteHeader(http.StatusTeapot)
+			return true
+		}
+		return false
+	}})
+	defer s.Close()
+	a := loginAs(t, s, "alice")
+	assert.Equal(t, http.StatusTeapot, a.call("GET", "/api/v4/users/me?hook=answer", nil, nil))
+	done := make(chan int)
+	go func() { done <- a.call("GET", "/api/v4/users/me?hook=hold", nil, nil) }()
+	<-held
+	select {
+	case <-done:
+		t.Fatal("the held request was answered")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	assert.Equal(t, http.StatusOK, <-done)
+}

@@ -32,7 +32,7 @@ const { attachFromClipboard, pickAttachments, removeAttachment, retryAttachment,
 
 const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   id: 'c1', name: 'Off-Topic', type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team', posts: [],
-  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false, ...o,
+  new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'me', crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0, ...o,
 })
 
 // cf: the Composer props a ChannelDTO now maps to (channelId/channelName/

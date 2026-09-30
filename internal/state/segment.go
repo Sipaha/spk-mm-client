@@ -145,13 +145,33 @@ func (s *Server) placeLocked(ch *Chan, raw []model.Post, crt bool) {
 // Holds reports whether the open channel shows postID now — in the window
 // or in the held history.
 func (s *Server) Holds(channelID, postID string) bool {
+	_, ok := s.HeldPost(channelID, postID)
+	return ok
+}
+
+// HeldPost is the post Holds finds.
+func (s *Server) HeldPost(channelID, postID string) (model.Post, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
 	if ch == nil || channelID != s.active {
-		return false
+		return model.Post{}, false
 	}
-	return indexOf(ch.Win.Posts, postID) >= 0 || indexOf(s.older, postID) >= 0
+	if i := indexOf(ch.Win.Posts, postID); i >= 0 {
+		return ch.Win.Posts[i], true
+	}
+	if i := indexOf(s.older, postID); i >= 0 {
+		return s.older[i], true
+	}
+	return model.Post{}, false
+}
+
+// SegmentStale reports that the open channel's held history waits for a reread
+// (BeginRevalidate).
+func (s *Server) SegmentStale(channelID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return channelID == s.active && s.segStale
 }
 
 // BeginJump starts a jump to a post of the open channel. It is a new

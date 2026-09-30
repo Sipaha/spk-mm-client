@@ -32,6 +32,9 @@ vi.mock('./api/client', () => ({
     loadOlderReplies: vi.fn().mockResolvedValue(undefined),
     sendReply: vi.fn().mockResolvedValue(undefined),
     saveThreadDraft: vi.fn().mockResolvedValue(undefined),
+    jumpToPost: vi.fn(),
+    loadNewer: vi.fn().mockResolvedValue(undefined),
+    retryRevalidation: vi.fn().mockResolvedValue(undefined),
   },
   uploadAttachmentBrowser: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -72,7 +75,7 @@ const srv = (id: number): ServerDTO => ({
 const chan = (id: string, over: Partial<ChannelDTO> = {}): ChannelDTO => ({
   id, name: id.toUpperCase(), type: 'O', header: '', purpose: '', team_id: 't1', team_name: 'team', posts: [],
   new_since: 0, has_more: false, loaded: true, syncing: false, gap_after: '', draft: '', me_id: 'u-alice',
-  crt: false, muted: false, ...over,
+  crt: false, muted: false, gap: { open: false, gen: 0, before_id: '', stale: false }, hist_rev: 0, ...over,
 })
 
 const sidebar = (over: Partial<SidebarDTO> = {}): SidebarDTO => ({
