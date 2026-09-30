@@ -133,6 +133,7 @@ export default function EmojiPicker({ serverId, anchor, info, onPick, onClose }:
       ref={root}
       role="dialog"
       aria-label={t('picker.label')}
+      data-overlay="true"
       className="fixed z-50 flex flex-col rounded-lg border border-line bg-panel text-fg shadow-xl"
       style={{ left: pos.left, top: pos.top, width: W, height: H }}
       onKeyDown={(e) => {

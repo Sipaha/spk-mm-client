@@ -112,6 +112,7 @@ export default function Downloads({ anchorEl, downloads, locale, primaryAction, 
       role="dialog"
       aria-label={t('downloads.panelLabel')}
       tabIndex={-1}
+      data-overlay="true"
       className="fixed z-50 flex flex-col rounded-lg border border-line bg-panel text-fg shadow-xl focus:outline-none"
       style={{ left: pos.left, top: pos.top, width: W, maxHeight: H }}
     >

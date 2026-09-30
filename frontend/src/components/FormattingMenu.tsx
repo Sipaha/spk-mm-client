@@ -45,6 +45,7 @@ export function FormattingMenu({ anchorEl, items, onPick, onClose }: Props) {
       ref={root}
       role="menu"
       aria-label={t('composer.moreFormatting')}
+      data-overlay="true"
       className="fixed z-50 flex flex-col rounded-lg border border-line bg-panel py-1 text-fg shadow-xl"
       style={{ left: pos.left, top: pos.top, width: W }}
       onKeyDown={onMenuKey}

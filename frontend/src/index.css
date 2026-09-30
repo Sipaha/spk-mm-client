@@ -116,3 +116,15 @@
   font-weight: 600;
   pointer-events: none;
 }
+
+/* WebKitGTK (2.52) paints GTK overlay scrollbars in a layer above all page
+   content, whatever the stacking order: the sidebar's scrollbar showed on
+   top of the open file viewer (user report 2026-09-30). Neither z-index,
+   isolation, will-change on the dialog or the scroller, nor scrollbar-width
+   helped; scrollbar-color does (it changes no layout — overlay scrollbars
+   take no space, classic ones keep theirs). So while an overlay
+   ([data-overlay]: the viewer, modals, pickers, menus) is open, every
+   scroller outside it draws a transparent scrollbar. */
+body:has([data-overlay]) :is(.overflow-auto, .overflow-y-auto, .overflow-x-auto):not([data-overlay] *) {
+  scrollbar-color: transparent transparent;
+}

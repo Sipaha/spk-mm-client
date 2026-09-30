@@ -72,7 +72,7 @@ export function ReactorsModal({ serverId, emoji, count, mine, meId, meAvatar, us
   const title = t('reaction.whoTitle', { emoji: `:${emoji}:`, n: String(count) })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4" onClick={closeOnBackdrop}>
+    <div data-overlay="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4" onClick={closeOnBackdrop}>
       <div
         ref={root}
         role="dialog"

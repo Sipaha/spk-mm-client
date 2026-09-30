@@ -188,6 +188,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       role="dialog"
       aria-modal="true"
       aria-label={t('viewer.label')}
+      data-overlay="true"
       className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg"
       onPointerDownCapture={(e) => {
         downRef.current = { target: e.target, x: e.clientX, y: e.clientY, onBar: onScrollbar(e.target, e.clientX, e.clientY) }
