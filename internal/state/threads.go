@@ -243,7 +243,7 @@ func (s *Server) threadPageLocked(rootID string, l model.PostList) (root model.P
 			replies = append(replies, p)
 		}
 	}
-	sortPosts(replies)
+	sortReplies(replies)
 	return root, replies, l.HasNext != nil && *l.HasNext
 }
 
@@ -295,7 +295,7 @@ func (s *Server) SetThreadPage(rootID string, epoch uint64, l model.PostList) {
 			}
 		}
 	}
-	sortPosts(merged)
+	sortReplies(merged)
 	if t.focus != nil {
 		s.setTailLocked(t, merged, threadReplies(rootID, l), hasNext)
 	} else {
@@ -329,7 +329,7 @@ func (s *Server) AppendOlderReplies(rootID string, epoch uint64, before string, 
 		}
 	}
 	t.replies = append(add, t.replies...)
-	sortPosts(t.replies)
+	sortReplies(t.replies)
 	t.complete = !hasNext
 	s.capThreadLocked(t)
 	if rootID != s.openThread {
@@ -575,12 +575,12 @@ func (s *Server) threadPostedLocked(p model.Post) {
 		}
 		return
 	}
-	if !t.complete && len(t.replies) > 0 && p.CreateAt < t.replies[0].CreateAt {
+	if !t.complete && len(t.replies) > 0 && cmpReplies(p, t.replies[0]) < 0 {
 		return
 	}
 	if t.focus != nil { // the tail: its oldest go (trimTailLocked)
 		t.replies = append(t.replies, p)
-		sortPosts(t.replies)
+		sortReplies(t.replies)
 		s.trimTailLocked(t)
 		return
 	}
@@ -596,7 +596,7 @@ func (s *Server) threadPostedLocked(p model.Post) {
 		t.capped = limit == ThreadMaxReplies
 	}
 	t.replies = append(t.replies, p)
-	sortPosts(t.replies)
+	sortReplies(t.replies)
 }
 
 // threadUpdatedLocked applies an edit to the cached copies of p.

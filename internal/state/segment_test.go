@@ -810,3 +810,56 @@ func TestRevalidationKeepsTiesAtPageBounds(t *testing.T) {
 	assert.Contains(t, olderIDs(s), "t4")
 	assert.False(t, townView(t, s).Gap.Stale)
 }
+
+// Codex review, finding 1: a jump whose pages overlap the held history
+// keeps the fresher local copy of a post edited live after its pages were
+// read — the pages are merged with the held copies (newerOf) before the
+// held history is replaced.
+func TestOverlappingJumpKeepsLiveEdit(t *testing.T) {
+	s := segFixture(t, 60)
+	stdJump(t, s) // s0…s10 held
+	op, ok := s.BeginJump("town")
+	require.True(t, ok)
+	before := plist("s0", "s11", run("s", 6, 5, 1000)...) // s6…s10, read before the edit
+	target := mkPost("s11", "town", "u2", 1110)
+	after := plist("s11", "s20", run("s", 12, 5, 1000)...)
+	edited := segPost(t, s, "s8")
+	edited.Message, edited.EditAt, edited.UpdateAt = "live edit", 99_000, 99_000
+	s.ApplyPostUpdate(edited)
+	require.True(t, s.SetSegment(op, target, before, after))
+	check(t, s)
+	assert.Equal(t, "live edit", segPost(t, s, "s8").Message)
+	assert.Equal(t, sIDs(6, 16), olderIDs(s))
+}
+
+// Codex review, finding 2: a jump's pages read before a reconnect may miss
+// what the lost stream carried (the catch-up updated only the copies held
+// then). The segment is applied, but stale — to be reread — not fresh.
+func TestSegmentReadBeforeReconnectIsStale(t *testing.T) {
+	t.Run("answer before the catch-up", func(t *testing.T) {
+		s := segFixture(t, 60)
+		op, ok := s.BeginJump("town")
+		require.True(t, ok)
+		s.MarkStale(20_000)
+		require.True(t, s.SetSegment(op, stdTarget(), stdBefore(), stdAfter()))
+		check(t, s)
+		assert.True(t, s.SegmentStale("town"), "an old gap generation must not become a fresh segment")
+		assert.True(t, townView(t, s).Gap.Stale)
+	})
+	t.Run("catch-up completed before the answer", func(t *testing.T) {
+		s := segFixture(t, 60)
+		op, ok := s.BeginJump("town")
+		require.True(t, ok)
+		s.MarkStale(20_000)
+		s.MergeSince("town", nil, 20_001, 0) // caught up: the window is live again
+		require.False(t, townView(t, s).Syncing)
+		require.True(t, s.SetSegment(op, stdTarget(), stdBefore(), stdAfter()))
+		check(t, s)
+		assert.True(t, s.SegmentStale("town"))
+		assert.Equal(t, sIDs(0, 10), olderIDs(s))
+
+		// A jump begun now is fresh again.
+		jump(t, s, stdTarget(), stdBefore(), stdAfter())
+		assert.False(t, s.SegmentStale("town"))
+	})
+}

@@ -467,3 +467,54 @@ func TestShortThreadCompleteAfterFocusClosed(t *testing.T) {
 	assert.Len(t, v.Posts, 51)
 	assert.False(t, v.HasMore)
 }
+
+// Codex review, finding 3: a jump to a reply held while an existing focus
+// has a page in flight is the newer navigation — that page must not land
+// (it could slide the window and let go of the reply jumped to).
+func TestHeldRetargetInvalidatesExistingFocusPage(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 500)
+	focusThread(t, s, root, replies, 99)
+	op, ok := s.BeginFocusLoad("R", true)
+	require.True(t, ok)
+	_, held, ok := s.FocusThread("town", "R", replies[99].ID)
+	require.True(t, ok)
+	require.True(t, held)
+	rev := mustThread(t, s, "R").Focus.Rev
+	i := replyAt(replies, op.Cursor.ID)
+	_, progressed := s.AppendFocus(op, true, downFrom(root, replies, i, 60))
+	assert.False(t, progressed, "a page begun before the retarget must be dropped")
+	v := mustThread(t, s, "R")
+	assert.Equal(t, rev, v.Focus.Rev)
+	assert.Equal(t, replies[99].ID, v.Focus.TargetID)
+
+	// The focus goes on in the new generation.
+	_, progressed = loadFocus(t, s, root, replies, true, 60)
+	assert.True(t, progressed)
+}
+
+// Codex review, finding 4: thread pages go by (create_at, id); the focus
+// keeps that order in every merge, so replies sharing one create_at slide
+// out at the right edge and the edge cursors stay in server order.
+func TestFocusSameTimestampSlidesInServerOrder(t *testing.T) {
+	s := crtFixture(true)
+	root, replies := seededThread("R", 500)
+	for i := range replies {
+		replies[i].CreateAt = 2000
+	}
+	root.LastReplyAt, root.UpdateAt = 2000, 2000
+	focusThread(t, s, root, replies, 299)
+	for range 3 {
+		loadFocus(t, s, root, replies, false, 60)
+	}
+	v := mustThread(t, s, "R")
+	want := append([]string{"R"}, rids(replies, 89, 289)...)
+	want = append(want, rids(replies, 440, 500)...)
+	assert.Equal(t, want, threadPostIDs(v), "three older pages keep the older edge, in server order")
+	op, ok := s.BeginFocusLoad("R", true)
+	require.True(t, ok)
+	assert.Equal(t, replies[288].ID, op.Cursor.ID, "the down cursor is the latest of the 200 focus replies")
+	op, ok = s.BeginFocusLoad("R", false)
+	require.True(t, ok)
+	assert.Equal(t, replies[89].ID, op.Cursor.ID)
+}

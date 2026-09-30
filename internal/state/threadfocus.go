@@ -72,9 +72,22 @@ type ThreadFocusView struct {
 	Rev      uint64  `json:"rev"`
 }
 
+// replyOrder is the order thread pages go by: (create_at, id) — mm-10.11
+// post_store.go getPostThread: ORDER BY CreateAt, Id; fromCreateAt/fromPost
+// continue from both. A thread's replies (the plain thread, the focus and
+// its tail) are kept in it everywhere, and compared by it at every edge:
+// replies sharing a create_at are common (imports, bots), and create_at
+// alone would slide, trim and page from the wrong reply.
+func replyOrder(a, b Cursor) int {
+	return cmp.Or(cmp.Compare(a.CreateAt, b.CreateAt), cmp.Compare(a.ID, b.ID))
+}
+
+func cmpReplies(a, b model.Post) int { return replyOrder(cursorOf(a), cursorOf(b)) }
+
+func sortReplies(ps []model.Post) { slices.SortFunc(ps, cmpReplies) }
+
 // threadReplies: the replies of rootID in pages as the server sent them,
-// oldest first by (create_at, id) — the order thread pages go by — each
-// once.
+// oldest first in replyOrder, each once.
 func threadReplies(rootID string, lists ...model.PostList) []model.Post {
 	var out []model.Post
 	for _, l := range lists {
@@ -84,9 +97,7 @@ func threadReplies(rootID string, lists ...model.PostList) []model.Post {
 			}
 		}
 	}
-	slices.SortFunc(out, func(a, b model.Post) int {
-		return cmp.Or(cmp.Compare(a.CreateAt, b.CreateAt), cmp.Compare(a.ID, b.ID))
-	})
+	sortReplies(out)
 	return out
 }
 
@@ -162,9 +173,11 @@ func (s *Server) FocusThread(channelID, rootID, replyID string) (op ThreadFocusO
 		if t.focus != nil {
 			t.focus.target = replyID
 		}
-		// A newer navigation: a focus begun before must not land (an
-		// existing one goes by its own generation).
-		s.bumpFocusLocked(nil)
+		// A newer navigation: a focus begun before must not land, nor a page
+		// of the existing focus begun before (it could slide the window
+		// and let go of the reply shown) — the focus goes on in the new
+		// generation.
+		s.bumpFocusLocked(t.focus)
 		return ThreadFocusOp{}, true, true
 	}
 	s.dropFocusLocked(t)
@@ -241,17 +254,17 @@ func (s *Server) placeFocusLocked(t *thread, raw []model.Post) {
 			f.replies[i] = newerOf(p, f.replies[i])
 			continue
 		}
-		if len(t.replies) > 0 && p.CreateAt > t.replies[0].CreateAt {
+		if len(t.replies) > 0 && cmpReplies(p, t.replies[0]) > 0 {
 			tail = append(tail, p)
 		} else {
 			add = append(add, p)
 		}
 	}
 	f.replies = append(f.replies, add...)
-	sortPosts(f.replies)
+	sortReplies(f.replies)
 	if len(tail) > 0 {
 		t.replies = append(t.replies, tail...)
-		sortPosts(t.replies)
+		sortReplies(t.replies)
 		s.trimTailLocked(t)
 	}
 }
@@ -271,7 +284,7 @@ func (s *Server) proveFocusLocked(t *thread, raw []model.Post, done bool, newest
 		return false
 	}
 	joins := slices.ContainsFunc(raw, func(p model.Post) bool { return indexOf(t.replies, p.ID) >= 0 })
-	if !joins && done && (len(t.replies) == 0 || t.replies[0].CreateAt <= newest.CreateAt) {
+	if !joins && done && (len(t.replies) == 0 || replyOrder(cursorOf(t.replies[0]), newest) <= 0) {
 		joins = true
 	}
 	f.gap = !joins
@@ -314,8 +327,8 @@ func (s *Server) absorbLocked(t *thread, replies []model.Post) {
 			f.replies = append(f.replies, p)
 		}
 	}
-	sortPosts(f.replies)
-	if last := f.replies[len(f.replies)-1]; last.CreateAt >= f.down.CreateAt {
+	sortReplies(f.replies)
+	if last := f.replies[len(f.replies)-1]; replyOrder(cursorOf(last), f.down) >= 0 {
 		f.down = cursorOf(last)
 	}
 	s.slideFocusLocked(t, true)
@@ -356,7 +369,7 @@ func (s *Server) setTailLocked(t *thread, merged, raw []model.Post, more bool) {
 		proof = proof || has(old)
 		var join []model.Post
 		for _, p := range old {
-			if indexOf(merged, p.ID) < 0 && (len(merged) == 0 || p.CreateAt < merged[0].CreateAt) {
+			if indexOf(merged, p.ID) < 0 && (len(merged) == 0 || cmpReplies(p, merged[0]) < 0) {
 				join = append(join, p)
 			}
 		}
@@ -367,7 +380,7 @@ func (s *Server) setTailLocked(t *thread, merged, raw []model.Post, more bool) {
 		f.gap = false
 		if len(merged) > 0 {
 			f.replies = slices.DeleteFunc(f.replies, func(p model.Post) bool {
-				return indexOf(merged, p.ID) >= 0 || p.CreateAt > merged[0].CreateAt
+				return indexOf(merged, p.ID) >= 0 || cmpReplies(p, merged[0]) > 0
 			})
 		}
 	case !f.gap:
@@ -503,7 +516,7 @@ func (s *Server) ApplyFocusRevalidation(op FocusRevalOp, r Reread) (applied bool
 		return false
 	}
 	f := t.focus
-	f.replies = s.rereadLocked(f.replies, op.Low, op.High, op.Held, r, []Cursor{op.High},
+	f.replies = s.rereadLocked(f.replies, replyOrder, op.Low, op.High, op.Held, r, []Cursor{op.High},
 		func(p model.Post) bool { return p.RootID == op.Root && s.liveReplyLocked(p) },
 		func(p model.Post) bool { return indexOf(t.replies, p.ID) < 0 })
 	s.slideFocusLocked(t, true) // replies read into the range count too

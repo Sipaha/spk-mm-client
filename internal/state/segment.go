@@ -1,6 +1,7 @@
 package state
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/spk/spk-mm-client/internal/mm/model"
@@ -31,6 +32,13 @@ type Cursor struct {
 }
 
 func cursorOf(p model.Post) Cursor { return Cursor{ID: p.ID, CreateAt: p.CreateAt} }
+
+// createOrder is the order a channel's pages go by: create_at alone —
+// mm-10.11 post_store.go getPostsAround: CreateAt < / > the cursor's,
+// ORDER BY CreateAt, no tie-break (posts sharing the cursor's create_at are
+// never returned: Reread.Bounds). The held history keeps it (sortPosts, a
+// stable sort); nothing in it is cut by position, only by create_at.
+func createOrder(a, b Cursor) int { return cmp.Compare(a.CreateAt, b.CreateAt) }
 
 // HistOp is a history operation's capture: the channel and the generations
 // (history, gap, window), the CRT mode and the cursor it was begun with.
@@ -204,8 +212,13 @@ func (s *Server) BeginJump(channelID string) (HistOp, bool) {
 }
 
 // SetSegment replaces the held history with the segment around target
-// (before=/after= pages from it). The gap stays open unless the segment is
-// proved to reach the window (joinsWindowLocked) at this moment.
+// (before=/after= pages from it). The pages are merged with the copies held
+// until now first (newerOf): a post edited or reacted to live since they
+// were read keeps its fresher copy — one deleted live stays out (the gone
+// ring). The gap stays open unless the segment is proved to reach the
+// window (joinsWindowLocked) at this moment. Pages begun before a reconnect
+// (gapGen) may miss what the lost stream carried — the catch-up updated only
+// the copies held then: the segment is applied stale, to be reread.
 func (s *Server) SetSegment(op HistOp, target model.Post, before, after model.PostList) (applied bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -214,8 +227,13 @@ func (s *Server) SetSegment(op HistOp, target model.Post, before, after model.Po
 		return false
 	}
 	raw := rawPosts(before, model.PostList{Order: []string{target.ID}, Posts: map[string]model.Post{target.ID: target}}, after)
+	for i, p := range raw {
+		if j := indexOf(s.older, p.ID); j >= 0 {
+			raw[i] = newerOf(p, s.older[j])
+		}
+	}
 	lo, hi := cursorOf(raw[0]), cursorOf(raw[len(raw)-1])
-	s.older, s.olderComplete, s.segStale = nil, before.PrevPostID == "", false
+	s.older, s.olderComplete, s.segStale = nil, before.PrevPostID == "", op.Gap != s.gapGen
 	s.olderGap = !joinsWindowLocked(ch, raw, after.NextPostID, hi)
 	if s.olderGap {
 		s.gapGen++
@@ -361,7 +379,7 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	if !ok || op.Gap != s.gapGen {
 		return false
 	}
-	s.older = s.rereadLocked(s.older, op.Low, op.High, op.Held, r, append([]Cursor{op.High}, r.Bounds...),
+	s.older = s.rereadLocked(s.older, createOrder, op.Low, op.High, op.Held, r, append([]Cursor{op.High}, r.Bounds...),
 		func(p model.Post) bool { return keep(p, op.CRT) },
 		func(p model.Post) bool { return indexOf(ch.Win.Posts, p.ID) < 0 })
 	if r.Covered {
@@ -371,9 +389,10 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	return true
 }
 
-// rereadLocked applies a reread r to held (oldest first), a range from low
-// to high whose posts had the update_at of at when it began, and returns
-// what is held after it — the channel's segment and a thread's focus share
+// rereadLocked applies a reread r to held (oldest first by order — the
+// order its pages go by), a range from low to high whose posts had the
+// update_at of at when it began, and returns what is held after it — the
+// channel's segment (createOrder) and a thread's focus (replyOrder) share
 // it. Posts read (ok: of the kind held) refresh their held copies (newerOf);
 // those not held, inside the range and admitted (not held elsewhere, like
 // the window), fill it. Only r.Covered proves a held post missing from the
@@ -381,8 +400,8 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 // copy changed after the start (a live edit or reaction), or it shares the
 // create_at of a bound (a page's cursor the pages cannot have returned it
 // past).
-func (s *Server) rereadLocked(held []model.Post, low, high Cursor, at map[string]int64, r Reread, bounds []Cursor,
-	ok, admit func(model.Post) bool) []model.Post {
+func (s *Server) rereadLocked(held []model.Post, order func(a, b Cursor) int, low, high Cursor, at map[string]int64,
+	r Reread, bounds []Cursor, ok, admit func(model.Post) bool) []model.Post {
 	var fresh []model.Post
 	if r.High != nil && !r.HighGone {
 		fresh = append(fresh, *r.High)
@@ -399,12 +418,12 @@ func (s *Server) rereadLocked(held []model.Post, low, high Cursor, at map[string
 			held[i] = newerOf(p, held[i])
 			continue
 		}
-		if p.CreateAt >= low.CreateAt && p.CreateAt <= high.CreateAt && admit(p) && indexOf(add, p.ID) < 0 {
+		if c := cursorOf(p); order(c, low) >= 0 && order(c, high) <= 0 && admit(p) && indexOf(add, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
 	held = append(held, add...)
-	sortPosts(held)
+	slices.SortStableFunc(held, func(a, b model.Post) int { return order(cursorOf(a), cursorOf(b)) })
 	if !r.Covered {
 		return held
 	}
