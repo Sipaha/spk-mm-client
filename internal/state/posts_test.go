@@ -114,14 +114,23 @@ func TestMarkStaleAndSyncItemsPriority(t *testing.T) {
 	s.mu.Unlock()
 }
 
+// oldestShown is the oldest post channelID shows.
+func oldestShown(t *testing.T, s *Server, channelID string) string {
+	t.Helper()
+	v, ok := s.ChannelView(channelID)
+	require.True(t, ok)
+	require.NotEmpty(t, v.Posts)
+	return v.Posts[0].ID
+}
+
 func TestAppendOlderOnlyForActiveChannel(t *testing.T) {
 	s := newFixture()
 	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 100)}, false, 5, 0)
 	assert.False(t, appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true), "not active: ignored")
-	assert.Equal(t, "w1", s.OldestPostID("town"))
+	assert.Equal(t, "w1", oldestShown(t, s, "town"))
 	s.SetActive("town")
 	appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
-	assert.Equal(t, "o1", s.OldestPostID("town"))
+	assert.Equal(t, "o1", oldestShown(t, s, "town"))
 	v, _ := s.ChannelView("town")
 	assert.Equal(t, []string{"o1", "w1"}, []string{v.Posts[0].ID, v.Posts[1].ID})
 	assert.False(t, v.HasMore)

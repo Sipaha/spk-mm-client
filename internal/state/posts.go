@@ -322,20 +322,6 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 	s.dirty.posts[channelID] = true
 }
 
-// OldestPostID is the oldest post the channel shows. (LoadOlder continues
-// from BeginLoadOlder's raw cursor instead.)
-func (s *Server) OldestPostID(channelID string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if channelID == s.active && len(s.older) > 0 {
-		return s.older[0].ID
-	}
-	if ch := s.chans[channelID]; ch != nil && len(ch.Win.Posts) > 0 {
-		return ch.Win.Posts[0].ID
-	}
-	return ""
-}
-
 // FetchMode is what a post fetch is requested with: the CRT mode and the
 // window generation, read together. The generation is handed back to
 // SetWindow/MergeSince (history operations capture it in their HistOp),

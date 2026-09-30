@@ -90,7 +90,7 @@ func TestSetWindowOnActiveChannelKeepsHistoryBehindAGap(t *testing.T) {
 	assert.Equal(t, "w9", v.Gap.BeforeID)
 	assert.True(t, v.Gap.Stale)
 	assert.False(t, v.HasMore, "the history still reaches the first post")
-	assert.Equal(t, "o1", s.OldestPostID("town"))
+	assert.Equal(t, "o1", oldestShown(t, s, "town"))
 }
 
 // Without anything held above the old window, a reload across a hole resets

@@ -463,6 +463,7 @@ func TestRevalidationSurvivesPermanentlyDeletedCursor(t *testing.T) {
 	g.open()
 	h.eventually(func() bool { return !h.view("c-town").Gap.Stale }, "reread")
 	got := messages(h.view("c-town"))
+	require.GreaterOrEqual(t, len(got), 40)
 	assert.Equal(t, town(1, 40), got[:40], "nothing dropped (#40 was read on the first page)")
 }
 

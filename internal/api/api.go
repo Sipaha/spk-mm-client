@@ -82,8 +82,10 @@ type API interface {
 	// channel's post), no_channel (not the open channel), cancelled.
 	JumpToPost(ctx context.Context, id int64, channelID, postID string) (JumpDTO, error)
 	// LoadNewer loads a page into the gap between the held history and the
-	// window (ChannelDTO.gap); a stale segment is reread first. no_progress:
-	// two pages in a row moved nothing — the user retries.
+	// window (ChannelDTO.gap). A stale segment is not reread by this call:
+	// the page is loaded as is and the background reread is scheduled once
+	// it is done (gap.stale until it ends). no_progress: two pages in a row
+	// moved nothing — the user retries.
 	LoadNewer(ctx context.Context, id int64, channelID string) error
 	// RetryRevalidation rereads a stale segment (gap.stale) now.
 	RetryRevalidation(ctx context.Context, id int64, channelID string) error
