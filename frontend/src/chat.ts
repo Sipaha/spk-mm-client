@@ -27,17 +27,27 @@ let threadViewSeq = 0
 let lastRead = 0 // threadViewSeq of the latest read begun
 let threadAttachmentsSeq = 0
 let wanted: { serverId: number; channelId: string } | null = null
-// threadWanted: the server/root the panel is open for — mirrors `wanted`
-// above, but for the thread panel (Task 6). null: no thread open.
-let threadWanted: { serverId: number; rootId: string } | null = null
+// PanelThread: a thread panel as Go holds it — the root, and the reply its
+// focus is around (focus: null — the plain thread: the latest replies).
+interface PanelThread {
+  serverId: number
+  channelId: string
+  rootId: string
+  focus: string | null
+}
+// threadWanted: the thread the panel shows — mirrors `wanted` above, but
+// for the thread panel (Task 6); its focus follows every snapshot applied.
+// null: no thread open.
+let threadWanted: PanelThread | null = null
 // goThread: the thread Go was last told to hold open (Go opens it when the
-// request arrives, before answering) and the thread command that told it
-// (owner: its threadSeq) — pending or landed; null: Go was told to close.
-// Only the latest thread command (openThread, a jump's focused open,
-// closeThread) owns Go's panel: an operation that ends without landing
-// reconciles Go with the UI panel (threadWanted) only while it still owns
-// goThread, so an older one can never undo a newer command.
-let goThread: { serverId: number; rootId: string; owner: number } | null = null
+// request arrives, before answering), its focus, and the thread command
+// that told it (owner: its threadSeq) — pending or landed; null: Go was
+// told to close. Only the latest thread command (openThread, a jump's
+// focused open, a restore, closeThread) owns Go's panel: an operation that
+// ends without landing reconciles Go with the panel (threadWanted) only
+// while it still owns goThread, so an older one can never undo a newer
+// command.
+let goThread: (PanelThread & { owner: number }) | null = null
 let inFlight = false
 let again = false
 // jumpSeq: the latest jump (jumpToPost) — checked after each of its awaits,
@@ -252,23 +262,23 @@ async function openThreadFocused(
   serverId: number, channelId: string, rootId: string, replyId: string, live: () => boolean, signal?: AbortSignal,
 ) {
   const my = ++threadSeq
-  goThread = { serverId, rootId, owner: my }
+  goThread = { serverId, channelId, rootId, focus: replyId, owner: my }
   const began = ++threadViewSeq
   let th: ThreadDTO
   try {
     th = await client.openThreadAt(serverId, channelId, rootId, replyId, signal)
   } catch (e) {
-    reconcileGoThread(my)
+    await reconcileGoThread(my)
     throw e
   }
   const s = useStore.getState()
   if (my !== threadSeq || !live() || s.selectedId !== serverId) {
-    reconcileGoThread(my)
+    await reconcileGoThread(my)
     return
   }
-  threadWanted = { serverId, rootId }
+  threadWanted = { serverId, channelId, rootId, focus: null }
   threadViewSeq++ // reads begun before this snapshot are older than it
-  s.setThread(th)
+  applyThread(th)
   s.setThreadFocus(replyId)
   void refreshThreadAttachments(serverId, channelId, rootId)
   // A read begun during the open — still in flight (dropped now) or
@@ -277,11 +287,22 @@ async function openThreadFocused(
   if (lastRead > began) await refreshThread(serverId, rootId)
 }
 
+// applyThread shows a snapshot of the panel's thread and keeps its focus
+// in threadWanted (the focus Go holds; a restore reopens it). Not a
+// navigation: threadFocus (centering) is not touched.
+function applyThread(th: ThreadDTO) {
+  if (threadWanted?.rootId === th.root_id) threadWanted = { ...threadWanted, focus: th.focus?.target_id ?? null }
+  const g = goThread
+  if (g && threadWanted && g.serverId === threadWanted.serverId && g.rootId === th.root_id) goThread = { ...g, focus: threadWanted.focus }
+  useStore.getState().setThread(th)
+}
+
 // reconcileGoThread: the thread command `owner` ended without landing.
 // While it still owns goThread (no newer open or close was sent), Go is
-// put back to the panel's thread — closed when the panel shows none on
-// that server, re-opened when it shows another one.
-function reconcileGoThread(owner: number) {
+// put back to the panel's thread: closed when the panel shows none on
+// that server, else restored — root and focus — when Go was told another
+// root or another focus (opening another root lets go of a focus in Go).
+async function reconcileGoThread(owner: number) {
   const g = goThread
   if (!g || g.owner !== owner) return // a newer command owns Go's panel
   const panel = threadWanted?.serverId === g.serverId ? threadWanted : null
@@ -290,10 +311,42 @@ function reconcileGoThread(owner: number) {
     client.closeThread(g.serverId).catch(() => {})
     return
   }
-  goThread = { ...panel, owner }
-  const cur = useStore.getState().thread
-  if (panel.rootId !== g.rootId && cur?.root_id === panel.rootId) {
-    client.openThread(g.serverId, cur.channel_id, cur.root_id).catch(() => {})
+  if (panel.rootId === g.rootId && panel.focus === g.focus) {
+    goThread = { ...panel, owner }
+    return
+  }
+  await restoreThread(panel)
+}
+
+// restoreThread reopens the panel's thread in Go as the panel shows it —
+// around its focus with OpenThreadAt, or plain — as a thread command of
+// its own (a newer one wins over it), and applies the answer so the panel
+// and Go agree again; the panel does not re-center (no new threadFocus).
+// A failed restore shows what Go holds then (a read); failing that, the
+// focus is dropped from the panel with the error — no dead focus buttons.
+async function restoreThread(panel: PanelThread) {
+  const my = ++threadSeq
+  goThread = { ...panel, owner: my }
+  threadViewSeq++
+  const { serverId, channelId, rootId, focus } = panel
+  try {
+    const th = focus ? await client.openThreadAt(serverId, channelId, rootId, focus) : await client.openThread(serverId, channelId, rootId)
+    if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
+    threadViewSeq++
+    applyThread(th)
+  } catch (e) {
+    if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
+    try {
+      const th = await client.getThread(serverId, rootId)
+      if (my !== threadSeq || useStore.getState().selectedId !== serverId) return
+      threadViewSeq++
+      applyThread(th)
+    } catch {
+      if (my !== threadSeq) return
+      const cur = useStore.getState().thread
+      if (cur?.root_id === rootId) applyThread({ ...cur, focus: null })
+      report(e)
+    }
   }
 }
 
@@ -356,16 +409,16 @@ export async function retryThreadRevalidation(serverId: number, rootId: string):
 // channelSeq/attachmentsSeq above, on top of Go's own cache eviction.
 export async function openThread(serverId: number, channelId: string, rootId: string) {
   dropJump() // the user opened a thread: a jump on its way must not replace it
-  threadWanted = { serverId, rootId }
+  threadWanted = { serverId, channelId, rootId, focus: null }
   const my = ++threadSeq
-  goThread = { serverId, rootId, owner: my }
+  goThread = { ...threadWanted, owner: my }
   threadViewSeq++
   try {
     const th = await client.openThread(serverId, channelId, rootId)
     if (my !== threadSeq) return
     threadViewSeq++
     const s = useStore.getState()
-    if (s.selectedId === serverId) s.setThread(th)
+    if (s.selectedId === serverId) applyThread(th)
     void refreshThreadAttachments(serverId, channelId, rootId)
   } catch (e) {
     if (my === threadSeq) report(e)
@@ -406,7 +459,7 @@ export async function refreshThread(serverId: number, rootId: string) {
     if (my !== threadViewSeq) return
     if (threadWanted?.serverId !== serverId || threadWanted.rootId !== rootId) return
     const s = useStore.getState()
-    if (s.selectedId === serverId) s.setThread(th)
+    if (s.selectedId === serverId) applyThread(th)
   } catch (e) {
     if (my === threadViewSeq) report(e)
   }

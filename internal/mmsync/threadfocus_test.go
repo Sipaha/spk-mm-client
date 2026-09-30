@@ -327,3 +327,37 @@ func TestOpenThreadAtRegistrationAndBeginAreOneStep(t *testing.T) {
 	assert.Equal(t, b, v.Focus.TargetID)
 	assert.Contains(t, threadMsgs(v), "Reply 300")
 }
+
+// Task 6 fix round 3 (UI reconcile): a focus is the open thread's only —
+// opening another thread's focus lets go of it even when that open is then
+// cancelled. The panel still shows the old focus, so the UI restores it
+// with OpenThreadAt on the same target; the restored focus really pages.
+func TestFocusRestoredAfterCancelledFocusOfAnotherThread(t *testing.T) {
+	h, g, ra := focusHarness(t, mmfake.Options{}, 500)
+	target := h.replyID(100)
+	h.focusAt(ra, 100)
+	h.tailLoaded(ra)
+	rb := h.fake.SeedThread("c-town", "alice", 0)
+	rbReply := h.fake.ReplyAs("c-town", rb, "bob", "rb target").ID
+
+	g.hold(func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/posts/"+rbReply) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.w.OpenThreadAt(ctx, "c-town", rb, rbReply)
+		done <- err
+	}()
+	g.wait(t)
+	cancel()
+	require.Error(t, <-done, "cancelled")
+	g.open()
+	assert.Nil(t, h.thread(ra).Focus, "opening rb let go of ra's focus")
+
+	v, err := h.w.OpenThreadAt(context.Background(), "c-town", ra, target)
+	require.NoError(t, err)
+	require.NotNil(t, v.Focus)
+	assert.Equal(t, target, v.Focus.TargetID)
+	h.tailLoaded(ra)
+	require.NoError(t, h.w.LoadThreadFocus(context.Background(), ra, true))
+	assert.Contains(t, threadMsgs(h.thread(ra)), "Reply 131", "the restored focus pages newer replies")
+}

@@ -1048,3 +1048,102 @@ test('fix 2: a server switch while a focused open is on its way closes it in Go 
   expect(client.closeThread).toHaveBeenCalledTimes(1) // nothing more: the switch owns it
   expect(useStore.getState().thread).toBeNull()
 })
+
+// --- Codex review (Task 6 fix round 3) repro ---
+
+test('Codex round2: reconciliation keeps the visible focus consistent with Go',async()=>{
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true}));await openChannel(1,'a');
+ vi.mocked(client.getChannel).mockResolvedValue(chan('a',{crt:true}));
+ const focused=thread('ra',{focus:{target_id:'old-reply',has_older:true,has_newer:true,gap:{open:true,gen:1,before_id:'tail',stale:false},rev:1}});
+ let backend:ThreadDTO=focused;
+ vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply',{in_feed:false,root_id:'ra'}));
+ vi.mocked(client.openThreadAt).mockResolvedValueOnce(focused);
+ await jumpToPost(1,'a','old-reply');
+ let reject!:(e:unknown)=>void;
+ vi.mocked(client.openThreadAt).mockImplementationOnce(()=>{
+  backend=thread('rb'); // Go opening rb drops ra's focus via trimThreadLocked.
+  return new Promise<ThreadDTO>((_,r)=>{reject=r});
+ });
+ vi.mocked(client.openThread).mockImplementation(async (_s,_c,root)=>{
+  backend=thread(root); // Reopening ra returns its last page, with no focus.
+  return backend;
+ });
+ // (Added with the fix: the fake backend also answers a focused reopen — the
+ // restore reopens ra around its target; Go then holds that focus again.)
+ vi.mocked(client.openThreadAt).mockImplementation(async (_s,_c,root,reply)=>{
+  backend=thread(root,{focus:{...focused.focus!,target_id:reply}});
+  return backend;
+ });
+ vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('other-reply',{in_feed:false,root_id:'rb'})).mockResolvedValueOnce(landed('channel-root'));
+ const b=jumpToPost(1,'a','other-reply');await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalledTimes(2));
+ await jumpToPost(1,'a','channel-root');
+ reject(new ApiError('cancelled',''));await b;await Promise.resolve();
+ expect(useStore.getState().thread?.root_id).toBe(backend.root_id);
+ expect(useStore.getState().thread?.focus?.target_id).toBe(backend.focus?.target_id);
+ expect(backend.root_id).toBe('ra'); // restored: the panel's thread…
+ expect(backend.focus?.target_id).toBe('old-reply'); // …around its old target, not the plain latest
+});
+
+test('fix 3: a restore does not re-center; a failed focused restore shows what Go holds; failing that the focus goes, with the error', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  const focus = { target_id: 'old-reply', has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'tail', stale: false }, rev: 1 }
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply', { in_feed: false, root_id: 'ra' }))
+  vi.mocked(client.openThreadAt).mockResolvedValueOnce(thread('ra', { focus }))
+  await jumpToPost(1, 'a', 'old-reply')
+  const nonce = useStore.getState().threadFocus?.nonce
+  const overtaken = async () => {
+    let reject!: (e: unknown) => void
+    vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('other', { in_feed: false, root_id: 'rb' })).mockResolvedValueOnce(landed('root'))
+    vi.mocked(client.openThreadAt).mockImplementationOnce(() => new Promise<ThreadDTO>((_, r) => (reject = r)))
+    const b = jumpToPost(1, 'a', 'other')
+    await vi.waitFor(() => expect(reject).toBeDefined())
+    await jumpToPost(1, 'a', 'root')
+    reject(new ApiError('cancelled', ''))
+    await b
+  }
+  // The focused restore fails; Go then holds ra plain — shown.
+  vi.mocked(client.openThreadAt).mockRejectedValueOnce(new ApiError('offline', ''))
+  vi.mocked(client.getThread).mockResolvedValueOnce(thread('ra'))
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  await overtaken()
+  await vi.waitFor(() => expect(useStore.getState().thread?.focus).toBeNull())
+  expect(useStore.getState().threadFocus?.nonce).toBe(nonce) // never re-centered by a restore
+
+  // Focused again; now the restore and the read both fail: the dead focus is dropped, the error shown.
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply', { in_feed: false, root_id: 'ra' }))
+  vi.mocked(client.openThreadAt).mockResolvedValueOnce(thread('ra', { focus }))
+  await jumpToPost(1, 'a', 'old-reply')
+  useStore.getState().setError(null)
+  vi.mocked(client.openThreadAt).mockRejectedValueOnce(new ApiError('offline', ''))
+  vi.mocked(client.getThread).mockRejectedValueOnce(new ApiError('offline', ''))
+  await overtaken()
+  await vi.waitFor(() => expect(useStore.getState().thread?.focus).toBeNull())
+  expect(useStore.getState().thread?.root_id).toBe('ra')
+  expect(useStore.getState().lastError).not.toBeNull()
+})
+
+test('fix 3: a newer thread command wins over a restore still on its way', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  const focus = { target_id: 'old-reply', has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'tail', stale: false }, rev: 1 }
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('old-reply', { in_feed: false, root_id: 'ra' }))
+  vi.mocked(client.openThreadAt).mockResolvedValueOnce(thread('ra', { focus }))
+  await jumpToPost(1, 'a', 'old-reply')
+  let reject!: (e: unknown) => void
+  const restore = deferred<ThreadDTO>()
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('other', { in_feed: false, root_id: 'rb' })).mockResolvedValueOnce(landed('root'))
+  vi.mocked(client.openThreadAt).mockImplementationOnce(() => new Promise<ThreadDTO>((_, r) => (reject = r))).mockReturnValueOnce(restore.p)
+  const b = jumpToPost(1, 'a', 'other')
+  await vi.waitFor(() => expect(reject).toBeDefined())
+  await jumpToPost(1, 'a', 'root')
+  reject(new ApiError('cancelled', ''))
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalledTimes(3)) // the restore is on its way
+  vi.mocked(client.openThread).mockResolvedValue(thread('rc'))
+  await openThread(1, 'a', 'rc') // the user opens another thread meanwhile
+  restore.resolve(thread('ra', { focus }))
+  await b
+  expect(useStore.getState().thread?.root_id).toBe('rc')
+})
