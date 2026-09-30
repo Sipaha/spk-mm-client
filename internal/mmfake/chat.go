@@ -827,6 +827,43 @@ func (s *Server) DeleteAsQuiet(postID string) {
 	}
 }
 
+// PurgePost removes postID from the store for good, without an event —
+// a permanent deletion (admin API permanent=true, mmctl): the row is gone,
+// so it no longer works as a before=/after= cursor either (the create_at
+// subquery finds nothing: an empty page).
+func (s *Server) PurgePost(postID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.chat.byID[postID]
+	if p == nil {
+		panic("mmfake: PurgePost: no post " + postID)
+	}
+	delete(s.chat.byID, postID)
+	s.chat.posts[p.ChannelID] = slices.DeleteFunc(s.chat.posts[p.ChannelID], func(q *fpost) bool { return q.ID == postID })
+}
+
+// SetCreateAt moves postID's create_at (tests: two posts at the same
+// millisecond). The channel's posts stay ordered by create_at.
+func (s *Server) SetCreateAt(postID string, at int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.chat.byID[postID]
+	if p == nil {
+		panic("mmfake: SetCreateAt: no post " + postID)
+	}
+	p.CreateAt = at
+	sort.SliceStable(s.chat.posts[p.ChannelID], func(i, j int) bool {
+		return s.chat.posts[p.ChannelID][i].CreateAt < s.chat.posts[p.ChannelID][j].CreateAt
+	})
+}
+
+// CreateAt is postID's create_at.
+func (s *Server) CreateAt(postID string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chat.byID[postID].CreateAt
+}
+
 // FailPosts makes the next n POST /posts fail with 500 (send-failure tests).
 func (s *Server) FailPosts(n int) {
 	s.mu.Lock()

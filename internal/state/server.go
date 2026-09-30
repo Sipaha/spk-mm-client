@@ -125,8 +125,8 @@ type Server struct {
 	gapGen      uint64
 	histRev     uint64
 	segStale    bool
-	olderCursor cursor
-	newerCursor cursor
+	olderCursor Cursor
+	newerCursor Cursor
 
 	// Threads (see threads.go): the cache by root id, its LRU (most recent
 	// last), the thread open in the panel, the epoch pages are applied with

@@ -425,3 +425,87 @@ func TestHistoryOperationsRunOneAtATime(t *testing.T) {
 	assert.Equal(t, town(1, 150), messages(v))
 	assert.False(t, v.HasMore)
 }
+
+// Fix round 1, item 1: High deleted for good (admin permanent delete):
+// before=High is an empty page with prev_post_id "" — not the channel's
+// start. The reread continues from the next held post instead of taking it
+// as proof and dropping the whole segment.
+func TestRevalidationSurvivesPermanentlyDeletedHigh(t *testing.T) {
+	h, _ := jumpHarness(t, mmfake.Options{SinceLimit: 5})
+	_, err := h.w.JumpTo(context.Background(), "c-town", h.postID("Message #10"))
+	require.NoError(t, err)
+	high, deleted := h.postID("Message #40"), h.postID("Message #15")
+	offlineOverflow(h, func() {
+		h.fake.PurgePost(high)
+		h.fake.DeleteAs(deleted)
+	})
+	h.eventually(func() bool { return h.hasMessage("c-town", "offline 9") && !h.view("c-town").Gap.Stale }, "reread")
+	want := append(town(1, 14), town(16, 39)...)
+	got := messages(h.view("c-town"))
+	require.GreaterOrEqual(t, len(got), len(want))
+	assert.Equal(t, want, got[:len(want)])
+	assert.NotContains(t, got, "Message #40")
+}
+
+// Fix round 1, item 1: a page's cursor deleted for good before the next
+// page is asked: that page is empty too — not proof either.
+func TestRevalidationSurvivesPermanentlyDeletedCursor(t *testing.T) {
+	h, g := jumpHarness(t, mmfake.Options{SinceLimit: 5})
+	for h.view("c-town").HasMore {
+		require.NoError(t, h.w.LoadOlder(context.Background(), "c-town"))
+	}
+	cur := h.postID("Message #40") // the reread's second cursor (see TestRevalidationPartialFailureKeepsSegment)
+	g.hold(query("before", cur))
+	offlineOverflow(h, func() {})
+	g.wait(t)
+	h.fake.PurgePost(cur)
+	g.open()
+	h.eventually(func() bool { return !h.view("c-town").Gap.Stale }, "reread")
+	got := messages(h.view("c-town"))
+	assert.Equal(t, town(1, 40), got[:40], "nothing dropped (#40 was read on the first page)")
+}
+
+// Fix round 1, item 2: #39 and #40 share a create_at; the first page ends
+// at #40 (its limit), before=#40 skips #39 — kept, not dropped.
+func TestRevalidationKeepsTiesAtPageBoundaries(t *testing.T) {
+	h, _ := jumpHarness(t, mmfake.Options{SinceLimit: 5})
+	h.fake.SetCreateAt(h.postID("Message #40"), h.fake.CreateAt(h.postID("Message #39")))
+	for h.view("c-town").HasMore {
+		require.NoError(t, h.w.LoadOlder(context.Background(), "c-town"))
+	}
+	require.Contains(t, messages(h.view("c-town")), "Message #39")
+	offlineOverflow(h, func() {})
+	h.eventually(func() bool { return h.hasMessage("c-town", "offline 9") && !h.view("c-town").Gap.Stale }, "reread")
+	assert.Contains(t, messages(h.view("c-town")), "Message #39")
+	assert.Contains(t, messages(h.view("c-town")), "Message #40")
+}
+
+// Fix round 1, item 3: a background reread holding the history lock gives
+// way to the user's history operations — they succeed within their budget
+// and the segment stays stale — and it is retried once they are done.
+func TestUserHistoryOpPreemptsBackgroundReread(t *testing.T) {
+	g := newGate()
+	h := newHarness(t, mmfake.Options{SinceLimit: 5, RequestHook: g.hook})
+	t.Cleanup(g.open)
+	h.tune = func(c *Config) { c.revalIdle = 100 * time.Millisecond }
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	h.w.OpenChannel("c-town")
+	_, err := h.w.JumpTo(context.Background(), "c-town", h.postID("Message #10"))
+	require.NoError(t, err)
+	g.hold(query("before", h.postID("Message #40"))) // the reread's first page
+	offlineOverflow(h, func() {})
+	g.wait(t)
+	require.True(t, h.view("c-town").Gap.Stale)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = h.w.LoadNewer(ctx, "c-town")
+	require.NoError(t, err, "not stuck behind the reread, no reread in its own budget")
+	require.NoError(t, h.w.LoadOlder(ctx, "c-town"))
+	g.wait(t) // the reread was retried after them — and is held again
+	assert.True(t, h.view("c-town").Gap.Stale)
+	g.open()
+	h.eventually(func() bool { return !h.view("c-town").Gap.Stale }, "the retried reread")
+}

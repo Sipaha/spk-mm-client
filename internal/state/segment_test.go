@@ -170,8 +170,8 @@ func TestSegmentReplacesHistoryAndOpensGap(t *testing.T) {
 	assert.Empty(t, v.GapAfter, "the reconnect gap is a different thing")
 
 	s.mu.Lock()
-	assert.Equal(t, cursor{ID: "s0", CreateAt: 1000}, s.olderCursor)
-	assert.Equal(t, cursor{ID: "s10", CreateAt: 1100}, s.newerCursor)
+	assert.Equal(t, Cursor{ID: "s0", CreateAt: 1000}, s.olderCursor)
+	assert.Equal(t, Cursor{ID: "s10", CreateAt: 1100}, s.newerCursor)
 	s.mu.Unlock()
 
 	// before= at the channel's first post: nothing older.
@@ -367,7 +367,7 @@ func TestAppendOlderUsesRawCursor(t *testing.T) {
 
 	op, ok := s.BeginLoadOlder("town")
 	require.True(t, ok)
-	assert.Equal(t, cursor{ID: "f0", CreateAt: 990}, op.Cursor, "the oldest raw post, not the oldest shown")
+	assert.Equal(t, Cursor{ID: "f0", CreateAt: 990}, op.Cursor, "the oldest raw post, not the oldest shown")
 	g0, g1 := mkPost("g0", "town", "u2", 800), mkPost("g1", "town", "u2", 810)
 	g0.OriginalID, g1.OriginalID = "x", "x"
 	s.AppendOlder(op, plist("more", "f0", g0, g1))
@@ -504,11 +504,11 @@ func TestRevalidationDropsOnlyWhenCovered(t *testing.T) {
 		s := staleSegment(t)
 		op, ok := s.BeginRevalidate("town")
 		require.True(t, ok)
-		assert.Equal(t, cursor{ID: "s0", CreateAt: 1000}, op.Low)
-		assert.Equal(t, cursor{ID: "s10", CreateAt: 1100}, op.High)
+		assert.Equal(t, Cursor{ID: "s0", CreateAt: 1000}, op.Low)
+		assert.Equal(t, Cursor{ID: "s10", CreateAt: 1100}, op.High)
 		assert.Len(t, op.Held, 11)
 		high := mkPost("s10", "town", "u2", 1100)
-		s.ApplyRevalidation(op, &high, false, []model.PostList{plist("s5", "s10", without(run("s", 5, 5, 1000), "s7")...)}, false)
+		s.ApplyRevalidation(op, Reread{High: &high, Pages: []model.PostList{plist("s5", "s10", without(run("s", 5, 5, 1000), "s7")...)}})
 		check(t, s)
 		assert.Equal(t, sIDs(0, 10), olderIDs(s), "not covered: nothing removed")
 		assert.True(t, townView(t, s).Gap.Stale)
@@ -522,7 +522,7 @@ func TestRevalidationDropsOnlyWhenCovered(t *testing.T) {
 		page := append(without(run("s", 0, 10, 1000), "s0", "s2", "s3"), fresh)
 		rev := townView(t, s).HistRev
 		// The first post and the cursor post (high) were deleted offline, s3 too.
-		s.ApplyRevalidation(op, nil, true, []model.PostList{plist("", "s10", page...)}, true)
+		s.ApplyRevalidation(op, Reread{HighGone: true, Pages: []model.PostList{plist("", "s10", page...)}, Covered: true})
 		check(t, s)
 		assert.Equal(t, append(sIDs(1, 2), sIDs(4, 9)...), olderIDs(s))
 		assert.Equal(t, "edited offline", segPost(t, s, "s2").Message)
@@ -544,7 +544,7 @@ func TestRevalidationDropsOnlyWhenCovered(t *testing.T) {
 		e6.Message, e6.EditAt, e6.UpdateAt = "live", 60_000, 60_000
 		s.ApplyPostUpdate(e6)
 		high := mkPost("s10", "town", "u2", 1100)
-		s.ApplyRevalidation(op, &high, false, []model.PostList{plist("", "s10", without(run("s", 0, 10, 1000), "s3")...)}, true)
+		s.ApplyRevalidation(op, Reread{High: &high, Pages: []model.PostList{plist("", "s10", without(run("s", 0, 10, 1000), "s3")...)}, Covered: true})
 		check(t, s)
 		assert.Equal(t, sIDs(0, 10), olderIDs(s), "s3 changed since the start: not removed")
 		assert.Equal(t, "live", segPost(t, s, "s6").Message, "newerOf")
@@ -563,7 +563,7 @@ func TestRevalidationDropsOnlyWhenCovered(t *testing.T) {
 		}
 		high := mkPost(op.High.ID, "town", "u2", 1100)
 		// before=high never returns a post with high's own create_at.
-		s.ApplyRevalidation(op, &high, false, []model.PostList{plist("", op.High.ID, run("s", 0, 10, 1000)...)}, true)
+		s.ApplyRevalidation(op, Reread{High: &high, Pages: []model.PostList{plist("", op.High.ID, run("s", 0, 10, 1000)...)}, Covered: true})
 		assert.Contains(t, olderIDs(s), other, "not covered by before=high: kept")
 	})
 	t.Run("superseded", func(t *testing.T) {
@@ -571,7 +571,7 @@ func TestRevalidationDropsOnlyWhenCovered(t *testing.T) {
 		op, ok := s.BeginRevalidate("town")
 		require.True(t, ok)
 		stdJump(t, s)
-		s.ApplyRevalidation(op, nil, true, []model.PostList{plist("", "s10")}, true)
+		s.ApplyRevalidation(op, Reread{HighGone: true, Pages: []model.PostList{plist("", "s10")}, Covered: true})
 		assert.Equal(t, sIDs(0, 10), olderIDs(s), "a new jump drops the old reread")
 	})
 }
@@ -692,7 +692,7 @@ func TestHistRevBumpsOnEveryAppliedPage(t *testing.T) {
 	r = rev()
 	rop, ok := s.BeginRevalidate("town")
 	require.True(t, ok)
-	s.ApplyRevalidation(rop, nil, false, nil, false)
+	s.ApplyRevalidation(rop, Reread{})
 	assert.Greater(t, rev(), r, "ApplyRevalidation")
 }
 
@@ -783,8 +783,30 @@ func TestRevalidationRemovalsAreGone(t *testing.T) {
 	require.True(t, ok)
 	high := mkPost("s10", "town", "u2", 1100)
 	page := slices.DeleteFunc(run("s", 0, 10, 1000), func(p model.Post) bool { return p.ID == "s3" })
-	require.True(t, s.ApplyRevalidation(op, &high, false, []model.PostList{plist("", "s10", page...)}, true))
+	require.True(t, s.ApplyRevalidation(op, Reread{High: &high, Pages: []model.PostList{plist("", "s10", page...)}, Covered: true}))
 	assert.NotContains(t, olderIDs(s), "s3")
 	stdJump(t, s) // its pages still hold s3
 	assert.NotContains(t, olderIDs(s), "s3", "a removed post is not resurrected")
+}
+
+// Fix round 1, item 2: a held post sharing a page cursor's create_at can lie
+// beyond that page's limit, and before=cursor never returns it: kept.
+func TestRevalidationKeepsTiesAtPageBounds(t *testing.T) {
+	s := segFixture(t, 10)
+	tie := mkPost("t4", "town", "u2", 1040) // s4's create_at
+	jump(t, s, stdTarget(), plist("older", "s5", append(run("s", 0, 5, 1000), tie)...), stdAfter())
+	s.SetWindow("town", run("n", 0, 5, 90_000), false, 9, 0)
+	op, ok := s.BeginRevalidate("town")
+	require.True(t, ok)
+	require.Len(t, op.Posts, 12)
+	assert.Equal(t, op.Low, op.Posts[0])
+	assert.Equal(t, op.High, op.Posts[11])
+	high := mkPost("s10", "town", "u2", 1100)
+	first := plist("s4", "s10", run("s", 4, 6, 1000)...) // the page's limit cut t4 off
+	second := plist("", "s4", run("s", 0, 4, 1000)...)   // before=s4: create_at < 1040
+	require.True(t, s.ApplyRevalidation(op, Reread{High: &high, Pages: []model.PostList{first, second},
+		Bounds: []Cursor{{ID: "s4", CreateAt: 1040}}, Covered: true}))
+	check(t, s)
+	assert.Contains(t, olderIDs(s), "t4")
+	assert.False(t, townView(t, s).Gap.Stale)
 }

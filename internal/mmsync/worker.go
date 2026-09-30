@@ -84,6 +84,7 @@ type Config struct {
 	refreshTimeout time.Duration
 	refreshRetry   time.Duration
 	reactBackoff   []time.Duration // test seam: nil → defaultReactBackoff
+	revalIdle      time.Duration   // test seam: 0 → revalRetryIn
 }
 
 func (c *Config) defaults() {
@@ -119,6 +120,9 @@ func (c *Config) defaults() {
 	}
 	if c.refreshRetry <= 0 {
 		c.refreshRetry = refreshRetryFirst
+	}
+	if c.revalIdle <= 0 {
+		c.revalIdle = revalRetryIn
 	}
 	if c.sinceLimit <= 0 {
 		c.sinceLimit = rest.SinceLimit

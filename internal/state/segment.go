@@ -21,16 +21,16 @@ import (
 // before cannot close the new gap), the window generation and CRT with
 // ResetWindows, the cursor with every page applied in its direction.
 
-// cursor is a raw post a page continues from: the oldest (before=) or
+// Cursor is a raw post a page continues from: the oldest (before=) or
 // newest (after=) post of the last page applied in that direction as the
 // server sent it — shown or filtered out — so a page with nothing to show
 // still moves on.
-type cursor struct {
+type Cursor struct {
 	ID       string
 	CreateAt int64
 }
 
-func cursorOf(p model.Post) cursor { return cursor{ID: p.ID, CreateAt: p.CreateAt} }
+func cursorOf(p model.Post) Cursor { return Cursor{ID: p.ID, CreateAt: p.CreateAt} }
 
 // HistOp is a history operation's capture: the channel and the generations
 // (history, gap, window), the CRT mode and the cursor it was begun with.
@@ -40,16 +40,32 @@ type HistOp struct {
 	Gap     uint64
 	Win     uint64
 	CRT     bool
-	Cursor  cursor
+	Cursor  Cursor
 }
 
 // RevalOp is a reread of a stale segment: the held range from its oldest
-// (Low) to its newest (High) post and each held post's update_at, all as of
-// the start.
+// (Low) to its newest (High) post, the held posts oldest first (Posts: a
+// reread whose cursor vanished continues from the next held one) and each
+// held post's update_at, all as of the start.
 type RevalOp struct {
 	HistOp
-	Low, High cursor
+	Low, High Cursor
+	Posts     []Cursor
 	Held      map[string]int64
+}
+
+// Reread is what a reread of a RevalOp found: High as GET /posts/{id}
+// returns it (HighGone: 404), the before= pages and the posts it read one
+// by one (Pages), and the cursor of every before= page (Bounds, High
+// included): a held post sharing a cursor's create_at can lie beyond a
+// page's limit, never returned — it is kept. Covered: the pages reach past
+// Low or to the channel's first post from a cursor known to exist.
+type Reread struct {
+	High     *model.Post
+	HighGone bool
+	Pages    []model.PostList
+	Bounds   []Cursor
+	Covered  bool
 }
 
 func (s *Server) histOpLocked(channelID string) HistOp {
@@ -77,7 +93,7 @@ func (s *Server) historyHeldLocked() bool {
 // describes it, and invalidates the operations in flight.
 func (s *Server) resetHistoryLocked() {
 	s.older, s.olderComplete, s.olderGap, s.segStale = nil, false, false, false
-	s.olderCursor, s.newerCursor = cursor{}, cursor{}
+	s.olderCursor, s.newerCursor = Cursor{}, Cursor{}
 	s.histGen++
 	s.gapGen++
 	s.histRev++
@@ -105,7 +121,7 @@ func rawPosts(lists ...model.PostList) []model.Post {
 // nothing newer (next) and the window is live. The latter also needs the
 // window not to start past the page: posts that arrived while the page was
 // in flight may have pushed the window's first post out.
-func joinsWindowLocked(ch *Chan, raw []model.Post, next string, newest cursor) bool {
+func joinsWindowLocked(ch *Chan, raw []model.Post, next string, newest Cursor) bool {
 	for _, p := range raw {
 		if indexOf(ch.Win.Posts, p.ID) >= 0 {
 			return true
@@ -252,7 +268,7 @@ func (s *Server) AppendNewer(op HistOp, page model.PostList) (closed, progressed
 
 // olderCursorLocked: where LoadOlder continues from — the raw cursor of the
 // last before= page, else the oldest post shown.
-func (s *Server) olderCursorLocked(ch *Chan) cursor {
+func (s *Server) olderCursorLocked(ch *Chan) Cursor {
 	switch {
 	case s.olderCursor.ID != "":
 		return s.olderCursor
@@ -261,7 +277,7 @@ func (s *Server) olderCursorLocked(ch *Chan) cursor {
 	case len(ch.Win.Posts) > 0:
 		return cursorOf(ch.Win.Posts[0])
 	}
-	return cursor{}
+	return Cursor{}
 }
 
 // BeginLoadOlder starts loading history above what the open channel shows.
@@ -324,20 +340,21 @@ func (s *Server) BeginRevalidate(channelID string) (RevalOp, bool) {
 		Held: make(map[string]int64, len(s.older))}
 	for _, p := range s.older {
 		op.Held[p.ID] = p.UpdateAt
+		op.Posts = append(op.Posts, cursorOf(p))
 	}
 	return op, true
 }
 
-// ApplyRevalidation applies a reread begun with op: high (GET of High;
-// highGone — 404) and the before=High pages. Posts read refresh the held
-// copies (newerOf) and fill the range. Only covered (the worker paged down
-// past Low or to the channel's first post) proves a post missing from the
-// pages is gone: then a held post missing is removed — unless its copy
-// changed after the start (a live edit or reaction), or it shares High's
-// create_at (before=High cannot return it) — and the segment is no longer
-// stale. Dropped after a reconnect (gapGen) too: the pages may predate what
-// it missed. applied: false when dropped — the worker begins it again.
-func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, pages []model.PostList, covered bool) (applied bool) {
+// ApplyRevalidation applies a reread r begun with op. Posts read refresh
+// the held copies (newerOf) and fill the range. Only r.Covered proves a
+// post missing from the pages is gone: then a held post missing is removed
+// (and goes into the gone ring) — unless its copy changed after the start
+// (a live edit or reaction), or it shares the create_at of a page's cursor
+// (r.Bounds, High: before=cursor cannot return it) — and the segment is no
+// longer stale. Dropped after a reconnect (gapGen) too: the pages may
+// predate what it missed. applied: false when dropped — the worker begins
+// it again.
+func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.histCurrentLocked(op.HistOp)
@@ -345,10 +362,10 @@ func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, 
 		return false
 	}
 	var fresh []model.Post
-	if high != nil && !highGone {
-		fresh = append(fresh, *high)
+	if r.High != nil && !r.HighGone {
+		fresh = append(fresh, *r.High)
 	}
-	fresh = append(fresh, rawPosts(pages...)...)
+	fresh = append(fresh, rawPosts(r.Pages...)...)
 	seen := map[string]bool{}
 	var add []model.Post
 	for _, p := range fresh {
@@ -366,10 +383,14 @@ func (s *Server) ApplyRevalidation(op RevalOp, high *model.Post, highGone bool, 
 	}
 	s.older = append(s.older, add...)
 	sortPosts(s.older)
-	if covered {
+	if r.Covered {
+		bounds := append([]Cursor{op.High}, r.Bounds...)
+		tied := func(p model.Post) bool {
+			return slices.ContainsFunc(bounds, func(b Cursor) bool { return b.CreateAt == p.CreateAt && b.ID != p.ID })
+		}
 		s.older = slices.DeleteFunc(s.older, func(p model.Post) bool {
 			at, held := op.Held[p.ID]
-			gone := held && !seen[p.ID] && p.UpdateAt == at && (p.ID == op.High.ID || p.CreateAt != op.High.CreateAt)
+			gone := held && !seen[p.ID] && p.UpdateAt == at && !tied(p)
 			if gone {
 				// Into the gone ring, so a page read before cannot bring it
 				// back. Only the ring: a root re-read here already has its
