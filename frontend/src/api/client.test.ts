@@ -175,3 +175,11 @@ test('executeCommand posts the command', async () => {
   expect(path).toBe('/api/ExecuteCommand')
   expect(JSON.parse(init!.body as string)).toEqual({ id: 3, channel_id: 'c1', root_id: '', command: '/echo hi' })
 })
+
+test('layout JSON uses integer pixels for both Go handlers', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null'))
+  await httpClient.setSidebarWidth(313.43)
+  expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ width: 313 })
+  await httpClient.setThreadWidth(537.9688720703125)
+  expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string)).toEqual({ width: 538 })
+})

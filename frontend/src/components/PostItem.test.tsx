@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { ApiError } from '../api/client'
@@ -852,4 +852,47 @@ test.each([
   render(<PostItem serverId={1} post={post(fields)} head me={me} locale="en-US" actions={a} editing={false} crt={false} variant={variant} />)
   await userEvent.click(screen.getByText('hello'))
   expect(a.openThread).not.toHaveBeenCalled()
+})
+
+test('a fresh outgoing message looks normal; pending feedback appears only after three seconds', () => {
+  vi.useFakeTimers()
+  try {
+    const fresh = post({ pending: true, create_at: Date.now(), user_id: me.id })
+    const props = { serverId: 1, head: true, me, locale: 'en-US', crt: false, actions: actions(), editing: false }
+    const view = render(<PostItem {...props} post={fresh} />)
+    expect(screen.queryByText('Sending…')).toBeNull()
+    expect(screen.getByText('hello').closest('article')).not.toHaveClass('opacity-60')
+    act(() => { vi.advanceTimersByTime(2999) })
+    expect(screen.queryByText('Sending…')).toBeNull()
+    view.rerender(<PostItem {...props} post={{ ...fresh }} />)
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(screen.getByText('Sending…')).toBeInTheDocument()
+    view.rerender(<PostItem {...props} post={{ ...fresh, pending: false }} />)
+    expect(screen.queryByText('Sending…')).toBeNull()
+    view.unmount()
+  } finally { vi.useRealTimers() }
+})
+
+test('confirmation cancels delayed feedback; remounting a pending row keeps its original deadline', () => {
+  vi.useFakeTimers()
+  try {
+    const fresh = post({ pending: true, create_at: Date.now(), user_id: me.id })
+    const props = { serverId: 1, head: true, me, locale: 'en-US', crt: false, actions: actions(), editing: false }
+    const view = render(<PostItem {...props} post={fresh} />)
+    act(() => { vi.advanceTimersByTime(500) })
+    view.rerender(<PostItem {...props} post={{ ...fresh, pending: false }} />)
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(screen.queryByText('Sending…')).toBeNull()
+    view.unmount()
+    const remounted = render(<PostItem {...props} post={fresh} />)
+    expect(screen.getByText('Sending…')).toBeInTheDocument()
+    remounted.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  } finally { vi.useRealTimers() }
+})
+
+test('an explicit rejection is visible immediately, even during the optimistic grace period', () => {
+  render(<PostItem serverId={1} post={post({ failed: true, create_at: Date.now() })} head me={me} locale="en-US" crt={false} actions={actions()} editing={false} />)
+  expect(screen.getByRole('alert')).toHaveTextContent('Not sent.')
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
 })

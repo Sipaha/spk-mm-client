@@ -217,3 +217,31 @@ test('two file cards in the thread panel at its 320px minimum wrap instead of ov
 
   await removeServerFromMenu(page)
 })
+
+test('fractional pointer coordinates save integer widths and survive a reload', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await signInAlice(page)
+  await apiCall(page, 'SetSidebarWidth', { width: 256 })
+  await apiCall(page, 'SetThreadWidth', { width: 420 })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  const root = unique('fractional resize')
+  await seedThread(page, root, ['reply'])
+  await repliesLink(page, root, 1).click()
+  const resize = async (label: string, endX: number) => {
+    await page.getByRole('separator', { name: label }).evaluate((el, x) => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 99, clientX: 800.25 }))
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 99, clientX: x }))
+    }, endX)
+  }
+  await resize('Resize sidebar', 857.68) // 256 + 57.43 -> 313
+  await resize('Resize thread panel', 682.2811279296875) // 420 + 117.9688720703125 -> 538
+  await expect.poll(() => apiCall(page, 'GetLayout')).toMatchObject({ sidebar_width: 313, thread_width: 538 })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  await repliesLink(page, root, 1).click()
+  await expect(page.getByRole('complementary', { name: 'Server channels' })).toHaveJSProperty('offsetWidth', 313)
+  await expect(threadPane(page)).toHaveJSProperty('offsetWidth', 538)
+  await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/fractional-resize.png` })
+  await removeServerFromMenu(page)
+})

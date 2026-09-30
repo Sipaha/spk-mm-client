@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { Profiler, StrictMode } from 'react'
 import { vi } from 'vitest'
 import type { Attachment, AttachmentField, ChannelDTO, FileView, PostView } from '../api/types'
 import { setLocale } from '../i18n'
@@ -331,7 +331,7 @@ test.each(['channel', 'thread'] as const)('%s: loads continue on their own at mo
 })
 
 // A thread panel of `height` px with a hand-driven layout: each row sits at
-// its virtualizer offset minus scrollTop, rows are 40 px, scrollTo moves the
+// its range offset plus preceding flow rows minus scrollTop (40 px rows), scrollTo moves the
 // feed. The root plus replies r11..r20 are loaded; more history is pending.
 async function threadRig(height: number) {
   const frames = manualFrames()
@@ -349,7 +349,12 @@ async function threadRig(height: number) {
     scrollTop: { configurable: true, get: () => st.top, set: (v: number) => void (st.top = Math.max(0, v)) },
   })
   log.scrollTo = ((o: ScrollToOptions) => void (st.top = Math.max(0, o.top ?? st.top))) as typeof log.scrollTo
-  const rowTop = (el: HTMLElement) => Number(/translateY\((-?[\d.]+)px\)/.exec(el.style.transform)?.[1] ?? 0) - st.top
+  const rowTop = (el: HTMLElement) => {
+    const range = el.parentElement!
+    const start = Number(/translateY\((-?[\d.]+)px\)/.exec(range.style.transform)?.[1] ?? 0)
+    const index = [...range.children].indexOf(el)
+    return start + index * 40 - st.top
+  }
   const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     const row = this.dataset.kind !== undefined
     const y = row ? rowTop(this) : 0
@@ -897,5 +902,32 @@ test('a shorter scroller changes the rendered rows in the next frame, not inside
   } finally {
     ro.restore()
     frames.restore()
+  }
+})
+
+test('a batch of row resizes commits together instead of rendering once per measured row', async () => {
+  const ro = recordResizeObservers()
+  let commits = 0
+  const posts = Array.from({ length: 20 }, (_, i) => P(`batch-${i}`, 'bob', 30 - i))
+  const view = render(<Profiler id="feed" onRender={() => { commits++ }}><Feed {...props({ posts, new_since: 0 })} /></Profiler>)
+  try {
+    const log = screen.getByRole('log')
+    geometry(log, { scrollHeight: 3000, clientHeight: 600, scrollTop: 400 })
+    log.scrollTo = ((o: ScrollToOptions) => { log.scrollTop = o.top ?? log.scrollTop }) as typeof log.scrollTo
+    fireEvent.scroll(log)
+    await act(async () => { await Promise.resolve() })
+    const targets = [...log.querySelectorAll('[data-index]')].slice(0, 8)
+    expect(targets).toHaveLength(8)
+    const observer = ro.watching(targets[0])[0]
+    commits = 0
+    await act(async () => {
+      observer.cb(targets.map(target => ({ target, borderBoxSize: [{ inlineSize: 800, blockSize: 60 }] }) as unknown as ResizeObserverEntry), observer.self)
+      await Promise.resolve()
+    })
+    expect(commits).toBeGreaterThan(0)
+    expect(commits).toBeLessThanOrEqual(2)
+  } finally {
+    view.unmount()
+    ro.restore()
   }
 })

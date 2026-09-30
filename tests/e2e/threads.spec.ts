@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
-  apiCall, channel, fakePost, feed, removeServerFromMenu, repliesLink, rootRow, seedThread, serverId, setCRT, signInAlice,
+  apiCall, channel, expectSent, fakePost, feed, removeServerFromMenu, repliesLink, rootRow, seedThread, serverId, setCRT, signInAlice,
   testGet, testPost, threadComposer, threadFeed, threadPane, unique,
 } from './helpers'
 
@@ -42,7 +42,7 @@ test('CRT on: a root shows "Replies: N" and no replies; the panel shows the thre
   await threadComposer(page).fill(mine)
   await page.keyboard.press('Enter')
   await expect(threadFeed(page).getByText(mine)).toBeVisible()
-  await expect(threadFeed(page).getByText('Sending…')).toHaveCount(0)
+  await expectSent(threadFeed(page).locator('article', { hasText: mine }))
   await expect(threadFeed(page).getByText(mine)).toHaveCount(1) // REST reply and WS echo → one post
   await expect(feed(page).getByText(mine)).toHaveCount(0)
   await expect(repliesLink(page, root, 3)).toBeVisible()
@@ -145,7 +145,7 @@ test('an image pasted into the panel composer is a chip there only; Enter sends 
   await page.keyboard.press('Enter')
   const post = threadFeed(page).locator('article', { hasText: text })
   await expect(post.getByRole('img', { name })).toBeVisible()
-  await expect(post.getByText('Sending…')).toHaveCount(0)
+  await expectSent(post)
   await expect(tray(threadPane(page))).toHaveCount(0)
   await expect(feed(page).getByText(text)).toHaveCount(0)
 })

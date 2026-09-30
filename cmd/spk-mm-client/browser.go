@@ -298,6 +298,17 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		tm.HandleFunc("GET /api/_test/fake/thread-reads", withFake(func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, fake.ThreadReads())
 		}))
+		tm.HandleFunc("POST /api/_test/fake/post-latency", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				MS int `json:"ms"`
+			}
+			if json.NewDecoder(r.Body).Decode(&in) != nil || in.MS < 0 || in.MS > 10000 {
+				http.Error(w, "ms must be between 0 and 10000", http.StatusBadRequest)
+				return
+			}
+			fake.SetLatency("/api/v4/posts", time.Duration(in.MS)*time.Millisecond)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}))
 		tm.HandleFunc("POST /api/_test/fake/drop", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
 				Lose bool `json:"lose"`

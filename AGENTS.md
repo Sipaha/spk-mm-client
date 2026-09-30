@@ -313,6 +313,22 @@
   должен ломать: нет скачка, нет пустоты под последним постом при развороте жеста вниз, новый пост
   внизу подхватывается, история догружается. — `frontend/src/components/scrollShift.test.ts`,
   `tests/e2e/feed-scroll.spec.ts`.
+- Ресайз ленты/треда (2026-09-30): только весь смонтированный диапазон строк имеет
+  `translateY(first.start)`; строки внутри — обычный поток с `display: flow-root` (включает
+  margin статьи в измеренную высоту). Нельзя возвращать отдельный absolute/transform каждой
+  строке: после изменения ширины перенос уже произошёл, а старые позиции до ResizeObserver
+  дают наложения на долю секунды. При этом виртуализация и overscan сохранены, весь канал
+  не монтируется. `useFlushSync: false` позволяет React объединить пакет замеров вместо
+  синхронного коммита на каждую строку выше viewport; normal flow уже сдвинул контент вместе
+  с компенсацией scrollTop. Не добавлять общий `onChange => flushSync` (даже через microtask):
+  при смене диапазона внутри доставки RO WebKitGTK получает loop errors. Синхронная microtask
+  остаётся только у `ScrollShift` для согласования margin во время жеста колеса. Тесты:
+  `Feed.test.tsx` (пакет из 8 замеров — не больше 2 коммитов), `resize.spec.ts` (48 промежуточных
+  ширин двух панелей, затем размеры окна), `feed-scroll`, `stick-bottom`, `threads`.
+  Исходный repro: 49 наложений до 60 px. Финальный WebKitGTK/Xvfb: 0 наложений в 707 проверках
+  соседних строк за 80 кадров, 0 ошибок RO; медиана кадра 17 ms, p95 32 ms (локальный smoke,
+  не гарантия для любого железа). Скриншот/метрики: `.agents/tmp/theme-refresh/webkit-resize*`
+  в корне Solution.
 - Якорь догрузки истории — верхний видимый пост **из тех, над которыми ляжет страница**. Корень треда
   стоит в панели первым и до, и после страницы (старые ответы ложатся под него и под строку «N
   ответов»), поэтому якорем быть не может: удержание корня оставляло ленту наверху, только что
@@ -324,7 +340,7 @@
   изменении размера, не только при новых строках: `ResizeObserver` на скроллере (`Feed.tsx`,
   «Bottom-stick»; колбэк — после layout, до paint, тот же кадр) и layout-эффект на общей высоте
   строк виртуализатора (в том же коммите, где выросли строки) пишут `scrollTop` = конец. Контейнер
-  строк **не** наблюдается `ResizeObserver`'ом: виртуализатор перерисовывает его синхронно из своего
+  строк **не** наблюдается `ResizeObserver`'ом: раньше виртуализатор перерисовывал его синхронно из
   наблюдателя строк, и более мелкий по глубине элемент меняется внутри рассылки — «ResizeObserver
   loop completed with undelivered notifications» (ловилось в e2e; `stick-bottom.spec.ts` проверяет во
   всех тестах, что таких ошибок нет). По той же причине новый размер скроллера виртуализатор получает
@@ -699,6 +715,20 @@
   `dataTransfer.files`) — тесты `Composer.test.tsx`, `ChannelPane.test.tsx` явно проверяют, что desktop-ветка
   никогда не читает `clipboardData.files` и что скрытый `<input type=file>` не рендерится в desktop-режиме
   (структурная гарантия «никаких байт с десктопа», не только доверие к поведению WebKitGTK).
+- Оптимистичная отправка (2026-09-30): локальный pending-пост сразу выглядит как обычный —
+  без `opacity-60` и строки «Отправка…». `PostItem` показывает `role=status` только через
+  3 с от локального `create_at`, если подтверждения ещё нет; это ожидание, не ошибка и
+  не таймаут запроса. Таймер очищается при подтверждении/ошибке/размонтировании; повторный
+  mount при виртуализации не начинает отсчёт заново. Явная ошибка показывается сразу с
+  Retry/Discard. Кнопка отмены ожидающих вложений остаётся вместе с отложенным статусом;
+  прогресс самих файлов сохраняется. Ключ `pending_post_id` удерживает строку при ack.
+  Тесты: `PostItem.test.tsx`, `optimistic-send.spec.ts` — канал и тред, реальные задержки
+  фейка 2 с (одинаковая высота до/после ack) и 4.5 с (статус после 3 с, без ложной ошибки).
+  В e2e отсутствие «Отправка…» больше не означает ack: `expectSent` ждёт доступных действий
+  отправленного поста. Вложенный locator `filter({has:…})` должен быть относительным,
+  без `[data-feed]` в нём, иначе пустая выборка с `toHaveCount(0)` скрывает ошибку теста.
+  Dev-only `/api/_test/fake/post-latency` `{ms:0..10000}` задаёт задержку пути `/api/v4/posts`,
+  0 снимает её; доступен только с `--test-api`, проверяет входной диапазон.
 - Пост с файлами ждёт своих загрузок **без дедлайна**: офлайн — пока сервер не станет «живым»;
   проваливается только при ошибке загрузки, отмене (discard) или остановке воркера; `createTimeout`
   (30 с) начинается лишь после загрузок, на сам `CreatePost` — в отличие от текстового поста, который
@@ -786,6 +816,13 @@
   платформы; проверять именно системный WebKitGTK, не только Chromium.
   Контраст: текст/фон 10.94:1, вторичный текст/фон 8.72:1, подписи/панель 5.96:1,
   прочитанный канал/сайдбар 10.08:1, текст кнопки/акцент 8.20:1.
+- Сохранение ширины панелей: `httpClient` и `wailsClient` округляют ширину через
+  `Math.round` непосредственно перед `SetSidebarWidth`/`SetThreadWidth` (Go принимает
+  `int`). Координаты PointerEvent при GTK/HiDPI бывают дробными: без округления Wails
+  отклонял аргумент (`cannot unmarshal number 537.968… into Go value of type int`), и
+  ширина не сохранялась. Live CSS остаётся дробным для плавности. —
+  `api/client.test.ts`, `api/wailsClient.test.ts` (четыре значения из пользовательского
+  лога), `layout.spec.ts` (дробные pointerdown/up → сохранение целых → reload).
 - Ширина сайдбара и панели треда — сплиттеры (`frontend/src/components/Splitter.tsx`, `role=
   separator`, стрелки на 16 px, Home/End, двойной клик — сброс), сохраняются один раз на всё
   приложение (не на сервер): `internal/store`'ная таблица `ui_prefs` (плоский key-value,
@@ -876,7 +913,7 @@ time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTime
 - Wails beta.25 exposes no WebKit memory knobs: it uses the default `WebKitWebContext` (`webkit_web_view_new_with_user_content_manager`), so the cache model and — in the 4.1 API — the web process's memory-pressure settings (a construct-only property of a web context) are out of reach; `webkit_website_data_manager_set_memory_pressure_settings` only covers the network process. The only lever over the web process engine is its environment (`JSC_*` options, read by JavaScriptCore at start; set with `os.Setenv` before the webview exists — WebKit launches the web process with our environment). Measured JIT-tier options all cost UI speed and were rejected (spike doc S4).
 - Memory soak runs: `--mm-fake-servers N` (dev desktop, `--mm-fake`) starts N in-process fakes (each seeded the same, `--mm-fake-channels` each) and signs alice in on all; `--mm-fake-churn 2s` makes bob post to a random channel every interval (no @mentions — no OS notifications; every 3rd post is a reply to one of the channel's 5 newest roots) and asks the UI to open a random channel every 5th tick (the notification-click path; every 5th of those with a `root_id` — channel plus thread panel, so the thread cache and panel churn too), and logs Go heap figures (`go memory …`) once a minute. A churn run's fakes alternate CRT — on for the first, off for the second (`fakeOptions`), so 2+ servers drive the thread panel and the inline replies with their context line, and `KeepPosts` also drops the thread records and subscriptions of trimmed roots and keeps no thread-read log (`TestKeepPostsDropsTheThreadsOfTrimmedRoots`). The fakes live in the main process; a churn run therefore starts them in a steady state (`fakeOptions`): every load channel is seeded with a full client window (`state.WindowSize` = 60 posts) and the fake keeps at most that many posts per channel and no event log — before, the fake stored every churn post (~0.5 KB each) and the client's windows kept filling from 20 to 60 posts for hours, and both read as main-process "growth". The main process still creeps ~2–3 MB for about 3 h at `2s` while churn posts (longer than the seed's) replace the seeded ones in the fake and the windows; `--mm-fake-churn 200ms` (10× faster) reaches the steady state in ~20 min (main) / ~80 min (web process) — use it for ≥ 60 min to check for a plateau, and judge `WebKitWebProcess` by its median/lower envelope: neighbouring samples differ by up to ±40 MB (large transient allocations), while its JS heap and DOM stay flat (before threads, 180 min at `200ms`: main 66 MB, web median ~130 MB, both flat; with replies and thread panels, CRT on one server and off on the other, Task 7 threads re-run, 96 min at `200ms`: main ~68–69 MB flat from minute 15 (slope after minute 60 −0.3 MB/h), Go heap flat from minute 30 (`next_gc` 23; the client's `internal/state` 2.75–4.5 MB without a trend, only the in-process fake creeps), web median ~150 MB from minute ~60 (slope over the last 35 min −10 MB/h), total ~225 MB — spike doc `docs/spikes/2026-09-28-threads-spike.md` §6.3). `SPK_MM_CLIENT_SOAK_PROFILES=<dir>` makes a churn run write `heap-NNN.pb.gz` there every minute for `go tool pprof -base` diffs. Both the `go memory` line and these profiles are **as of the last GC**, and an idle client (e.g. `--mm-fake-churn 1h`, used only to get the ticker) may run no GC for up to 2 min (the runtime's forced GC): garbage from a burst — a decoded 16 MB picture — then reads as a "flat" heap. Compare `num_gc` between ticks before calling anything retained. The in-process fakes store uploads (`POST /api/v4/files`) and their previews on disk (`mmfake.Options.FilesDir` = `<data dir>/tmp/mmfake`, cleared at start, each fake's own subdir removed on `Close`) — before, every pasted 16 MB picture stayed in the fake's memory (5 → +91 MB Go heap in the main process), which read as a client leak in the Task 6 memory check. — `internal/mmfake/files_test.go`, `TestFakeOptionsForSoak`. Measure with nothing attached: a WebKit inspector session (`WEBKIT_INSPECTOR_HTTP_SERVER`, and especially `Heap.snapshot`, which the inspector keeps) inflates the web and main processes by tens of MB — use `JSC_logGC=1` (sizes after each JS GC on stderr) for the JS heap instead. Run the soak **headless**, under `xvfb-run -a` (`/usr/bin/Xvfb`/`/usr/bin/xvfb-run`) — no window on the user's real display for an hour-long run; set `TMPDIR` to a scratch dir before invoking it (`xvfb-run`'s own `mktemp -d` for its `Xauthority` defaults to `/tmp` otherwise). — `cmd/spk-mm-client/devchurn.go`, `devfake.go` (`fakeOptions`), `TestFakeChurnPostsRepliesAndOpensThreads`, `TestFakeOptionsForSoak`, `TestKeepPostsCapsHistoryAndEventLog`; spike doc S4 «Рост памяти в soak этапа 3 ч.1б».
 - Engine-specific frontend timing (JIT tiers etc.): Playwright's own WebKit build does not start on this host (missing `libavif16`/`libjxl` without sudo) and is not the system engine anyway; drive the system WebKitGTK 4.1 through PyGObject (`gi.require_version('WebKit2', '4.1')`, a `WebView` in a `Gtk.Window`, `evaluate_javascript` — an async IIFE's Promise result is unsupported, stash results on `window` and poll). `JSC_*` variables in the script's environment reach its web process.
-- `position: fixed` inside a feed row does not position against the viewport: the row has a `transform` (the virtualizer), which turns `fixed` into `absolute`-like behaviour relative to that row, so a popover clips to the row's box. The emoji picker opened from a `PostItem` renders through a portal into `document.body` instead. — `frontend/src/components/PostItem.tsx`, `frontend/src/components/EmojiPicker.tsx`.
+- `position: fixed` inside a feed row does not position against the viewport: the mounted range has a `transform` (the virtualizer), which turns `fixed` into `absolute`-like behaviour relative to that row, so a popover clips to the row's box. The emoji picker opened from a `PostItem` renders through a portal into `document.body` instead. — `frontend/src/components/PostItem.tsx`, `frontend/src/components/EmojiPicker.tsx`.
 - WebKitGTK 2.52 renders `application/pdf` itself: a frame navigated to a PDF gets its built-in viewer (the `PDFJSViewer` feature, on by default — `webkit-pdfjs-viewer://`, pdf.js 4.1.392 bundled in `libwebkit2gtk`, with `isEvalSupported` and PDF scripting on: an `/OpenAction` `app.alert` pops a real script dialog; the eval path is the CVE-2024-4367 class), and embedders cannot configure or turn it off per view. The `/media` sandbox CSP applies to that viewer's own frame and keeps it from running (an empty box) — so `/media/…/pdf/…` keeps the sandbox, and the UI never puts a PDF in an `iframe`/`embed`/`object`. The fakes seed two PDFs in `c-offtopic`: `manual.pdf` (`mmfake.PDFFileID`, a real `mmfake.PDFPages` = 50-page document generated in Go, ~4 MB — text, vector shapes and a 480x360 JPEG of its own per page; `mmfake.LandscapePage` is turned sideways, and `mmfake.ScannedPage` carries a CCITT Group 4 scan instead of a JPEG, decoded through pdf.js's `jbig2.wasm`; final review I3/M9, stale since fbe527b/a4d4a4a — it used to be ~66 KB of text and vector shapes only) and `spec.pdf` (`mmfake.JunkPDFFileID`: a `%PDF-1.4` header and nothing else — passes Go's magic check, pdf.js refuses it: the UI's fallback-to-card case). — spike report `.superpowers/sdd/fixes-2026-09-28/pdf-spike-report.md` (A), `internal/mmfake/pdf.go`, `TestSeededPDFIsARealMultiPageDocument`, `TestSeededPDFHasOneLandscapePage`, `TestSeededPDFHasAScannedCCITTPage`.
 - A `nil *media.Cache` stored in an `http.Handler` interface variable is not a nil interface (the classic Go gotcha) — when the media cache fails to open, the desktop runner keeps the interface itself `nil` (never assigns the typed nil pointer to it), so `withMedia` can tell "no cache" apart from "a broken cache handle". — `cmd/spk-mm-client/run_desktop_wails.go`.
 - Two `http.ServeMux` patterns `/emoji/name/{name}` and `/emoji/{id}/image` overlap on `/emoji/name/image` and Go's `ServeMux` panics at registration time, not at request time — the fake server merges them into one pattern `/emoji/{a}/{b}` and dispatches by shape inside the handler. — `internal/mmfake/media.go`.

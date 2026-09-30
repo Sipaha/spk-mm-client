@@ -2,7 +2,11 @@ import { expect, test, type Page } from '@playwright/test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { channel, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+import { channel, expectSent, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+
+test.afterEach(async ({ page }) => {
+  if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
+})
 
 // A real (small, valid) 64x64 PNG, used both as a pasted/dropped in-page
 // File and as an on-disk fixture for the 📎 file-picker input. Big enough to
@@ -90,7 +94,7 @@ test('paste an image: a chip appears, Enter sends a post with the image', async 
   // getByRole('img', { name }) — not post.locator('img'), which also matches
   // the post's own avatar image.
   await expect(post.getByRole('img', { name })).toBeVisible()
-  await expect(post.getByText('Sending…')).toHaveCount(0)
+  await expectSent(post)
   await feed(page).evaluate((el) => { el.scrollTop = el.scrollHeight })
   await page.screenshot({ path: 'test-results/attachments-sent-post.png' })
   await removeServerFromMenu(page)
@@ -188,8 +192,8 @@ test('attachments only, no text, is a valid post', async ({ page }) => {
   await expect(img).toBeVisible()
   // The server created it: no longer pending, and the picture is the post's
   // file (/feed or /thumb of its file id), not the staged attachment (/staged/<id>).
-  const post = feed(page).locator('article').filter({ has: img })
-  await expect(post.getByText('Sending…')).toHaveCount(0)
+  const post = feed(page).locator('article').filter({ has: page.getByRole('img', { name }) })
+  await expectSent(post)
   await expect(img).toHaveAttribute('src', /\/(feed|thumb)\//)
   await removeServerFromMenu(page)
 })

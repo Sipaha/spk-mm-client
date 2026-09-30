@@ -150,8 +150,9 @@ export const httpClient: Client = {
   logout: (id) => done(post('Logout', { id })),
   appInfo: () => post('AppInfo', {}),
   getLayout: () => post('GetLayout', {}),
-  setSidebarWidth: (width) => done(post('SetSidebarWidth', { width })),
-  setThreadWidth: (width) => done(post('SetThreadWidth', { width })),
+  // Pointer coordinates can be fractional (GTK/HiDPI); Go persists int pixels.
+  setSidebarWidth: (width) => done(post('SetSidebarWidth', { width: Math.round(width) })),
+  setThreadWidth: (width) => done(post('SetThreadWidth', { width: Math.round(width) })),
   getFormattingBarHidden: () => post('GetFormattingBarHidden', {}),
   setFormattingBarHidden: (hidden) => done(post('SetFormattingBarHidden', { hidden })),
   selectServer: (id) => done(post('SelectServer', { id })),
@@ -267,8 +268,9 @@ export const wailsClient: Client = {
   logout: (id) => wcall('Logout', id),
   appInfo: () => wcall('AppInfo'),
   getLayout: () => wcall('GetLayout'),
-  setSidebarWidth: (width) => wcall('SetSidebarWidth', width),
-  setThreadWidth: (width) => wcall('SetThreadWidth', width),
+  // Round at the transport boundary, keeping live drag geometry subpixel.
+  setSidebarWidth: (width) => wcall('SetSidebarWidth', Math.round(width)),
+  setThreadWidth: (width) => wcall('SetThreadWidth', Math.round(width)),
   getFormattingBarHidden: () => wcall('GetFormattingBarHidden'),
   setFormattingBarHidden: (hidden) => wcall('SetFormattingBarHidden', hidden),
   selectServer: (id) => wcall('SelectServer', id),

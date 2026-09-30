@@ -123,3 +123,10 @@ export async function seedThread(page: Page, root: string, replies: string[], ch
 export const rootRow = (page: Page, text: string) => feed(page).locator('article', { hasText: text })
 export const repliesLink = (page: Page, text: string, n: number) =>
   rootRow(page, text).getByRole('button', { name: new RegExp(`^Replies: ${n}( ·|$)`) })
+
+// Pending feedback is intentionally absent for the first 3 seconds. Its
+// absence is no longer an acknowledgement: wait until sent-post actions exist.
+export async function expectSent(post: Locator) {
+  await post.hover()
+  await expect(post.getByRole('button', { name: 'More actions' })).toBeVisible()
+}

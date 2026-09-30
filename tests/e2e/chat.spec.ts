@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test'
-import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
+import { apiCall, channel, expectSent, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
 // Sidebar-menu fix/addendum screenshots (2026-09-29): a fixed absolute path
 // per the brief, not the generic E2E_SHOTS default other specs use.
@@ -21,7 +21,7 @@ test('sidebar, feed and sending once', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Message' }).fill(text)
   await page.keyboard.press('Enter')
   await expect(feed(page).getByText(text)).toBeVisible()
-  await expect(feed(page).getByText('Sending…')).toHaveCount(0)
+  await expectSent(feed(page).locator('article', { hasText: text }))
   await expect(feed(page).getByText(text)).toHaveCount(1) // REST reply and WS echo → one post
   await removeServerFromMenu(page)
 })
@@ -101,7 +101,7 @@ test('edit with arrow-up, delete with confirmation', async ({ page }) => {
   await box.fill(text)
   await page.keyboard.press('Enter')
   await expect(feed(page).getByText(text)).toBeVisible()
-  await expect(feed(page).getByText('Sending…')).toHaveCount(0)
+  await expectSent(feed(page).locator('article', { hasText: text }))
 
   await box.press('ArrowUp')
   const edit = page.getByRole('textbox', { name: 'Edit message' })

@@ -154,3 +154,11 @@ test('autocomplete: an abort cancels the Wails call (its Go context)', async () 
   await wailsClient.executeCommand(3, 'c1', 'r1', '/away')
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'ExecuteCommand', 3, 'c1', 'r1', '/away')
 })
+
+test.each([537.9688720703125, 583.1544799804688, 497.22552490234375, 564.2781982421875, 420])('layout widths reach Go int bindings as integers (%s)', async (width) => {
+  vi.mocked(Call.ByName).mockResolvedValue(undefined)
+  await wailsClient.setSidebarWidth(width)
+  expect(Call.ByName).toHaveBeenLastCalledWith(FQN + 'SetSidebarWidth', Math.round(width))
+  await wailsClient.setThreadWidth(width)
+  expect(Call.ByName).toHaveBeenLastCalledWith(FQN + 'SetThreadWidth', Math.round(width))
+})

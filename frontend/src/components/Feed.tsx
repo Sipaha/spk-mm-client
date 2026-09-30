@@ -206,21 +206,20 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const sizer = useRef<HTMLDivElement>(null)
   const afterGesture = useRef(() => {}) // the bottom-stick's re-pin deferred past a wheel/touch gesture (below)
   const [, bump] = useReducer((x: number) => x + 1, 0)
-  const [shift] = useState(() => {
+  const [renderShift] = useState(() => {
     let queued = false
-    // The shifted rows must be committed before the next paint: the
-    // virtualizer's own notify for them is async. A microtask runs after the
-    // ResizeObserver callback that took the shift and before the paint.
-    const rerender = () => {
+    // During a wheel gesture, commit the pending margin compensation before
+    // paint. Normal remeasurement is batched asynchronously by React below.
+    return () => {
       if (queued) return
       queued = true
       queueMicrotask(() => {
         queued = false
-        flushSync(bump)
+        if (scroller.current?.isConnected) flushSync(bump)
       })
     }
-    return new ScrollShift(() => scroller.current, () => sizer.current, rerender, () => afterGesture.current())
   })
+  const [shift] = useState(() => new ScrollShift(() => scroller.current, () => sizer.current, renderShift, () => afterGesture.current()))
   useEffect(() => () => shift.dispose(), [shift])
   useLayoutEffect(() => shift.apply()) // every commit: rows and shift reach the screen together
 
@@ -285,6 +284,11 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     estimateSize: (i) => estimate(rows[i]),
     getItemKey: (i) => rows[i].key,
     overscan: 8,
+    // Flow rows reflow immediately, so no per-row synchronous React commit is
+    // needed when scrollTop compensates for a resized row. React batches the
+    // observer's notifications; range changes happen outside its delivery
+    // (unmounting measured rows inside it causes ResizeObserver loops in GTK).
+    useFlushSync: false,
     // The scroller's new size is taken in the next frame, not inside the
     // ResizeObserver delivery: mid-scroll the virtualizer's notify is a
     // flushSync, and a shorter scroller (the composer growing) unmounted the
@@ -316,6 +320,7 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // The content half of the bottom-stick (above): the rows' total height
   // changed in this commit.
   const total = v.getTotalSize()
+  const visibleRows = v.getVirtualItems()
   const lastTotal = useRef(total)
   useLayoutEffect(() => {
     if (total === lastTotal.current) return
@@ -671,18 +676,24 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
           <div className="absolute inset-0 flex items-center justify-center text-fg-muted">{t(data.loaded ? 'feed.empty' : 'feed.loading')}</div>
         )}
         <div ref={sizer} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
-          {v.getVirtualItems().map((it) => (
-            <div
-              key={it.key}
-              data-index={it.index}
-              data-key={it.key}
-              data-kind={rows[it.index].kind}
-              ref={v.measureElement}
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${it.start}px)` }}
-            >
-              {renderRow(rows[it.index])}
-            </div>
-          ))}
+          {/* Only the mounted range is positioned. Its rows use normal flow:
+              text wrapping moves the next message in the same layout pass,
+              without waiting for ResizeObserver/React to update each offset.
+              flow-root keeps article margins inside the measured row. */}
+          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${visibleRows[0]?.start ?? 0}px)` }}>
+            {visibleRows.map((it) => (
+              <div
+                key={it.key}
+                data-index={it.index}
+                data-key={it.key}
+                data-kind={rows[it.index].kind}
+                ref={v.measureElement}
+                style={{ display: 'flow-root', width: '100%' }}
+              >
+                {renderRow(rows[it.index])}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       <button

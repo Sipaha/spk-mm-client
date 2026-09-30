@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { Attachment, EmojiDTO, FileView, PostView, ReactionUsersDTO } from '../api/types'
 import { invalidateRecent, useQuickReactions } from '../emoji/recent'
@@ -295,6 +295,19 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
 
 export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, actions, editing, variant = 'channel', replyContext = null, isInlineReply = false }: Props) {
   const time = formatTime(post.create_at, locale)
+  // Pending posts already live in the local feed. Give quick confirmations
+  // no extra label/opacity/layout at all. Use the original local send time,
+  // not mount time: virtualization must not restart the grace period.
+  const pendingDeadline = post.create_at + 3000
+  const [revealedDeadline, revealPending] = useState<number | null>(null)
+  const showPending = post.pending && !post.failed && (revealedDeadline === pendingDeadline || Date.now() >= pendingDeadline)
+  useEffect(() => {
+    if (!post.pending || post.failed) return
+    const remaining = pendingDeadline - Date.now()
+    if (remaining <= 0) return
+    const timer = setTimeout(() => revealPending(pendingDeadline), remaining)
+    return () => clearTimeout(timer)
+  }, [post.pending, post.failed, pendingDeadline])
   const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
   const trigger = useRef<HTMLElement | null>(null)
   const canReact = !post.system && !post.pending && !post.failed
@@ -419,7 +432,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     <article
       ref={articleRef}
       data-post-id={post.id}
-      className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''} ${post.pending ? 'opacity-60' : ''}`}
+      className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''}`}
       onPointerEnter={() => setHot(true)}
       onPointerLeave={() => setHot(false)}
       onFocus={() => setHot(true)}
@@ -521,8 +534,8 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
                 : t('thread.replies', { n: String(post.reply_count) })}
             </button>
           )}
-          {post.pending && (
-            <div className="flex items-center gap-2 text-xs text-fg-muted">
+          {showPending && (
+            <div role="status" className="flex items-center gap-2 text-xs text-fg-muted">
               {t('post.sending')}
               {/* A post with files still waiting (e.g. offline) can be cancelled
                   (DiscardPost works on a waiting post); once every file is

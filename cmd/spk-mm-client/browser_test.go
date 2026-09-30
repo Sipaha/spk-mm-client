@@ -288,6 +288,16 @@ func TestTestAPIFakeControlsAndNotifications(t *testing.T) {
 		require.NoError(t, err)
 		return resp
 	}
+	for _, body := range []string{`{"ms":-1}`, `{"ms":10001}`, `{"ms":"bad"}`} {
+		r := post("/api/_test/fake/post-latency", body)
+		assert.Equal(t, http.StatusBadRequest, r.StatusCode)
+		r.Body.Close()
+	}
+	for _, body := range []string{`{"ms":20}`, `{"ms":0}`} {
+		r := post("/api/_test/fake/post-latency", body)
+		assert.Equal(t, http.StatusOK, r.StatusCode)
+		r.Body.Close()
+	}
 	resp := post("/api/_test/fake/post", `{"channel_id":"c-offtopic","username":"bob","message":"from test"}`)
 	require.Equal(t, 200, resp.StatusCode)
 	found := false
