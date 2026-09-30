@@ -98,8 +98,13 @@ func (w *Worker) lane(channelID string) *histLane {
 // with the caller's, the worker's life, or a later operation — a jump
 // (cause ErrSuperseded), and for a reread a user's operation too (cause
 // errPreempted). A jump first cancels every operation begun before it, a
-// user's operation every reread. end must be called when it is over.
-func (w *Worker) histBegin(ctx context.Context, channelID string, kind opKind) (l *histLane, octx context.Context, end func()) {
+// user's operation every reread. begin (if any) is the operation's state
+// Begin — a navigation's new generation: it runs in the same short critical
+// section as the registration and the cancelling, so navigations begin in
+// the state in the order they cancel each other — one cancelled cannot
+// begin after (and so invalidate) the one that cancelled it. end must be
+// called when it is over.
+func (w *Worker) histBegin(ctx context.Context, channelID string, kind opKind, begin func()) (l *histLane, octx context.Context, end func()) {
 	l = w.lane(channelID)
 	octx, cancel := context.WithCancelCause(ctx)
 	stop := context.AfterFunc(w.life, func() { cancel(context.Canceled) })
@@ -117,6 +122,12 @@ func (w *Worker) histBegin(ctx context.Context, channelID string, kind opKind) (
 		delete(l.ops, o)
 	}
 	l.ops[t] = struct{}{}
+	if w.cfg.histBegun != nil {
+		w.cfg.histBegun(channelID)
+	}
+	if begin != nil {
+		begin()
+	}
 	l.mu.Unlock()
 	return l, octx, func() {
 		l.mu.Lock()
@@ -157,11 +168,17 @@ func (w *Worker) histErr(ctx context.Context, err error) error {
 // it is (no request), else the segment around it replaces the held history
 // (Post first — its channel and thread; then before=/after= pages of
 // jumpPage). Either way it is a new navigation: every history operation
-// begun before is cancelled and its page dropped.
+// begun before is cancelled and its page dropped. A segment whose pages were
+// read before a reconnect is applied stale and reread in the background.
 func (w *Worker) JumpTo(ctx context.Context, channelID, postID string) (JumpResult, error) {
-	l, ctx, end := w.histBegin(ctx, channelID, opJump)
+	// Last (after the history lock is let go of): a segment applied stale —
+	// its pages read before a reconnect — is reread; so is one whose reread
+	// this jump cancelled.
+	defer w.scheduleRevalidation(channelID)
+	var op state.HistOp
+	var ok bool
+	l, ctx, end := w.histBegin(ctx, channelID, opJump, func() { op, ok = w.st.BeginJump(channelID) })
 	defer end()
-	op, ok := w.st.BeginJump(channelID)
 	if !ok {
 		return JumpResult{}, ErrNoChannel
 	}
@@ -230,7 +247,7 @@ func (w *Worker) historyLoaded(ctx context.Context, channelID string) {
 // operation before it applied its page. A page that no longer fits (a
 // jump, a reset) is dropped; a jump cancelling it is not an error either.
 func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
-	l, ctx, end := w.histBegin(ctx, channelID, opUser)
+	l, ctx, end := w.histBegin(ctx, channelID, opUser, nil)
 	defer end()
 	if err := l.lock(ctx); err != nil {
 		return quietSuperseded(w.histErr(ctx, err))
@@ -264,7 +281,7 @@ func quietSuperseded(err error) error {
 // reread is started, or begun again, once it is done.
 func (w *Worker) LoadNewer(ctx context.Context, channelID string) (closed bool, err error) {
 	defer w.scheduleRevalidation(channelID)
-	l, ctx, end := w.histBegin(ctx, channelID, opUser)
+	l, ctx, end := w.histBegin(ctx, channelID, opUser, nil)
 	defer end()
 	if err := l.lock(ctx); err != nil {
 		return false, quietSuperseded(w.histErr(ctx, err))
@@ -298,7 +315,7 @@ func (w *Worker) RetryRevalidation(ctx context.Context, channelID string) error 
 // rereadOnce runs one reread (run) under a lane's history lock, as an
 // operation a user's one pre-empts (errPreempted).
 func (w *Worker) rereadOnce(ctx context.Context, lane string, run func(context.Context) error) error {
-	l, ctx, end := w.histBegin(ctx, lane, opReread)
+	l, ctx, end := w.histBegin(ctx, lane, opReread, nil)
 	defer end()
 	if err := l.lock(ctx); err != nil {
 		return w.histErr(ctx, err)

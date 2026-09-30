@@ -39,9 +39,10 @@ func (w *Worker) OpenThreadAt(ctx context.Context, channelID, rootID, replyID st
 	// Last (after the lane is let go of): a stale focus — whose reread this
 	// cancelled, if one ran — is reread again.
 	defer w.scheduleFocusRevalidation(rootID)
-	l, ctx, end := w.histBegin(ctx, threadLane, opJump)
+	var op state.ThreadFocusOp
+	var held, ok bool
+	l, ctx, end := w.histBegin(ctx, threadLane, opJump, func() { op, held, ok = w.st.FocusThread(channelID, rootID, replyID) })
 	defer end()
-	op, held, ok := w.st.FocusThread(channelID, rootID, replyID)
 	if !ok {
 		return state.ThreadView{}, ErrNoChannel
 	}
@@ -118,7 +119,7 @@ func (w *Worker) focusLoaded(ctx context.Context, rootID string) {
 // reread in the background once it is done.
 func (w *Worker) LoadThreadFocus(ctx context.Context, rootID string, newer bool) error {
 	defer w.scheduleFocusRevalidation(rootID)
-	l, ctx, end := w.histBegin(ctx, threadLane, opUser)
+	l, ctx, end := w.histBegin(ctx, threadLane, opUser, nil)
 	defer end()
 	if err := l.lock(ctx); err != nil {
 		return quietSuperseded(w.histErr(ctx, err))

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -508,4 +509,115 @@ func TestUserHistoryOpPreemptsBackgroundReread(t *testing.T) {
 	assert.True(t, h.view("c-town").Gap.Stale)
 	g.open()
 	h.eventually(func() bool { return !h.view("c-town").Gap.Stale }, "the retried reread")
+}
+
+// raceHarness is jumpHarness with the histBegun seam routed to hook (nil:
+// nothing).
+func raceHarness(t *testing.T, o mmfake.Options) (*harness, *gate, *atomic.Pointer[func(string)]) {
+	t.Helper()
+	g := newGate()
+	o.RequestHook = g.hook
+	h := newHarness(t, o)
+	t.Cleanup(g.open)
+	hook := new(atomic.Pointer[func(string)])
+	h.tune = func(c *Config) {
+		c.histBegun = func(l string) {
+			if f := hook.Load(); f != nil {
+				(*f)(l)
+			}
+		}
+	}
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	h.w.OpenChannel("c-town")
+	return h, g, hook
+}
+
+// navRace runs two navigations of one lane, A (to aID) then B (to bID),
+// with A paused (the histBegun seam) right after its registration, before
+// its state Begin. B is started meanwhile: it registers and begins at once
+// unless A's registration and Begin are one step — then it waits for A's.
+// Their GET /posts/{id} are held until A is over. Returns A's and B's
+// errors.
+func navRace(t *testing.T, g *gate, hook *atomic.Pointer[func(string)], lane, aID, bID string,
+	nav func(id string) error) (errA, errB error) {
+	t.Helper()
+	paused, release := make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	pause := func(l string) {
+		if l == lane && first.CompareAndSwap(false, true) {
+			close(paused)
+			<-release
+		}
+	}
+	hook.Store(&pause)
+	g.hold(func(r *http.Request) bool {
+		return strings.HasSuffix(r.URL.Path, "/posts/"+aID) || strings.HasSuffix(r.URL.Path, "/posts/"+bID)
+	})
+	aDone, bDone := make(chan error, 1), make(chan error, 1)
+	go func() { aDone <- nav(aID) }()
+	select {
+	case <-paused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("A never registered")
+	}
+	go func() { bDone <- nav(bID) }()
+	select {
+	case <-g.arrived: // B began while A was between its registration and Begin
+	case <-time.After(300 * time.Millisecond): // B waits for A's registration and Begin
+	}
+	close(release)
+	select {
+	case errA = <-aDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("A never ended")
+	}
+	g.open()
+	select {
+	case errB = <-bDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("B never ended")
+	}
+	return errA, errB
+}
+
+// Codex review, finding 5: a jump's registration (cancelling the ones
+// before it) and its state Begin are one step — a jump cancelled between
+// the two must not begin after the newer one and leave it stale.
+func TestJumpRegistrationAndBeginAreOneStep(t *testing.T) {
+	h, g, hook := raceHarness(t, mmfake.Options{})
+	errA, errB := navRace(t, g, hook, "c-town", h.postID("Message #10"), h.postID("Message #50"), func(id string) error {
+		_, err := h.w.JumpTo(context.Background(), "c-town", id)
+		return err
+	})
+	require.ErrorIs(t, errA, ErrSuperseded)
+	require.NoError(t, errB, "the newer jump applies")
+	assert.Equal(t, append(town(20, 80), town(91, 150)...), messages(h.view("c-town")))
+}
+
+// Codex review, finding 2: a jump whose pages were read before a reconnect
+// — the catch-up done before they land — is applied stale and reread: the
+// post jumped to, edited while the stream was lost, is not shown as read
+// before.
+func TestJumpAcrossReconnectIsReread(t *testing.T) {
+	h, g := jumpHarness(t, mmfake.Options{})
+	target := h.postID("Message #10")
+	g.hold(query("after", target)) // GET /posts/{target} is answered already
+	done := make(chan error, 1)
+	go func() { _, err := h.w.JumpTo(context.Background(), "c-town", target); done <- err }()
+	g.wait(t)
+	h.fake.SetDown(true)
+	h.fake.DropConnections(true)
+	h.eventually(func() bool { return h.w.Status() == StatusReconnecting }, "offline")
+	h.fake.EditAs(target, "edited offline")
+	h.fake.PostAs("c-town", "bob", "offline marker")
+	h.fake.SetDown(false)
+	h.live()
+	h.eventually(func() bool { return h.hasMessage("c-town", "offline marker") }, "caught up")
+	g.open()
+	require.NoError(t, <-done)
+	h.eventually(func() bool { return h.hasMessage("c-town", "edited offline") && !h.view("c-town").Gap.Stale },
+		"the segment read before the reconnect is reread")
+	assert.NotContains(t, messages(h.view("c-town")), "Message #10")
 }

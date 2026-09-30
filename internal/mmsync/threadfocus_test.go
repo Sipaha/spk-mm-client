@@ -307,3 +307,23 @@ func TestFocusRereadRetriedAfterFailure(t *testing.T) {
 	require.NoError(t, h.w.RetryThreadRevalidation(context.Background(), root))
 	assert.False(t, h.thread(root).Focus.Gap.Stale)
 }
+
+// Codex review, finding 5: opening a focus registers (cancelling the ones
+// before it) and begins in the state in one step — an OpenThreadAt
+// cancelled between the two must not begin after the newer one and drop
+// its focus.
+func TestOpenThreadAtRegistrationAndBeginAreOneStep(t *testing.T) {
+	h, g, hook := raceHarness(t, mmfake.Options{CRT: true})
+	root := h.fake.SeedThread("c-town", "alice", 500)
+	a, b := h.replyID(100), h.replyID(300)
+	errA, errB := navRace(t, g, hook, threadLane, a, b, func(id string) error {
+		_, err := h.w.OpenThreadAt(context.Background(), "c-town", root, id)
+		return err
+	})
+	require.ErrorIs(t, errA, ErrSuperseded)
+	require.NoError(t, errB, "the newer focus applies")
+	v := h.thread(root)
+	require.NotNil(t, v.Focus)
+	assert.Equal(t, b, v.Focus.TargetID)
+	assert.Contains(t, threadMsgs(v), "Reply 300")
+}

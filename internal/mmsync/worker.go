@@ -85,6 +85,9 @@ type Config struct {
 	refreshRetry   time.Duration
 	reactBackoff   []time.Duration // test seam: nil → defaultReactBackoff
 	revalIdle      time.Duration   // test seam: 0 → revalRetryIn
+	// test seam: called with the lane once a history operation is
+	// registered, before its state Begin
+	histBegun func(lane string)
 }
 
 func (c *Config) defaults() {
