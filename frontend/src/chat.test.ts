@@ -1601,12 +1601,49 @@ test('a team change aborts the search request in flight', async () => {
   expect(useStore.getState().search).toBeNull()
 })
 
-test('a sidebar refresh without a hit\'s channel (left it) makes the hit not jumpable', async () => {
-  const cats = [{ id: 'x', type: 'channels', name: 'Channels', collapsed: false, channels: [{ id: 'a', name: 'A', slug: 'a', type: 'O', unread: false, mentions: 0, muted: false }] }]
-  useStore.getState().setSidebar(1, sidebar({ categories: cats }))
+// Fix round 2: the sidebar is filtered (read DMs/GMs hidden by
+// direct_channel_show/group_channel_show or auto-closed past
+// limit_visible_dms_gms — internal/state/sidebar.go): not being in it is not
+// a lost membership. A refresh only upgrades hits; a channel really left
+// shows when its jump fails, on the card.
+test('Codex search7 fix: hidden DM search hit stays jumpable after sidebar refresh', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({
+    hits: [hit('dm-hit', { channel_id: 'dm-hidden', channel_type: 'D', channel_name: 'bob', channel_display: 'bob', jumpable: true })],
+    has_next: false, limit_reached: false,
+  })
+  await submitSearch('hello')
+  useStore.getState().setSidebar(1, sidebar({ categories: [] }))
+  expect(useStore.getState().search?.hits[0].jumpable).toBe(true)
+})
+
+test('a hidden GM and a DM auto-closed past the visible limit stay jumpable, with their names, across refreshes', async () => {
+  searchReady()
+  vi.mocked(client.searchPosts).mockResolvedValueOnce({
+    hits: [
+      hit('gm-hit', { channel_id: 'gm-hidden', channel_type: 'G', channel_name: 'alice,bob,carol', channel_display: 'alice, bob, carol' }),
+      hit('dm-hit', { channel_id: 'dm-closed', channel_type: 'D', channel_name: 'dave', channel_display: 'dave' }),
+    ],
+    has_next: false, limit_reached: false,
+  })
+  await submitSearch('hello')
+  const before = useStore.getState().search!.hits
+  // The DMs category shows only the visible ones: these two are not in it.
+  const dms = [{ id: 'dm', type: 'direct_messages', name: 'DMs', collapsed: false, channels: [{ id: 'dm-bob', name: 'bob', type: 'D', unread: false, mentions: 0, muted: false }] }]
+  useStore.getState().setSidebar(1, sidebar({ categories: dms }))
+  useStore.getState().setSidebar(1, sidebar({ categories: [] }))
+  expect(useStore.getState().search!.hits).toEqual(before)
+})
+
+test('a channel really left: its hit stays, the jump fails on the card (the existing inline path)', async () => {
+  searchReady()
+  useStore.getState().setChannel(1, chan('b'))
   vi.mocked(client.searchPosts).mockResolvedValueOnce(page(['h1']))
   await submitSearch('hello')
-  expect(useStore.getState().search?.hits[0].jumpable).toBe(true)
   useStore.getState().setSidebar(1, sidebar({ categories: [] }))
-  expect(useStore.getState().search?.hits[0].jumpable).toBe(false)
+  expect(useStore.getState().search?.hits[0].jumpable).toBe(true)
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('forbidden', ''))
+  await expect(openHit(hit('h1'))).rejects.toMatchObject({ code: 'forbidden' })
+  expect(useStore.getState().search?.hits).toHaveLength(1)
 })
