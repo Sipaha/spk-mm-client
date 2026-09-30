@@ -18,6 +18,28 @@ import { TextView } from './TextView'
 // scripts/check-pdf-bundle.mjs against the built initial chunk.
 const PdfView = lazy(() => import('./PdfView'))
 
+// A press that moved further than this is a drag (a text selection), not a
+// click on the empty area.
+const CLICK_SLOP = 4
+// Width of the zone along a scrollable element's right/bottom edge treated
+// as its scrollbar: GTK's overlay scrollbars take no layout space, so
+// clientWidth alone would not exclude them.
+const SCROLLBAR_ZONE = 16
+
+// onScrollbar: is (x, y) over el's scrollbar? A press on a scrollbar (or a
+// scrollbar drag) of the PDF scroller — itself an "empty area" — must not
+// close the viewer.
+function onScrollbar(el: EventTarget | null, x: number, y: number): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  const vbar = el.scrollHeight > el.clientHeight
+  const hbar = el.scrollWidth > el.clientWidth
+  if (!vbar && !hbar) return false
+  const r = el.getBoundingClientRect()
+  const dx = x - r.left
+  const dy = y - r.top
+  return (vbar && dx >= Math.min(el.clientLeft + el.clientWidth, r.width - SCROLLBAR_ZONE)) || (hbar && dy >= Math.min(el.clientTop + el.clientHeight, r.height - SCROLLBAR_ZONE))
+}
+
 interface Props {
   serverId: number
   files: FileView[] // the post's previewable files (images and texts)
@@ -59,6 +81,12 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
   // own click handler — fired right after, since the drag can end with the
   // pointer over the backdrop — doesn't treat it as a backdrop click.
   const draggedRef = useRef(false)
+  // Where the last press started (pointerdown, captured on the dialog): a
+  // click only closes the viewer when the press started on the same empty
+  // area it ended on, did not move (a text selection dragged from a PDF
+  // page — or from the empty area into a page — ends in a `click` on their
+  // common ancestor, the empty scroller) and was not on a scrollbar.
+  const downRef = useRef<{ target: EventTarget | null; x: number; y: number; onBar: boolean } | null>(null)
   // Set right before switching from Rendered to Source in response to
   // Ctrl+F (see below); read once by TextView's mount effect to focus the
   // search field, then cleared — a normal Source/Rendered toggle click (or
@@ -111,6 +139,9 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       return
     }
     const target = e.target as HTMLElement
+    const down = downRef.current
+    if (down && (down.target !== target || down.onBar || Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_SLOP)) return
+    if (onScrollbar(target, e.clientX, e.clientY)) return
     // A literal hit on this handler's own element (the classic "backdrop"
     // case), or a hit on ImageZoom's root div: that div fills the whole
     // pane (so the image can be centered/panned within it) and sits in
@@ -119,10 +150,12 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
     // clicking the empty area, not the pane div underneath (833c3e6 made
     // that space unreachable by `target === currentTarget` alone). A click
     // on the <img> itself (or any other control) has that element as its
-    // target, never this one, so it's unaffected. Other viewer kinds
-    // (video/audio, markdown/text, file cards) don't need this: video/audio
-    // has no such wrapper, and markdown/text intentionally fill the pane
-    // with real content that must not close on click.
+    // target, never this one, so it's unaffected. PdfView marks its root and
+    // its scroller the same way (the dark area around the pages; a page box
+    // is not marked, so clicks on a page — text selection — never close).
+    // Other viewer kinds (video/audio, markdown/text, file cards) don't need
+    // this: video/audio has no such wrapper, and markdown/text intentionally
+    // fill the pane with real content that must not close on click.
     const isEmptyArea = target === e.currentTarget || target.hasAttribute('data-viewer-empty')
     if (isEmptyArea) {
       // Stop this bubbling further: the dialog's own onClick also uses
@@ -150,7 +183,17 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
     return v
   }
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={t('viewer.label')} className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg" onClick={closeOnBackdrop}>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('viewer.label')}
+      className="fixed inset-0 z-50 flex flex-col bg-black/85 text-fg"
+      onPointerDownCapture={(e) => {
+        downRef.current = { target: e.target, x: e.clientX, y: e.clientY, onBar: onScrollbar(e.target, e.clientX, e.clientY) }
+      }}
+      onClick={closeOnBackdrop}
+    >
       <header className="flex items-center gap-3 px-4 py-2 text-sm">
         <span className="min-w-0 truncate font-medium">{file.name}</span>
         <span className="shrink-0 text-xs text-fg-muted">{formatSize(file.size)}</span>

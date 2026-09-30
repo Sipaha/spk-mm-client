@@ -323,6 +323,36 @@ test('receipt: opens at the webapp\'s 175%, centred; a narrow window caps it at 
   await expect(v).toHaveCount(0)
 })
 
+// User request 2026-09-30: a click on the empty dark area around the page
+// closes the viewer (like the image viewer); a click on the page, or a
+// text-selection drag from the page onto the dark area, does not.
+test('receipt: a click on the dark area closes the viewer; a click or selection drag on the page does not', async ({ page }) => {
+  await signInAlice(page)
+  await channel(page, /^bob/).click()
+  await feed(page).getByRole('button', { name: 'View Receipt-1234-5678-9012.pdf' }).click()
+  const v = viewer(page)
+  await expect(v.getByText(/^\d+ \/ \d+$/)).toHaveText('1 / 1')
+  const span = v.locator('[data-page="1"] .pdf-text-layer span', { hasText: 'Receipt' }).first()
+  await expect(span).toBeVisible({ timeout: 15_000 })
+  const pageBox = (await v.locator('[data-page="1"]').boundingBox())!
+
+  // A plain click on the page (its text).
+  const sb = (await span.boundingBox())!
+  await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2)
+  await expect(v).toBeVisible()
+  // A selection drag from the page's text out onto the dark area left of it.
+  await page.mouse.move(sb.x + sb.width - 2, sb.y + sb.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(pageBox.x - 20, sb.y + sb.height / 2, { steps: 5 })
+  await page.mouse.up()
+  expect((await page.evaluate(() => window.getSelection()?.toString() ?? '')).length).toBeGreaterThan(0)
+  await expect(v).toBeVisible()
+
+  // A plain click on the dark area left of the page.
+  await page.mouse.click(pageBox.x - 20, pageBox.y + 200)
+  await expect(v).toHaveCount(0)
+})
+
 test('a broken PDF (spec.pdf) falls back to the file card, no iframe/embed/object', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()

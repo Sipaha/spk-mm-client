@@ -467,3 +467,14 @@ test('Fit width pressed again returns to the default zoom', async () => {
   expect(await screen.findByText('175%')).toBeInTheDocument()
   expect(fitButton).toHaveAttribute('aria-pressed', 'false')
 })
+
+// The dark area around the pages is the viewer's "empty area" (Viewer.tsx
+// closes on a click there); the page boxes themselves are not.
+test('root and scroller are marked as the viewer\'s empty area, page boxes are not', async () => {
+  const { container } = render(<PdfView serverId={1} file={file} onFail={vi.fn()} />)
+  await screen.findByText('1 / 5')
+  const scroller = container.querySelector('.overflow-auto') as HTMLElement
+  expect(scroller).toHaveAttribute('data-viewer-empty', 'true')
+  expect(container.firstElementChild).toHaveAttribute('data-viewer-empty', 'true')
+  for (const b of Array.from(container.querySelectorAll('[data-page]'))) expect(b).not.toHaveAttribute('data-viewer-empty')
+})

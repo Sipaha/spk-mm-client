@@ -18,7 +18,22 @@ vi.mock('./PdfView', () => ({
       onFail()
       return null
     }
-    return <div data-testid="pdf-view">{file.name}</div>
+    // PdfView's own shape, as far as Viewer's empty-area click cares: an
+    // empty-marked root and scroller, a toolbar, and a page box (unmarked)
+    // with text in it.
+    return (
+      <div data-testid="pdf-view" data-viewer-empty="true">
+        <div data-testid="pdf-toolbar">
+          <span>{file.name}</span>
+          <button type="button">Zoom in</button>
+        </div>
+        <div data-testid="pdf-scroller" data-viewer-empty="true">
+          <div data-page="1">
+            <span>Receipt text</span>
+          </div>
+        </div>
+      </div>
+    )
   },
 }))
 
@@ -118,7 +133,7 @@ test('clicking the empty area around the image closes the viewer, while loading 
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
-  fireEvent.click(emptyArea)
+  await userEvent.click(emptyArea) // a real click: pointerdown + click on the same element
   expect(onClose).toHaveBeenCalledTimes(1)
 
   onClose.mockClear()
@@ -127,7 +142,7 @@ test('clicking the empty area around the image closes the viewer, while loading 
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
-  fireEvent.click(emptyArea)
+  await userEvent.click(emptyArea) // a real click: pointerdown + click on the same element
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
@@ -141,7 +156,7 @@ test('at zoom > 1, clicking the visible image still does not close; clicking the
 
   await userEvent.click(el)
   expect(onClose).not.toHaveBeenCalled()
-  fireEvent.click(emptyArea)
+  await userEvent.click(emptyArea) // a real click: pointerdown + click on the same element
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
@@ -465,4 +480,73 @@ test('a toast shows inside the open viewer, above everything under it', () => {
   expect(screen.getByRole('dialog', { name: 'File viewer' })).toContainElement(screen.getByText(/Could not download build\.png/))
   unmount()
   useStore.setState({ toast: null })
+})
+
+// User request 2026-09-30: a plain click on the empty dark area of the PDF
+// viewer (around the pages) closes it, like the image viewer — but never a
+// click on a page, a text-selection drag (from a page to the empty area, or
+// the other way round), a scrollbar press/drag, the wheel or the toolbar.
+describe('pdf: clicking the empty area closes the viewer', () => {
+  async function openPdf() {
+    const onClose = vi.fn()
+    render(<Viewer serverId={1} files={[pdf]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+    await screen.findByTestId('pdf-view')
+    return { onClose, scroller: screen.getByTestId('pdf-scroller'), page: screen.getByText('Receipt text') }
+  }
+  const at = { clientX: 100, clientY: 100 }
+
+  test('a click on the dark area around the page closes it', async () => {
+    const { onClose, scroller } = await openPdf()
+    fireEvent.pointerDown(scroller, at)
+    fireEvent.click(scroller, at)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('a click on the page (its text) does not', async () => {
+    const { onClose, page } = await openPdf()
+    fireEvent.pointerDown(page, at)
+    fireEvent.click(page, at)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('a text-selection drag from the page that ends on the empty area does not (click lands on the scroller)', async () => {
+    const { onClose, page, scroller } = await openPdf()
+    fireEvent.pointerDown(page, at)
+    fireEvent.click(scroller, { clientX: 300, clientY: 120 })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('a drag that starts on the empty area and moves (a selection into the page) does not', async () => {
+    const { onClose, scroller } = await openPdf()
+    fireEvent.pointerDown(scroller, at)
+    fireEvent.click(scroller, { clientX: 160, clientY: 100 })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('a press on the scroller\'s scrollbar (overlay or classic) does not', async () => {
+    const { onClose, scroller } = await openPdf()
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 800 })
+    Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 1000 }) // overlay: no layout width
+    scroller.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800, x: 0, y: 0, toJSON: () => ({}) })
+    const bar = { clientX: 993, clientY: 400 }
+    fireEvent.pointerDown(scroller, bar)
+    fireEvent.click(scroller, bar)
+    expect(onClose).not.toHaveBeenCalled()
+    // …while a click well inside the same scroller still closes.
+    fireEvent.pointerDown(scroller, { clientX: 500, clientY: 400 })
+    fireEvent.click(scroller, { clientX: 500, clientY: 400 })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('the wheel and toolbar clicks do not', async () => {
+    const { onClose, scroller } = await openPdf()
+    fireEvent.wheel(scroller, { deltaY: 100 })
+    const zoomIn = screen.getByRole('button', { name: 'Zoom in' })
+    fireEvent.pointerDown(zoomIn, at)
+    fireEvent.click(zoomIn, at)
+    fireEvent.pointerDown(screen.getByTestId('pdf-toolbar'), at)
+    fireEvent.click(screen.getByTestId('pdf-toolbar'), at)
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

@@ -354,7 +354,12 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
   const btn = 'rounded px-2 py-0.5 hover:bg-hover'
   const pages = Array.from({ length: n }, (_, k) => k + 1)
   return (
-    <div className="flex h-full w-full min-w-0 flex-col">
+    // data-viewer-empty (root and scroller, not the page boxes): the dark
+    // area around the pages counts as the viewer's empty area — a click
+    // there closes the viewer, like the image viewer's (Viewer.tsx's
+    // closeOnBackdrop, which also ignores drags, text selections and
+    // scrollbar presses).
+    <div data-viewer-empty="true" className="flex h-full w-full min-w-0 flex-col">
       {/* bg-panel (opaque): fix round 1, controller review — this row had no
           background of its own and relied on the dialog's translucent
           bg-black/85 backdrop, so the sidebar behind the viewer showed
@@ -374,7 +379,7 @@ export default function PdfView({ serverId, file, onFail }: { serverId: number; 
           {t('pdf.fitWidth')}
         </button>
       </div>
-      <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
+      <div ref={scroller} data-viewer-empty="true" className="min-h-0 flex-1 overflow-auto">
         {base &&
           pages.map((i) => {
             // bg-panel, not a hard-coded white: the app is dark by default
