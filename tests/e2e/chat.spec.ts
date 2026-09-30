@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { apiCall, channel, expectSent, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
 // Sidebar-menu fix/addendum screenshots (2026-09-29): a fixed absolute path
@@ -120,11 +120,30 @@ test('edit with arrow-up, delete with confirmation', async ({ page }) => {
   await removeServerFromMenu(page)
 })
 
+// latestPost: a fresh post from bob, the feed's last row. The hover tests
+// below used a seed post («Message #140») whose place on screen depends on
+// how much every earlier test posted into Town Square (the fake is shared by
+// the whole run). In some runs it sat half above the feed's top edge: the
+// hover scrolled it into view by less than NEAR_BOTTOM, the feed stayed "at
+// its bottom", the next update right after sign-in (read state, sidebar)
+// pinned it back down, the post slid from under the pointer and its toolbar
+// — rendered only while hovered — was gone for good (the click waited 30 s
+// for a button nothing would show again). The last row is fully on screen
+// at the bottom: hovering it scrolls nothing, and a re-pin moves nothing.
+async function latestPost(page: Page) {
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  const text = unique('hover target')
+  await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: text })
+  const post = feed(page).locator('article', { hasText: text })
+  await expect(post).toBeInViewport({ ratio: 1 })
+  return { post, text }
+}
+
 test('mark as unread keeps the channel unread while it is open', async ({ page }) => {
   await signInAlice(page)
   const unread = async () => ((await apiCall(page, 'ListServers')) as { unread: boolean }[]).at(-1)?.unread
-  await expect.poll(unread).toBe(false) // baseline: nothing unread, so the dot below comes from this action
-  const post = feed(page).locator('article', { hasText: 'Message #140' })
+  const { post } = await latestPost(page)
+  await expect.poll(unread).toBe(false) // baseline: bob's post is read in the open channel, so the dot below comes from this action
   await post.hover()
   await post.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: 'Mark as unread' }).click()
@@ -142,14 +161,15 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
 // #4, UI pass 2026-09-28).
 test('save a post for later: hover, Save, reload keeps it, then unsave', async ({ page }) => {
   await signInAlice(page)
-  const post = feed(page).locator('article', { hasText: 'Message #140' })
+  const { post, text } = await latestPost(page)
   await post.hover()
   await post.getByRole('button', { name: 'Save' }).click()
   await expect(post.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
 
   await page.reload()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
-  const postAfterReload = feed(page).locator('article', { hasText: 'Message #140' })
+  const postAfterReload = feed(page).locator('article', { hasText: text })
+  await expect(postAfterReload).toBeInViewport({ ratio: 1 })
   await postAfterReload.hover()
   await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
 
@@ -242,14 +262,18 @@ const DENSITY_SHOTS = '/home/spk/.spk/sawe/ss/Mattermost/.agents/tmp/density-sho
 test('post toolbar: a short post keeps it inside the post; a long wrapping post or an attachment card overhangs above', async ({ page }) => {
   await signInAlice(page)
   const short = unique('short toolbar test post')
-  const long = unique('a very long wrapping toolbar test message') +
+  // Located by their unique parts: the same test run twice against one fake
+  // (--repeat-each) would otherwise find the previous run's copies too.
+  const longHead = unique('a very long wrapping toolbar test message')
+  const attachmentTitle = unique('toolbar-test-attachment')
+  const long = longHead +
     ' padded out with enough extra words that it wraps across more than one line and its own last line of text reaches under the top-right corner where the hover toolbar would otherwise sit, forcing it to move above the post instead of covering that text.'
   await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: short })
   await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: long })
   await testPost(page, 'fake/webhook', {
     channel_id: 'c-town', username: 'bob', message: '', override_username: 'jenkins',
     override_icon_url: '/static/images/webhook-icon.png',
-    attachments: [{ color: '#00c100', title: unique('toolbar-test-attachment'), text: 'Branch: **master**', footer: 'build #1' }],
+    attachments: [{ color: '#00c100', title: attachmentTitle, text: 'Branch: **master**', footer: 'build #1' }],
   })
   await page.reload()
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
@@ -268,7 +292,7 @@ test('post toolbar: a short post keeps it inside the post; a long wrapping post 
   await page.screenshot({ path: `${DENSITY_SHOTS}/toolbar-e2e-1-short-inside.png` })
   await page.mouse.move(5, 5)
 
-  const longPost = feed(page).locator('article', { hasText: 'a very long wrapping toolbar test message' })
+  const longPost = feed(page).locator('article', { hasText: longHead })
   await longPost.hover()
   const longToolbar = longPost.getByTestId('post-toolbar')
   await expect(longToolbar).toBeVisible()
@@ -279,7 +303,7 @@ test('post toolbar: a short post keeps it inside the post; a long wrapping post 
   await page.screenshot({ path: `${DENSITY_SHOTS}/toolbar-e2e-2-wrapping-overhang.png` })
   await page.mouse.move(5, 5)
 
-  const attachmentPost = feed(page).locator('article', { hasText: 'toolbar-test-attachment' })
+  const attachmentPost = feed(page).locator('article', { hasText: attachmentTitle })
   await attachmentPost.hover()
   const attachmentToolbar = attachmentPost.getByTestId('post-toolbar')
   await expect(attachmentToolbar).toBeVisible()
