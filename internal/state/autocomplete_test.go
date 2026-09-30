@@ -82,3 +82,19 @@ func TestPostViewsOfForeignPosts(t *testing.T) {
 	vs := s.PostViews([]model.Post{{ID: "p1", UserID: "u2", ChannelID: "elsewhere", Message: "hi", CreateAt: 5, ReplyCount: 2}})
 	assert.Equal(t, []PostView{{ID: "p1", UserID: "u2", Author: "bob", Avatar: "7", Status: "online", Message: "hi", CreateAt: 5, ReplyCount: 2}}, vs)
 }
+
+// Review (Codex) 2: a hit's own webhook picture would be served from
+// /media/<srv>/posticon/<id>, which resolves held posts only — a hit is
+// not held, so it shows the generic webhook icon (no URL in the DTO); an
+// emoji icon needs no lookup and stays.
+func TestPostViewsOfForeignWebhookPostsUseTheGenericIcon(t *testing.T) {
+	s := newFixture()
+	url := model.Post{ID: "p1", UserID: "u2", Props: model.PostProps{FromWebhook: true, OverrideIconURL: "https://gitlab.example/fox.png"}}
+	emo := model.Post{ID: "p2", UserID: "u2", Props: model.PostProps{FromWebhook: true, OverrideIconEmoji: ":tada:"}}
+	vs := s.PostViews([]model.Post{url, emo})
+	assert.Equal(t, "webhook", vs[0].Icon)
+	assert.Empty(t, vs[0].IconVersion)
+	assert.Equal(t, ":tada:", vs[1].Icon)
+	_, ok := s.PostIconURL("p1")
+	assert.False(t, ok, "the media route would not find it")
+}

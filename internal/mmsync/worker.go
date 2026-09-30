@@ -207,12 +207,16 @@ type Worker struct {
 	emojiLoad   atomic.Bool           // custom emoji list read (or being read) by this worker
 	missMu      sync.Mutex
 	emojiMiss   map[string]time.Time // custom emoji names the server does not have
-	usersMu     sync.Mutex
-	lanesMu     sync.Mutex
-	lanes       map[string]*histLane // channel id → its history operations (jump.go)
-	ac          *acCache             // composer autocomplete answers (aclru.go); cleared when Run ends
-	bg          sync.WaitGroup
-	live        liveMark
+	// usersSem serialises profile reads (loadUsers, refreshUsers,
+	// ReactionUsers, loadProfiles): a 1-slot semaphore, so a waiter gives up
+	// with its ctx (lockUsers) instead of sitting in a Mutex until another
+	// read's slow chunks are done.
+	usersSem chan struct{}
+	lanesMu  sync.Mutex
+	lanes    map[string]*histLane // channel id → its history operations (jump.go)
+	ac       *acCache             // composer autocomplete answers (aclru.go); cleared when Run ends
+	bg       sync.WaitGroup
+	live     liveMark
 
 	// only touched by the Run goroutine
 	resume ws.Resume
@@ -243,6 +247,7 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		st:         state.New(cfg.Now),
 		nudge:      make(chan struct{}, 1),
 		authFail:   make(chan struct{}, 1),
+		usersSem:   make(chan struct{}, 1),
 		metaReq:    make(chan struct{}, 1),
 		metaDue:    make(chan struct{}, 1),
 		statusDue:  make(chan struct{}, 1),
@@ -937,9 +942,28 @@ func (w *Worker) metaLoop(ctx context.Context) {
 	}
 }
 
+// lockUsers enters profile serialisation (usersSem), giving up — false —
+// once ctx ends; true: the caller holds it (unlockUsers) with ctx alive.
+func (w *Worker) lockUsers(ctx context.Context) bool {
+	select {
+	case w.usersSem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	if ctx.Err() != nil { // both were ready: select may have taken the slot
+		w.unlockUsers()
+		return false
+	}
+	return true
+}
+
+func (w *Worker) unlockUsers() { <-w.usersSem }
+
 func (w *Worker) loadUsers(ctx context.Context) {
-	w.usersMu.Lock()
-	defer w.usersMu.Unlock()
+	if !w.lockUsers(ctx) {
+		return
+	}
+	defer w.unlockUsers()
 	ids := w.st.MissingUserIDs()
 	if len(ids) == 0 {
 		return
@@ -970,8 +994,10 @@ func (w *Worker) refreshUsers(ctx context.Context, ids []string, since int64) {
 	if since > 0 {
 		since = max(1, since-sinceMargin.Milliseconds())
 	}
-	w.usersMu.Lock()
-	defer w.usersMu.Unlock()
+	if !w.lockUsers(ctx) {
+		return
+	}
+	defer w.unlockUsers()
 	users, err := w.rc.UsersByIDsSince(ctx, ids, since)
 	if err != nil {
 		if sessionExpired(err) {

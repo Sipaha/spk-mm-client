@@ -24,12 +24,15 @@ func (w *Worker) ReactionUsers(ctx context.Context, postID, emoji string) (state
 	}
 	if missing := w.st.MissingAmong(ids); len(missing) > 0 {
 		// A func literal so defer actually protects the unlock (matching
-		// loadUsers/refreshUsers's own w.usersMu.Lock(); defer Unlock() —
+		// loadUsers/refreshUsers's own lockUsers; defer unlockUsers —
 		// fix round 1: this used to unlock manually after the call, which
-		// would leave the mutex held forever if UsersByIDs ever panicked).
+		// would leave the lock held forever if UsersByIDs ever panicked).
+		// A caller that gives up while waiting gets what state knows.
 		func() {
-			w.usersMu.Lock()
-			defer w.usersMu.Unlock()
+			if !w.lockUsers(ctx) {
+				return
+			}
+			defer w.unlockUsers()
 			users, err := w.rc.UsersByIDs(ctx, missing)
 			if err != nil {
 				if sessionExpired(err) {

@@ -207,13 +207,19 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 
 // PostViews renders posts no window may hold (search hits) the way the
 // feed does: the author's name, picture version and status from the held
-// profiles (load missing ones first).
+// profiles (load missing ones first). A webhook's own picture by URL
+// (Icon "post") is served by /media/<srv>/posticon/<id> from held posts
+// only (PostIconURL): these show the generic webhook icon instead.
 func (s *Server) PostViews(posts []model.Post) []PostView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]PostView, 0, len(posts))
 	for _, p := range posts {
-		out = append(out, s.postViewLocked(p))
+		v := s.postViewLocked(p)
+		if v.Icon == "post" {
+			v.Icon, v.IconVersion = "webhook", ""
+		}
+		out = append(out, v)
 	}
 	return out
 }

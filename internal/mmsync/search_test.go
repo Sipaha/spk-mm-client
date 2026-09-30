@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -243,4 +244,47 @@ func TestSearchSuggestIsTeamScoped(t *testing.T) {
 
 	_, err = h.w.SearchSuggest(ctx, "t-fake", ACEmoji, "")
 	require.ErrorIs(t, err, ErrSuggestKind)
+}
+
+// Review (Codex) 1: a search whose author profile must be read waits for
+// another profile read (loadUsers' slow chunks) — cancelling the search
+// must end that wait at once, not when the other read is done.
+func TestSearchProfileWaitHonorsCancellation(t *testing.T) {
+	h := liveHarness(t, mmfake.Options{ExtraUsers: 1})
+	require.NotEmpty(t, h.w.State().MissingAmong([]string{"u-dave"}))
+	require.True(t, h.w.lockUsers(context.Background())) // another read in flight
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.w.loadProfiles(ctx, []string{"u-dave"}); close(done) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	returned := false
+	select {
+	case <-done:
+		returned = true
+	case <-time.After(150 * time.Millisecond):
+	}
+	h.w.unlockUsers()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("did not finish after unlocking")
+	}
+	require.True(t, returned, "cancelled search hydration waits on an unrelated profile reader")
+	require.True(t, h.w.lockUsers(context.Background()), "a waiter that gave up left the lock free")
+	h.w.unlockUsers()
+}
+
+// A waiter asks only for what the read it waited for did not bring.
+func TestSearchProfileWaitRechecksWhatIsMissing(t *testing.T) {
+	h := liveHarness(t, mmfake.Options{ExtraUsers: 1})
+	require.True(t, h.w.lockUsers(context.Background()))
+	done := make(chan struct{})
+	go func() { h.w.loadProfiles(context.Background(), []string{"u-dave"}); close(done) }()
+	time.Sleep(20 * time.Millisecond)
+	before := h.fake.Hits("POST", "/api/v4/users/ids")
+	h.w.State().SetUsers([]model.User{{ID: "u-dave", Username: "dave"}}) // the other read brought dave
+	h.w.unlockUsers()
+	<-done
+	assert.Equal(t, before, h.fake.Hits("POST", "/api/v4/users/ids"), "nothing left to read")
 }

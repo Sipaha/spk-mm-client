@@ -126,14 +126,20 @@ func (w *Worker) SearchPosts(ctx context.Context, teamID, terms string, page, tz
 }
 
 // loadProfiles reads the profiles of ids the state lacks, in one batch
-// under usersMu (like ReactionUsers); a failure leaves them unnamed.
+// under the profile lock (lockUsers, like ReactionUsers) — best effort: a
+// failure leaves them unnamed; a caller that gives up while waiting for
+// another read returns at once (its ctx error is the caller's to check).
 func (w *Worker) loadProfiles(ctx context.Context, ids []string) {
-	missing := w.st.MissingAmong(uniq(ids))
+	ids = uniq(ids)
+	if len(w.st.MissingAmong(ids)) == 0 || !w.lockUsers(ctx) {
+		return
+	}
+	defer w.unlockUsers()
+	// The read we may have waited for could have brought some of them.
+	missing := w.st.MissingAmong(ids)
 	if len(missing) == 0 {
 		return
 	}
-	w.usersMu.Lock()
-	defer w.usersMu.Unlock()
 	users, err := w.rc.UsersByIDs(ctx, missing)
 	if err != nil {
 		if sessionExpired(err) {
