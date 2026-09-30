@@ -5,7 +5,7 @@ import { t } from '../i18n'
 import { streamURL, useLoadFailure } from '../media'
 import { useLiveEpoch } from '../store'
 import { FileCard, IconButton, type FileHandlers } from './FileCard'
-import { videoBox } from './files'
+import { boxStyle, videoBox } from './files'
 import { IconAudio, IconExpand, IconPlay } from './icons'
 import { registerMediaElement, releaseMediaElement } from './mediaSession'
 
@@ -137,7 +137,7 @@ export function MediaPlayer({ serverId, file, kind, big = false, onDownload, onO
     if (url) ref.current?.play().catch(() => {})
   }
   return (
-    <div className="relative shrink-0 overflow-hidden rounded border border-line bg-black" style={box}>
+    <div className="relative shrink-0 overflow-hidden rounded border border-line bg-black" style={boxStyle(box)}>
       <video
         ref={ref}
         controls={wantsPlay}

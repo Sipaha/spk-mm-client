@@ -2,7 +2,7 @@ import type { FileView } from '../api/types'
 import { t } from '../i18n'
 import { mediaURL, useLoadFailure } from '../media'
 import { FileCard, StagedProgress, type FileHandlers } from './FileCard'
-import { fileKind, fitBox, imageSrc } from './files'
+import { boxStyle, fileKind, fitBox, imageSrc } from './files'
 import { MarkdownSnippet } from './MarkdownSnippet'
 import { MediaPlayer } from './MediaPlayer'
 import { TextSnippet } from './TextSnippet'
@@ -38,8 +38,8 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
   )
   if (file.staged) {
     return (
-      <div className="flex flex-col gap-1">
-        <div className="block shrink-0 overflow-hidden rounded border border-line bg-panel" style={{ width: box.width, height: box.height }}>
+      <div className="flex max-w-full flex-col gap-1">
+        <div className="block shrink-0 overflow-hidden rounded border border-line bg-panel" style={boxStyle(box)}>
           {img}
         </div>
         <StagedProgress file={file} />
@@ -53,7 +53,7 @@ function ImageTile({ serverId, file, big, onView, onDownload, onOpen }: { server
       title={file.name}
       onClick={() => onView(file)}
       className="block shrink-0 overflow-hidden rounded border border-line bg-panel focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-      style={{ width: box.width, height: box.height }}
+      style={boxStyle(box)}
     >
       {img}
     </button>
@@ -94,15 +94,19 @@ export function Attachments({
     // column), so `others`' own w-full below has something real to wrap
     // against.
     <div className="mt-1 flex w-full min-w-0 flex-col items-start gap-2">
+      {/* The media rows are w-full for the same reason as the cards' row
+          below: a box's max-width: 100% (boxStyle) is ignored while a
+          shrink-to-fit row takes its size from that box's 480 px, so the row
+          must have the column's width for the box to scale down to. */}
       {images.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full min-w-0 flex-wrap gap-2">
           {images.map((f) => (
             <ImageTile key={f.id} serverId={serverId} file={f} big={images.length === 1} {...h} />
           ))}
         </div>
       )}
       {videos.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full min-w-0 flex-wrap gap-2">
           {videos.map((f) => (
             <MediaPlayer key={f.id} serverId={serverId} file={f} kind="video" onView={h.onView} onDownload={h.onDownload} onOpen={h.onOpen} />
           ))}

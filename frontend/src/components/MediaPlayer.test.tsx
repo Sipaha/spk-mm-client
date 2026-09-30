@@ -31,7 +31,9 @@ test('video: fixed box before load, preload="none", poster placeholder; clicking
   expect(el).toHaveAttribute('preload', 'none')
   expect(el).not.toHaveAttribute('controls')
   // Fixed box up to the load — the feed must not jump once the stream resolves.
-  expect(el.parentElement).toHaveStyle({ width: '480px', height: '270px' })
+  // (up to the column's width: it scales down with its aspect ratio kept).
+  expect(el.parentElement).toHaveStyle({ width: '480px', maxWidth: '100%', aspectRatio: '480 / 270' })
+  expect(el.parentElement!.style.height).toBe('')
   const poster = screen.getByRole('button', { name: 'Play clip.webm' })
   expect(poster).toHaveTextContent('clip.webm')
   expect(poster).toHaveTextContent('42.5 KB')

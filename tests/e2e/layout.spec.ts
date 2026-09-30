@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
-import { apiCall, channel, fakePost, fakeURL, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed, threadPane, unique } from './helpers'
+import { crc32, deflateSync } from 'node:zlib'
+import { apiCall, channel, fakePost, fakeURL, feed, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed, threadPane, unique } from './helpers'
 
 // Theme brief 2026-09-28, scope 3a: resizable sidebar/thread-panel
 // splitters, app-wide persistence via internal/api's GetLayout/
@@ -243,5 +244,85 @@ test('fractional pointer coordinates save integer widths and survive a reload', 
   await expect(page.getByRole('complementary', { name: 'Server channels' })).toHaveJSProperty('offsetWidth', 313)
   await expect(threadPane(page)).toHaveJSProperty('offsetWidth', 538)
   await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/fractional-resize.png` })
+  await removeServerFromMenu(page)
+})
+
+// png: a real (all-black, greyscale) PNG of the given size — the fake reads
+// an upload's dimensions from its header, like Mattermost does.
+function png(width: number, height: number) {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const out = Buffer.alloc(body.length + 8)
+    out.writeUInt32BE(data.length, 0)
+    body.copy(out, 4)
+    out.writeUInt32BE(crc32(body), body.length + 4)
+    return out
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8 // bit depth; colour type 0 (greyscale), no interlace
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(Buffer.alloc((width + 1) * height))),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+// User report 2026-09-30 («когда открыта панель с диалогом скрол
+// горизонтальный появляется»): a single feed image (fitBox up to 480 px) and
+// a video poster (VIDEO_BOX, 480 px) had fixed pixel boxes; the open thread
+// panel narrowed the channel feed's content column below 480 px (≈1035 px
+// window) and the feed scroller got a horizontal scrollbar — the boxes must
+// scale down to the column, keeping their aspect ratio. Same for a markdown
+// image's link with a long URL.
+test('an open thread panel narrows the feed without horizontal overflow from images and videos', async ({ page }) => {
+  await page.setViewportSize({ width: 1035, height: 765 })
+  await signInAlice(page)
+  await apiCall(page, 'SetSidebarWidth', { width: 256 })
+  await apiCall(page, 'SetThreadWidth', { width: 480 })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  const fake = await fakeURL(page)
+  const login = await page.request.post(`${fake}/api/v4/users/login`, { data: { login_id: 'alice', password: 'secret' } })
+  expect(login.ok(), await login.text()).toBeTruthy()
+  const auth = { Authorization: `Bearer ${login.headers()['token']}` }
+  const send = async (message: string, filename: string, contentType: string, data: Buffer) => {
+    const up = await page.request.post(`${fake}/api/v4/files?channel_id=c-town&filename=${encodeURIComponent(filename)}`, {
+      headers: { ...auth, 'Content-Type': contentType },
+      data,
+    })
+    expect(up.ok(), await up.text()).toBeTruthy()
+    const fileId = ((await up.json()).file_infos[0] as { id: string }).id
+    const post = await page.request.post(`${fake}/api/v4/posts`, { headers: auth, data: { channel_id: 'c-town', message, file_ids: [fileId] } })
+    expect(post.ok(), await post.text()).toBeTruthy()
+    return ((await post.json()) as { id: string }).id
+  }
+  const rootText = unique('wide picture')
+  const rootId = await send(rootText, 'wide.png', 'image/png', png(960, 540))
+  await send(unique('wide clip'), 'clip.webm', 'video/webm', Buffer.alloc(2048, 3))
+  await fakePost(page, 'c-town', 'bob', 'nice picture', rootId)
+  // A markdown image is a link with its URL for text: an unbreakable run in
+  // an inline-flex box, whose min-content width the column cannot shrink.
+  await fakePost(page, 'c-town', 'bob', `![](https://gitlab.example.com/uploads/${'a1b2c3d4'.repeat(12)}/screenshot.png)`)
+
+  await repliesLink(page, rootText, 1).click()
+  await expect(threadPane(page)).toBeVisible()
+  const picture = feed(page).getByRole('button', { name: 'View wide.png' })
+  await expect(picture).toBeVisible()
+  await expect(feed(page).getByRole('button', { name: 'Play clip.webm' })).toBeVisible()
+  await expect(threadFeed(page).getByRole('button', { name: 'View wide.png' })).toBeVisible()
+  await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/thread-panel-media-fit.png` })
+
+  for (const log of [feed(page), threadFeed(page)]) {
+    const { scrollWidth, clientWidth } = await log.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+    expect(scrollWidth).toBe(clientWidth)
+  }
+  await noOverflow(page)
+  // Scaled, not cropped: the box keeps the picture's 16:9.
+  const box = (await picture.boundingBox())!
+  expect(box.width).toBeLessThan(480)
+  expect(Math.abs(box.width / box.height - 16 / 9)).toBeLessThan(0.02)
   await removeServerFromMenu(page)
 })
