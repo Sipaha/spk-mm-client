@@ -114,12 +114,26 @@ export const Markdown = memo(function Markdown({
   onLink,
   serverId = 0,
   emojiInfo,
+  inline = false,
 }: {
   text: string
   me: string
   onLink(href: string): void
   serverId?: number
   emojiInfo?: () => Promise<EmojiDTO>
+  // inline (channel/thread header text, header-markdown-brief 2026-09-30):
+  // the caller owns single-line clamping (a `truncate` container with a
+  // `title` holding the raw text) — this flag only keeps *us* from ever
+  // emitting a block box that would fight it. Every element the standard
+  // renderer would otherwise put on its own line (paragraphs, headings,
+  // blockquotes, lists, code fences, <hr>) renders as its children only, and
+  // a line break — hard (blank line -> new paragraph, both collapse to the
+  // same "next paragraph" children-only case) or soft (remarkBreaks' <br>) —
+  // becomes a single space instead, so arbitrary multi-line/multi-block
+  // input still comes out as one inline run for the container to clamp.
+  // Root wraps in <span>, not <div>, so it never breaks its parent's own
+  // inline/flex flow.
+  inline?: boolean
 }) {
   // The whole-message jumbo rule (mm-10.11): only ":name:" shortcodes and
   // whitespace, AND every one of them resolves (standard or known-custom) —
@@ -186,11 +200,34 @@ export const Markdown = memo(function Markdown({
       </div>
     ),
   }
+  // inlineComponents: only the block-level tags need overriding — anything
+  // already inline (a/img/span/strong/em/code/...) is left to `components`
+  // above. children-only (no wrapping element at all) rather than a <span>
+  // per node: a <span> per paragraph/list item is still a valid child of an
+  // inline run, but nesting many of them buys nothing here and keeps a flat,
+  // easy-to-read DOM for the single line this always ends up as.
+  const inlineComponents: Components = {
+    p: ({ children }) => <>{children} </>,
+    h1: ({ children }) => <>{children} </>,
+    h2: ({ children }) => <>{children} </>,
+    h3: ({ children }) => <>{children} </>,
+    h4: ({ children }) => <>{children} </>,
+    h5: ({ children }) => <>{children} </>,
+    h6: ({ children }) => <>{children} </>,
+    blockquote: ({ children }) => <>{children} </>,
+    ul: ({ children }) => <>{children}</>,
+    ol: ({ children }) => <>{children}</>,
+    li: ({ children }) => <>{children} </>,
+    pre: ({ children }) => <>{children}</>,
+    hr: () => <>{' '}</>,
+    br: () => <>{' '}</>,
+  }
+  const Wrapper: 'span' | 'div' = inline ? 'span' : 'div'
   return (
-    <div className="md break-words">
-      <ReactMarkdown remarkPlugins={plugins} skipHtml components={components}>
+    <Wrapper className={inline ? undefined : 'md break-words'}>
+      <ReactMarkdown remarkPlugins={plugins} skipHtml components={inline ? { ...components, ...inlineComponents } : components}>
         {text}
       </ReactMarkdown>
-    </div>
+    </Wrapper>
   )
 })

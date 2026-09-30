@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { vi } from 'vitest'
 import type { ChannelDTO, ServerDTO } from '../api/types'
 import { setLocale } from '../i18n'
@@ -117,4 +117,45 @@ test('the composer tray reflects the store\'s attachments for this channel', () 
   })
   render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
   expect(screen.getByText('shot.png')).toBeInTheDocument()
+})
+
+// --- header-markdown-brief 2026-09-30 (user report: icon not aligned with
+// the name, header too tall, raw markdown shown in the header text) ---
+
+test('header: the type icon and channel name are both flex children of the h1, centred by items-center (not baseline)', () => {
+  const { container } = render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
+  const h1 = container.querySelector('h1')!
+  expect(h1).toHaveClass('flex', 'items-center')
+  // The icon's own box has a fixed width and centres its svg on both axes —
+  // no reliance on inline-flow baseline synthesis (the bug: an inline-flex
+  // span's vertical-align is its own baseline, not the sibling text's).
+  const iconBox = h1.querySelector('svg')!.parentElement!
+  expect(iconBox).toHaveClass('flex', 'items-center', 'justify-center')
+  const nameSpan = h1.querySelector('span.truncate')!
+  expect(nameSpan.textContent).toBe('Town Square')
+})
+
+test('header: the row is compact (py-1.5, not the old py-2) and still items-center for consistent vertical centring', () => {
+  const { container } = render(<ChannelPane server={server()} channel={channel()} onReauth={() => {}} />)
+  const header = container.querySelector('header')!
+  expect(header).toHaveClass('items-center', 'py-1.5')
+  expect(header).not.toHaveClass('items-baseline', 'py-2')
+})
+
+test('header: a markdown channel header renders as inline markdown — link element present, no raw brackets, title keeps the raw text', () => {
+  const ch = channel({ header: 'Board: [Sprint](https://jira.example.com/sprint) | [Kanban](https://jira.example.com/kanban)' })
+  const { container } = render(<ChannelPane server={server()} channel={ch} onReauth={() => {}} />)
+  const holder = container.querySelector('[title^="Board: ["]')!
+  expect(holder).toHaveAttribute('title', ch.header)
+  expect(holder).toHaveClass('truncate')
+  expect(holder.textContent).not.toContain('[Sprint]')
+  expect(holder.textContent).not.toContain('(https://jira.example.com/sprint)')
+  const links = within(holder as HTMLElement).getAllByRole('link')
+  expect(links.map((l) => l.textContent)).toEqual(['Sprint', 'Kanban'])
+  expect(links[0]).toHaveAttribute('href', 'https://jira.example.com/sprint')
+})
+
+test('header: no channel header means no header-text element at all', () => {
+  const { container } = render(<ChannelPane server={server()} channel={channel({ header: '' })} onReauth={() => {}} />)
+  expect(container.querySelector('header .text-xs.text-fg-muted')).toBeNull()
 })

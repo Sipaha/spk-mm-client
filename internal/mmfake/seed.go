@@ -66,6 +66,12 @@ func (s *Server) seed() {
 	}
 	add("c-town", model.ChannelOpen, "Town Square", "town-square", townUsers...)
 	add("c-offtopic", model.ChannelOpen, "Off-Topic", "off-topic", "u-alice", "u-bob")
+	// A markdown channel header (header-markdown-brief 2026-09-30): the seed
+	// had no channel with one at all before this — the user's report (raw
+	// "[Сприит](https://…)" shown literally in the header bar) needs a
+	// channel whose header actually contains a markdown link to exercise the
+	// fix, in both a browser-mode screenshot and tests/e2e.
+	s.chat.channels["c-offtopic"].Header = "Board: [Sprint](https://example.com/sprint) | [Kanban](https://example.com/kanban)"
 	add("c-secret", model.ChannelPrivate, "Secret", "secret", "u-alice")
 	// A public channel alice is not in: "Other Channels" of ~ autocomplete.
 	add("c-offices", model.ChannelOpen, "Offices", "offices", "u-bob")

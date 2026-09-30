@@ -185,6 +185,51 @@ test('emoji: a shortcode inside a markdown link\'s label converts; the URL itsel
   expect(onLink).toHaveBeenCalledWith('https://example.com')
 })
 
+// --- inline mode (header-markdown-brief 2026-09-30) ---
+
+test('inline: a link renders clickable, wrapped in a span not a div, no raw brackets', async () => {
+  const onLink = vi.fn()
+  const { container } = render(
+    <Markdown text={'Board: [Sprint](https://example.com/sprint)'} me="alice" onLink={onLink} serverId={1} inline />,
+  )
+  expect(container.querySelector('div')).toBeNull()
+  expect(container.firstElementChild!.tagName).toBe('SPAN')
+  expect(container.textContent).not.toContain('[Sprint]')
+  expect(container.textContent).not.toContain('(https://example.com/sprint)')
+  const link = screen.getByRole('link', { name: 'Sprint' })
+  await userEvent.click(link)
+  expect(onLink).toHaveBeenCalledWith('https://example.com/sprint')
+})
+
+test('inline: no block elements render — paragraphs, a heading and a list all flatten to text', () => {
+  const { container } = render(
+    <Markdown text={'# Title\n\nfirst para\n\n- one\n- two\n\n> quoted'} me="alice" onLink={() => {}} serverId={1} inline />,
+  )
+  for (const tag of ['h1', 'p', 'ul', 'li', 'blockquote']) expect(container.querySelector(tag)).toBeNull()
+  expect(container.textContent).toContain('Title')
+  expect(container.textContent).toContain('first para')
+  expect(container.textContent).toContain('one')
+  expect(container.textContent).toContain('two')
+  expect(container.textContent).toContain('quoted')
+})
+
+test('inline: a soft line break becomes a space, not a <br> — stays one visual line', () => {
+  const { container } = render(<Markdown text={'line one\nline two'} me="alice" onLink={() => {}} serverId={1} inline />)
+  // No <br> element: that's the part that would force a real line break even
+  // under the caller's `white-space: nowrap` (a raw "\n" character next to
+  // it — mdast-util-to-hast's break handler always emits one alongside the
+  // <br>, cosmetic only — is itself collapsible whitespace under nowrap, so
+  // it renders as a single space; only the element forces a hard break).
+  expect(container.querySelector('br')).toBeNull()
+  expect(container.textContent!.replace(/\s+/g, ' ').trim()).toBe('line one line two')
+})
+
+test('non-inline mode is unaffected: still a div with a real <p>', () => {
+  const { container } = render(<Markdown text={'hello'} me="alice" onLink={() => {}} serverId={1} />)
+  expect(container.querySelector('div.md')).not.toBeNull()
+  expect(container.querySelector('p')).not.toBeNull()
+})
+
 // ChannelMention's ~link (sidebar-sections-brief.md fix round 1): a third
 // origin, besides a Sidebar row click and a notification, that switches the
 // active channel — clicking it calls chat.ts's real openChannel (not a

@@ -15,6 +15,7 @@ import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
 import { ChannelTypeMarker, IconDownload } from './icons'
+import { Markdown } from './Markdown'
 import type { PostActions } from './PostItem'
 import { TOAST_HOST } from './Toast'
 import { Viewer } from './Viewer'
@@ -124,17 +125,52 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       className={`relative flex min-h-0 min-w-0 flex-1 flex-col bg-app ${dragActive ? 'file-drop-target-active' : ''}`}
       data-drop-label={t('composer.dropHint')}
     >
-      <header className="flex min-w-0 items-baseline gap-3 border-b border-line bg-panel px-4 py-2">
-        <h1 className="shrink-0 font-semibold text-fg">
-          <span className="mr-1 inline-flex items-center text-fg-subtle">
-            <ChannelTypeMarker type={channel.type} />
+      {/* header height/alignment (header-markdown-brief 2026-09-30, user
+          report): was items-baseline with the type icon as an inline-flex
+          span inside the <h1>'s own text flow — an inline-flex box's
+          vertical-align is its own baseline synthesized from its content
+          (browser-dependent, and different from the text's baseline next to
+          it), so the icon sat visibly off-centre from "Town Square"'s
+          x-height. Fixed the same way Sidebar.tsx's channel row already
+          does it (ChannelTypeMarker there has the identical icon+name
+          pattern and was never affected): the icon lives in its own
+          fixed-width flex box (`w-4`, `items-center justify-center`) and the
+          name in its own span, both laid out by the *h1 itself* being a flex
+          row with items-center — flexbox centres each child's margin box on
+          the row's cross axis directly, no baseline synthesis involved.  The
+          outer header row switched items-baseline -> items-center for the
+          same reason, now that its own first child (h1) is itself a flex
+          container (a flex container's own baseline is its first item's
+          baseline, one more layer of the same synthesis problem). Height:
+          py-2 -> py-1.5 and the icon 18px -> 16px (matching Sidebar.tsx's own
+          channel-row size) together take the measured header from 44px to
+          39px (Playwright boundingBox() on a real render, header-shots/
+          before-header.png vs after-header.png) -- inside the ~40-44px range
+          the user asked for, and still >= the downloads button's own
+          rendered height (16px icon + py-1's 4px+4px = 24px), with room to
+          spare. */}
+      <header className="flex min-w-0 items-center gap-3 border-b border-line bg-panel px-4 py-1.5">
+        <h1 className="flex shrink-0 items-center gap-1.5 font-semibold text-fg">
+          <span className="flex w-4 shrink-0 items-center justify-center text-fg-subtle">
+            <ChannelTypeMarker type={channel.type} size={16} />
           </span>
-          {channel.name}
+          <span className="truncate">{channel.name}</span>
         </h1>
         {channel.header && (
-          <p className="truncate text-xs text-fg-muted" title={channel.header}>
-            {channel.header}
-          </p>
+          // inline markdown (same brief, Ruling 3): the header could hold a
+          // raw "[label](url)" etc. — rendered literally before this fix.
+          // Markdown's `inline` mode (see its own comment) collapses any
+          // block structure into one run; this wrapper still owns the
+          // single-line clamp (`truncate` + `title` with the *raw* text, so
+          // hovering the ellipsis shows the unrendered source, same as
+          // before this fix) and needs its own min-w-0 — a flex item's
+          // default min-width:auto would otherwise refuse to shrink below
+          // this text's content width once the window narrows (the same
+          // flexbox trap this file's drop-target comment above describes for
+          // the whole pane).
+          <div className="min-w-0 flex-1 truncate text-xs text-fg-muted" title={channel.header}>
+            <Markdown text={channel.header} me={me.username} onLink={actions.link} serverId={server.id} emojiInfo={actions.emojiInfo} inline />
+          </div>
         )}
         <button
           ref={downloadsBtnRef}
