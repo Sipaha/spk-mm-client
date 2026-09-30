@@ -927,3 +927,124 @@ test('fix: an overtaken focused open that already reached Go puts Go back to the
   await first
   expect(client.closeThread).toHaveBeenCalledWith(1) // Go opened r1; no panel shows it
 })
+
+// --- Codex review (Task 6 fix round 2) repros ---
+
+test('Codex fix: stale focused-open must not close a newer focused-open in flight',async()=>{
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true}));await openChannel(1,'a');
+ vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('a-reply',{in_feed:false,root_id:'ra'})).mockResolvedValueOnce(landed('b-reply',{in_feed:false,root_id:'rb'}));
+ const a=deferred<ThreadDTO>(),b=deferred<ThreadDTO>();
+ vi.mocked(client.openThreadAt).mockReturnValueOnce(a.p).mockReturnValueOnce(b.p);
+ const ja=jumpToPost(1,'a','a-reply');await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalledTimes(1));
+ const jb=jumpToPost(1,'a','b-reply');await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalledTimes(2));
+ vi.mocked(client.closeThread).mockClear();
+ a.resolve(thread('ra'));await ja;
+ const calls=vi.mocked(client.closeThread).mock.calls.length;
+ b.resolve(thread('rb'));await jb;
+ expect(calls).toBe(0);
+});
+test('Codex fix: refresh completed during focused-open must not be lost',async()=>{
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true}));await openChannel(1,'a');
+ vi.mocked(client.openThread).mockResolvedValue(thread('r1'));await openThread(1,'a','r1');
+ vi.mocked(client.jumpToPost).mockResolvedValue(landed('reply',{in_feed:false,root_id:'r1'}));
+ const focus={target_id:'reply',has_older:true,has_newer:true,gap:{open:true,gen:1,before_id:'tail',stale:false},rev:1};
+ const stale=thread('r1',{focus}),fresh=thread('r1',{focus,posts:[post({id:'fresh'})]});
+ const opening=deferred<ThreadDTO>();vi.mocked(client.openThreadAt).mockReturnValueOnce(opening.p);
+ const j=jumpToPost(1,'a','reply');await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalled());
+ vi.mocked(client.getThread).mockResolvedValue(fresh);await refreshThread(1,'r1');
+ expect(useStore.getState().thread?.posts).toEqual(fresh.posts);
+ opening.resolve(stale);await j;await Promise.resolve();
+ expect(useStore.getState().thread?.posts).toEqual(fresh.posts);
+});
+
+test('Codex fix: cancelled focused-open leaving a Go thread is cleaned up',async()=>{
+ vi.mocked(client.openChannel).mockResolvedValue(chan('a',{crt:true}));await openChannel(1,'a');
+ vi.mocked(client.getChannel).mockResolvedValue(chan('a',{crt:true}));
+ vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply',{in_feed:false,root_id:'r1'})).mockResolvedValueOnce(landed('root'));
+ let reject!:(e:unknown)=>void;
+ vi.mocked(client.openThreadAt).mockReturnValueOnce(new Promise<ThreadDTO>((_,r)=>{reject=r}));
+ const a=jumpToPost(1,'a','reply');await vi.waitFor(()=>expect(client.openThreadAt).toHaveBeenCalled());
+ vi.mocked(client.closeThread).mockClear();
+ await jumpToPost(1,'a','root');
+ reject(new ApiError('cancelled',''));await a;
+ expect(client.closeThread).toHaveBeenCalledWith(1);
+});
+
+test('fix 2: an older focused open answered after a newer one landed neither closes nor replaces it in Go', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('a-reply', { in_feed: false, root_id: 'ra' })).mockResolvedValueOnce(landed('b-reply', { in_feed: false, root_id: 'rb' }))
+  const a = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(a.p).mockResolvedValueOnce(thread('rb'))
+  vi.mocked(client.getThread).mockResolvedValue(thread('rb'))
+  const ja = jumpToPost(1, 'a', 'a-reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalledTimes(1))
+  await jumpToPost(1, 'a', 'b-reply')
+  expect(useStore.getState().thread?.root_id).toBe('rb')
+  vi.mocked(client.closeThread).mockClear()
+  vi.mocked(client.openThread).mockClear()
+  a.resolve(thread('ra'))
+  await ja
+  expect(client.closeThread).not.toHaveBeenCalled()
+  expect(client.openThread).not.toHaveBeenCalled()
+  expect(useStore.getState().thread?.root_id).toBe('rb')
+  expect(useStore.getState().threadFocus?.postId).toBe('b-reply')
+})
+
+test('fix 2: a focused open overtaken by a jump into the feed puts Go back to the thread the panel shows', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.openThread).mockResolvedValue(thread('rx'))
+  await openThread(1, 'a', 'rx')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { crt: true }))
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply', { in_feed: false, root_id: 'r1' })).mockResolvedValueOnce(landed('root'))
+  const slow = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(slow.p)
+  const j = jumpToPost(1, 'a', 'reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  await jumpToPost(1, 'a', 'root')
+  vi.mocked(client.openThread).mockClear()
+  vi.mocked(client.closeThread).mockClear()
+  slow.resolve(thread('r1'))
+  await j
+  expect(client.openThread).toHaveBeenCalledWith(1, 'a', 'rx') // Go holds r1 now: back to the panel's rx
+  expect(client.closeThread).not.toHaveBeenCalled()
+  expect(useStore.getState().thread?.root_id).toBe('rx')
+})
+
+test('fix 2: a cancelled focused open after the user opened another thread leaves Go alone', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply', { in_feed: false, root_id: 'r1' }))
+  let reject!: (e: unknown) => void
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(new Promise<ThreadDTO>((_, r) => (reject = r)))
+  const j = jumpToPost(1, 'a', 'reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  vi.mocked(client.openThread).mockResolvedValue(thread('r2'))
+  await openThread(1, 'a', 'r2')
+  vi.mocked(client.closeThread).mockClear()
+  vi.mocked(client.openThread).mockClear()
+  reject(new ApiError('cancelled', ''))
+  await j
+  expect(client.closeThread).not.toHaveBeenCalled()
+  expect(client.openThread).not.toHaveBeenCalled()
+  expect(useStore.getState().thread?.root_id).toBe('r2')
+})
+
+test('fix 2: a server switch while a focused open is on its way closes it in Go on that server', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce(landed('reply', { in_feed: false, root_id: 'r1' }))
+  const slow = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(slow.p)
+  const j = jumpToPost(1, 'a', 'reply')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  vi.mocked(client.closeThread).mockClear()
+  vi.mocked(client.sidebar).mockResolvedValue(sidebar({ selected_channel_id: '' }))
+  selectServer(2)
+  expect(client.closeThread).toHaveBeenCalledWith(1)
+  slow.resolve(thread('r1'))
+  await j
+  expect(client.closeThread).toHaveBeenCalledTimes(1) // nothing more: the switch owns it
+  expect(useStore.getState().thread).toBeNull()
+})
