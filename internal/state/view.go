@@ -116,6 +116,22 @@ type ChannelView struct {
 	MeAvatar string `json:"me_avatar"`
 	CRT      bool   `json:"crt"`
 	Muted    bool   `json:"muted"`
+	// Gap: the open channel's history is not proved to join the window
+	// (segment.go) — Open, its generation, the window's first post the gap
+	// is above ("" while the window is empty; the gap stays open), and
+	// Stale: the history is to be reread (independent of Open). Unrelated
+	// to GapAfter (a reconnect).
+	Gap HistGap `json:"gap"`
+	// HistRev moves with every history page applied (the UI's anchor ties
+	// a pending correction to it).
+	HistRev uint64 `json:"hist_rev"`
+}
+
+type HistGap struct {
+	Open     bool   `json:"open"`
+	Gen      uint64 `json:"gen"`
+	BeforeID string `json:"before_id"`
+	Stale    bool   `json:"stale"`
 }
 
 // ChannelView renders a channel for the UI: browsed history, the window
@@ -137,12 +153,17 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	if channelID == s.active {
 		v.NewSince = s.newSince
 		posts = append(posts, s.older...)
+		v.Gap = HistGap{Open: s.olderGap, Gen: s.gapGen, Stale: s.segStale}
+		if s.olderGap && len(ch.Win.Posts) > 0 {
+			v.Gap.BeforeID = ch.Win.Posts[0].ID
+		}
+		v.HistRev = s.histRev
 	}
 	posts = append(posts, ch.Win.Posts...)
 	posts = s.withEphemeralLocked(posts, func(p model.Post) bool {
 		return p.ChannelID == channelID && (p.RootID == "" || !v.CRT)
 	})
-	if channelID == s.active && (s.olderComplete || len(s.older) > 0) {
+	if channelID == s.active && s.historyHeldLocked() {
 		v.HasMore = !s.olderComplete
 	} else {
 		v.HasMore = ch.Win.Loaded && !ch.Win.Complete

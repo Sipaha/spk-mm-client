@@ -68,17 +68,19 @@ func (w *Worker) view(channelID string) {
 	}
 }
 
+// LoadOlder loads a page of history above the open channel from the raw
+// cursor BeginLoadOlder captures with the history generations; a page that
+// no longer fits (a jump, a reset, another page applied) is dropped.
 func (w *Worker) LoadOlder(ctx context.Context, channelID string) error {
-	crt, gen := w.st.FetchMode() // before the cursor: see fetch
-	before := w.st.OldestPostID(channelID)
-	if before == "" {
+	op, ok := w.st.BeginLoadOlder(channelID)
+	if !ok {
 		return nil
 	}
-	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: before, CollapsedThreads: crt})
+	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, Before: op.Cursor.ID, CollapsedThreads: op.CRT})
 	if err != nil {
 		return w.actionErr(err)
 	}
-	w.st.AppendOlder(channelID, l.Ascending(), l.PrevPostID == "", gen)
+	w.st.AppendOlder(op, l)
 	w.loadUsers(ctx)
 	if channelID == w.st.Active() {
 		w.requestStatuses() // authors of the older posts

@@ -116,6 +116,18 @@ type Server struct {
 	ephemeral     []model.Post      // ephemeral_message posts, oldest first (ephemeral.go)
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
+	// The held history of the open channel (segment.go): a gap between it
+	// and the window, the generations operations are applied with, the
+	// revision the UI anchors pages to, a segment to reread, and the raw
+	// cursors LoadOlder/LoadNewer continue from.
+	olderGap    bool
+	histGen     uint64
+	gapGen      uint64
+	histRev     uint64
+	segStale    bool
+	olderCursor cursor
+	newerCursor cursor
+
 	// Threads (see threads.go): the cache by root id, its LRU (most recent
 	// last), the thread open in the panel, the epoch pages are applied with
 	// (ResetThreads/MarkStale move it) and thread drafts (Task 4).
@@ -237,6 +249,9 @@ func (s *Server) Bootstrap(b Bootstrap) (crtChanged bool) {
 // forgetChannelLocked drops everything local about a channel (left, kicked,
 // deleted server-side). The caller removes it from s.chans.
 func (s *Server) forgetChannelLocked(id string) {
+	if id == s.active {
+		s.resetHistoryLocked()
+	}
 	delete(s.drafts, id)
 	for _, p := range s.pending[id] {
 		s.releaseLocked(p)

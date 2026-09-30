@@ -66,24 +66,50 @@ func TestOrphansAreBounded(t *testing.T) {
 	assert.Equal(t, "p10", decodeID(t, orphans[0]), "the oldest are dropped first")
 }
 
-// Reloading the active channel's latest page (catch-up overflow) must drop
-// the history loaded above the old window: it no longer joins the new one.
-func TestSetWindowOnActiveChannelDropsLoadedHistory(t *testing.T) {
+// Reloading the active channel's latest page (catch-up overflow) no longer
+// reaches the history loaded above the old window: the history stays where
+// the reader is, behind a gap to the new window, and is to be reread (spec
+// «Поиск», Секция 1 — before it, the history was dropped and the reader
+// thrown down to the new window).
+func TestSetWindowOnActiveChannelKeepsHistoryBehindAGap(t *testing.T) {
 	s := newFixture()
 	s.ClearGuard()
 	s.SetActive("town")
 	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000)}, false, 5, 0)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
+	appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
 	v, _ := s.ChannelView("town")
 	require.Len(t, v.Posts, 2)
 	assert.False(t, v.HasMore)
 
 	s.SetWindow("town", []model.Post{mkPost("w9", "town", "u2", 9000)}, false, 9, 0)
+	check(t, s)
 	v, _ = s.ChannelView("town")
-	require.Len(t, v.Posts, 1, "older history is not shown across the hole")
-	assert.Equal(t, "w9", v.Posts[0].ID)
-	assert.True(t, v.HasMore, "HasMore follows the new window")
-	assert.Equal(t, "w9", s.OldestPostID("town"))
+	require.Len(t, v.Posts, 2, "the old window's post is in the gap now")
+	assert.Equal(t, []string{"o1", "w9"}, []string{v.Posts[0].ID, v.Posts[1].ID})
+	assert.True(t, v.Gap.Open)
+	assert.Equal(t, "w9", v.Gap.BeforeID)
+	assert.True(t, v.Gap.Stale)
+	assert.False(t, v.HasMore, "the history still reaches the first post")
+	assert.Equal(t, "o1", s.OldestPostID("town"))
+}
+
+// Without anything held above the old window, a reload across a hole resets
+// the history as before: HasMore follows the new window.
+func TestSetWindowWithNothingHeldFollowsTheNewWindow(t *testing.T) {
+	s := newFixture()
+	s.SetActive("town")
+	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000)}, false, 5, 0)
+	appendOlder(t, s, "town", nil, true) // nothing older: complete, nothing held
+	v, _ := s.ChannelView("town")
+	require.False(t, v.HasMore)
+
+	s.SetWindow("town", []model.Post{mkPost("w9", "town", "u2", 9000)}, false, 9, 0)
+	v, _ = s.ChannelView("town")
+	assert.True(t, v.HasMore, "the new window is not complete")
+	assert.False(t, v.Gap.Open)
+	op, ok := s.BeginLoadOlder("town")
+	require.True(t, ok)
+	assert.Equal(t, "w9", op.Cursor.ID)
 }
 
 func decodeID(t *testing.T, ev ws.Event) string {
@@ -116,7 +142,7 @@ func TestSetWindowOverlappingPageKeepsLoadedHistory(t *testing.T) {
 	s.ClearGuard()
 	s.SetActive("town")
 	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000)}, false, 5, 0)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
+	appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
 
 	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 1000), mkPost("w2", "town", "u2", 2000), mkPost("w3", "town", "u2", 3000)}, false, 9, 0)
 	v, _ := s.ChannelView("town")

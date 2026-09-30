@@ -117,10 +117,10 @@ func TestMarkStaleAndSyncItemsPriority(t *testing.T) {
 func TestAppendOlderOnlyForActiveChannel(t *testing.T) {
 	s := newFixture()
 	s.SetWindow("town", []model.Post{mkPost("w1", "town", "u2", 100)}, false, 5, 0)
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
-	assert.Equal(t, "w1", s.OldestPostID("town"), "not active: ignored")
+	assert.False(t, appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true), "not active: ignored")
+	assert.Equal(t, "w1", s.OldestPostID("town"))
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{mkPost("o1", "town", "u2", 50)}, true, 0)
+	appendOlder(t, s, "town", []model.Post{mkPost("o1", "town", "u2", 50)}, true)
 	assert.Equal(t, "o1", s.OldestPostID("town"))
 	v, _ := s.ChannelView("town")
 	assert.Equal(t, []string{"o1", "w1"}, []string{v.Posts[0].ID, v.Posts[1].ID})
@@ -141,7 +141,7 @@ func TestTrimmedWindowPostMovesToOlderForActiveChannel(t *testing.T) {
 	}
 	s.SetWindow("town", page, true, 5, 0)
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{mkPost("old1", "town", "u2", 50)}, false, 0)
+	appendOlder(t, s, "town", []model.Post{mkPost("old1", "town", "u2", 50)}, false)
 	s.ClearGuard()
 	s.ApplyEvent(postedEv(mkPost("new1", "town", "u2", int64(100+WindowSize))))
 
@@ -160,7 +160,7 @@ func TestHasMoreFalseAfterEmptyFinalAppendOlder(t *testing.T) {
 	s.SetActive("town")
 	v, _ := s.ChannelView("town")
 	assert.True(t, v.HasMore, "sanity: window incomplete, nothing fetched yet")
-	s.AppendOlder("town", nil, true, 0)
+	appendOlder(t, s, "town", nil, true)
 	v, _ = s.ChannelView("town")
 	assert.False(t, v.HasMore, "AppendOlder said there is nothing older left")
 }
@@ -265,11 +265,13 @@ func TestPageFromBeforeResetWindowsIsDropped(t *testing.T) {
 	s.SetActive("town")
 	_, gen := s.FetchMode()
 	s.SetWindow("town", []model.Post{mkPost("a", "town", "u2", 100)}, false, 5, gen)
+	older, ok := s.BeginLoadOlder("town")
+	require.True(t, ok)
 	s.ResetWindows()
 
 	s.MergeSince("town", []model.Post{mkPost("b", "town", "u2", 200)}, 6, gen)
 	s.SetWindow("off", []model.Post{mkPost("c", "off", "u2", 100)}, true, 6, gen)
-	s.AppendOlder("town", []model.Post{mkPost("o", "town", "u2", 50)}, true, gen)
+	s.AppendOlder(older, plist("", "a", mkPost("o", "town", "u2", 50)))
 	for _, ch := range []string{"town", "off"} {
 		it, ok := s.SyncItemFor(ch)
 		require.True(t, ok, "%s still needs a fetch", ch)
@@ -282,7 +284,7 @@ func TestPageFromBeforeResetWindowsIsDropped(t *testing.T) {
 	assert.False(t, crt)
 	assert.NotEqual(t, gen, gen2)
 	s.SetWindow("town", []model.Post{mkPost("a", "town", "u2", 100)}, false, 7, gen2)
-	s.AppendOlder("town", []model.Post{mkPost("o", "town", "u2", 50)}, true, gen2)
+	appendOlder(t, s, "town", []model.Post{mkPost("o", "town", "u2", 50)}, true)
 	v, _ = s.ChannelView("town")
 	assert.Equal(t, []string{"o", "a"}, []string{v.Posts[0].ID, v.Posts[1].ID})
 }

@@ -151,7 +151,7 @@ func TestNonCRTReplyCarriesRootContext(t *testing.T) {
 	assert.Empty(t, v["long"].RootAuthor, "roots carry no context")
 
 	s.SetActive("town")
-	s.AppendOlder("town", []model.Post{hist}, true, 0)
+	appendOlder(t, s, "town", []model.Post{hist}, true)
 	v = byID()
 	assert.Equal(t, "bob", v["r3"].RootAuthor, "root found in the loaded history")
 	assert.Equal(t, "from history", v["r3"].RootSnippet)

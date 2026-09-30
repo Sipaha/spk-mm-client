@@ -59,9 +59,10 @@ func sortPosts(ps []model.Post) {
 }
 
 // trimWindowLocked keeps ch.Win.Posts at ≤ WindowSize. For the active
-// channel with history already loaded (s.older non-empty), the trimmed
-// (oldest) posts are not discarded — they are still visible above the
-// window, so they move to the end of s.older instead.
+// channel with history already loaded, the trimmed (oldest) posts are not
+// discarded — they are still visible above the window, so they move to the
+// end of s.older instead. Not across a gap: s.older would get a hole inside
+// it; they come back when the gap is loaded.
 func (s *Server) trimWindowLocked(ch *Chan) {
 	w := &ch.Win
 	if len(w.Posts) <= WindowSize {
@@ -71,7 +72,7 @@ func (s *Server) trimWindowLocked(ch *Chan) {
 	trimmed := append([]model.Post(nil), w.Posts[:cut]...)
 	w.Posts = append([]model.Post(nil), w.Posts[cut:]...)
 	w.Complete = false
-	if ch.Info.ID == s.active && len(s.older) > 0 {
+	if ch.Info.ID == s.active && !s.olderGap && s.historyHeldLocked() {
 		s.older = append(s.older, trimmed...)
 		sortPosts(s.older)
 	}
@@ -121,6 +122,11 @@ func (s *Server) upsertLocked(ch *Chan, p model.Post) {
 			}
 			ch.Win.Posts[i] = p
 		}
+	} else if j := indexOf(s.older, p.ID); ch.Info.ID == s.active && j >= 0 {
+		// Held above the window already (a late echo of an old post): one
+		// copy only.
+		s.older[j] = newerOf(p, s.older[j])
+		return
 	} else {
 		ch.Win.Posts = append(ch.Win.Posts, p)
 		sortPosts(ch.Win.Posts)
@@ -221,10 +227,9 @@ func replyPosted(root *model.Post, p model.Post) bool {
 // SetWindow installs the latest page of a channel. Posts already in the
 // window that are newer than the page arrived over WS while the request was
 // in flight — they are kept. History loaded above the old window of the
-// active channel is dropped unless the new page still reaches the old
-// window's first post: a catch-up overflow reloads only the latest page, and
-// keeping history across that hole would hide it; HasMore then follows the
-// new window.
+// active channel follows windowReplacedLocked: kept, behind a gap when the
+// new page no longer reaches the old window's first post (a catch-up
+// overflow reloads only the latest page).
 //
 // gen is FetchMode's generation when the page was requested: a page from
 // before a ResetWindows is dropped.
@@ -255,15 +260,8 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 		}
 	}
 	sortPosts(merged)
-	if channelID == s.active && len(s.older) > 0 {
-		// s.older joins the old window's first post. If the new window
-		// still reaches down to it there is no hole: keep the history
-		// (minus what the window now holds); otherwise drop it.
-		if len(ch.Win.Posts) > 0 && len(merged) > 0 && merged[0].CreateAt <= ch.Win.Posts[0].CreateAt {
-			s.older = slices.DeleteFunc(s.older, func(p model.Post) bool { return p.CreateAt >= merged[0].CreateAt })
-		} else {
-			s.older, s.olderComplete = nil, false
-		}
+	if channelID == s.active && s.historyHeldLocked() {
+		s.windowReplacedLocked(ch.Win, merged)
 	}
 	ch.Win = Window{Posts: merged, Loaded: true, Complete: complete, SyncedAt: syncedAt}
 	s.trimWindowLocked(ch)
@@ -271,7 +269,10 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 }
 
 // MergeSince applies a posts?since= response (edits, deletions, new posts)
-// and marks the window caught up. gen: as in SetWindow.
+// and marks the window caught up. gen: as in SetWindow. Every copy held is
+// updated first (the window and, for the open channel, the history); then a
+// new post goes to the window by the window's own rule — one inside the
+// history's gap does not fill it and is left to the gap's loading.
 func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -294,8 +295,17 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 			s.removeLocked(ch, p)
 		case !keep(p, crt) || s.gone.has(p.ID):
 			continue
-		case indexOf(ch.Win.Posts, p.ID) >= 0 || p.CreateAt >= oldest:
-			s.upsertLocked(ch, p)
+		default:
+			held := false
+			if channelID == s.active {
+				if i := indexOf(s.older, p.ID); i >= 0 {
+					s.older[i] = newerOf(p, s.older[i])
+					held = true
+				}
+			}
+			if indexOf(ch.Win.Posts, p.ID) >= 0 || (!held && p.CreateAt >= oldest) {
+				s.upsertLocked(ch, p)
+			}
 		}
 	}
 	ch.Win.Loaded, ch.Win.Stale, ch.Win.GapAfter = true, false, ""
@@ -303,28 +313,8 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 	s.dirty.posts[channelID] = true
 }
 
-// AppendOlder adds a page of history above the window while the channel is
-// open. It lives only in memory and is dropped when the user leaves.
-// gen: as in SetWindow.
-func (s *Server) AppendOlder(channelID string, posts []model.Post, complete bool, gen uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ch := s.chans[channelID]
-	if ch == nil || channelID != s.active || gen != s.winGen {
-		return
-	}
-	crt := s.crtLocked()
-	var add []model.Post
-	for _, p := range posts {
-		if keep(p, crt) && !s.gone.has(p.ID) && indexOf(s.older, p.ID) < 0 && indexOf(ch.Win.Posts, p.ID) < 0 {
-			add = append(add, p)
-		}
-	}
-	s.older = append(add, s.older...)
-	sortPosts(s.older)
-	s.olderComplete = complete
-}
-
+// OldestPostID is the oldest post the channel shows. (LoadOlder continues
+// from BeginLoadOlder's raw cursor instead.)
 func (s *Server) OldestPostID(channelID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -339,7 +329,8 @@ func (s *Server) OldestPostID(channelID string) string {
 
 // FetchMode is what a post fetch is requested with: the CRT mode and the
 // window generation, read together. The generation is handed back to
-// SetWindow/MergeSince/AppendOlder, which drop a page requested before a
+// SetWindow/MergeSince (history operations capture it in their HistOp),
+// which drop a page requested before a
 // ResetWindows — it may be of the other mode, or land on a window that is
 // no longer there as Loaded. (The same pattern guards the thread cache
 // against ResetThreads.)
@@ -360,7 +351,7 @@ func (s *Server) ResetWindows() {
 		ch.Win = Window{}
 		s.dirty.posts[id] = true
 	}
-	s.older, s.olderComplete = nil, false
+	s.resetHistoryLocked()
 }
 
 // markStale marks w stale as of liveUntil: posts after GapAfter may be
@@ -382,9 +373,12 @@ func (w *Window) markStale(liveUntil int64) {
 
 // MarkStale records that the event stream was lost. Every loaded window may
 // miss posts after its last one; it stays readable and is caught up by the worker.
+// A LoadNewer begun before cannot close the history's gap (gapGen): its
+// proof may predate what the window missed.
 func (s *Server) MarkStale(liveUntil int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.gapGen++
 	s.markThreadsStaleLocked()
 	for id, ch := range s.chans {
 		if !ch.Win.Loaded || ch.Win.Stale {
@@ -889,7 +883,8 @@ func (s *Server) SetActive(channelID string) int64 {
 	if channelID == s.active {
 		return s.newSince
 	}
-	s.active, s.older, s.olderComplete, s.suppressView, s.newSince = channelID, nil, false, "", 0
+	s.resetHistoryLocked()
+	s.active, s.suppressView, s.newSince = channelID, "", 0
 	if ch := s.chans[channelID]; ch != nil {
 		s.newSince = ch.Member.LastViewedAt
 		team := ch.Info.TeamID
