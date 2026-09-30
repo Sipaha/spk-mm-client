@@ -36,6 +36,7 @@ vi.mock('../chat', () => ({
   openFile: vi.fn(), openLink: vi.fn(), openThread: vi.fn(), react: vi.fn(), removeDownload: vi.fn(), retryPost: vi.fn(),
   revealDownload: vi.fn(), revealSavedFile: vi.fn(), fileKey: (s: number, f: string) => `${s}/${f}`, saveDraft: vi.fn(), sendPost: vi.fn(), uploadAttachments: vi.fn().mockResolvedValue(undefined),
   attachFromClipboard: vi.fn(), pickAttachments: vi.fn(), removeAttachment: vi.fn(), retryAttachment: vi.fn(),
+  loadNewer: vi.fn().mockResolvedValue(undefined), retryRevalidation: vi.fn().mockResolvedValue(undefined),
 }))
 
 const { uploadAttachments } = await import('../chat')

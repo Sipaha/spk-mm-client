@@ -55,7 +55,9 @@ const {
   loadOlderReplies, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
   openDownloadsPanel, openFile, openFromNotification, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
   react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, revealSavedFile, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
+  jumpToPost, loadNewer, retryRevalidation, loadThreadFocus, retryThreadRevalidation,
 } = await import('./chat')
+const { ApiError } = await import('./api/client')
 
 const post = (over: Partial<PostView> = {}): PostView => ({
   id: 'p1', user_id: 'u-bob', author: 'bob', message: 'hi', create_at: 1, ...over,
@@ -112,6 +114,13 @@ beforeEach(() => {
   vi.mocked(client.loadOlderReplies).mockReset().mockResolvedValue(undefined)
   vi.mocked(client.sendReply).mockReset().mockResolvedValue(undefined)
   vi.mocked(client.saveThreadDraft).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.jumpToPost).mockReset()
+  vi.mocked(client.openThreadAt).mockReset()
+  vi.mocked(client.loadNewer).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.retryRevalidation).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.loadThreadFocus).mockReset().mockResolvedValue(undefined)
+  vi.mocked(client.retryThreadRevalidation).mockReset().mockResolvedValue(undefined)
+  useStore.setState({ focus: null, threadFocus: null })
   useStore.setState({
     servers: [srv(1), srv(2)], selectedId: 1, adding: false, sidebar: null, channel: null, lastError: null,
     editingId: null, downloads: [], downloadsOpen: false, attachments: [], attachError: null,
@@ -689,4 +698,151 @@ test('uploadAttachments tries every file even if one fails, then throws the firs
   expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(1, 1, 'a', good1, '')
   expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(2, 1, 'a', bad, '')
   expect(uploadAttachmentBrowser).toHaveBeenNthCalledWith(3, 1, 'a', good2, '')
+})
+
+// --- Jump to a post (spec «Поиск», Секция 1/1б) -----------------------------
+
+const landed = (post_id: string, over: Partial<{ root_id: string; in_feed: boolean }> = {}) => ({ post_id, root_id: '', in_feed: true, ...over })
+
+test('a jump into the open channel focuses the post and re-reads the channel; the same post again gets a new nonce', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  vi.mocked(client.openChannel).mockClear()
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { hist_rev: 1 }))
+  vi.mocked(client.jumpToPost).mockResolvedValue(landed('p1'))
+  await jumpToPost(1, 'a', 'p1')
+  expect(client.openChannel).not.toHaveBeenCalled() // already open: no re-open (it would close the panel, re-mark read)
+  expect(client.jumpToPost).toHaveBeenCalledWith(1, 'a', 'p1', expect.any(AbortSignal))
+  expect(client.getChannel).toHaveBeenCalledWith(1, 'a')
+  const first = useStore.getState().focus
+  expect(first?.postId).toBe('p1')
+  await jumpToPost(1, 'a', 'p1')
+  expect(useStore.getState().focus?.postId).toBe('p1')
+  expect(useStore.getState().focus?.nonce).not.toBe(first?.nonce)
+})
+
+test('a jump into another channel opens it first, then jumps', async () => {
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('a')).mockResolvedValueOnce(chan('b'))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('b', { hist_rev: 1 }))
+  vi.mocked(client.jumpToPost).mockResolvedValue(landed('p9'))
+  await jumpToPost(1, 'b', 'p9')
+  expect(client.openChannel).toHaveBeenLastCalledWith(1, 'b')
+  expect(vi.mocked(client.openChannel).mock.invocationCallOrder.at(-1)!).toBeLessThan(vi.mocked(client.jumpToPost).mock.invocationCallOrder[0])
+  expect(useStore.getState().channel?.id).toBe('b')
+  expect(useStore.getState().focus?.postId).toBe('p9')
+})
+
+test('jump superseded by another jump does nothing', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a'))
+  const slow = deferred<{ post_id: string; root_id: string; in_feed: boolean }>()
+  vi.mocked(client.jumpToPost).mockReturnValueOnce(slow.p).mockResolvedValueOnce(landed('p2'))
+  const first = jumpToPost(1, 'a', 'p1')
+  const firstSignal = vi.mocked(client.jumpToPost).mock.calls[0][3]!
+  await jumpToPost(1, 'a', 'p2')
+  expect(firstSignal.aborted).toBe(true) // the older request is let go of
+  slow.resolve(landed('p1', { in_feed: false, root_id: 'r1' })) // …and even if it lands, nothing follows
+  await expect(first).resolves.toBeUndefined()
+  expect(useStore.getState().focus?.postId).toBe('p2')
+  expect(client.openThreadAt).not.toHaveBeenCalled()
+})
+
+test('a jump the channel switch overtook does nothing: no focus, no thread', async () => {
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('a'))
+  await openChannel(1, 'a')
+  const slow = deferred<{ post_id: string; root_id: string; in_feed: boolean }>()
+  vi.mocked(client.jumpToPost).mockReturnValueOnce(slow.p)
+  const j = jumpToPost(1, 'a', 'p1')
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('b'))
+  await openChannel(1, 'b') // the user went elsewhere
+  slow.resolve(landed('p1'))
+  await j
+  expect(useStore.getState().focus).toBeNull()
+})
+
+test('a cancelled (superseded in Go) jump is silent; a real failure is thrown for the caller to show inline', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('cancelled', ''))
+  await expect(jumpToPost(1, 'a', 'p1')).resolves.toBeUndefined()
+  vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('post_gone', ''))
+  await expect(jumpToPost(1, 'a', 'p1')).rejects.toMatchObject({ code: 'post_gone' })
+  expect(useStore.getState().lastError).toBeNull() // not the global banner
+  expect(useStore.getState().focus).toBeNull()
+})
+
+test('CRT reply opens the thread focus', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockResolvedValue(landed('p5', { in_feed: false, root_id: 'r1' }))
+  const th = thread('r1', { focus: { target_id: 'p5', has_older: true, has_newer: true, gap: { open: true, gen: 1, before_id: 'p90', stale: false }, rev: 1 } })
+  vi.mocked(client.openThreadAt).mockResolvedValue(th)
+  await jumpToPost(1, 'a', 'p5', 'r1')
+  expect(client.openThreadAt).toHaveBeenCalledWith(1, 'a', 'r1', 'p5', expect.any(AbortSignal))
+  expect(useStore.getState().thread).toEqual(th)
+  expect(useStore.getState().threadFocus?.postId).toBe('p5')
+  expect(useStore.getState().focus).toBeNull() // the channel feed stays where it is
+  closeThread(1)
+  expect(useStore.getState().threadFocus).toBeNull()
+})
+
+test('a thread focus landing after another thread was opened is dropped', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { crt: true }))
+  await openChannel(1, 'a')
+  vi.mocked(client.jumpToPost).mockResolvedValue(landed('p5', { in_feed: false, root_id: 'r1' }))
+  const slow = deferred<ThreadDTO>()
+  vi.mocked(client.openThreadAt).mockReturnValueOnce(slow.p)
+  const j = jumpToPost(1, 'a', 'p5')
+  await vi.waitFor(() => expect(client.openThreadAt).toHaveBeenCalled())
+  vi.mocked(client.openThread).mockResolvedValue(thread('r2'))
+  await openThread(1, 'a', 'r2')
+  slow.resolve(thread('r1'))
+  await j
+  expect(useStore.getState().thread?.root_id).toBe('r2')
+  expect(useStore.getState().threadFocus).toBeNull()
+})
+
+test('loadNewer loads a gap page and re-reads the channel; a cancel is silent, a failure is thrown', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a', { hist_rev: 2 }))
+  await loadNewer(1, 'a')
+  expect(client.loadNewer).toHaveBeenCalledWith(1, 'a')
+  expect(useStore.getState().channel?.hist_rev).toBe(2)
+  vi.mocked(client.loadNewer).mockRejectedValueOnce(new ApiError('cancelled', ''))
+  await expect(loadNewer(1, 'a')).resolves.toBeUndefined()
+  vi.mocked(client.loadNewer).mockRejectedValueOnce(new ApiError('no_progress', ''))
+  await expect(loadNewer(1, 'a')).rejects.toMatchObject({ code: 'no_progress' })
+  expect(useStore.getState().lastError).toBeNull()
+})
+
+test('retryRevalidation / retryThreadRevalidation call the API; a failure is reported, a cancel is not', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
+  await openChannel(1, 'a')
+  vi.mocked(client.getChannel).mockResolvedValue(chan('a'))
+  await retryRevalidation(1, 'a')
+  expect(client.retryRevalidation).toHaveBeenCalledWith(1, 'a')
+  vi.mocked(client.retryRevalidation).mockRejectedValueOnce(new ApiError('cancelled', ''))
+  await retryRevalidation(1, 'a')
+  expect(useStore.getState().lastError).toBeNull()
+  vi.mocked(client.retryThreadRevalidation).mockRejectedValueOnce(new ApiError('offline', ''))
+  await retryThreadRevalidation(1, 'r1')
+  expect(client.retryThreadRevalidation).toHaveBeenCalledWith(1, 'r1')
+  expect(useStore.getState().lastError).not.toBeNull()
+})
+
+test('loadThreadFocus loads a page either way and re-reads the thread; older resolves like onLoadOlder', async () => {
+  useStore.getState().setChannel(1, chan('a'))
+  vi.mocked(client.openThread).mockResolvedValue(thread('r1'))
+  await openThread(1, 'a', 'r1')
+  vi.mocked(client.getThread).mockResolvedValue(thread('r1'))
+  expect(await loadThreadFocus(1, 'r1', false)).toBe(true)
+  expect(client.loadThreadFocus).toHaveBeenCalledWith(1, 'r1', false)
+  expect(client.getThread).toHaveBeenCalledWith(1, 'r1')
+  vi.mocked(client.loadThreadFocus).mockRejectedValueOnce(new ApiError('no_progress', ''))
+  await expect(loadThreadFocus(1, 'r1', true)).rejects.toMatchObject({ code: 'no_progress' })
+  vi.mocked(client.loadThreadFocus).mockRejectedValueOnce(new ApiError('cancelled', ''))
+  await expect(loadThreadFocus(1, 'r1', true)).resolves.toBe(false)
 })

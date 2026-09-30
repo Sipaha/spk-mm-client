@@ -25,6 +25,16 @@ export interface ToastMsg {
 }
 let toastSeq = 0
 
+// Focus: a post a jump landed on (spec «Поиск», «Лента (Feed)») — its feed
+// centers and highlights it once per nonce: the same post jumped to again
+// is a new request (centered again), while the data revisions the feed
+// anchors to (hist_rev, focus.rev) never center anything.
+export interface Focus {
+  postId: string
+  nonce: number
+}
+let focusSeq = 0
+
 interface State {
   servers: ServerDTO[]
   selectedId: number | null // null = "add server" screen
@@ -82,6 +92,10 @@ interface State {
   // keep the row under Unreads until the *next* switch. Reset with the
   // channel/sidebar (server switch, sign-out) via `cleared` below.
   heldChannel: HeldChannel | null
+  // focus: the open channel's feed's jump target; threadFocus: the thread
+  // panel's (a CRT reply jumped to) — each gone with its channel/thread.
+  focus: Focus | null
+  threadFocus: Focus | null
   setServers(list: ServerDTO[]): void
   select(id: number | null): void
   setError(msg: string | null): void
@@ -105,13 +119,15 @@ interface State {
   setThreadAttachments(list: AttachmentView[]): void
   setThreadAttachError(msg: string | null): void
   setHeldChannel(h: HeldChannel | null): void
+  setFocus(postId: string | null): void
+  setThreadFocus(postId: string | null): void
 }
 
 const hasActiveDownload = (list: DownloadView[]) => list.some((d) => d.state === 'downloading')
 
 const cleared = {
   sidebar: null, channel: null, editingId: null, attachments: [], attachError: null,
-  thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null,
+  thread: null, threadAttachments: [], threadAttachError: null, heldChannel: null, focus: null, threadFocus: null,
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -139,6 +155,8 @@ export const useStore = create<State>((set, get) => ({
   threadAttachments: [],
   threadAttachError: null,
   heldChannel: null,
+  focus: null,
+  threadFocus: null,
   setServers(list) {
     const { selectedId: sel, adding, servers: prev, signInFor, lastError } = get()
     const stillThere = sel !== null && list.some((s) => s.id === sel)
@@ -187,7 +205,9 @@ export const useStore = create<State>((set, get) => ({
     const switchedChannel = get().channel?.id !== ch.id
     set({
       channel: ch,
-      ...(switchedChannel ? { editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null } : {}),
+      ...(switchedChannel
+        ? { editingId: null, attachments: [], attachError: null, thread: null, threadAttachments: [], threadAttachError: null, focus: null, threadFocus: null }
+        : {}),
     })
   },
   setEditing: (id) => set({ editingId: id }),
@@ -216,10 +236,13 @@ export const useStore = create<State>((set, get) => ({
   },
   setAttachments: (list) => set({ attachments: list }),
   setAttachError: (msg) => set({ attachError: msg }),
-  setThread: (thread) => set({ thread }),
+  // Another thread (or none) takes its focus with it.
+  setThread: (thread) => set((s) => ({ thread, ...(thread?.root_id !== s.thread?.root_id ? { threadFocus: null } : {}) })),
   setThreadAttachments: (list) => set({ threadAttachments: list }),
   setThreadAttachError: (msg) => set({ threadAttachError: msg }),
   setHeldChannel: (h) => set({ heldChannel: h }),
+  setFocus: (postId) => set({ focus: postId === null ? null : { postId, nonce: ++focusSeq } }),
+  setThreadFocus: (postId) => set({ threadFocus: postId === null ? null : { postId, nonce: ++focusSeq } }),
 }))
 
 // useLiveEpoch: the server's live epoch (see State.liveEpochs).

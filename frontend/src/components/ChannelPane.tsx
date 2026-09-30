@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom'
 import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
-  editLastOwn, editPost, emojiInfo, executeCommand, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  openThread, react, reactionUsers, removeDownload, retryPost, revealDownload, saveDraft, sendPost, setPostSaved, uploadAttachments,
+  editLastOwn, editPost, emojiInfo, executeCommand, loadNewer, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
+  openThread, react, reactionUsers, removeDownload, retryPost, retryRevalidation, revealDownload, saveDraft, sendPost, setPostSaved,
+  uploadAttachments,
 } from '../chat'
 import { errorMessage } from '../errors'
 import { formatLocale } from '../format'
@@ -27,6 +28,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloads = useStore((s) => s.downloads)
   const downloadsOpen = useStore((s) => s.downloadsOpen)
   const attachments = useStore((s) => s.attachments)
+  const focus = useStore((s) => s.focus)
   const activeDownloads = downloads.filter((d) => d.state === 'downloading').length
   const downloadsLabel = activeDownloads > 0 ? t('downloads.buttonActive', { n: String(activeDownloads) }) : t('downloads.button')
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
@@ -208,7 +210,21 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           {t('channel.syncing')}
         </div>
       )}
-      <Feed key={`feed-${channel.id}`} data={channel} variant="channel" serverId={server.id} me={me} locale={formatLocale()} actions={actions} editingId={editingId} onLoadOlder={() => loadOlder(server.id, channel.id)} toastHost={TOAST_HOST.channel} />
+      <Feed
+        key={`feed-${channel.id}`}
+        data={channel}
+        variant="channel"
+        serverId={server.id}
+        me={me}
+        locale={formatLocale()}
+        actions={actions}
+        editingId={editingId}
+        onLoadOlder={() => loadOlder(server.id, channel.id)}
+        onLoadNewer={() => loadNewer(server.id, channel.id)}
+        onRetryStale={() => void retryRevalidation(server.id, channel.id)}
+        focus={focus}
+        toastHost={TOAST_HOST.channel}
+      />
       {/* pt-2 (8px): feed↔composer gap (density-brief 2026-09-29) — the
           official client leaves visible air above the input box. The
           composer itself isn't the source: advanced_text_editor.scss's

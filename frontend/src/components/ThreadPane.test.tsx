@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
-import type { PostView, ServerDTO, ThreadDTO } from '../api/types'
+import type { PostView, ServerDTO, ThreadDTO, ThreadFocus } from '../api/types'
 import { setLocale } from '../i18n'
 import { useStore } from '../store'
 import { ThreadPane } from './ThreadPane'
@@ -36,9 +36,10 @@ vi.mock('../chat', () => ({
   openThread: vi.fn(), react: vi.fn().mockResolvedValue(undefined), reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
   retryPost: vi.fn(), saveThreadDraft: vi.fn(), sendReply: vi.fn().mockResolvedValue(undefined), setPostSaved: vi.fn(),
   uploadAttachments: vi.fn().mockResolvedValue(undefined),
+  loadThreadFocus: vi.fn().mockResolvedValue(true), retryThreadRevalidation: vi.fn().mockResolvedValue(undefined),
 }))
 
-const { loadOlderReplies, openThread } = await import('../chat')
+const { loadOlderReplies, loadThreadFocus, openThread, retryThreadRevalidation } = await import('../chat')
 
 const server = (o: Partial<ServerDTO> = {}): ServerDTO => ({
   id: 5, name: 'Acme', url: 'https://mm', signed_in: true, username: 'alice', gitlab: false,
@@ -56,7 +57,9 @@ const thread = (o: Partial<ThreadDTO> = {}): ThreadDTO => ({
 
 beforeEach(() => {
   setLocale('en')
-  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null })
+  useStore.setState({ editingId: null, threadAttachments: [], threadAttachError: null, threadFocus: null })
+  vi.mocked(loadThreadFocus).mockReset().mockResolvedValue(true)
+  vi.mocked(retryThreadRevalidation).mockReset().mockResolvedValue(undefined)
   vi.mocked(loadOlderReplies).mockReset().mockResolvedValue(true)
   vi.mocked(openThread).mockReset()
   // matchMedia stub for useNarrow — wide by default.
@@ -337,4 +340,50 @@ test('Esc still calls the latest onClose even though the listener was bound to a
   await userEvent.keyboard('{Escape}')
   expect(second).toHaveBeenCalledTimes(1)
   expect(first).not.toHaveBeenCalled()
+})
+
+// --- Thread focus (spec «Поиск», Секция 1б) --------------------------------
+
+const reply = (id: string, minAgo: number): PostView =>
+  post({ id, user_id: 'u-carol', author: 'carol', message: `reply ${id}`, root_id: 'root', create_at: Date.now() - minAgo * 60_000 })
+const focused = (o: Partial<ThreadFocus> = {}) =>
+  thread({
+    posts: [post({ create_at: Date.now() - 600 * 60_000 }), reply('s1', 300), reply('s2', 299), reply('t1', 10), reply('t2', 9)],
+    focus: { target_id: 's2', has_older: true, has_newer: true, gap: { open: true, gen: 2, before_id: 't1', stale: false }, rev: 1, ...o },
+  })
+
+test('ThreadPane focus: the jump target is highlighted, gap rows come from focus.gap', async () => {
+  useStore.setState({ threadFocus: { postId: 's2', nonce: 1 } })
+  render(<ThreadPane server={server()} thread={focused()} onClose={() => {}} />)
+  const log = screen.getByRole('log')
+  expect(log.querySelector('[data-key="s2"]')).toHaveClass('post--focus')
+  const keys = [...log.querySelectorAll('[data-kind]')].map((r) => r.getAttribute('data-key'))
+  expect(keys.indexOf('gap:2')).toBe(keys.indexOf('s2') + 1)
+  await userEvent.click(screen.getByRole('button', { name: 'Load newer replies' }))
+  expect(loadThreadFocus).toHaveBeenCalledWith(5, 'root', true)
+})
+
+test('ThreadPane focus: older replies load through the focus, not the plain thread', () => {
+  render(<ThreadPane server={server()} thread={focused()} onClose={() => {}} />)
+  const log = screen.getByRole('log')
+  log.scrollTop = 0
+  fireEvent.scroll(log)
+  expect(loadThreadFocus).toHaveBeenCalledWith(5, 'root', false)
+  expect(loadOlderReplies).not.toHaveBeenCalled()
+})
+
+test('ThreadPane focus: a stale segment offers Retry of the reread', async () => {
+  render(<ThreadPane server={server()} thread={focused({ gap: { open: true, gen: 2, before_id: 't1', stale: true } })} onClose={() => {}} />)
+  expect(screen.getByText('Checking messages…')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(retryThreadRevalidation).toHaveBeenCalledWith(5, 'root')
+})
+
+test('ThreadPane focus: "open in browser" goes to the target reply\'s permalink', async () => {
+  const { openLink } = await import('../chat')
+  vi.mocked(openLink).mockClear()
+  render(<ThreadPane server={server()} thread={focused()} onClose={() => {}} />)
+  expect(screen.getByText('Showing the replies around the one found')).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Open in browser' }))
+  expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/s2')
 })

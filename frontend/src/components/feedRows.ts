@@ -1,10 +1,17 @@
-import type { ChannelDTO, PostView } from '../api/types'
+import type { ChannelDTO, HistGap, PostView } from '../api/types'
 
 export type Row =
   | { kind: 'more'; key: 'more' }
   | { kind: 'day'; key: string; ms: number }
   | { kind: 'new'; key: 'new' }
-  | { kind: 'gap'; key: 'gap' }
+  // gapAfter: the window lost posts across a reconnect (gap_after).
+  | { kind: 'gapAfter'; key: 'gap' }
+  // gap: the held history does not (yet) join the window (spec «Поиск»,
+  // «Лента (Feed)»). open: the row between them, loading newer pages (key
+  // 'gap:<gen>' — the same row while that gap holds); a closed gap whose
+  // history is still stale is a thin indicator at the top of the history
+  // (key 'gap-stale:<gen>').
+  | { kind: 'gap'; key: string; open: boolean; stale: boolean }
   // threadReplies: the panel's "N replies" divider, right after the root
   // (variant 'thread' only — see buildRows).
   | { kind: 'threadReplies'; key: 'thread-replies'; count: number }
@@ -44,20 +51,35 @@ function isFirstReplyOfSeries(prev: PostView | null, p: PostView): boolean {
 }
 
 // buildRows turns the channel's (or thread's) posts (oldest first) into feed
-// rows: day separators, the "new messages" line, the gap marker, author
+// rows: day separators, the "new messages" line, the gap markers, author
 // groups and — variant-dependent — the reply-context line (channel, CRT
 // off) or the "N replies" divider after the root (thread).
+// gap (the history gap; absent: none): its row goes right before
+// before_id's post — ahead of that post's day separator — or after the
+// last post while before_id is '' (or not shown). The "new messages" line
+// is not drawn after an open gap: its true place may be among the posts
+// not loaded yet.
 export function buildRows(
-  ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'crt'>,
+  ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'crt'> & { gap?: HistGap },
   variant: FeedVariant = 'channel',
 ): Row[] {
   const rows: Row[] = []
   if (ch.has_more) rows.push({ kind: 'more', key: 'more' })
+  const gap = ch.gap
+  if (gap && !gap.open && gap.stale) rows.push({ kind: 'gap', key: `gap-stale:${gap.gen}`, open: false, stale: true })
   let prev: PostView | null = null
   let lineDone = false
   let broken = false // a gap row (or the thread divider) ended the previous group
   let firstPost = true
+  let gapDone = !gap?.open
+  const pushGap = () => {
+    rows.push({ kind: 'gap', key: `gap:${gap!.gen}`, open: true, stale: gap!.stale })
+    gapDone = true
+    broken = true
+  }
   for (const p of ch.posts) {
+    if (!gapDone && gap!.before_id !== '' && p.id === gap!.before_id) pushGap()
+    const afterGap = gap?.open === true && gapDone
     let head = true
     if (!prev || dayKey(prev.create_at) !== dayKey(p.create_at)) {
       rows.push({ kind: 'day', key: `day-${dayKey(p.create_at)}`, ms: p.create_at })
@@ -73,9 +95,11 @@ export function buildRows(
         !!prev.webhook
     }
     if (!lineDone && ch.new_since > 0 && p.create_at > ch.new_since && p.user_id !== ch.me_id && !p.pending && !p.failed) {
-      rows.push({ kind: 'new', key: 'new' })
       lineDone = true
-      head = true
+      if (!afterGap) {
+        rows.push({ kind: 'new', key: 'new' })
+        head = true
+      }
     }
     const isInlineReply = variant === 'channel' && !ch.crt && !!p.root_id
     let replyContext: { author: string; snippet: string } | null | undefined
@@ -99,10 +123,11 @@ export function buildRows(
     }
     firstPost = false
     if (ch.gap_after && p.id === ch.gap_after) {
-      rows.push({ kind: 'gap', key: 'gap' })
+      rows.push({ kind: 'gapAfter', key: 'gap' })
       broken = true
     }
     prev = p
   }
+  if (!gapDone) pushGap()
   return rows
 }

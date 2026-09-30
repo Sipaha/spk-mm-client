@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FileView, ServerDTO, ThreadDTO } from '../api/types'
 import { errorMessage } from '../errors'
 import {
-  copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, markUnread,
-  openFile, openLink, openThread, react, reactionUsers, retryPost, saveThreadDraft, sendReply, setPostSaved, uploadAttachments,
+  copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, loadThreadFocus,
+  markUnread, openFile, openLink, openThread, react, reactionUsers, retryPost, retryThreadRevalidation, saveThreadDraft, sendReply,
+  setPostSaved, uploadAttachments,
 } from '../chat'
 import { formatLocale } from '../format'
 import { t } from '../i18n'
@@ -26,6 +27,7 @@ interface Props {
 export function ThreadPane({ server, thread, onClose }: Props) {
   const editingId = useStore((s) => s.editingId)
   const threadAttachments = useStore((s) => s.threadAttachments)
+  const threadFocus = useStore((s) => s.threadFocus)
   const narrow = useNarrow()
   const paneRef = useRef<HTMLElement>(null)
   const [viewer, setViewer] = useState<{ rootId: string; files: FileView[]; index: number } | null>(null)
@@ -94,15 +96,26 @@ export function ThreadPane({ server, thread, onClose }: Props) {
     [server.id, server.url, thread.channel_id, thread.team_name, thread.root_id],
   )
   const me = useMemo(() => ({ id: thread.me_id, username: server.username }), [thread.me_id, server.username])
+  // A thread focus (a reply jumped to beyond the replies held — spec
+  // «Поиск», Секция 1б): older replies page through the focus (has_older),
+  // its gap to the latest replies is the feed's history gap, and its rev
+  // the revision the feed's anchors wait for. Centering is threadFocus's
+  // nonce (store), never rev.
+  const focus = thread.focus
   const data: FeedData = useMemo(
     () => ({
       id: thread.root_id, posts: thread.posts, new_since: thread.new_since, me_id: thread.me_id,
-      gap_after: thread.gap_after, has_more: thread.has_more, loaded: thread.loaded, crt: thread.crt,
+      gap_after: thread.gap_after, has_more: thread.focus ? thread.focus.has_older : thread.has_more, loaded: thread.loaded, crt: thread.crt,
+      ...(thread.focus ? { gap: thread.focus.gap, hist_rev: thread.focus.rev } : {}),
     }),
     [thread],
   )
 
-  const permalink = `${server.url}/${thread.team_name}/pl/${thread.root_id}`
+  // "Open in browser": the reply focused, else the thread.
+  const permalink = `${server.url}/${thread.team_name}/pl/${focus?.target_id || thread.root_id}`
+  // The focus shows a part of the thread (older replies or ones behind
+  // the gap not loaded): say so, with the way out to the full thread.
+  const partial = !!focus && (focus.has_older || focus.gap.open)
   const retryLoad = () => void openThread(server.id, thread.channel_id, thread.root_id)
 
   // Drag-and-drop (browser mode; desktop drops never reach the page — see
@@ -196,9 +209,9 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           </button>
         </div>
       )}
-      {thread.capped && (
+      {(thread.capped || partial) && (
         <div role="status" className="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5 text-xs text-fg-muted">
-          <span>{t('thread.capped')}</span>
+          <span>{t(partial ? 'thread.focused' : 'thread.capped')}</span>
           <button type="button" className="shrink-0 underline" onClick={() => openLink(permalink)}>
             {t('thread.openInBrowser')}
           </button>
@@ -213,7 +226,10 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         locale={formatLocale()}
         actions={actions}
         editingId={editingId}
-        onLoadOlder={() => loadOlderReplies(server.id, thread.root_id)}
+        onLoadOlder={() => (focus ? loadThreadFocus(server.id, thread.root_id, false) : loadOlderReplies(server.id, thread.root_id))}
+        onLoadNewer={() => loadThreadFocus(server.id, thread.root_id, true)}
+        onRetryStale={() => void retryThreadRevalidation(server.id, thread.root_id)}
+        focus={threadFocus}
         toastHost={TOAST_HOST.thread}
       />
       {thread.root_deleted && (

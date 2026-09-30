@@ -86,6 +86,21 @@
 .md hr { border-color: var(--color-line); margin: 0.5rem 0; }
 .md del { color: var(--color-fg-muted); }
 
+/* A jump's target in a feed (Feed.tsx, spec «Поиск» «Лента (Feed)»): an
+   accent background that holds, then fades out within 3 s (the class goes
+   then too). Two identical animations alternate (post--focus-0/-1) so a
+   jump to the same post again restarts the fade. */
+.post--focus-0 { animation: post-focus-a 3s ease-in forwards; }
+.post--focus-1 { animation: post-focus-b 3s ease-in forwards; }
+@keyframes post-focus-a {
+  0%, 40% { background-color: color-mix(in srgb, var(--color-accent) 20%, transparent); }
+  100% { background-color: transparent; }
+}
+@keyframes post-focus-b {
+  0%, 40% { background-color: color-mix(in srgb, var(--color-accent) 20%, transparent); }
+  100% { background-color: transparent; }
+}
+
 /* Drop target overlay: Wails (desktop) toggles .file-drop-target-active on
    [data-file-drop-target] itself while a native drag hovers it; browser
    mode's own dragenter/dragleave handlers (ChannelPane) do the same, so one

@@ -1,11 +1,11 @@
-import type { PostView } from '../api/types'
+import type { HistGap, PostView } from '../api/types'
 import { buildRows, type Row } from './feedRows'
 
 const base = new Date(2026, 8, 24, 10, 0).getTime()
 const P = (id: string, user: string, min: number, o: Partial<PostView> = {}): PostView => ({
   id, user_id: user, author: user, message: id, create_at: base + min * 60_000, ...o,
 })
-const ch = (posts: PostView[], o: Partial<{ new_since: number; gap_after: string; has_more: boolean; crt: boolean }> = {}) => ({
+const ch = (posts: PostView[], o: Partial<{ new_since: number; gap_after: string; has_more: boolean; crt: boolean; gap: HistGap }> = {}) => ({
   posts, new_since: 0, me_id: 'me', gap_after: '', has_more: false, crt: false, ...o,
 })
 const shape = (rows: Row[]) => rows.map((r) => (r.kind === 'post' ? `${r.key}${r.head ? '*' : ''}` : r.kind))
@@ -44,7 +44,59 @@ test('pending own posts never get the line', () => {
 
 test('history row on top, gap row after the last post before the loss', () => {
   const rows = buildRows(ch([P('a', 'bob', 0), P('b', 'bob', 1), P('c', 'bob', 2)], { has_more: true, gap_after: 'b' }))
-  expect(shape(rows)).toEqual(['more', 'day', 'a*', 'b', 'gap', 'c*'])
+  expect(shape(rows)).toEqual(['more', 'day', 'a*', 'b', 'gapAfter', 'c*'])
+})
+
+// Spec «Поиск», «Лента (Feed)»: the held history (a segment jumped to, or
+// scrolled up to) may not join the window — the gap row sits right before
+// the window's first post (before_id), ahead of its day separator.
+const gap = (o: Partial<HistGap> = {}): HistGap => ({ open: true, gen: 3, before_id: 'w1', stale: false, ...o })
+
+test('the history gap row goes before the window\'s first post, ahead of its day separator; the next post heads a group', () => {
+  const rows = buildRows(ch([P('s1', 'bob', 0), P('s2', 'bob', 1), P('w1', 'bob', 24 * 60), P('w2', 'bob', 24 * 60 + 1)], { gap: gap() }))
+  expect(shape(rows)).toEqual(['day', 's1*', 's2', 'gap', 'day', 'w1*', 'w2'])
+  const same = buildRows(ch([P('s2', 'bob', 1), P('w1', 'bob', 2)], { gap: gap() }))
+  expect(shape(same)).toEqual(['day', 's2*', 'gap', 'w1*']) // same day, same author: still a new group
+})
+
+test('an open gap with an empty window (before_id \'\') sits at the end; a closed gap draws no row', () => {
+  expect(shape(buildRows(ch([P('s1', 'bob', 0)], { gap: gap({ before_id: '' }) })))).toEqual(['day', 's1*', 'gap'])
+  expect(shape(buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1)], { gap: gap({ open: false, before_id: '' }) })))).toEqual(['day', 's1*', 'w1'])
+})
+
+test('gap row key is stable while the gap generation holds, and differs from the reconnect row', () => {
+  const key = (rows: Row[]) => rows.find((r) => r.kind === 'gap')?.key
+  const a = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1)], { gap: gap() }))
+  const b = buildRows(ch([P('s0', 'bob', -1), P('s1', 'bob', 0), P('s2', 'bob', 0.5), P('w1', 'bob', 1)], { gap: gap() }))
+  expect(key(a)).toBe('gap:3')
+  expect(key(b)).toBe(key(a))
+  expect(key(buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1)], { gap: gap({ gen: 4 }) })))).toBe('gap:4')
+  const both = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1), P('w2', 'bob', 2)], { gap: gap(), gap_after: 'w1' }))
+  expect(both.filter((r) => r.kind === 'gap' || r.kind === 'gapAfter').map((r) => r.key)).toEqual(['gap:3', 'gap'])
+})
+
+test('a stale history shows on the open gap row; a closed stale gap is a thin indicator row at the top of the history', () => {
+  const open = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1)], { gap: gap({ stale: true }) }))
+  expect(open.find((r) => r.kind === 'gap')).toMatchObject({ open: true, stale: true })
+  const closed = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 1)], { has_more: true, gap: gap({ open: false, before_id: '', stale: true }) }))
+  expect(shape(closed)).toEqual(['more', 'gap', 'day', 's1*', 'w1'])
+  expect(closed[1]).toMatchObject({ key: 'gap-stale:3', open: false, stale: true })
+})
+
+test('new line hidden when new_since falls into the gap', () => {
+  // The first newer post from someone else is right after the gap: the true
+  // boundary may be among the posts not loaded — no line until they are.
+  const into = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 10), P('w2', 'bob', 11)], { gap: gap(), new_since: base + 5 * 60_000 }))
+  expect(shape(into)).toEqual(['day', 's1*', 'gap', 'w1*', 'w2'])
+  // Own posts after the gap don't make it known either.
+  const mine = buildRows(ch([P('s1', 'bob', 0), P('w1', 'me', 10), P('w2', 'bob', 11)], { gap: gap(), new_since: base + 5 * 60_000 }))
+  expect(shape(mine).includes('new')).toBe(false)
+  // Inside the segment (before the gap) the line is known and drawn.
+  const before = buildRows(ch([P('s1', 'bob', 0), P('s2', 'bob', 6), P('w1', 'bob', 10)], { gap: gap(), new_since: base + 5 * 60_000 }))
+  expect(shape(before)).toEqual(['day', 's1*', 'new', 's2*', 'gap', 'w1*'])
+  // Once the gap closes the line comes back.
+  const closed = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 10)], { gap: gap({ open: false }), new_since: base + 5 * 60_000 }))
+  expect(shape(closed)).toEqual(['day', 's1*', 'new', 'w1*'])
 })
 
 test('a pending post and its confirmed replacement share one row key', () => {

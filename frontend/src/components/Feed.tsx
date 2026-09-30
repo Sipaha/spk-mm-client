@@ -1,9 +1,11 @@
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { Attachment, ChannelDTO, FileView } from '../api/types'
+import type { Attachment, ChannelDTO, FileView, HistGap } from '../api/types'
+import { errorMessage } from '../errors'
 import { formatDay } from '../format'
 import { t } from '../i18n'
+import type { Focus } from '../store'
 import { buildRows, type FeedVariant, type Row } from './feedRows'
 import { fileKind } from './files'
 import { IconArrowDown } from './icons'
@@ -14,8 +16,13 @@ import { useToastHost } from './Toast'
 // FeedData: what Feed needs from a channel or a thread (ChannelDTO and
 // ThreadDTO both have this shape — see AGENTS.md/Task 6 brief). new_since/
 // gap_after are always empty on a ThreadDTO, so the "new messages" line and
-// the gap row never appear there.
-export type FeedData = Pick<ChannelDTO, 'id' | 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'loaded' | 'crt'>
+// the reconnect gap row never appear there. gap/hist_rev: the history gap
+// and the revision history pages are applied with — a channel's own, a
+// thread focus's gap and rev (ThreadPane); absent on a plain thread.
+export type FeedData = Pick<ChannelDTO, 'id' | 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'loaded' | 'crt'> & {
+  gap?: HistGap
+  hist_rev?: number
+}
 
 interface Props {
   data: FeedData
@@ -26,6 +33,13 @@ interface Props {
   actions: PostActions
   editingId: string | null
   onLoadOlder(): Promise<boolean>
+  // onLoadNewer loads one page of the history gap (resolves once done — a
+  // cancelled one too); rejects with the error the gap row shows.
+  onLoadNewer?(): Promise<unknown>
+  // onRetryStale: "Retry" of a stale history's reread.
+  onRetryStale?(): void
+  // focus: a jump's target — centered and highlighted once per nonce.
+  focus?: Focus | null
   // toastHost: this feed's priority as a toast host (Toast.tsx's
   // TOAST_HOST) — the toast then floats over the feed's visible box, like the
   // jump-to-latest button. Without it the feed hosts no toast.
@@ -36,6 +50,8 @@ const NEAR_TOP = 300
 const NEAR_BOTTOM = 48
 const NEW_BADGE_CAP = 99
 const MAX_AUTO_LOADS = 2 // history loads the feed starts on its own (fillViewportIfShort) before it waits for the user
+const MAX_GAP_AUTO_LOADS = 5 // gap pages loaded on their own while the gap row is on screen before it waits for the user
+const FOCUS_MS = 3000 // how long a jump's target stays highlighted (the fade is CSS: .post--focus)
 const MAX_CORRECTIONS = 10 // a few frames may pass before the anchor row is even (re-)mounted after scrollToOffset
 
 // attachmentEstimate: a message_attachment's rendered height before mount
@@ -159,7 +175,7 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
-export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, toastHost }: Props) {
+export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, onLoadNewer, onRetryStale, focus, toastHost }: Props) {
   const rows = useMemo(() => buildRows(data, variant), [data, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
@@ -167,12 +183,28 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const bottomTop = useRef<number | null>(null) // scrollTop when the feed was last known to be at its bottom
   const anchor = useRef<string | null>(null)
   const anchorOffset = useRef(0) // anchor row's distance below the viewport top, px
+  // The pending anchor belongs to a history page: it is restored by the
+  // first render whose hist_rev is past anchorRev (the revision when the
+  // page was asked for) — not by any rows update (a WS post, a
+  // channel_changed ahead of the page) and not when the request resolves (a
+  // page Go dropped moves no revision). undefined: the data has no revision
+  // (a plain thread) — the next rows update restores it.
+  const anchorRev = useRef<number | undefined>(undefined)
+  const anchorSide = useRef<'top' | 'gap'>('top') // 'gap': the post on the gap row's side on screen (loadNewer)
   const userScrolling = useRef(false) // a real wheel/touch gesture since the last restore
   const anchorTried = useRef(false) // the last rows change restored a history anchor (dev diagnostics)
   const loading = useRef(false)
   const autoLoads = useRef(0) // fillViewportIfShort's loads since the last user gesture or leaving the top
   const lastLoad = useRef<{ rows: number; top: number } | null>(null) // rows and scrollTop when the last load started
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [loadingGap, setLoadingGap] = useState(false)
+  const [gapError, setGapError] = useState<string | null>(null)
+  const gapAutoLoads = useRef(0) // gap pages loaded on their own since the user last acted or the row left the screen
+  // A jump: the target waiting for its row (focusPending), the last nonce
+  // taken, the highlighted post (seq restarts the fade for the same post).
+  const focusPending = useRef<string | null>(null)
+  const focusNonce = useRef<number | null>(null)
+  const [highlight, setHighlight] = useState<{ id: string; seq: number } | null>(null)
   const frame = useFrames()
   // Jump-to-latest button: visible once the feed is far enough from the
   // bottom, with a badge counting others' posts that arrived since. `far`
@@ -404,6 +436,12 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   // a reply below the fold, and keeping that one in place pushed the root the
   // user was reading off screen — then the root anchors, the page lands below
   // (re-review I-1).
+  //
+  // A gap page lands in the middle, at the gap row: the post kept in place
+  // is the one on the side of the gap row that is on screen — the first
+  // post under the row when the row is in the upper half of the viewport
+  // (the user came up to it from the window: pages land above what they
+  // read), else the top one as for history.
   const captureAnchor = () => {
     const el = scroller.current
     const first = rows.find((r) => r.kind === 'post')
@@ -416,11 +454,28 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
         const b = r.getBoundingClientRect()
         return { key: r.dataset.key ?? '', top: b.top, bottom: b.bottom }
       })
-      const others = boxes.filter((b) => b.key !== head && b.top < viewBottom && b.bottom > viewTop)
-      found = pickAnchor(head !== null && others.length ? boxes.filter((b) => b.key !== head) : boxes, viewTop)
+      const gapRow = anchorSide.current === 'gap' ? el.querySelector<HTMLElement>('[data-gap-open]') : null
+      const g = gapRow?.getBoundingClientRect()
+      if (g && g.bottom > viewTop && g.top < viewBottom && (g.top + g.bottom) / 2 < (viewTop + viewBottom) / 2) {
+        let below: { key: string; top: number } | null = null
+        for (const b of boxes) if (b.top >= g.bottom - 0.5 && (!below || b.top < below.top)) below = b
+        if (below) found = { key: below.key, offset: below.top - viewTop }
+      }
+      if (!found) {
+        const others = boxes.filter((b) => b.key !== head && b.top < viewBottom && b.bottom > viewTop)
+        found = pickAnchor(head !== null && others.length ? boxes.filter((b) => b.key !== head) : boxes, viewTop)
+      }
     }
     anchor.current = found?.key ?? null
     anchorOffset.current = found?.offset ?? 0
+  }
+
+  // beginAnchor: a history page is asked for — the anchor is taken now and
+  // tied to the current revision (anchorRev above).
+  const beginAnchor = (side: 'top' | 'gap') => {
+    anchorSide.current = side
+    anchorRev.current = data.hist_rev
+    captureAnchor()
   }
 
   const loadOlder = async () => {
@@ -428,14 +483,67 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     loading.current = true
     setLoadingOlder(true)
     lastLoad.current = { rows: rows.length, top: scroller.current?.scrollTop ?? 0 }
-    captureAnchor()
+    beginAnchor('top')
     try {
       if (!(await onLoadOlder())) anchor.current = null
     } finally {
       loading.current = false
       setLoadingOlder(false)
+      checkGap()
     }
   }
+
+  // loadGap loads one page of the history gap — on its own while the gap
+  // row is on screen (auto; MAX_GAP_AUTO_LOADS in a row, then the row's
+  // button waits for the user), or on the user's click (a fresh budget).
+  // One history operation at a time: the same flag as loadOlder's.
+  const gapOpen = !!data.gap?.open
+  const loadGap = async (auto: boolean) => {
+    if (loading.current || !onLoadNewer || !gapOpen) return
+    if (auto) {
+      if (gapError !== null || gapAutoLoads.current >= MAX_GAP_AUTO_LOADS) return
+      gapAutoLoads.current++
+    } else {
+      gapAutoLoads.current = 0
+    }
+    loading.current = true
+    setLoadingGap(true)
+    setGapError(null)
+    beginAnchor('gap')
+    try {
+      await onLoadNewer()
+    } catch (e) {
+      anchor.current = null
+      setGapError(errorMessage(e))
+    } finally {
+      loading.current = false
+      setLoadingGap(false)
+      checkGap()
+    }
+  }
+
+  // checkGap: in the next frame (after layout), load the gap when its row
+  // is on screen; off screen it gets a fresh budget for the next time the
+  // user reaches it.
+  const loadGapRef = useRef(loadGap)
+  loadGapRef.current = loadGap
+  const checkGap = () => {
+    frame('gap', () => {
+      const el = scroller.current
+      const row = el?.querySelector<HTMLElement>('[data-gap-open]')
+      if (!el || !row || loading.current) return
+      const view = el.getBoundingClientRect()
+      const b = row.getBoundingClientRect()
+      if (b.bottom > view.top && b.top < view.top + el.clientHeight) void loadGapRef.current(true)
+      else gapAutoLoads.current = 0
+    })
+  }
+  // A new gap (another generation): its own budget, no old error.
+  const gapGen = data.gap?.gen
+  useEffect(() => {
+    gapAutoLoads.current = 0
+    setGapError(null)
+  }, [gapGen])
 
   // Fetches another page when the current one still doesn't fill the
   // viewport (e.g. a short first page), or when the feed is still within
@@ -498,8 +606,55 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     })
   }
 
+  // centerOn keeps a jump's target centered once its real height and the
+  // rows around it are measured (scrollToIndex's center used estimates for
+  // rows never rendered) — same frame loop as correctAnchorPosition. A row
+  // taller than the viewport goes to its top.
+  const centerOn = (key: string, attempt: number) => {
+    if (attempt > MAX_CORRECTIONS) return
+    frame('anchor', () => {
+      const el = scroller.current
+      if (!el || userScrolling.current) return
+      const rowEl = el.querySelector(`[data-key="${CSS.escape(key)}"]`)
+      if (!rowEl) {
+        centerOn(key, attempt + 1)
+        return
+      }
+      const b = rowEl.getBoundingClientRect()
+      const measured = b.top - el.getBoundingClientRect().top
+      const nudge = anchorNudge(measured, Math.max(0, (el.clientHeight - b.height) / 2))
+      if (nudge === null) return
+      el.scrollTop += nudge
+      centerOn(key, attempt + 1)
+    })
+  }
+
+  // applyFocus centers and highlights the jump's target once its row is
+  // there; false while it is not loaded yet (it stays pending).
+  const highlightSeq = useRef(0)
+  const applyFocus = (): boolean => {
+    const id = focusPending.current
+    const i = id === null ? -1 : rows.findIndex((r) => r.kind === 'post' && r.post.id === id)
+    if (i < 0) return false
+    focusPending.current = null
+    ready.current = true
+    userScrolling.current = false
+    atBottom.current = false
+    bottomTop.current = null
+    scrollToIndex(i, { align: 'center' })
+    centerOn(rows[i].key, 1)
+    setHighlight({ id: id!, seq: ++highlightSeq.current })
+    return true
+  }
+
   useLayoutEffect(() => {
     if (!rows.length) return
+    if (focusPending.current !== null && applyFocus()) {
+      // A jump wins over the initial scroll, a pending anchor and the bottom.
+      fillViewportIfShort()
+      checkGap()
+      return
+    }
     if (!ready.current) {
       // First rows: the "new messages" line, else the latest post.
       ready.current = true
@@ -511,10 +666,13 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
         scrollToIndex(rows.length - 1, { align: 'end' })
       }
       fillViewportIfShort()
+      checkGap()
       return
     }
-    anchorTried.current = !!anchor.current
-    if (anchor.current) {
+    // A pending anchor waits for its page's revision (anchorRev).
+    const due = anchorRev.current === undefined || (data.hist_rev ?? 0) > anchorRev.current
+    anchorTried.current = anchor.current !== null && due
+    if (anchor.current !== null && due) {
       // History landed above: keep the anchored row at the exact screen
       // position it had before the prepend (not necessarily the viewport
       // top — it may not have been there).
@@ -531,12 +689,40 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
         correctAnchorPosition(key, offset, 1)
       }
       fillViewportIfShort()
+      checkGap()
       return
     }
     const last = rows[rows.length - 1]
     if (atBottom.current || (last.kind === 'post' && last.post.pending)) scrollToIndex(rows.length - 1, { align: 'end' })
     fillViewportIfShort()
+    checkGap()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
+
+  // A jump (a new nonce): from now on nothing else moves the feed — not the
+  // bottom (atBottom off at once, before any scroll event), not a history
+  // anchor or its pending correction, not a ScrollShift left over. Runs
+  // after the rows effect above, so in a commit that brings both the
+  // target wins over the initial scroll. A data revision alone (hist_rev,
+  // a thread focus's rev) never gets here: only a navigation centers.
+  useLayoutEffect(() => {
+    if (!focus || focus.nonce === focusNonce.current) return
+    focusNonce.current = focus.nonce
+    atBottom.current = false
+    bottomTop.current = null
+    anchor.current = null
+    anchorRev.current = undefined
+    frame('anchor', () => {}) // drops a pending anchor correction
+    shift.flush()
+    focusPending.current = focus.postId
+    if (rows.length) applyFocus()
+  }, [focus?.nonce]) // only a new navigation; rows are the rows effect's
+
+  // The highlight fades (CSS) and goes after FOCUS_MS.
+  useEffect(() => {
+    if (!highlight) return
+    const id = setTimeout(() => setHighlight(null), FOCUS_MS)
+    return () => clearTimeout(id)
+  }, [highlight])
 
   // Scrolls the post being edited into view when editing starts. Matched by
   // the post's real id, not the row key: a just-confirmed own post keeps its
@@ -563,9 +749,10 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     atBottom.current = distance < NEAR_BOTTOM || stayed
     bottomTop.current = atBottom.current ? el.scrollTop : null
     if (!wasAtBottom && atBottom.current) resetNewPosts()
-    if (loading.current && anchor.current) captureAnchor() // still waiting for the page: track where the user is now
+    if (anchor.current) captureAnchor() // still waiting for the page's revision: track where the user is now
     if (el.scrollTop < NEAR_TOP) void loadOlder()
     else autoLoads.current = 0 // away from the top: the next arrival there is a new episode
+    checkGap()
     // Hysteresis: show past one viewport from the bottom, hide within
     // NEAR_BOTTOM, leave it as-is in between — so it doesn't flicker.
     if (distance > el.clientHeight) {
@@ -624,8 +811,10 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
             <div className="h-px flex-1 bg-danger" />
           </div>
         )
-      case 'gap':
+      case 'gapAfter':
         return <div role="status" className="py-2 text-center text-xs text-fg-muted">{t('feed.gap')}</div>
+      case 'gap':
+        return <GapRow row={r} variant={variant} loading={loadingGap} error={gapError} onLoad={() => void loadGap(false)} onRetryStale={onRetryStale} />
       case 'threadReplies':
         return (
           <div className="flex items-center px-4 py-2">
@@ -647,8 +836,10 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     shift.onUserInput()
     autoLoads.current = 0
     lastLoad.current = null
+    gapAutoLoads.current = 0
     const el = scroller.current
     if (el && el.scrollTop < NEAR_TOP) fillViewportIfShort()
+    checkGap()
   }
 
   return (
@@ -681,18 +872,23 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
               without waiting for ResizeObserver/React to update each offset.
               flow-root keeps article margins inside the measured row. */}
           <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${visibleRows[0]?.start ?? 0}px)` }}>
-            {visibleRows.map((it) => (
-              <div
-                key={it.key}
-                data-index={it.index}
-                data-key={it.key}
-                data-kind={rows[it.index].kind}
-                ref={v.measureElement}
-                style={{ display: 'flow-root', width: '100%' }}
-              >
-                {renderRow(rows[it.index])}
-              </div>
-            ))}
+            {visibleRows.map((it) => {
+              const r = rows[it.index]
+              const lit = highlight !== null && r.kind === 'post' && r.post.id === highlight.id
+              return (
+                <div
+                  key={it.key}
+                  data-index={it.index}
+                  data-key={it.key}
+                  data-kind={r.kind}
+                  ref={v.measureElement}
+                  className={lit ? `post--focus post--focus-${highlight.seq % 2}` : undefined}
+                  style={{ display: 'flow-root', width: '100%' }}
+                >
+                  {renderRow(r)}
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>
@@ -726,4 +922,56 @@ function ToastHost({ priority }: { priority: number }) {
   const ref = useRef<HTMLDivElement>(null)
   useToastHost(ref, priority, 'feed')
   return <div ref={ref} data-toast-host="feed" className="pointer-events-none absolute inset-0" />
+}
+
+// GapRow: the history gap (spec «Поиск», «Лента (Feed)»). Open: "Load
+// newer messages" (loaded on its own while on screen), its error with
+// "Retry", and — the history being stale — "Checking messages…" with
+// "Retry" of the reread. A closed gap with a stale history is only the
+// thin indicator.
+function GapRow({ row, variant, loading, error, onLoad, onRetryStale }: {
+  row: Extract<Row, { kind: 'gap' }>
+  variant: FeedVariant
+  loading: boolean
+  error: string | null
+  onLoad(): void
+  onRetryStale?(): void
+}) {
+  const stale = row.stale && (
+    <div role="status" className="flex items-center justify-center gap-2 text-fg-muted">
+      <span>{t('feed.gap.checking')}</span>
+      {onRetryStale && (
+        <button type="button" className="underline hover:text-fg" onClick={onRetryStale}>
+          {t('feed.gap.retry')}
+        </button>
+      )}
+    </div>
+  )
+  if (!row.open) return <div className="py-1 text-xs">{stale}</div>
+  return (
+    <div data-gap-open className="flex flex-col items-center gap-1 px-4 py-2 text-xs">
+      <div className="flex w-full items-center">
+        <div className="h-px flex-1 bg-line" />
+        {error !== null ? (
+          <span className="flex items-center gap-2 px-3">
+            <span role="alert" className="text-danger">{error}</span>
+            <button type="button" className="font-semibold text-accent underline hover:text-fg" onClick={onLoad}>
+              {t('feed.gap.retry')}
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onLoad}
+            className="mx-3 rounded px-2 py-0.5 font-semibold text-accent hover:bg-hover disabled:text-fg-muted disabled:hover:bg-transparent"
+          >
+            {loading ? t('feed.gap.loading') : t(variant === 'thread' ? 'thread.gap.loadNewer' : 'feed.gap.loadNewer')}
+          </button>
+        )}
+        <div className="h-px flex-1 bg-line" />
+      </div>
+      {stale}
+    </div>
+  )
 }

@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { Profiler, StrictMode } from 'react'
 import { vi } from 'vitest'
-import type { Attachment, AttachmentField, ChannelDTO, FileView, PostView } from '../api/types'
+import { ApiError } from '../api/client'
+import type { Attachment, AttachmentField, ChannelDTO, FileView, HistGap, PostView } from '../api/types'
 import { setLocale } from '../i18n'
 import type { Row } from './feedRows'
 import { anchorNudge, CARD_CHROME, estimate, Feed, FILE_CARD_H, pickAnchor } from './Feed'
@@ -123,7 +124,8 @@ test('estimate: a plain post (no attachments) is unchanged — flat head/non-hea
   expect(estimate(postRow(post(), false))).toBe(28)
   expect(estimate({ kind: 'day', key: 'd', ms: 0 })).toBe(36)
   expect(estimate({ kind: 'new', key: 'new' })).toBe(36)
-  expect(estimate({ kind: 'gap', key: 'gap' })).toBe(36)
+  expect(estimate({ kind: 'gapAfter', key: 'gap' })).toBe(36)
+  expect(estimate({ kind: 'gap', key: 'gap:1', open: true, stale: false })).toBe(36)
   expect(estimate({ kind: 'more', key: 'more' })).toBe(36)
 })
 
@@ -261,8 +263,12 @@ async function openAtTop(variant: 'channel' | 'thread') {
   fireEvent.scroll(log)
   await frames.flush()
   expect(onLoadOlder).toHaveBeenCalledTimes(1)
+  // A page applied moves hist_rev (the anchor waits for it); a page Go
+  // dropped (no posts) does not.
+  let rev = p.data.hist_rev
   const land = async (posts: PostView[]) => {
-    view.rerender(<Feed {...p} data={{ ...p.data, posts: [...posts, ...p.data.posts] }} />)
+    if (posts.length) rev++
+    view.rerender(<Feed {...p} data={{ ...p.data, posts: [...posts, ...p.data.posts], hist_rev: rev }} />)
     await frames.flush()
   }
   const cleanup = () => (frames.restore(), geo.restore())
@@ -339,7 +345,8 @@ async function threadRig(height: number) {
   const reply = (n: number): PostView => ({ ...P(`r${n}`, n % 2 ? 'carol' : 'bob', 60 - n), root_id: 'R' })
   const replies = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => reply(from + i))
   const onLoadOlder = vi.fn().mockResolvedValue(true)
-  const p = { ...props({ has_more: true, posts: [root, ...replies(11, 20)] }, onLoadOlder), variant: 'thread' as const }
+  // A plain thread: no history revision (the restore follows the next rows update).
+  const p = { ...props({ has_more: true, posts: [root, ...replies(11, 20)], hist_rev: undefined }, onLoadOlder), variant: 'thread' as const }
   const view = render(<Feed {...p} />)
   const log = screen.getByRole('log')
   const st = { top: 0 }
@@ -929,5 +936,301 @@ test('a batch of row resizes commits together instead of rendering once per meas
   } finally {
     view.unmount()
     ro.restore()
+  }
+})
+
+// ---- the history gap and jumps (spec «Поиск», «Лента (Feed)») ----
+//
+// A channel whose held history (s1..s10, a segment jumped to) does not join
+// the window (w1..w10): the gap row sits between them. The layout is driven
+// by hand like threadRig's: 40 px rows at their range offset minus
+// scrollTop; scrollTo moves the feed within the content's height.
+
+const seg = (from: number, to: number, prefix = 's', minAgo = 300) =>
+  Array.from({ length: to - from + 1 }, (_, i) => P(`${prefix}${from + i}`, 'bob', minAgo - from - i))
+const win = (from: number, to: number) => seg(from, to, 'w', 100)
+const openGap = (o: Partial<HistGap> = {}): HistGap => ({ open: true, gen: 1, before_id: 'w1', stale: false, ...o })
+
+type FeedProps = Parameters<typeof Feed>[0]
+
+async function channelRig(height: number, o: Partial<ChannelDTO> = {}, extra: Partial<FeedProps> = {}) {
+  const frames = manualFrames()
+  const onLoadNewer = vi.fn((): Promise<unknown> => Promise.resolve())
+  const onRetryStale = vi.fn()
+  let p: FeedProps = {
+    ...props({ posts: [...seg(1, 10), ...win(1, 10)], gap: openGap(), hist_rev: 1, new_since: 0, ...o }),
+    onLoadNewer, onRetryStale, ...extra,
+  }
+  const view = render(<Feed {...p} />)
+  const log = screen.getByRole('log')
+  const st = { top: 0 }
+  const content = () => Math.max(height, parseFloat((log.lastElementChild as HTMLElement).style.height) || 0)
+  const clamp = (v: number) => Math.max(0, Math.min(v, content() - height))
+  Object.defineProperties(log, {
+    scrollHeight: { configurable: true, get: content },
+    clientHeight: { configurable: true, get: () => height },
+    scrollTop: { configurable: true, get: () => st.top, set: (v: number) => void (st.top = clamp(v)) },
+  })
+  const scrollToSpy = vi.fn((o: ScrollToOptions) => void (st.top = clamp(o.top ?? st.top)))
+  log.scrollTo = scrollToSpy as unknown as typeof log.scrollTo
+  const rowTop = (el: HTMLElement) => {
+    const range = el.parentElement!
+    const start = Number(/translateY\((-?[\d.]+)px\)/.exec(range.style.transform)?.[1] ?? 0)
+    return start + [...range.children].indexOf(el) * 40 - st.top
+  }
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const row = this.closest<HTMLElement>('[data-kind]')
+    const inLog = row !== null && log.contains(row)
+    const y = this === log ? 0 : inLog ? rowTop(row) : 0
+    const h = this === log ? height : inLog ? 40 : 0
+    return { top: y, bottom: y + h, left: 0, right: 0, width: 0, height: h, x: 0, y, toJSON: () => ({}) } as DOMRect
+  })
+  const onScreen = (key: string) => {
+    const el = log.querySelector<HTMLElement>(`[data-key="${key}"]`)
+    return el ? rowTop(el) : null
+  }
+  const row = (key: string) => log.querySelector<HTMLElement>(`[data-key="${key}"]`)
+  const scrollTo = async (top: number) => {
+    st.top = clamp(top)
+    fireEvent.scroll(log)
+    await frames.flush()
+  }
+  const update = async (d: Partial<ChannelDTO>, x: Partial<FeedProps> = {}) => {
+    p = { ...p, ...x, data: { ...p.data, ...d } }
+    view.rerender(<Feed {...p} />)
+    await frames.flush()
+  }
+  await frames.flush() // the mount's frames
+  fireEvent.scroll(log) // the scroll event a browser sends for the mount's own scroll
+  await frames.flush()
+  return {
+    log, st, onLoadNewer, onRetryStale, onScreen, row, scrollTo, update, scrollToSpy, flush: frames.flush,
+    data: () => p.data,
+    restore: () => (rect.mockRestore(), frames.restore()),
+  }
+}
+
+// A promise the test settles by hand.
+function pending<T = void>() {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((a, b) => ((resolve = a), (reject = b)))
+  return { promise, resolve, reject }
+}
+
+test('renders a gap row between segment and window', () => {
+  render(<Feed {...props({ posts: [...seg(1, 2), ...win(1, 2)], gap: openGap(), hist_rev: 1 })} onLoadNewer={vi.fn().mockResolvedValue(undefined)} />)
+  const log = screen.getByRole('log')
+  const order = [...log.querySelectorAll('[data-kind]')].map((r) => r.getAttribute('data-key'))
+  expect(order.indexOf('gap:1')).toBe(order.indexOf('s2') + 1)
+  expect(order.indexOf('w1')).toBeGreaterThan(order.indexOf('gap:1'))
+  const gapRow = log.querySelector<HTMLElement>('[data-key="gap:1"]')!
+  expect(within(gapRow).getByRole('button', { name: 'Load newer messages' })).toBeInTheDocument()
+})
+
+test('gap row key is stable while the gap generation holds (the same row element across pages)', async () => {
+  const r = await channelRig(600)
+  try {
+    const before = r.row('gap:1')
+    expect(before).not.toBeNull()
+    await r.update({ posts: [...seg(1, 12), ...win(1, 10)], hist_rev: 2 })
+    expect(r.row('gap:1')).toBe(before)
+  } finally {
+    r.restore()
+  }
+})
+
+test('the thread variant labels the gap row with replies', () => {
+  render(<Feed {...props({ posts: [...seg(1, 2), ...win(1, 2)], gap: openGap(), hist_rev: 1 })} variant="thread" onLoadNewer={vi.fn().mockResolvedValue(undefined)} />)
+  expect(screen.getByRole('button', { name: 'Load newer replies' })).toBeInTheDocument()
+})
+
+test('auto-loads the gap within a budget', async () => {
+  // Short channel: the gap row stays on screen whatever loads.
+  const r = await channelRig(600, { posts: [...seg(1, 2), ...win(1, 2)] })
+  try {
+    expect(r.onLoadNewer).toHaveBeenCalledTimes(5) // on its own: 5 pages in a row, then it waits
+    await r.update({ posts: [...seg(1, 3), ...win(1, 2)], hist_rev: 2 })
+    expect(r.onLoadNewer).toHaveBeenCalledTimes(5)
+
+    fireEvent.click(within(r.row('gap:1')!).getByRole('button', { name: 'Load newer messages' }))
+    await r.flush()
+    expect(r.onLoadNewer.mock.calls.length).toBeGreaterThan(5) // the user asked: a fresh budget
+
+    const n = r.onLoadNewer.mock.calls.length
+    fireEvent.wheel(r.log, { deltaY: 100 })
+    await r.flush()
+    expect(r.onLoadNewer.mock.calls.length).toBeGreaterThan(n) // a wheel gesture too
+  } finally {
+    r.restore()
+  }
+})
+
+test('pages are loaded one at a time (the gap and history share one flag)', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const onLoadOlder = vi.fn().mockResolvedValue(true)
+  const r = await channelRig(600, { has_more: true }, { onLoadNewer, onLoadOlder })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    fireEvent.wheel(r.log, { deltaY: 100 })
+    await r.scrollTo(r.st.top - 10)
+    const button = within(r.row('gap:1')!).getByRole('button', { name: 'Loading…' })
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    await r.scrollTo(0) // at the top: history would load — not while a page is in flight
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    expect(onLoadOlder).not.toHaveBeenCalled()
+  } finally {
+    r.restore()
+  }
+})
+
+test('anchor applies on hist_rev, not on an earlier channel_changed', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(600, {}, { onLoadNewer })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(1) // the gap row is on screen at the bottom of the feed
+    // A WS post arrives first (channel_changed before the page): no hist_rev change.
+    await r.update({ posts: [...seg(1, 10), ...win(1, 11)] })
+    await r.scrollTo(r.st.top + 20) // the user keeps scrolling while the page is in flight
+    const seen = r.onScreen('w1')!
+    page.resolve()
+    // The page: three posts land in the gap, above w1.
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 11)], hist_rev: 2 })
+    expect(r.onScreen('w1')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
+test('a dropped page (no hist_rev change) with a WS row does not consume the anchor', async () => {
+  const later = pending()
+  const onLoadNewer = vi.fn((): Promise<unknown> => later.promise).mockImplementationOnce(() => Promise.resolve()) // Go dropped the first page
+  const r = await channelRig(600, {}, { onLoadNewer })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(2) // …the next one is in flight
+    await r.scrollTo(r.st.top - 100) // off the bottom: a new post is not followed there
+    const seen = r.onScreen('w1')!
+    r.scrollToSpy.mockClear()
+    await r.update({ posts: [...seg(1, 10), ...win(1, 11)] }) // a WS post, same hist_rev
+    expect(r.scrollToSpy).not.toHaveBeenCalled() // no restore on it
+    expect(r.onScreen('w1')).toBe(seen)
+    later.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 11)], hist_rev: 2 })
+    expect(r.onScreen('w1')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
+test('keeps the visible post when rows are inserted above it (from below)', async () => {
+  const page = pending()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(600, {}, { onLoadNewer })
+  try {
+    // The user came up from the window: the gap row is in the upper part of
+    // the screen, segment posts above it, window posts below.
+    await r.scrollTo(240)
+    expect(r.onScreen('gap:1')).toBe(200)
+    const seen = r.onScreen('w1')!
+    expect(r.onScreen('s6')).toBeGreaterThanOrEqual(0) // a segment post is on screen too, at the top
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(r.onScreen('w1')).toBe(seen) // the side on screen below the gap stays put
+  } finally {
+    r.restore()
+  }
+})
+
+test('jump centers and highlights the target, beats the initial scroll', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  // A "new messages" line in the window would be the initial scroll's target.
+  const posts = [...seg(1, 10), ...win(1, 9), P('w10', 'carol', 1)]
+  const r = await channelRig(600, { posts, gap: openGap({ open: false, before_id: '' }), new_since: now - 5 * 60_000 }, { focus: { postId: 's8', nonce: 1 } })
+  try {
+    expect(r.onScreen('s8')).toBe(280) // (600 - 40) / 2
+    expect(r.row('s8')).toHaveClass('post--focus')
+    act(() => void vi.advanceTimersByTime(3000))
+    expect(r.row('s8')).not.toHaveClass('post--focus') // the highlight fades out
+  } finally {
+    vi.useRealTimers()
+    r.restore()
+  }
+})
+
+test('a jump after the feed opened centers the target and a new post does not pull it to the bottom', async () => {
+  const r = await channelRig(600, { gap: openGap({ open: false, before_id: '' }) })
+  try {
+    expect(r.st.top).toBe(r.log.scrollHeight - 600) // opened at the bottom
+    await r.update({}, { focus: { postId: 's8', nonce: 1 } })
+    expect(r.onScreen('s8')).toBe(280)
+    await r.update({ posts: [...seg(1, 10), ...win(1, 11)] })
+    expect(r.onScreen('s8')).toBe(280)
+  } finally {
+    r.restore()
+  }
+})
+
+test('a jump whose target is not loaded yet centers it once it arrives', async () => {
+  const r = await channelRig(600, { posts: win(1, 10), gap: openGap({ open: false, before_id: '' }) })
+  try {
+    await r.update({}, { focus: { postId: 's8', nonce: 1 } }) // Go has not re-read the channel yet
+    await r.update({ posts: [...seg(1, 10), ...win(1, 10)], gap: openGap(), hist_rev: 2 })
+    expect(r.onScreen('s8')).toBe(280)
+    expect(r.row('s8')).toHaveClass('post--focus')
+  } finally {
+    r.restore()
+  }
+})
+
+test('same target again re-centers (nonce)', async () => {
+  const r = await channelRig(600, { gap: openGap({ open: false, before_id: '' }) }, { focus: { postId: 's8', nonce: 1 } })
+  try {
+    expect(r.onScreen('s8')).toBe(280)
+    await r.scrollTo(0)
+    await r.update({ hist_rev: 2 }) // a data revision: never re-centers
+    expect(r.onScreen('s8')).toBe(320)
+    await r.update({}, { focus: { postId: 's8', nonce: 2 } })
+    expect(r.onScreen('s8')).toBe(280)
+  } finally {
+    r.restore()
+  }
+})
+
+test('stale indicator with retry', async () => {
+  const onRetryStale = vi.fn()
+  const view = render(<Feed {...props({ posts: [...seg(1, 2), ...win(1, 2)], gap: openGap({ stale: true }), hist_rev: 1 })} onLoadNewer={vi.fn().mockResolvedValue(undefined)} onRetryStale={onRetryStale} />)
+  const gapRow = screen.getByRole('log').querySelector<HTMLElement>('[data-key="gap:1"]')!
+  expect(within(gapRow).getByText('Checking messages…')).toBeInTheDocument()
+  fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry' }))
+  expect(onRetryStale).toHaveBeenCalledTimes(1)
+
+  // A closed gap whose history is still stale: a thin indicator row of its own.
+  view.rerender(<Feed {...props({ posts: [...seg(1, 2), ...win(1, 2)], gap: openGap({ open: false, before_id: '', stale: true }), hist_rev: 2 })} onRetryStale={onRetryStale} />)
+  expect(screen.queryByRole('button', { name: 'Load newer messages' })).not.toBeInTheDocument()
+  const thin = screen.getByRole('log').querySelector<HTMLElement>('[data-key="gap-stale:1"]')!
+  expect(within(thin).getByText('Checking messages…')).toBeInTheDocument()
+  fireEvent.click(within(thin).getByRole('button', { name: 'Retry' }))
+  expect(onRetryStale).toHaveBeenCalledTimes(2)
+})
+
+test('a failed gap page shows the error with Retry and stops loading on its own', async () => {
+  const onLoadNewer = vi.fn((): Promise<unknown> => Promise.reject(new ApiError('no_progress', '')))
+  const r = await channelRig(600, {}, { onLoadNewer })
+  try {
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    const gapRow = r.row('gap:1')!
+    expect(within(gapRow).getByText('Could not load newer messages')).toBeInTheDocument()
+    await r.scrollTo(r.st.top - 10)
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    onLoadNewer.mockImplementation(() => new Promise(() => {}))
+    fireEvent.click(within(gapRow).getByRole('button', { name: 'Retry' }))
+    await r.flush()
+    expect(onLoadNewer).toHaveBeenCalledTimes(2)
+    expect(within(r.row('gap:1')!).queryByText('Could not load newer messages')).not.toBeInTheDocument()
+  } finally {
+    r.restore()
   }
 })

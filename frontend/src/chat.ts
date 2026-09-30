@@ -26,6 +26,15 @@ let wanted: { serverId: number; channelId: string } | null = null
 let threadWanted: { serverId: number; rootId: string } | null = null
 let inFlight = false
 let again = false
+// jumpSeq: the latest jump (jumpToPost) — checked after each of its awaits,
+// so a jump overtaken by another one, a channel or server switch does
+// nothing more (no scroll, no thread). jumpAbort lets go of its request.
+let jumpSeq = 0
+let jumpAbort: AbortController | null = null
+
+// cancelled: a history operation a newer navigation replaced (Go's
+// CodeCancelled) — never shown.
+const cancelled = (e: unknown) => e instanceof ApiError && e.code === 'cancelled'
 
 export const report = (e: unknown) => useStore.getState().setError(errorMessage(e))
 
@@ -40,6 +49,13 @@ export function resetChat() {
   inFlight = false
   again = false
   downloadsSeq++
+  dropJump()
+}
+
+function dropJump() {
+  jumpSeq++
+  jumpAbort?.abort()
+  jumpAbort = null
 }
 
 export function selectServer(id: number | null) {
@@ -93,6 +109,11 @@ export async function loadSidebar(serverId: number, teamId = '', openSelected = 
 }
 
 export async function openChannel(serverId: number, channelId: string) {
+  dropJump() // the user went somewhere: a jump still on its way stops
+  await enterChannel(serverId, channelId)
+}
+
+async function enterChannel(serverId: number, channelId: string) {
   // Navigating to a channel closes any thread panel open for this server
   // (Task 6 brief) — even the same channel's, re-clicked: opening always
   // starts fresh, same as the channel fetch itself below.
@@ -164,6 +185,111 @@ export async function openFromNotification(serverId: number, channelId: string, 
   if (rootId) void openThread(serverId, channelId, rootId)
 }
 
+// --- Jump to a post (spec «Поиск», Секция 1/1б) ---------------------------
+
+// jumpToPost shows postId of channelId: the channel is opened (unless it is
+// the one open), Go loads the history around the post, and the feed
+// centers and highlights it (store focus). A reply of a collapsed thread
+// (CRT: in_feed false) opens its thread focused on it instead. Each step
+// goes on only while this is still the latest jump (jumpSeq). Resolves
+// quietly when overtaken or cancelled; any other failure (post_gone,
+// forbidden, offline…) is thrown for the caller to show where it asked.
+export async function jumpToPost(serverId: number, channelId: string, postId: string, rootId?: string): Promise<void> {
+  // Another server first (its reset drops jumps in flight too); its
+  // sidebar then finds this channel wanted and leaves it be.
+  if (useStore.getState().selectedId !== serverId) selectServer(serverId)
+  dropJump()
+  const my = jumpSeq
+  const ctl = new AbortController()
+  jumpAbort = ctl
+  const live = () => my === jumpSeq
+  try {
+    if (wanted?.serverId !== serverId || wanted.channelId !== channelId || useStore.getState().channel?.id !== channelId) {
+      await enterChannel(serverId, channelId)
+      if (!live()) return
+    }
+    const r = await client.jumpToPost(serverId, channelId, postId, ctl.signal)
+    if (!live()) return
+    if (!r.in_feed) {
+      await openThreadFocused(serverId, channelId, r.root_id || rootId || '', r.post_id, ctl.signal)
+      return
+    }
+    useStore.getState().setFocus(r.post_id)
+    await refreshChannel(serverId, channelId)
+  } catch (e) {
+    if (!live() || cancelled(e)) return
+    throw e
+  } finally {
+    if (jumpAbort === ctl) jumpAbort = null
+  }
+}
+
+// openThreadFocused opens rootId's thread in the panel around replyId (Go's
+// thread focus: a segment around it when it is beyond the replies held)
+// and asks the panel to center and highlight it. threadSeq drops it once
+// another thread is opened or the panel closed meanwhile.
+async function openThreadFocused(serverId: number, channelId: string, rootId: string, replyId: string, signal?: AbortSignal) {
+  threadWanted = { serverId, rootId }
+  const my = ++threadSeq
+  const th = await client.openThreadAt(serverId, channelId, rootId, replyId, signal)
+  if (my !== threadSeq) return
+  const s = useStore.getState()
+  if (s.selectedId !== serverId) return
+  s.setThread(th)
+  s.setThreadFocus(replyId)
+  void refreshThreadAttachments(serverId, channelId, rootId)
+}
+
+// loadNewer loads one page of the gap between the held history and the
+// window, then re-reads the channel. A cancelled one is quiet; a failure
+// (no_progress, offline…) is thrown: the gap row shows it with "Retry".
+export async function loadNewer(serverId: number, channelId: string): Promise<void> {
+  try {
+    await client.loadNewer(serverId, channelId)
+  } catch (e) {
+    if (cancelled(e)) return
+    throw e
+  }
+  await refreshChannel(serverId, channelId)
+}
+
+// retryRevalidation: "Retry" of a stale history's reread (Go retries on
+// its own a few times first).
+export async function retryRevalidation(serverId: number, channelId: string): Promise<void> {
+  try {
+    await client.retryRevalidation(serverId, channelId)
+    await refreshChannel(serverId, channelId)
+  } catch (e) {
+    if (!cancelled(e)) report(e)
+  }
+}
+
+// loadThreadFocus loads one page of the thread focus: older (the panel's
+// onLoadOlder — resolves true when the thread was re-read, a failure is
+// reported) or newer (the gap to the latest replies — a failure is thrown
+// for the gap row). A cancelled one resolves false, quietly.
+export async function loadThreadFocus(serverId: number, rootId: string, newer: boolean): Promise<boolean> {
+  try {
+    await client.loadThreadFocus(serverId, rootId, newer)
+  } catch (e) {
+    if (cancelled(e)) return false
+    if (newer) throw e
+    report(e)
+    return false
+  }
+  await refreshThread(serverId, rootId)
+  return true
+}
+
+export async function retryThreadRevalidation(serverId: number, rootId: string): Promise<void> {
+  try {
+    await client.retryThreadRevalidation(serverId, rootId)
+    await refreshThread(serverId, rootId)
+  } catch (e) {
+    if (!cancelled(e)) report(e)
+  }
+}
+
 // --- Thread panel (Task 6) -----------------------------------------------
 
 // openThread opens rootId's thread in serverId's panel (replacing whatever
@@ -172,6 +298,7 @@ export async function openFromNotification(serverId: number, channelId: string, 
 // away) is dropped by threadSeq — chat.ts's own guard, same pattern as
 // channelSeq/attachmentsSeq above, on top of Go's own cache eviction.
 export async function openThread(serverId: number, channelId: string, rootId: string) {
+  dropJump() // the user opened a thread: a jump on its way must not replace it
   threadWanted = { serverId, rootId }
   const my = ++threadSeq
   try {
