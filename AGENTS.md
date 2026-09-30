@@ -962,7 +962,11 @@
   страницы восстанавливается только рендером с `hist_rev` новее захваченного (WS-строки и
   выброшенные страницы его не съедают); до того он следует за прокруткой читателя, а
   обновления строк до страницы держат читаемый пост на месте (`holdAnchor`; если он сам ушёл в
-  разрыв — ближайший под ним, нижним краем). Сторона — откуда читатель подошёл к строке
+  разрыв — ближайший под ним, нижним краем; и после прокрутки колесом: во время жеста поправка
+  идёт в `ScrollShift.absorb`, не в `scrollTop` — запись отменила бы анимацию колеса WebKitGTK;
+  защёлка `userScrolling` значит «жест был», не «жест идёт», и держать не мешает). Следующая
+  страница, запрошенная пока предыдущая ещё корректируется, якорится на её цели, а запасные
+  посты снимаются с поправкой на её ошибку. Сторона — откуда читатель подошёл к строке
   (`readerSide`: где строка была, пока была вне экрана; собственные прокрутки восстановления не
   считаются): сверху — держится верхний пост, снизу — пост под строкой (нижним краем: страница
   может присоединить его к группе автора). Линия «новые» за открытым разрывом — только если
@@ -970,7 +974,10 @@
   channel_changed», «keeps the visible post when rows are inserted above it (from below)»,
   «keeps the top post when the reader came down to the gap row, even with the row in the upper
   half», «a live post trimming the window under the gap row while its page loads does not move
-  the post on screen», «auto-loads the gap within a budget»), `feedRows.test.ts` («new line
+  the post on screen (wheel before: %s)», «a chained gap page: the anchored post leaving the
+  window keeps the rest on screen», «a gap row mounted after its scroll check loads without
+  another scroll event», «auto-loads the gap within a budget»), `scrollShift.test.ts` («absorb
+  moves the content without writing scrollTop…»), `feedRows.test.ts` («new line
   hidden when new_since falls into the gap»), e2e `tests/e2e/search.spec.ts` (проходы
   прокруткой `walkFeed`).
 - **UI: один путь снимка треда — `viewThread`.** Каждый снимок треда (открытие, фокус,

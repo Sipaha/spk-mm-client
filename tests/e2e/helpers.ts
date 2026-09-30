@@ -228,7 +228,7 @@ export async function walkFeed(page: Page, log: Locator, first: string, label: R
     if (still >= 3) break // the end, three steps in a row: nothing more comes
     if (Date.now() > deadline) throw new Error(`walkFeed: no end within ${timeout} ms (top ${snap.top}/${snap.end}, gap ${snap.gap})`)
     if (!atEnd) await log.evaluate((el) => el.scrollBy({ top: Math.round(el.clientHeight * 0.66) }))
-    else await page.waitForTimeout(100)
+    else await frames(page)
   }
   expect(problems, problems.join('\n')).toEqual([])
   return order.filter((id) => labels.has(id)).map((id) => labels.get(id)!)

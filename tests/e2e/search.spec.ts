@@ -38,6 +38,8 @@ async function hold(page: Page, method: string, what: 'request' | 'answer') {
   let taken = false
   let arrived!: () => void
   const seen = new Promise<void>((r) => (arrived = r))
+  let finished!: () => void
+  const done = new Promise<void>((r) => (finished = r))
   const handler = async (route: Route) => {
     if (taken) return route.continue()
     taken = true
@@ -45,16 +47,21 @@ async function hold(page: Page, method: string, what: 'request' | 'answer') {
     if (what === 'request') {
       await gate
       await route.continue().catch(() => {}) // the UI may have aborted it meanwhile
+      finished()
       return
     }
     const response = await route.fetch().catch(() => null)
     await gate
     if (response) await route.fulfill({ response }).catch(() => {})
     else await route.abort().catch(() => {})
+    finished()
   }
   await page.route(`**/api/${method}`, handler)
   return {
     // seen: the UI has asked (within 10 s — a hang here says the UI never did).
+    // done: the held call has been handed back to the UI (or dropped, if the
+    // UI aborted it meanwhile).
+    done,
     seen: () => Promise.race([seen, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`hold: the UI never called ${method}`)), 10_000))]),
     release: async () => {
       release()
@@ -155,21 +162,27 @@ test('a gap reached from below, a live post while its page loads: the post on sc
       return el.scrollHeight - el.clientHeight - el.scrollTop
     }))
     .toBeLessThan(2)
+  // Up with the mouse wheel, as a reader does (a wheel gesture is what
+  // the feed must hold the posts through — review, fix round 1).
+  const box = (await log.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await expect
     .poll(async () => {
       if (await gapOnScreen(log)) return true
-      await log.evaluate((el) => el.scrollBy({ top: -Math.round(el.clientHeight * 0.8) }))
+      await page.mouse.wheel(0, -Math.round(box.height * 0.6))
+      await frames(page)
       return false
     }, { timeout: 30_000, intervals: [50] })
     .toBe(true)
   await held.seen()
   // The row in the upper part of the viewport: the reader came from the
   // window below, so the first post under the row is what must stay put.
-  await log.evaluate((el) => {
-    const row = el.querySelector('[data-gap-open]')!.getBoundingClientRect()
-    el.scrollTop += row.top - el.getBoundingClientRect().top - el.clientHeight * 0.2
-  })
-  await frames(page)
+  const rowAt = () => log.evaluate((el) => Math.round(el.querySelector('[data-gap-open]')!.getBoundingClientRect().top - el.getBoundingClientRect().top))
+  await page.mouse.wheel(0, (await rowAt()) - Math.round(box.height * 0.2))
+  const scrollTop = () => log.evaluate((el) => el.scrollTop)
+  let last = -1
+  await expect.poll(async () => { const t = await scrollTop(); const same = t === last; last = t; await frames(page); return same }).toBe(true)
+  expect(await rowAt()).toBeLessThan(box.height / 2)
   // The probe: a window post under the row, mid-screen — not the window's
   // first post, which the live post below pushes out of the window (with the
   // gap open it goes into the gap and comes back with the page).
@@ -278,7 +291,8 @@ test('races: of two quick jumps the second is shown; a second click on the same 
   await hitCard(page, 'Message #150').click()
   await expect(focusedRow(log)).toContainText('Message #150')
   await held.release()
-  await page.waitForTimeout(300) // the late answer of the first jump has arrived and must change nothing
+  await held.done // the late answer of the first jump is back (or dropped: the UI aborted it) and must change nothing
+  await frames(page)
   await expect(focusedRow(log)).toContainText('Message #150')
   await expect(focusedRow(log)).toBeInViewport()
 
