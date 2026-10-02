@@ -14,7 +14,8 @@ import { AttachmentsTray } from './AttachmentsTray'
 import { AutocompletePopup } from './AutocompletePopup'
 import { IconBold, IconCode, IconHeading, IconItalic, IconListBulleted, IconListNumbered, IconMood, IconQuote, IconSend, IconStrikethrough } from './composerIcons'
 import { FormattingMenu } from './FormattingMenu'
-import { IconAttach, IconLink, IconMore } from './icons'
+import { IconAttach, IconLink, IconMore, IconPreview } from './icons'
+import { Markdown } from './Markdown'
 import { useAutocomplete } from './useAutocomplete'
 
 const EmojiPicker = lazy(() => import('./EmojiPicker'))
@@ -26,7 +27,10 @@ const DRAFT_DELAY = 500
 // the pane height". MIN_MAX_HEIGHT keeps that floor sane before the
 // ResizeObserver has measured anything (or in a very short pane).
 const PANE_HEIGHT_RATIO = 0.4
+const MANUAL_PANE_HEIGHT_RATIO = 0.7
 const MIN_MAX_HEIGHT = 88
+const MIN_EDITOR_HEIGHT = 40
+const RESIZE_STEP = 24
 
 // formattingBarFetchStarted: a module-level guard, not per-instance state —
 // the channel composer and the thread composer can be mounted at the same
@@ -57,14 +61,14 @@ const GROUP_BREAK_INDICES = FORMAT_BUTTONS.reduce<number[]>((acc, b, i) => {
   return acc
 }, [])
 
-// RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, attach, emoji,
-// send) is always exactly these 4 fixed-size buttons — a constant, no
-// ResizeObserver/ref of its own. 4 buttons have 3 gaps *between* them.
+// RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, preview, attach,
+// emoji, send) is always exactly these 5 fixed-size buttons — a constant,
+// no ResizeObserver/ref of its own. 5 buttons have 4 gaps *between* them.
 // TOOLBAR_RESERVED is the right group plus the row's px-1.5 padding (6px
 // each side) — not the gap before the group: the last left item's
 // TOOLBAR_ITEM_WIDTH (a button or "more") already carries that trailing gap
 // (re-review M-1; checked against Chromium's layout, composer report).
-const RIGHT_GROUP_BUTTON_COUNT = 4
+const RIGHT_GROUP_BUTTON_COUNT = 5
 const RIGHT_GROUP_WIDTH = RIGHT_GROUP_BUTTON_COUNT * TOOLBAR_BUTTON_SIZE + (RIGHT_GROUP_BUTTON_COUNT - 1) * TOOLBAR_GAP
 const TOOLBAR_ROW_PADDING = 12 // px-1.5, both sides
 const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + TOOLBAR_ROW_PADDING
@@ -115,6 +119,10 @@ interface Props {
   // exercise the emoji picker need no changes — ChannelPane/ThreadPane
   // always pass the real one.
   emojiInfo?(): Promise<EmojiDTO>
+  // me/onLink let the preview use the exact message Markdown renderer,
+  // including own mentions and the app's safe external-link path.
+  me?: string
+  onLink?(href: string): void
   onSend(message: string, attachmentIds: string[]): Promise<void>
   // onCommand: a message starting with "/" is a slash command — executed
   // (Go ExecuteCommand), never posted as text; absent: sent as text.
@@ -126,12 +134,13 @@ interface Props {
 }
 
 const emptyEmojiInfo = (): Promise<EmojiDTO> => Promise.resolve({ recent: [], custom: [], custom_enabled: false })
+const ignoreLink = () => {}
 
 // Composer must be keyed by (channel, root): its draft belongs to one
 // channel's or one thread's composer.
 export function Composer({
   channelId, channelName, draft, rootId = '', disabled = false, serverId, attachments,
-  emojiInfo = emptyEmojiInfo, onSend, onCommand, channelType = '', onDraft, onEditLast,
+  emojiInfo = emptyEmojiInfo, me = '', onLink = ignoreLink, onSend, onCommand, channelType = '', onDraft, onEditLast,
 }: Props) {
   const [text, setText] = useState(draft)
   const [error, setError] = useState<string | null>(null)
@@ -143,6 +152,7 @@ export function Composer({
   // confirmation (the webapp's LeaveChannelModal: leaving is only undone
   // by a new invitation); only its button runs the command.
   const [confirmLeave, setConfirmLeave] = useState<string | null>(null)
+  const [preview, setPreview] = useState(false)
   const attachError = useStore((s) => (rootId ? s.threadAttachError : s.attachError))
   const setAttachError = (msg: string | null) => {
     const s = useStore.getState()
@@ -232,21 +242,30 @@ export function Composer({
   const hiddenButtons = FORMAT_BUTTONS.slice(visibleCount)
   const [moreAnchor, setMoreAnchor] = useState<HTMLButtonElement | null>(null)
 
-  // maxTextareaHeight: ~40% of the pane's height — ChannelPane's/
-  // ThreadPane's own flex column, whose height does not itself change as
-  // the composer grows: the parent of this component's own root (rootRef,
-  // the `border-t … px-3 py-2` wrapper below). The root itself grows with
-  // the composer — that was the bug (fix round 1, item a): the cap chased
-  // its own box and topped out at ~3-4 lines instead of ~40% of the real
-  // pane. A ref, not a parentElement chain from the box, so a wrapper added
-  // around the box cannot move it (re-review M-3). typeof ResizeObserver check: jsdom has
+  // maxTextareaHeight: ~40% of the real ChannelPane/ThreadPane flex column,
+  // explicitly marked by data-composer-pane. Do not measure the immediate
+  // parent: both panes intentionally wrap Composer in a pt-2 spacing div,
+  // whose height follows the composer and would cap it near the minimum.
+  // typeof ResizeObserver check: jsdom has
   // none (Feed.tsx uses the same guard) — tests fall back to no cap, which
   // is harmless (no real layout to measure there anyway).
   const [maxTextareaHeight, setMaxTextareaHeight] = useState<number | undefined>(undefined)
+  const [maxManualHeight, setMaxManualHeight] = useState(480)
+  const [manualHeight, setManualHeight] = useState<number | undefined>(undefined)
+  const [autoHeight, setAutoHeight] = useState(MIN_EDITOR_HEIGHT)
+  const [editorHeight, setEditorHeight] = useState(MIN_EDITOR_HEIGHT)
   useEffect(() => {
-    const pane = rootRef.current?.parentElement
+    const pane = rootRef.current?.closest<HTMLElement>('[data-composer-pane]')
     if (!pane || typeof ResizeObserver === 'undefined') return
-    const update = () => setMaxTextareaHeight(Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * PANE_HEIGHT_RATIO)))
+    const update = () => {
+      const autoMax = Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * PANE_HEIGHT_RATIO))
+      const manualMax = Math.max(MIN_MAX_HEIGHT, Math.round(pane.clientHeight * MANUAL_PANE_HEIGHT_RATIO))
+      setMaxTextareaHeight(autoMax)
+      setMaxManualHeight(manualMax)
+      setManualHeight((height) => (height === undefined ? height : Math.min(height, manualMax)))
+      setAutoHeight((height) => Math.min(height, manualMax))
+      setEditorHeight((height) => Math.min(height, manualMax))
+    }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(pane)
@@ -266,13 +285,60 @@ export function Composer({
   useLayoutEffect(() => {
     const el = textareaRef.current
     const box = el?.parentElement
-    if (!el || !box || el.scrollHeight === 0) return
+    if (!el || !box || preview || manualHeight !== undefined || el.scrollHeight === 0) return
     box.style.minHeight = `${box.offsetHeight}px`
     el.style.height = 'auto'
     const next = maxTextareaHeight ? Math.min(el.scrollHeight, maxTextareaHeight) : el.scrollHeight
     el.style.height = `${next}px`
+    setAutoHeight(next)
+    setEditorHeight(next)
     box.style.minHeight = ''
-  }, [text, maxTextareaHeight])
+  }, [text, maxTextareaHeight, manualHeight, preview])
+
+  const setHeight = (height: number) => {
+    const next = Math.max(MIN_EDITOR_HEIGHT, Math.min(maxManualHeight, Math.round(height)))
+    setManualHeight(next)
+    setEditorHeight(next)
+  }
+  const resetHeight = () => {
+    setManualHeight(undefined)
+    setEditorHeight(autoHeight)
+  }
+  const resizeStart = useRef<{ y: number; height: number } | null>(null)
+  const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (disabled || e.button !== 0) return
+    e.preventDefault()
+    resizeStart.current = { y: e.clientY, height: editorHeight }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }
+  const onResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeStart.current || !e.currentTarget.hasPointerCapture?.(e.pointerId)) return
+    setHeight(resizeStart.current.height + resizeStart.current.y - e.clientY)
+  }
+  const stopResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    resizeStart.current = null
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture?.(e.pointerId)
+  }
+  const onResizeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
+    if (e.key === 'ArrowUp') setHeight(editorHeight + RESIZE_STEP)
+    else if (e.key === 'ArrowDown') setHeight(editorHeight - RESIZE_STEP)
+    else if (e.key === 'Home') setHeight(MIN_EDITOR_HEIGHT)
+    else if (e.key === 'End') setHeight(maxManualHeight)
+    else return
+    e.preventDefault()
+  }
+
+  const togglePreview = () => {
+    const next = !preview
+    if (next) {
+      ac.close()
+      setMoreAnchor(null)
+      setPicker(null)
+    }
+    setPreview(next)
+    if (!next) requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const flush = () => {
     clearTimeout(timer.current)
@@ -323,6 +389,7 @@ export function Composer({
   // runCommand: the explicit send of a "/..." message — the only way a
   // slash command ever runs. Attachments stay in the tray.
   const runCommand = async (msg: string) => {
+    setPreview(false)
     setText('')
     latest.current = ''
     flush()
@@ -355,6 +422,7 @@ export function Composer({
     setCommandError(null)
     const attachmentIds = attachments.filter((a) => !pendingSendIds.current.has(a.id)).map((a) => a.id)
     if (!msg.trim() && attachmentIds.length === 0) return
+    setPreview(false)
     setText('')
     latest.current = ''
     flush()
@@ -508,7 +576,25 @@ export function Composer({
   }
 
   return (
-    <div ref={rootRef} className="border-t border-line bg-panel px-3 py-2">
+    <div ref={rootRef} className="relative border-t border-line bg-panel px-3 py-2">
+      <div
+        role="separator"
+        aria-label={t('composer.resize')}
+        aria-orientation="horizontal"
+        aria-valuemin={MIN_EDITOR_HEIGHT}
+        aria-valuemax={maxManualHeight}
+        aria-valuenow={editorHeight}
+        tabIndex={disabled ? -1 : 0}
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={stopResize}
+        onPointerCancel={stopResize}
+        onDoubleClick={resetHeight}
+        onKeyDown={onResizeKeyDown}
+        className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus:outline-none"
+      >
+        <span className="h-0.5 w-10 rounded bg-line transition-colors group-hover:bg-accent group-focus:bg-accent" />
+      </div>
       {error && (
         <p role="alert" className="pb-1 text-xs text-danger">
           {error}
@@ -581,9 +667,23 @@ export function Composer({
           onPaste={onPaste}
           disabled={disabled}
           autoFocus
-          style={{ maxHeight: maxTextareaHeight ? `${maxTextareaHeight}px` : undefined }}
+          hidden={preview}
+          style={{
+            height: manualHeight ? `${manualHeight}px` : undefined,
+            maxHeight: manualHeight ? `${maxManualHeight}px` : maxTextareaHeight ? `${maxTextareaHeight}px` : undefined,
+          }}
           className="w-full resize-none overflow-y-auto rounded-t-lg bg-transparent px-3 py-2 text-fg placeholder:text-fg-subtle focus:outline-none disabled:opacity-50"
         />
+        {preview && (
+          <div
+            role="region"
+            aria-label={t('composer.previewRegion')}
+            style={{ height: `${editorHeight}px`, maxHeight: `${maxManualHeight}px` }}
+            className="w-full overflow-y-auto rounded-t-lg px-3 py-2 text-fg"
+          >
+            {text.trim() ? <Markdown text={text} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} /> : <span className="text-fg-subtle">{t('composer.previewEmpty')}</span>}
+          </div>
+        )}
         <div ref={toolbarRef} role="toolbar" aria-label={t('composer.toolbar')} className="flex items-center gap-0.5 px-1.5 py-1">
           {/* No horizontal scrollbar here (coordinator ruling 2026-09-29):
               the thread panel (as narrow as 320px) cannot fit all 9
@@ -596,7 +696,7 @@ export function Composer({
               {shownButtons.map(({ mode, label, Icon, groupBreak }) => (
                 <span key={mode} className="flex shrink-0 items-center gap-0.5">
                   {groupBreak && <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-line" />}
-                  <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled}>
+                  <ToolbarButton label={t(label)} onClick={() => runFormat(mode)} disabled={disabled || preview}>
                     <Icon size={18} />
                   </ToolbarButton>
                 </span>
@@ -606,7 +706,7 @@ export function Composer({
                   label={t('composer.moreFormatting')}
                   haspopup="menu"
                   expanded={moreAnchor !== null}
-                  disabled={disabled}
+                  disabled={disabled || preview}
                   onClick={(e) => {
                     // Capture currentTarget synchronously: React nulls it out
                     // on the pooled event by the time a functional setState
@@ -628,6 +728,9 @@ export function Composer({
               onClick={toggleFormattingBar}
             >
               <span className="text-xs font-semibold leading-none">Aa</span>
+            </ToolbarButton>
+            <ToolbarButton label={preview ? t('composer.previewHide') : t('composer.previewShow')} pressed={preview} onClick={togglePreview} disabled={disabled}>
+              <IconPreview size={18} />
             </ToolbarButton>
             <ToolbarButton label={t('composer.attach')} onClick={onAttachClick} disabled={disabled}>
               <IconAttach size={18} />

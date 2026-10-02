@@ -166,6 +166,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
       ref={paneRef}
       role="complementary"
       aria-label={t('thread.title')}
+      data-composer-pane
       data-file-drop-target
       data-srv={server.id}
       data-channel={thread.channel_id}
@@ -289,6 +290,8 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           serverId={server.id}
           attachments={threadAttachments}
           emojiInfo={() => emojiInfo(server.id)}
+          me={server.username}
+          onLink={openLink}
           onSend={(m, ids) => sendReply(server.id, thread.channel_id, thread.root_id, m, ids)}
           onCommand={(cmd) => executeCommand(server.id, thread.channel_id, thread.root_id, cmd)}
           onDraft={(text) => saveThreadDraft(server.id, thread.root_id, text)}

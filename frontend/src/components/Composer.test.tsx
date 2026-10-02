@@ -592,7 +592,7 @@ test('the "more formatting" popover lists the collapsed buttons; picking one app
     await user.click(screen.getByRole('button', { name: 'More formatting options' }))
     const menu = await screen.findByRole('menu', { name: 'More formatting options' })
     expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual([
-      'Italic (Ctrl+I)', 'Strikethrough', 'Heading', 'Link (Ctrl+Alt+K)', 'Code', 'Quote', 'Bulleted list', 'Numbered list',
+      'Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Strikethrough', 'Heading', 'Link (Ctrl+Alt+K)', 'Code', 'Quote', 'Bulleted list', 'Numbered list',
     ])
     await user.click(within(menu).getByRole('menuitem', { name: 'Quote' }))
     expect(screen.queryByRole('menu')).toBeNull()
@@ -635,16 +635,14 @@ test('auto-grow measures with the composer box\'s height held, then releases it'
   }
 })
 
-// Fix round 1, item (a): the auto-grow cap must track the real pane
-// (ChannelPane's/ThreadPane's own column), not the composer's own root —
-// the `border-t … px-3 py-2` wrapper grows right along with the composer;
-// the pane is its parent. Found by the bottom-stick agent: capped at ~3-4
-// lines in practice instead of ~40% of the real pane.
-test('the auto-grow height cap is observed on the pane (the composer root\'s parent), not the composer\'s own root', () => {
+// The auto-grow cap must track the explicitly marked real pane
+// (ChannelPane's/ThreadPane's own column), not the composer or its pt-2
+// wrapper: both grow with the editor and create a self-referential cap.
+test('the auto-grow height cap observes the marked pane, not the composer root', () => {
   const ro = stubResizeObserver()
   try {
     render(
-      <div data-testid="pane">
+      <div data-testid="pane" data-composer-pane>
         <Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />
       </div>,
     )
@@ -661,7 +659,7 @@ test('the cap tracks ~40% of the pane\'s real height, not the composer\'s own bo
   const ro = stubResizeObserver()
   try {
     render(
-      <div data-testid="pane">
+      <div data-testid="pane" data-composer-pane>
         <Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />
       </div>,
     )
@@ -673,4 +671,59 @@ test('the cap tracks ~40% of the pane\'s real height, not the composer\'s own bo
   } finally {
     ro.restore()
   }
+})
+
+test('the resize separator changes the editor height by keyboard and double-click restores auto height', async () => {
+  const ro = stubResizeObserver()
+  try {
+    render(
+      <div data-testid="pane" data-composer-pane>
+        <Composer {...cf(channel())} serverId={1} attachments={[]} onSend={vi.fn()} onDraft={() => {}} onEditLast={() => {}} />
+      </div>,
+    )
+    const pane = screen.getByTestId('pane')
+    setClientHeight(pane, 600)
+    ro.fire(pane)
+
+    const separator = screen.getByRole('separator', { name: 'Resize message field' })
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    expect(separator).toHaveAttribute('aria-valuemax', '420')
+    fireEvent.keyDown(separator, { key: 'ArrowUp' })
+    expect(box.style.height).toBe('64px')
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(box.style.height).toBe('420px')
+    await userEvent.dblClick(separator)
+    expect(box.style.height).toBe('')
+  } finally {
+    ro.restore()
+  }
+})
+
+test('preview uses the message Markdown renderer and returns to the unchanged draft', async () => {
+  const user = userEvent.setup()
+  render(
+    <Composer
+      {...cf(channel())}
+      serverId={1}
+      me="alice"
+      attachments={[]}
+      onSend={vi.fn()}
+      onDraft={() => {}}
+      onEditLast={() => {}}
+    />,
+  )
+  const box = screen.getByRole('textbox', { name: 'Message' })
+  const raw = '## Heading\n\nHello **bold** @alice'
+  fireEvent.change(box, { target: { value: raw } })
+
+  await user.click(screen.getByRole('button', { name: 'Show preview' }))
+  expect(box).not.toBeVisible()
+  const preview = screen.getByRole('region', { name: 'Message preview' })
+  expect(within(preview).getByRole('heading', { name: 'Heading' })).toBeVisible()
+  expect(within(preview).getByText('bold').tagName).toBe('STRONG')
+  expect(within(preview).getByText('@alice')).toHaveAttribute('data-mention', 'alice')
+
+  await user.click(screen.getByRole('button', { name: 'Back to editing' }))
+  expect(box).toBeVisible()
+  expect(box).toHaveValue(raw)
 })

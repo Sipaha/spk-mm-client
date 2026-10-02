@@ -198,6 +198,16 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
   const [text, setText] = useState(post.message)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Fit the editor to the actual laid-out message, including visually
+  // wrapped lines (counting '\n' cannot see those). Very long messages are
+  // capped at half the viewport and scroll inside the editor.
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el || el.scrollHeight === 0) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [text])
   const save = async () => {
     if (busy) return
     setBusy(true)
@@ -213,10 +223,11 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
   return (
     <div className="mt-1">
       <textarea
+        ref={textareaRef}
         aria-label={t('post.editLabel')}
         autoFocus
         value={text}
-        rows={Math.min(10, text.split('\n').length + 1)}
+        rows={1}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
@@ -227,7 +238,7 @@ function EditBox({ post, actions }: { post: PostView; actions: PostActions }) {
             void save()
           }
         }}
-        className="w-full resize-none rounded border border-accent bg-app px-2 py-1 text-fg focus:outline-none"
+        className="max-h-[50vh] w-full resize-none overflow-y-auto rounded border border-accent bg-app px-2 py-1 text-fg focus:outline-none"
       />
       <div className="flex items-center gap-3 text-xs">
         <button className="rounded bg-accent px-2 py-0.5 text-accent-fg disabled:opacity-50" disabled={busy} onClick={() => void save()}>

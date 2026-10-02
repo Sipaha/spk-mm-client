@@ -108,6 +108,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   return (
     <section
       aria-label={channel.name}
+      data-composer-pane
       data-file-drop-target
       data-srv={server.id}
       data-channel={channel.id}
@@ -260,6 +261,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           serverId={server.id}
           attachments={attachments}
           emojiInfo={() => emojiInfo(server.id)}
+          me={server.username}
+          onLink={openLink}
           onSend={(m, ids) => sendPost(server.id, channel.id, m, ids)}
           onCommand={(cmd) => executeCommand(server.id, channel.id, '', cmd)}
           channelType={channel.type}

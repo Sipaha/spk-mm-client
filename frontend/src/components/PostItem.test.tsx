@@ -412,6 +412,38 @@ test('inline edit: Enter saves, Escape cancels, errors stay visible', async () =
   expect(await screen.findByRole('alert')).toHaveTextContent('You are not allowed to do that')
 })
 
+test('inline edit grows to the laid-out message height and keeps fitting as text changes', () => {
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight')
+  Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLTextAreaElement) {
+      return this.value.includes('third') ? 140 : 84
+    },
+  })
+  try {
+    render(
+      <PostItem
+        serverId={1}
+        post={post({ user_id: 'u-alice', message: 'first\nsecond' })}
+        head
+        me={me}
+        locale="en-US"
+        crt={false}
+        actions={actions()}
+        editing
+      />,
+    )
+    const box = screen.getByRole('textbox', { name: 'Edit message' }) as HTMLTextAreaElement
+    expect(box.style.height).toBe('84px')
+    fireEvent.change(box, { target: { value: 'first\nsecond\nthird' } })
+    expect(box.style.height).toBe('140px')
+    expect(box).toHaveClass('max-h-[50vh]', 'overflow-y-auto')
+  } finally {
+    if (desc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', desc)
+    else delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight
+  }
+})
+
 test('the reaction button opens the picker; picking reacts, one already ours is not sent again', async () => {
   const a = actions()
   a.emojiInfo = vi.fn().mockResolvedValue({ recent: ['tada'], custom: [], custom_enabled: false })

@@ -120,6 +120,28 @@ test('edit with arrow-up, delete with confirmation', async ({ page }) => {
   await removeServerFromMenu(page)
 })
 
+test('editing a multiline message opens an editor fitted to its content and grows with more text', async ({ page }) => {
+  await signInAlice(page)
+  const composer = page.getByRole('textbox', { name: 'Message' })
+  const lines = Array.from({ length: 7 }, (_, i) => `editable line ${i + 1}`)
+  await composer.fill(lines.join('\n'))
+  await composer.press('Enter')
+  await expect(feed(page).getByText(lines[0], { exact: false })).toBeVisible()
+  await composer.press('ArrowUp')
+
+  const edit = page.getByRole('textbox', { name: 'Edit message' })
+  const initial = await edit.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }))
+  expect(initial.client).toBeGreaterThan(100)
+  // clientHeight excludes the 1px border on each side; scrollHeight does not.
+  expect(initial.client).toBeGreaterThanOrEqual(initial.scroll - 3)
+
+  await edit.fill([...lines, 'one more line', 'and another'].join('\n'))
+  const grown = await edit.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }))
+  expect(grown.client).toBeGreaterThan(initial.client)
+  expect(grown.client).toBeGreaterThanOrEqual(grown.scroll - 3)
+  await edit.press('Escape')
+})
+
 // latestPost: a fresh post from bob, the feed's last row. The hover tests
 // below used a seed post («Message #140») whose place on screen depends on
 // how much every earlier test posted into Town Square (the fake is shared by

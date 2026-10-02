@@ -85,3 +85,47 @@ test('the composer auto-grows with several lines, then scrolls internally past i
   await box.press('Control+a')
   await box.press('Delete')
 })
+
+test('the composer can be resized upward and reset to automatic height', async ({ page }) => {
+  await signInAlice(page)
+  const box = page.getByRole('textbox', { name: 'Message' })
+  const separator = page.getByRole('separator', { name: 'Resize message field' })
+  const before = (await box.boundingBox())!.height
+  const grip = (await separator.boundingBox())!
+
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y - 140, { steps: 5 })
+  await page.mouse.up()
+  const grown = (await box.boundingBox())!.height
+  expect(grown).toBeGreaterThan(before + 100)
+
+  const movedGrip = (await separator.boundingBox())!
+  await page.mouse.move(movedGrip.x + movedGrip.width / 2, movedGrip.y + movedGrip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(movedGrip.x + movedGrip.width / 2, movedGrip.y + 60, { steps: 3 })
+  await page.mouse.up()
+  expect((await box.boundingBox())!.height).toBeLessThan(grown - 40)
+
+  await separator.dblclick()
+  expect((await box.boundingBox())!.height).toBeLessThan(before + 10)
+})
+
+test('preview renders the draft as a message and returning keeps the raw markdown', async ({ page }) => {
+  await signInAlice(page)
+  const box = page.getByRole('textbox', { name: 'Message' })
+  const raw = '## Preview heading\n\nA **bold** line with @alice'
+  await box.fill(raw)
+
+  await page.getByRole('button', { name: 'Show preview' }).click()
+  const preview = page.getByRole('region', { name: 'Message preview' })
+  await expect(preview.getByRole('heading', { name: 'Preview heading' })).toBeVisible()
+  await expect(preview.locator('strong')).toHaveText('bold')
+  await expect(preview.locator('[data-mention="alice"]')).toHaveText('@alice')
+  await expect(box).toBeHidden()
+
+  await page.getByRole('button', { name: 'Back to editing' }).click()
+  await expect(box).toBeVisible()
+  await expect(box).toHaveValue(raw)
+  await box.fill('')
+})

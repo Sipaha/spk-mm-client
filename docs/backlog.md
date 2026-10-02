@@ -475,13 +475,13 @@
   открытий. Прогнать `--mm-fake --mm-fake-pdf-cycles 60` (или 2 × 40) по рецепту в AGENTS.md и
   убедиться, что уровень после закрытий остаётся в полосе и не растёт; при росте — вернуться к
   спайк-доку S4 «PDF: гейт памяти» (рычаги и изоляция уже измерены).
-- **Composer: message priority (!), formatting preview, and slash/@-mention
+- **Composer: message priority (!) remains out of scope; slash/@-mention
   autocomplete are out of scope** (composer brief 2026-09-29, controller ruling):
   the redesigned composer (`frontend/src/components/Composer.tsx`) ships the
-  formatting toolbar, the Aa toggle, emoji insert and the send button, but
-  three webapp features stay out: (1) the "(!)" message-priority picker next
-  to the formatting buttons; (2) the formatting bar's "eye" preview toggle
-  (rendered markdown instead of raw text before sending); (3) `/`-slash-command
+  formatting toolbar, the Aa toggle, emoji insert, send button, and (added
+  2026-10-02 at the user's request) the eye preview toggle. Two webapp features
+  stay out: (1) the "(!)" message-priority picker next to the formatting
+  buttons; (2) `/`-slash-command
   and `@`-mention autocomplete in the textarea — the latter still needs the
   user's explicit approval before any implementer picks it up (not just an
   ordinary backlog item).
