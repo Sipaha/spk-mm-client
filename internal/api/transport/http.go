@@ -174,6 +174,12 @@ func (h *HTTP) routes() {
 	}) (any, error) {
 		return h.api.Sidebar(ctx, r.ID, r.TeamID)
 	}))
+	h.mux.HandleFunc("POST /api/QuickChannels", handle(func(ctx context.Context, _ *struct{}) (any, error) {
+		return h.api.QuickChannels(ctx)
+	}))
+	h.mux.HandleFunc("POST /api/PinnedPosts", handle(func(ctx context.Context, r *chanReq) (any, error) {
+		return h.api.PinnedPosts(ctx, r.ID, r.ChannelID)
+	}))
 	h.mux.HandleFunc("POST /api/OpenChannel", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return h.api.OpenChannel(ctx, r.ID, r.ChannelID)
 	}))

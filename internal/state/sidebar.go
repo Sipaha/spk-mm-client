@@ -54,6 +54,47 @@ type SidebarView struct {
 	Categories        []CategoryView `json:"categories"`
 }
 
+// QuickChannel is a channel exposed to the global Ctrl+K switcher. Unlike
+// Sidebar it never changes navigation and it includes every joined channel,
+// including DMs hidden by the sidebar's recency preference.
+type QuickChannel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	TeamID      string `json:"team_id"`
+	TeamName    string `json:"team_name"`
+	TeamDisplay string `json:"team_display"`
+	// LastActivityAt is the same recency key as the sidebar: under CRT the
+	// latest root post, otherwise the latest post, never older than creation.
+	LastActivityAt int64 `json:"last_activity_at"`
+}
+
+func (s *Server) QuickChannels() []QuickChannel {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	teams := make(map[string]model.Team, len(s.teams))
+	for _, t := range s.teams {
+		teams[t.ID] = t
+	}
+	out := make([]QuickChannel, 0, len(s.chans))
+	for _, c := range s.chans {
+		if c.Info.DeleteAt != 0 {
+			continue
+		}
+		t := teams[c.Info.TeamID]
+		out = append(out, QuickChannel{ID: c.Info.ID, Name: s.channelNameLocked(c), Type: c.Info.Type,
+			TeamID: c.Info.TeamID, TeamName: t.Name, TeamDisplay: t.DisplayName,
+			LastActivityAt: s.lastActivityLocked(&c.Info, s.crtLocked())})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastActivityAt != out[j].LastActivityAt {
+			return out[i].LastActivityAt > out[j].LastActivityAt
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
 const defaultDMLimit = 40
 
 // Sidebar builds the sidebar of teamID ("" = the last used team) and makes

@@ -67,6 +67,18 @@ export interface SidebarDTO {
   categories: CategoryView[] | null
 }
 
+export interface QuickChannelDTO {
+  server_id: number
+  server_name: string
+  id: string
+  name: string
+  type: string
+  team_id: string
+  team_name: string
+  team_display: string
+  last_activity_at: number
+}
+
 export interface AttachmentField {
   title?: string
   value?: string

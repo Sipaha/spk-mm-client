@@ -15,10 +15,11 @@ import { Composer } from './Composer'
 import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
-import { ChannelTypeMarker, IconDownload } from './icons'
+import { ChannelTypeMarker, IconDownload, IconPin } from './icons'
 import { Markdown } from './Markdown'
 import type { PostActions } from './PostItem'
 import { SearchBox } from './SearchBox'
+import { PinnedPosts } from './PinnedPosts'
 import { TOAST_HOST } from './Toast'
 import { Viewer } from './Viewer'
 
@@ -36,6 +37,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
   // The viewer belongs to the channel it was opened in.
   const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
+  const [pinsOpen, setPinsOpen] = useState(false)
 
   // Drag-and-drop (browser mode; desktop drops never reach the page —
   // WebKitGTK takes them at the GTK level and Wails toggles
@@ -201,7 +203,9 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
             </span>
           )}
         </button>
+        <button type="button" title={t('pins.title')} aria-label={t('pins.title')} onClick={() => setPinsOpen(true)} className="flex shrink-0 items-center justify-center rounded px-1.5 py-1 text-fg-muted hover:bg-hover hover:text-fg"><IconPin size={16} /></button>
       </header>
+      {pinsOpen && <PinnedPosts server={server} channelId={channel.id} onClose={() => setPinsOpen(false)} />}
       {server.state === 'needs_reauth' && (
         <div role="status" className="flex items-center gap-3 bg-mention-bg px-4 py-1.5 text-sm text-mention-fg">
           {t('channel.sessionExpired')}

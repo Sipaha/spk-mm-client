@@ -69,6 +69,8 @@ type API interface {
 	NetworkChanged(ctx context.Context) error
 	OpenURL(ctx context.Context, rawURL string) error
 	Sidebar(ctx context.Context, id int64, teamID string) (SidebarDTO, error)
+	QuickChannels(ctx context.Context) ([]QuickChannelDTO, error)
+	PinnedPosts(ctx context.Context, id int64, channelID string) ([]PinnedPostDTO, error)
 	OpenChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error

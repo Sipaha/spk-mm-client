@@ -893,7 +893,15 @@
   последние посты Town Square). Фейк: `/users/autocomplete`, `/teams/{id}/channels/autocomplete`,
   `/emoji/autocomplete`, `/teams/{id}/commands/autocomplete`, `/commands/execute` (`/echo`, `/shrug`,
   `/away` — эфемерный ответ; остальное — 404 `not_found`), `ExecutedCommands()`; публичный канал
-  «Offices», где alice нет. Ctrl+K не согласован (`docs/backlog.md`); поиск — ниже.
+  «Offices», где alice нет. Ctrl+K сделан 2026-10-02: глобальный список каналов/DM
+  строится без изменения навигации (`state.QuickChannels`, `api.QuickChannels`). Порядок без
+  запроса — по `last_activity_at`; с запросом сначала качество совпадения (точное/начало имени,
+  граница слова, подстрока, команда/сервер), затем активность, поэтому личный `roman.*` выше
+  старых групп с `roman` внутри состава; поиск — ниже.
+- Закреплённые сообщения канала (2026-10-02): кнопка с pin-иконкой в шапке открывает
+  панель поверх правого края; `GET /channels/{id}/pinned` идёт через
+  `Worker.PinnedPosts` только в live, профили авторов догружаются, клик использует общий
+  `jumpToPost` (включая ответ CRT). Фейк реализует тот же маршрут.
 
 ### Переход к сообщению и поиск (спека `docs/specs/2026-09-30-search-design.md`)
 

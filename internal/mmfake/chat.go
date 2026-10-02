@@ -84,6 +84,7 @@ func (s *Server) chatRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v4/users/me/status", s.handleAuthed(s.getStatus))
 	mux.HandleFunc("POST /api/v4/users/ids", s.handleAuthed(s.usersByIDs))
 	mux.HandleFunc("GET /api/v4/channels/{cid}/posts", s.handleAuthed(s.channelPosts))
+	mux.HandleFunc("GET /api/v4/channels/{cid}/pinned", s.handleAuthed(s.pinnedPosts))
 	mux.HandleFunc("POST /api/v4/posts", s.handleAuthed(s.createPost))
 	mux.HandleFunc("PUT /api/v4/posts/{pid}/patch", s.handleAuthed(s.patchPost))
 	mux.HandleFunc("GET /api/v4/posts/{pid}", s.handleAuthed(s.getPost))
@@ -373,6 +374,25 @@ func (s *Server) channelPosts(w http.ResponseWriter, r *http.Request, u User) {
 	default:
 		if start > 0 {
 			list.PrevPostID = vis[start-1].ID
+		}
+	}
+	writeJSON(w, 200, list)
+}
+
+func (s *Server) pinnedPosts(w http.ResponseWriter, r *http.Request, u User) {
+	cid := r.PathValue("cid")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.isMemberLocked(cid, u.ID) {
+		appError(w, 403, "api.context.permissions.app_error", "no permission")
+		return
+	}
+	list := model.PostList{Order: []string{}, Posts: map[string]model.Post{}}
+	for i := len(s.chat.posts[cid]) - 1; i >= 0; i-- {
+		p := s.chat.posts[cid][i]
+		if p.DeleteAt == 0 && p.IsPinned {
+			list.Order = append(list.Order, p.ID)
+			list.Posts[p.ID] = p.Post
 		}
 	}
 	writeJSON(w, 200, list)

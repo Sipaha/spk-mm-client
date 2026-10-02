@@ -11,6 +11,8 @@ import type {
   EventType,
   JumpDTO,
   LayoutDTO,
+  QuickChannelDTO,
+  PostView,
   ReactionUsersDTO,
   SavedFile,
   SearchPageDTO,
@@ -49,6 +51,8 @@ export interface Client {
   networkChanged(): Promise<void>
   openURL(url: string): Promise<void>
   sidebar(id: number, teamId: string): Promise<SidebarDTO>
+  quickChannels(): Promise<QuickChannelDTO[]>
+  pinnedPosts(id: number, channelId: string): Promise<PostView[]>
   openChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
   loadOlder(id: number, channelId: string): Promise<void>
@@ -200,6 +204,8 @@ export const httpClient: Client = {
   networkChanged: () => done(post('NetworkChanged', {})),
   openURL: (url) => done(post('OpenURL', { url })),
   sidebar: (id, team_id) => post('Sidebar', { id, team_id }),
+  quickChannels: () => post('QuickChannels', {}),
+  pinnedPosts: (id, channel_id) => post('PinnedPosts', { id, channel_id }),
   openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
@@ -343,6 +349,8 @@ export const wailsClient: Client = {
   networkChanged: () => wcall('NetworkChanged'),
   openURL: (url) => wcall('OpenURL', url),
   sidebar: (id, teamId) => wcall('Sidebar', id, teamId),
+  quickChannels: () => wcall('QuickChannels'),
+  pinnedPosts: (id, channelId) => wcall('PinnedPosts', id, channelId),
   openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),

@@ -48,6 +48,12 @@ func (w *API) OpenURL(url string) error      { return w.a.OpenURL(context.Backgr
 func (w *API) Sidebar(id int64, teamID string) (api.SidebarDTO, error) {
 	return w.a.Sidebar(context.Background(), id, teamID)
 }
+func (w *API) QuickChannels() ([]api.QuickChannelDTO, error) {
+	return w.a.QuickChannels(context.Background())
+}
+func (w *API) PinnedPosts(id int64, channelID string) ([]api.PinnedPostDTO, error) {
+	return w.a.PinnedPosts(context.Background(), id, channelID)
+}
 func (w *API) OpenChannel(id int64, channelID string) (api.ChannelDTO, error) {
 	return w.a.OpenChannel(context.Background(), id, channelID)
 }

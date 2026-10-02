@@ -342,6 +342,10 @@ export function IconInfo(p: IconProps) {
   )
 }
 
+export function IconPin(p: IconProps) {
+  return <Icon {...p}><path d="M16 3l5 5-2 2-1-1-4 4v3l-2 2-3-3-5 5-1-1 5-5-3-3 2-2h3l4-4-1-1 3-2z" /></Icon>
+}
+
 // IconWebhook: Material Icons "webhook" — the generic picture of a webhook
 // post that has no icon of its own (PostAvatar), drawn by us rather than the
 // webapp's image asset.

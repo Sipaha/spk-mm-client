@@ -15,6 +15,7 @@ import {
   RAIL_WIDTH, SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
 } from './components/splitter'
 import { SearchPane } from './components/SearchPane'
+import { QuickSwitcher } from './components/QuickSwitcher'
 import { ThreadPane } from './components/ThreadPane'
 import { Announcer, Toast } from './components/Toast'
 import { IconClose } from './components/icons'
@@ -201,6 +202,7 @@ export function App() {
 
   return (
     <div className="flex h-screen bg-app text-sm text-fg">
+      <QuickSwitcher />
       {showRail && <ServerRail servers={servers} selectedId={selectedId} onSelect={selectServer} />}
       {chat ? (
         <>

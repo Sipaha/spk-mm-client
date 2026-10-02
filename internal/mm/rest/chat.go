@@ -136,6 +136,13 @@ func (c *Client) ChannelPosts(ctx context.Context, channelID string, q PostsQuer
 	return out, err
 }
 
+// PinnedPosts returns every pinned post in a channel (server order).
+func (c *Client) PinnedPosts(ctx context.Context, channelID string) (model.PostList, error) {
+	var out model.PostList
+	err := c.get(ctx, "/api/v4/channels/"+url.PathEscape(channelID)+"/pinned", &out)
+	return out, err
+}
+
 // StatusesByIDs fetches presence in chunks. The server answers "offline" for
 // users it has no status for, and an empty list if statuses are disabled.
 func (c *Client) StatusesByIDs(ctx context.Context, ids []string) ([]model.Status, error) {
