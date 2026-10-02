@@ -17,44 +17,56 @@
   src: url("./fonts/OpenSans-Italic-Variable.ttf") format("truetype");
 }
 
-/* Graphite dark theme (2026-09-30): neutral surfaces and text, blue only
-   for links, selection and focus. One theme, no switcher or system-theme
+/* Grayscale antialiasing softens light text on dark surfaces without
+   changing font metrics. Verified in WebKitGTK: its default RGB subpixel
+   rendering left coloured edges on Open Sans at 14px. */
+html {
+  -webkit-font-smoothing: antialiased;
+  font-weight: var(--font-weight-normal);
+}
+
+/* Editor-inspired dark theme (2026-10-02): cool grey surfaces from the
+   user's reference, with lighter sidebar/panels and muted blue accents.
+   One theme, no switcher or system-theme
    override. Components use semantic tokens; the preload background in
    index.html must stay in sync with --color-app. */
 @theme {
   --font-sans: "Open Sans", ui-sans-serif, system-ui, sans-serif;
+  /* Slightly fuller strokes with grayscale smoothing; keep medium (500),
+     semibold (600) and bold (700) distinct. Both font files are variable. */
+  --font-weight-normal: 450;
   /* Open Sans at the official client's body size and existing line heights. */
   --text-sm: 0.875rem;
   --text-sm--line-height: 1.25rem;
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
-  --color-app: #202225;
-  --color-panel: #27292d;
-  --color-sidebar: #191b1e;
-  --color-rail: #141619;
-  --color-fg: #d3d6db;
-  --color-fg-muted: #bbc0c8;
-  --color-fg-subtle: #a1a6af;
-  --color-line: #3b3e44;
-  --color-hover: #303338;
-  --color-accent: #82b4f2;
+  --color-app: #282c34;
+  --color-panel: #30343e;
+  --color-sidebar: #30343e;
+  --color-rail: #353b45;
+  --color-fg: #d8dadc;
+  --color-fg-muted: #a7acb2;
+  --color-fg-subtle: #969da5;
+  --color-line: #424854;
+  --color-hover: #393f4b;
+  --color-accent: #8aafdb;
   --color-accent-fg: #15191e;
   --color-mention-bg: #40382b;
   --color-mention-fg: #e5c38b;
   --color-danger: #e58d94;
   /* Light semantic fills need a dark foreground, including mention badges. */
   --color-danger-fg: #15191e;
-  --color-code-bg: #292c31;
+  --color-code-bg: #30343e;
   --color-online: #8cc79b;
   --color-away: #e0b874;
   --color-dnd: #e58d94;
 
   /* Read channels remain ordinary readable text; unread channels are
      brighter and bold. Only explicitly muted channels use opacity-50. */
-  --color-sidebar-fg: #c2c6ce;
-  --color-sidebar-fg-unread: #eceef2;
-  --color-sidebar-active-bg: #293747;
-  --color-sidebar-active-border: #82b4f2;
+  --color-sidebar-fg: #b8bdc4;
+  --color-sidebar-fg-unread: #eceef0;
+  --color-sidebar-active-bg: #444b59;
+  --color-sidebar-active-border: #8aafdb;
 
   /* File-kind colours remain independent of semantic status colours. */
   --color-file-pdf: #e58d94;
