@@ -50,7 +50,10 @@ beforeEach(() => {
 })
 
 beforeEach(() => setLocale('en'))
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 test('full image, keyboard navigation around the post, Escape closes', async () => {
   const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response('hello log', { headers: { 'X-Truncated': '1' } }))
@@ -274,8 +277,16 @@ test('text search: counter and Enter/Shift+Enter cycle matches, current one high
   render(<Viewer serverId={1} files={[log]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
   await act(async () => vi.advanceTimersByTime(0))
   const box = await screen.findByRole('textbox', { name: 'Search in file' })
+  const searchControls = box.parentElement!
+  expect(searchControls).toHaveClass('w-[21rem]')
+  expect(searchControls).toHaveClass('grid-cols-[1fr_14rem]')
+  expect(box).toHaveClass('col-start-2')
+  expect(searchControls.lastElementChild).toHaveClass('col-start-1')
+  expect(searchControls.lastElementChild).toHaveClass('invisible')
   await user.type(box, 'one')
   await act(async () => vi.advanceTimersByTime(150))
+  expect(searchControls.lastElementChild).not.toHaveClass('invisible')
+  expect(searchControls).toHaveClass('w-[21rem]')
   expect(screen.getByText('1 of 3')).toBeInTheDocument()
   const dialog = screen.getByRole('dialog', { name: 'File viewer' })
   expect(dialog.querySelectorAll('mark')).toHaveLength(3)
@@ -315,7 +326,7 @@ test('arrow keys typed in the search field move the caret, not the post’s file
   expect(onIndex).not.toHaveBeenCalled()
 })
 
-test('markdown: opens rendered by default (heading, list, remote image as a link); Source switches to TextView with search', async () => {
+test('markdown: opens rendered with header search; Source keeps the same header search', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\n- one\n- two\n\n![pic](https://example.com/x.png)\n')))
   const onLink = vi.fn()
   const { container } = render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={onLink} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
@@ -324,7 +335,7 @@ test('markdown: opens rendered by default (heading, list, remote image as a link
   expect(container.querySelector('img')).toBeNull() // the remote image is a link, never fetched
   await userEvent.click(screen.getByRole('link', { name: /pic/ }))
   expect(onLink).toHaveBeenCalledWith('https://example.com/x.png')
-  expect(screen.queryByRole('textbox', { name: 'Search in file' })).toBeNull()
+  expect(screen.getByRole('textbox', { name: 'Search in file' })).toBeInTheDocument()
 
   await userEvent.click(screen.getByRole('button', { name: 'Source' }))
   expect(await screen.findByRole('textbox', { name: 'Search in file' })).toBeInTheDocument()
@@ -371,16 +382,17 @@ test('markdown: the Rendered/Source switch is a labelled group; keyboard (Tab, E
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
 })
 
-test('markdown: Ctrl+F in Rendered mode switches to Source and focuses the search field (it does nothing in Rendered otherwise)', async () => {
+test('markdown: Ctrl+F focuses search in Rendered mode without switching to Source', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\nsome body text\n')))
   render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
-  expect(screen.queryByRole('textbox', { name: 'Search in file' })).toBeNull()
+  const box = screen.getByRole('textbox', { name: 'Search in file' })
+  expect(box).not.toHaveFocus()
 
   await userEvent.keyboard('{Control>}f{/Control}')
 
-  expect(await screen.findByRole('textbox', { name: 'Search in file' })).toHaveFocus()
-  expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull() // switched to Source
+  expect(box).toHaveFocus()
+  expect(screen.getByRole('heading', { name: 'Title' })).toBeInTheDocument()
 })
 
 test('markdown: Ctrl+F works on a Russian keyboard layout (key is "а", not "f" — matched by the physical key instead)', async () => {
@@ -391,7 +403,44 @@ test('markdown: Ctrl+F works on a Russian keyboard layout (key is "а", not "f" 
   fireEvent.keyDown(window, { key: 'а', code: 'KeyF', ctrlKey: true })
 
   expect(await screen.findByRole('textbox', { name: 'Search in file' })).toHaveFocus()
-  expect(screen.queryByRole('heading', { name: 'Title' })).toBeNull() // switched to Source
+  expect(screen.getByRole('heading', { name: 'Title' })).toBeInTheDocument()
+})
+
+test('markdown: rendered search highlights substrings and cycles through them', async () => {
+  vi.useFakeTimers()
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('# Title\n\nalpha beta alpha\n')))
+  render(<Viewer serverId={1} files={[readme]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  await act(async () => vi.advanceTimersByTime(0))
+  const box = screen.getByRole('textbox', { name: 'Search in file' })
+  await user.type(box, 'alp')
+  await act(async () => vi.advanceTimersByTime(150))
+  expect(screen.getByText('1 of 2')).toBeInTheDocument()
+  let marks = screen.getByRole('dialog').querySelectorAll('mark[data-file-find="true"]')
+  expect(marks).toHaveLength(2)
+  expect(marks[0]).toHaveAttribute('data-current', 'true')
+  await user.type(box, '{Enter}')
+  expect(screen.getByText('2 of 2')).toBeInTheDocument()
+  marks = screen.getByRole('dialog').querySelectorAll('mark[data-file-find="true"]')
+  expect(marks[1]).toHaveAttribute('data-current', 'true')
+})
+
+test('the empty header strip closes the viewer, with visible controls kept outside it', async () => {
+  const onClose = vi.fn()
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={onClose} onDownload={noop} onOpen={noop} />)
+  const empty = container.querySelector('[data-viewer-header-empty]') as HTMLElement
+  expect(empty).toHaveClass('mx-2')
+  await userEvent.click(screen.getByRole('button', { name: 'Download' }))
+  expect(onClose).not.toHaveBeenCalled()
+  await userEvent.click(empty)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('the content pane keeps side/bottom breathing room but only a small gap below the header', () => {
+  const { container } = render(<Viewer serverId={1} files={[img]} index={0} me="alice" onLink={noop} onIndex={noop} onClose={noop} onDownload={noop} onOpen={noop} />)
+  const pane = container.querySelector('[role="dialog"] > div:last-of-type')!
+  expect(pane).toHaveClass('px-4', 'pb-4', 'pt-1')
+  expect(pane).not.toHaveClass('p-4')
 })
 
 test('a plain text file has no Source/Rendered switch', async () => {

@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { FileView } from '../api/types'
 import { formatSize } from '../format'
 import { t } from '../i18n'
-import { isShortcut } from '../keyboard'
 import { DownloadButton } from './DownloadButton'
 import { FileCard } from './FileCard'
 import { TOAST_HOST, useToastHost } from './Toast'
@@ -87,11 +86,8 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
   // page — or from the empty area into a page — ends in a `click` on their
   // common ancestor, the empty scroller) and was not on a scrollbar.
   const downRef = useRef<{ target: EventTarget | null; x: number; y: number; onBar: boolean } | null>(null)
-  // Set right before switching from Rendered to Source in response to
-  // Ctrl+F (see below); read once by TextView's mount effect to focus the
-  // search field, then cleared — a normal Source/Rendered toggle click (or
-  // paging to a plain text file) must not steal focus.
-  const focusSearchRef = useRef(false)
+  const [searchHost, setSearchHost] = useState<HTMLSpanElement | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   // Markdown files default to the rendered view; the header's Source/
   // Rendered switch flips this. Per-file, so paging ←/→ to a different
   // file always starts on the rendered view again.
@@ -112,24 +108,15 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       } else if (e.key === 'ArrowLeft' && files.length > 1) {
         e.preventDefault()
         onIndex((index - 1 + files.length) % files.length)
-      } else if (isShortcut(e, 'KeyF', { ctrl: true })) {
-        // TextView (Source) intercepts Ctrl+F itself once mounted; in
-        // Rendered mode there is no search field to intercept for at all,
-        // so without this Ctrl+F silently did nothing. Switch to Source
-        // and hand off focus to its search field once it mounts. Matched
-        // by physical key (`code`), not `key` — see keyboard.ts.
-        const f = files[index]
-        if (f && fileKind(f) === 'markdown' && !mdSource) {
-          e.preventDefault()
-          focusSearchRef.current = true
-          setMdSource(true)
-        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [files, index, onClose, onIndex, mdSource])
-  useEffect(() => setMdSource(false), [files[index]?.id])
+  }, [files, index, onClose, onIndex])
+  useEffect(() => {
+    setMdSource(false)
+    setSearchQuery('')
+  }, [files[index]?.id])
   const file = files[index]
   if (!file) return null
   const src = imageSrc(file)
@@ -174,14 +161,6 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
   const kind = fileKind(file)
   const showImage = kind === 'image' && src && !failedIds.has(file.id)
   const isMarkdown = kind === 'markdown'
-  // Read-and-clear: TextView only needs this for the render that mounts it
-  // right after Ctrl+F switched from Rendered — any later render (a normal
-  // Source/Rendered toggle, paging) must not carry it over.
-  const consumeFocusSearch = () => {
-    const v = focusSearchRef.current
-    focusSearchRef.current = false
-    return v
-  }
   return (
     <div
       ref={dialogRef}
@@ -201,7 +180,12 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
         {files.length > 1 && (
           <span className="shrink-0 text-xs text-fg-muted">{t('viewer.counter', { i: String(index + 1), n: String(files.length) })}</span>
         )}
-        <span className="ml-auto flex shrink-0 items-center gap-2">
+        {/* Deliberate empty hit area: it closes the viewer like the dark
+            backdrop, while mx-2 leaves a miss-safe gutter around every
+            visible control. */}
+        <span aria-hidden="true" data-viewer-empty data-viewer-header-empty className="mx-2 min-w-4 self-stretch flex-1" />
+        <span className="flex shrink-0 items-center gap-2">
+          {(kind === 'text' || isMarkdown) && <span ref={setSearchHost} className="flex items-center" />}
           {showImage && (
             <>
               <span className="text-xs text-fg-muted" data-testid="viewer-zoom-percent">
@@ -244,7 +228,7 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
       {/* overflow-hidden: a zoomed-in image must clip to this pane — without
           it, the transformed <img> paints over the header (it comes later
           in the DOM) and steals clicks from the Fit button/percent. */}
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4" onClick={closeOnBackdrop}>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pb-4 pt-1" onClick={closeOnBackdrop}>
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.prev')} className={`${nav} left-3`} onClick={() => onIndex((index - 1 + files.length) % files.length)}>
             <IconChevronLeft size={24} />
@@ -298,9 +282,9 @@ export function Viewer({ serverId, files, index, me, onLink, onIndex, onClose, o
             </Suspense>
           )
         ) : isMarkdown && !mdSource ? (
-          <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} />
+          <MarkdownView key={file.id} serverId={serverId} file={file} me={me} onLink={onLink} searchHost={searchHost} query={searchQuery} onQueryChange={setSearchQuery} />
         ) : (
-          <TextView key={file.id} serverId={serverId} file={file} autoFocusSearch={consumeFocusSearch()} />
+          <TextView key={file.id} serverId={serverId} file={file} searchHost={searchHost} searchInHeader value={searchQuery} onValueChange={setSearchQuery} />
         )}
         {files.length > 1 && (
           <button type="button" aria-label={t('viewer.next')} className={`${nav} right-3`} onClick={() => onIndex((index + 1) % files.length)}>

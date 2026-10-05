@@ -98,6 +98,131 @@ html {
 .md hr { border-color: var(--color-line); margin: 0.5rem 0; }
 .md del { color: var(--color-fg-muted); }
 
+/* Small, dependency-free fenced-code palette. HighlightedCode emits only
+   escaped React text plus these spans; unknown languages still get strings,
+   comments, literals and numbers from the common lexer. */
+.syntax-comment { color: var(--color-fg-subtle); font-style: italic; }
+.syntax-keyword { color: #c5a8d8; }
+.syntax-string { color: #a8c98f; }
+.syntax-number { color: #dfa77f; }
+.syntax-literal,
+.syntax-command { color: #82b4f2; }
+.syntax-property { color: #94bdc9; }
+.syntax-variable { color: #e0c382; }
+.syntax-type { color: #85bdb2; }
+.syntax-punctuation { color: var(--color-fg-muted); }
+
+/* A markdown attachment in the feed is a compact document. It needs clearer
+   hierarchy than message markdown, but must remain dense inside its fixed
+   eight-line preview box. */
+.md-preview {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.md-preview > :first-child { margin-top: 0; }
+.md-preview > :last-child { margin-bottom: 0; }
+.md-preview p { margin: 0.35rem 0; }
+.md-preview h1 {
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 1rem;
+  line-height: 1.3;
+  font-weight: 650;
+}
+.md-preview h2 {
+  margin: 0.8rem 0 0.35rem;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  font-weight: 650;
+}
+.md-preview h3,
+.md-preview h4,
+.md-preview h5,
+.md-preview h6 { margin: 0.65rem 0 0.3rem; font-size: 0.875rem; line-height: 1.35; }
+.md-preview ul,
+.md-preview ol { margin: 0.35rem 0; padding-left: 1.35rem; }
+.md-preview li { margin: 0.12rem 0; }
+.md-preview pre {
+  margin: 0.5rem 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-app);
+}
+.md-preview table { margin: 0.5rem 0; }
+.md-preview th,
+.md-preview td { padding: 0.25rem 0.45rem; }
+
+/* Full markdown files are documents, not oversized chat messages. Keep the
+   compact rules above for posts/snippets and layer a calmer reading rhythm,
+   stronger hierarchy and a useful line length only inside Viewer. */
+.md-document {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--color-fg);
+}
+.md-document > :first-child { margin-top: 0; }
+.md-document > :last-child { margin-bottom: 0; }
+.md-document p { margin: 0.75rem 0; max-width: 72ch; text-wrap: pretty; }
+.md-document h1,
+.md-document h2,
+.md-document h3,
+.md-document h4,
+.md-document h5,
+.md-document h6 {
+  color: var(--color-fg);
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.md-document h1 {
+  margin: 0 0 1rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.md-document h2 {
+  margin: 1.75rem 0 0.7rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.md-document h3 { margin: 1.4rem 0 0.6rem; font-size: 1.1rem; font-weight: 650; }
+.md-document h4,
+.md-document h5,
+.md-document h6 { margin: 1.2rem 0 0.5rem; font-size: 1rem; font-weight: 650; }
+.md-document ul,
+.md-document ol { margin: 0.75rem 0; padding-left: 1.75rem; }
+.md-document li { margin: 0.25rem 0; padding-left: 0.125rem; }
+.md-document li::marker { color: var(--color-fg-muted); }
+.md-document blockquote {
+  margin: 1rem 0;
+  padding: 0.125rem 0 0.125rem 1rem;
+  border-left-width: 3px;
+}
+.md-document code {
+  font-size: 0.875em;
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  padding: 0.08rem 0.32rem;
+}
+.md-document pre {
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-panel);
+  line-height: 1.55;
+}
+.md-document pre code { border: 0; font-size: 0.875rem; }
+.md-document table { margin: 1rem 0; min-width: min(100%, 32rem); }
+.md-document th,
+.md-document td { padding: 0.45rem 0.75rem; }
+.md-document hr { margin: 2rem 0; }
+
 /* A jump's target in a feed (Feed.tsx, spec «Поиск» «Лента (Feed)»): an
    accent background that holds, then fades out within 3 s (the class goes
    then too). Two identical animations alternate (post--focus-0/-1) so a

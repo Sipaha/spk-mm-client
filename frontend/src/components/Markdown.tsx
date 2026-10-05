@@ -6,12 +6,14 @@ import type { EmojiDTO } from '../api/types'
 import { emojiChar, useEmojiIndex, type EmojiIndex } from '../emoji'
 import { useEmojiInfo } from '../emoji/recent'
 import { EmojiGlyph } from './EmojiGlyph'
+import { HighlightedCode } from './HighlightedCode'
 import { IconImage } from './icons'
 import { emojiNames, isEmojiOnlyText, remarkEmoji } from './remarkEmoji'
 import { openChannel } from '../chat'
 import { useStore } from '../store'
 import { remarkChannelMentions } from './remarkChannelMentions'
 import { remarkHighlight } from './remarkHighlight'
+import { remarkFind } from './remarkFind'
 import { remarkMentions } from './remarkMentions'
 
 const plugins = [remarkGfm, remarkBreaks, remarkMentions, remarkChannelMentions, remarkEmoji]
@@ -117,6 +119,9 @@ export const Markdown = memo(function Markdown({
   serverId = 0,
   emojiInfo,
   inline = false,
+  document = false,
+  preview = false,
+  find = '',
   highlight = NO_HIGHLIGHT,
 }: {
   text: string
@@ -137,12 +142,28 @@ export const Markdown = memo(function Markdown({
   // Root wraps in <span>, not <div>, so it never breaks its parent's own
   // inline/flex flow.
   inline?: boolean
+  // document: a full markdown file in Viewer. Messages intentionally stay
+  // compact; a document gets its own readable measure and typography
+  // through `.md-document` (index.css).
+  document?: boolean
+  // preview: a markdown attachment in the feed. It keeps document rhythm
+  // at the smaller, fixed-height card scale instead of looking like a chat
+  // message accidentally clipped into a file box.
+  preview?: boolean
+  // find: the full-file viewer's case-insensitive substring search. It is
+  // separate from search-result `highlight`, whose terms use word rules.
+  find?: string
   // highlight: a search result's terms to <mark> (remarkHighlight — last,
   // after the mention/channel/emoji plugins). Keep the array stable: it
   // keys the plugin list.
   highlight?: string[]
 }) {
-  const remarkPlugins = useMemo(() => (highlight.length > 0 ? [...plugins, [remarkHighlight, highlight] as const] : plugins), [highlight])
+  const remarkPlugins = useMemo(() => {
+    const out: unknown[] = [...plugins]
+    if (highlight.length > 0) out.push([remarkHighlight, highlight] as const)
+    if (find.trim()) out.push([remarkFind, find] as const)
+    return out
+  }, [highlight, find])
   // The whole-message jumbo rule (mm-10.11): only ":name:" shortcodes and
   // whitespace, AND every one of them resolves (standard or known-custom) —
   // fix round 1 #2. isEmojiOnlyText is just the cheap shape pre-check: most
@@ -206,7 +227,11 @@ export const Markdown = memo(function Markdown({
         </span>
       )
     },
-    mark: ({ children }) => <mark className="rounded-sm bg-mention-bg text-mention-fg">{children}</mark>,
+    mark: ({ children, ...props }) => {
+      const fileFind = (props as Record<string, unknown>)['data-file-find'] === 'true'
+      return <mark data-file-find={fileFind ? 'true' : undefined} className="rounded-sm bg-mention-bg text-mention-fg">{children}</mark>
+    },
+    code: ({ className, children }) => <HighlightedCode className={className}>{children}</HighlightedCode>,
     table: ({ children }) => (
       <div className="overflow-x-auto">
         <table>{children}</table>
@@ -236,8 +261,9 @@ export const Markdown = memo(function Markdown({
     br: () => <>{' '}</>,
   }
   const Wrapper: 'span' | 'div' = inline ? 'span' : 'div'
+  const variant = document ? ' md-document' : preview ? ' md-preview' : ''
   return (
-    <Wrapper className={inline ? undefined : 'md break-words'}>
+    <Wrapper className={inline ? undefined : `md break-words${variant}`}>
       <ReactMarkdown remarkPlugins={remarkPlugins as never} skipHtml components={inline ? { ...components, ...inlineComponents } : components}>
         {text}
       </ReactMarkdown>

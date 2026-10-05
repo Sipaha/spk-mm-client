@@ -54,6 +54,26 @@ test('markdown: gfm, single newlines break, links via onLink, no raw html, no re
   expect(onLink).toHaveBeenCalledWith('https://evil.test/x.png')
 })
 
+test('fenced code gets basic language-aware highlighting; inline code stays plain', () => {
+  const { container } = render(
+    <Markdown
+      text={'```yaml\nenabled: true\nport: 5671\n```\n\n```bash\nkubectl create secret --from-file=ca.crt\n```\n\n`enabled: true`'}
+      me="alice"
+      onLink={() => {}}
+      serverId={1}
+    />,
+  )
+  const blocks = container.querySelectorAll('pre code')
+  expect(blocks).toHaveLength(2)
+  expect(blocks[0].querySelector('.syntax-property')).toHaveTextContent('enabled')
+  expect(blocks[0].querySelector('.syntax-literal')).toHaveTextContent('true')
+  expect(blocks[0].querySelector('.syntax-number')).toHaveTextContent('5671')
+  expect(blocks[1].querySelector('.syntax-command')).toHaveTextContent('kubectl')
+  expect(blocks[1].querySelector('.syntax-property')).toHaveTextContent('--from-file')
+  const inline = [...container.querySelectorAll('code')].find((el) => el.closest('pre') === null)!
+  expect(inline.querySelector('span')).toBeNull()
+})
+
 test('mentions: me and @channel stand out, others are plain highlights, code is untouched', () => {
   const { container } = render(<Markdown text={'@alice @bob @channel `@alice`'} me="alice" onLink={() => {}} serverId={1} />)
   const spans = [...container.querySelectorAll('[data-mention]')]

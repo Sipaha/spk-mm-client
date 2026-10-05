@@ -24,7 +24,9 @@ test('renders a heading, a list and a code block; fixed height until expanded', 
   expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
   expect(screen.getAllByRole('listitem')).toHaveLength(2)
   expect(container.querySelector('code')).toBeInTheDocument()
+  expect(container.querySelector('.md')).toHaveClass('md-preview')
   const box = container.querySelector('figure > div')!
+  expect(box).toHaveClass('px-3', 'py-2')
   expect(box).toHaveClass('h-40')
   await userEvent.click(screen.getByRole('button', { name: 'Expand' }))
   expect(box).toHaveClass('max-h-96')

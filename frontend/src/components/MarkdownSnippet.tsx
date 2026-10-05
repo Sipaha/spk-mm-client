@@ -28,13 +28,8 @@ export function MarkdownSnippet({
   const [open, setOpen] = useState(false)
   if (res.status === 'error') return <FileCard serverId={serverId} file={file} onDownload={onDownload} onOpen={onOpen} />
   return (
-    // bg-panel, not bg-code-bg: .md pre/.md code (index.css) already paint
-    // fenced code and inline code with --color-code-bg, so a snippet panel
-    // in that same shade would swallow them — code needs to read as a
-    // distinct surface against the panel, same as it does over the feed's
-    // bg-app.
-    <figure className="w-full max-w-3xl overflow-hidden rounded border border-line bg-panel text-xs">
-      <figcaption className="flex items-center gap-2 border-b border-line px-2 py-1">
+    <figure className="w-full max-w-3xl overflow-hidden rounded-md border border-line bg-panel">
+      <figcaption className="flex items-center gap-2 border-b border-line bg-app/35 px-3 py-1.5 text-xs">
         <IconNote className="shrink-0 text-fg-muted" />
         <span className="min-w-0 truncate font-medium" title={file.name}>
           {file.name}
@@ -53,8 +48,8 @@ export function MarkdownSnippet({
           </IconButton>
         </span>
       </figcaption>
-      <div className={`overflow-x-auto px-2 py-1 text-fg ${open ? 'max-h-96 overflow-y-auto' : 'h-40 overflow-y-hidden'}`}>
-        {res.status === 'loading' ? <span className="text-fg-muted">{t('file.loading')}</span> : <Markdown text={res.text} me={me} onLink={onLink} serverId={serverId} />}
+      <div className={`overflow-x-auto px-3 py-2 text-fg ${open ? 'max-h-96 overflow-y-auto' : 'h-40 overflow-y-hidden'}`}>
+        {res.status === 'loading' ? <span className="text-xs text-fg-muted">{t('file.loading')}</span> : <Markdown text={res.text} me={me} onLink={onLink} serverId={serverId} preview />}
       </div>
     </figure>
   )

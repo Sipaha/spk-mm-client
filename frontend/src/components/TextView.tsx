@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { FileView } from '../api/types'
 import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { mediaURL } from '../media'
 import { useLiveEpoch } from '../store'
-import { IconChevronLeft, IconChevronRight } from './icons'
+import { FileSearchControls } from './FileSearchControls'
 import { useTextFile } from './textFile'
 
 const SEARCH_DEBOUNCE = 150
@@ -62,21 +63,28 @@ export function TextView({
   serverId,
   file,
   autoFocusSearch,
+  searchHost,
+  searchInHeader = false,
+  value,
+  onValueChange,
 }: {
   serverId: number
   file: FileView
-  // Focus (and select) the search field once, right after mount — used by
-  // Viewer.tsx when Ctrl+F in a markdown file's Rendered view switches to
-  // this component (Source): there is no search field to intercept for
-  // until this mounts, so the viewer hands off the focus request instead.
+  // Focus (and select) the search field once, right after mount.
   autoFocusSearch?: boolean
+  searchHost?: HTMLElement | null
+  searchInHeader?: boolean
+  value?: string
+  onValueChange?(value: string): void
 }) {
   const res = useTextFile(mediaURL(serverId, 'text', file.id, { full: '1' }), useLiveEpoch(serverId))
   const text = res.status === 'ok' ? res.text : ''
   const lowerText = useMemo(() => foldForSearch(text), [text])
 
-  const [query, setQuery] = useState('')
-  const [debounced, setDebounced] = useState('')
+  const [ownQuery, setOwnQuery] = useState('')
+  const query = value ?? ownQuery
+  const setQuery = onValueChange ?? setOwnQuery
+  const [debounced, setDebounced] = useState(query.trim())
   const [current, setCurrent] = useState(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -97,9 +105,7 @@ export function TextView({
   }
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  // Mount-once, not on every `autoFocusSearch` change: the caller passes a
-  // read-once flag (Viewer.tsx's `consumeFocusSearch`), true only for the
-  // very render that mounts this component.
+  // Mount-once: a later rerender must not steal focus back to the field.
   useEffect(() => {
     if (autoFocusSearch) {
       inputRef.current?.focus()
@@ -138,25 +144,6 @@ export function TextView({
   const goNext = () => matches.length > 0 && setCurrent((safeCurrent + 1) % matches.length)
   const goPrev = () => matches.length > 0 && setCurrent((safeCurrent - 1 + matches.length) % matches.length)
 
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      if (e.shiftKey) goPrev()
-      else goNext()
-    } else if (e.key === 'Escape') {
-      if (query) {
-        // Clear first; an empty field's Escape is left alone so it bubbles
-        // to the viewer's own handler and closes it, as before.
-        e.preventDefault()
-        e.stopPropagation()
-        clearQuery()
-      }
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      // Let the input move its caret; just don't let the viewer page files.
-      e.stopPropagation()
-    }
-  }
-
   const renderText = (): React.ReactNode => {
     if (!needle || matches.length === 0) return text
     const parts: React.ReactNode[] = []
@@ -189,6 +176,21 @@ export function TextView({
   const count = matches.length === 0 ? 0 : safeCurrent + 1
   const total = more ? `${MATCH_CAP}+` : String(matches.length)
 
+  const controls = (
+    <FileSearchControls
+      ref={inputRef}
+      query={query}
+      active={!!needle}
+      current={count}
+      total={total}
+      disabled={matches.length === 0}
+      onQuery={changeQuery}
+      onClear={clearQuery}
+      onNext={goNext}
+      onPrev={goPrev}
+    />
+  )
+
   return (
     <div className="flex h-full w-full flex-col gap-1">
       {/* bg-panel (opaque): fix round 1, controller review — this row had no
@@ -196,43 +198,7 @@ export function TextView({
           bg-black/85 backdrop, so the sidebar behind the viewer showed
           through the search controls. PdfView.tsx's own toolbar row gets
           the same fix. */}
-      <div className="flex shrink-0 items-center gap-2 rounded bg-panel px-2 py-1.5">
-        <input
-          ref={inputRef}
-          type="text"
-          aria-label={t('viewer.search.label')}
-          placeholder={t('viewer.search.label')}
-          value={query}
-          onChange={(e) => changeQuery(e.target.value)}
-          onKeyDown={onInputKeyDown}
-          className="w-56 rounded border border-line bg-app px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none"
-        />
-        {needle && (
-          <>
-            <span className="text-xs text-fg-muted">{t('viewer.search.counter', { i: String(count), n: total })}</span>
-            <button
-              type="button"
-              aria-label={t('viewer.search.prev')}
-              title={t('viewer.search.prev')}
-              disabled={matches.length === 0}
-              onClick={goPrev}
-              className="flex items-center justify-center rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
-            >
-              <IconChevronLeft />
-            </button>
-            <button
-              type="button"
-              aria-label={t('viewer.search.next')}
-              title={t('viewer.search.next')}
-              disabled={matches.length === 0}
-              onClick={goNext}
-              className="flex items-center justify-center rounded px-1.5 text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40"
-            >
-              <IconChevronRight />
-            </button>
-          </>
-        )}
-      </div>
+      {searchInHeader ? (searchHost ? createPortal(controls, searchHost) : null) : <div className="flex shrink-0 items-center gap-2 rounded bg-panel px-2 py-1.5">{controls}</div>}
       {res.status === 'ok' && res.truncated && <p className="shrink-0 text-xs text-fg-muted">{t('file.truncated')}</p>}
       <pre className="min-h-0 flex-1 overflow-auto whitespace-pre rounded bg-code-bg p-3 font-mono text-xs leading-5 text-fg">
         {res.status === 'ok' ? renderText() : res.status === 'loading' ? t('file.loading') : t('err.no_file')}

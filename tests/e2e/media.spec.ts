@@ -212,14 +212,23 @@ test('video, audio and markdown previews: smoke', async ({ page }) => {
   await signInAlice(page)
   await channel(page, /Off-Topic/).click()
 
-  // markdown: rendered fragment in the feed, and Rendered/Source toggle in the viewer
+  // markdown: rendered fragment in the feed, header search in both views,
+  // and the empty header strip closes like the backdrop
   await expect(feed(page).getByRole('heading', { name: 'spk-mm-client' })).toBeVisible()
   await feed(page).getByRole('button', { name: 'View README.md' }).click()
   const viewer = page.getByRole('dialog', { name: 'File viewer' })
   await expect(viewer.getByRole('heading', { name: 'spk-mm-client' })).toBeVisible()
+  const search = viewer.getByRole('textbox', { name: 'Search in file' })
+  const searchX = await search.evaluate((el) => el.getBoundingClientRect().x)
+  await search.fill('viewer')
+  await expect(viewer.getByText('1 of 2')).toBeVisible()
+  expect(await search.evaluate((el) => el.getBoundingClientRect().x)).toBe(searchX)
   await viewer.getByRole('group', { name: 'Markdown view' }).getByRole('button', { name: 'Source' }).click()
   await expect(viewer.locator('pre')).toContainText('# spk-mm-client')
-  await viewer.getByRole('button', { name: 'Close' }).click()
+  await expect(search).toHaveValue('viewer')
+  await expect(viewer.getByText('1 of 2')).toBeVisible()
+  await viewer.locator('[data-viewer-header-empty]').click()
+  await expect(viewer).toHaveCount(0)
 
   // video: feed poster → click plays it. clip.webm (VP9/Opus), not clip.mp4
   // (H.264 may not have a decoder on this host) — AGENTS.md / task-6-brief.
