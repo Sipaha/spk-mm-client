@@ -42,7 +42,9 @@ afterEach(() => {
 const hover = (el: Element) => userEvent.hover(el)
 
 test('head shows author, time and bot badge; follow-up hides them', () => {
-  const { rerender } = render(<PostItem serverId={1} post={post({ bot: true, edit_at: 1 })} head me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
+  const { container, rerender } = render(<PostItem serverId={1} post={post({ bot: true, edit_at: 1 })} head me={me} locale="ru-RU" crt={false} actions={actions()} editing={false} />)
+  expect(container.querySelector('[data-post-id]')).toHaveClass('hover:bg-hover/35')
+  expect(container.querySelector('[data-post-id]')).not.toHaveClass('hover:bg-hover')
   expect(screen.getByText('bob')).toBeInTheDocument()
   expect(screen.getByText('BOT')).toBeInTheDocument()
   expect(screen.getAllByText('13:05')).toHaveLength(1)

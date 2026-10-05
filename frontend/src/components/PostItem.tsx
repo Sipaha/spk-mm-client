@@ -443,7 +443,7 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     <article
       ref={articleRef}
       data-post-id={post.id}
-      className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover ${head ? 'mt-2' : ''}`}
+      className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover/35 ${head ? 'mt-2' : ''}`}
       onPointerEnter={() => setHot(true)}
       onPointerLeave={() => setHot(false)}
       onFocus={() => setHot(true)}
