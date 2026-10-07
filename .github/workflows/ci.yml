@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: mm-client-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     uses: ./.github/workflows/test.yml
