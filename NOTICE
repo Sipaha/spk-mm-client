@@ -1,0 +1,10 @@
+SPK MM Client
+Copyright 2026 Pavel Simonov
+
+This project's source is licensed under the Apache License, Version 2.0.
+Third-party components retain their respective licenses.
+
+Bundled Inter fonts: Copyright 2016 The Inter Project Authors; SIL OFL 1.1
+(public/licenses/inter.txt).
+GitHub icon: GitHub Octicons, MIT (public/licenses/octicons.txt).
+Theme icon: Phosphor Icons, MIT (public/licenses/phosphor-icons.txt).

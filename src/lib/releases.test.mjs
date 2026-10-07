@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {parseRelease,REPO} from './releases.mjs';
+const asset=(name,url=REPO+'/releases/download/v1.0.0/'+name)=>({name,browser_download_url:url,size:123});
+test('only actual project files and matching sidecars are linked',()=>{const d=parseRelease({tag_name:'v1.0.0',assets:[asset('spk-mm-client_1.0.0_linux_amd64.deb'),asset('spk-mm-client_1.0.0_linux_amd64.deb.sha256'),asset('spk-mm-client-browser_1.0.0.zip'),asset('spk-mm-client.exe','https://foreign.example/spk-mm-client.exe')]});assert.equal(d.files.length,1);assert(d.files[0].checksum.endsWith('.sha256'));});
+test('draft/prerelease/invalid data do not claim published packages',()=>{for(const d of [null,{}, {draft:true,tag_name:'v1',assets:[]},{prerelease:true,tag_name:'v1',assets:[]}])assert.equal(parseRelease(d),null);});

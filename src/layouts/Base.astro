@@ -1,0 +1,44 @@
+---
+import '../styles/global.css';
+import { languages, pagePath, languageBootstrap } from '../lib/languages.mjs';
+import type { Lang } from '../i18n/copy';
+interface Props { lang: Lang; title: string; description: string; }
+const { lang, title, description } = Astro.props;
+const base = '/spk-mm-client/';
+const origin = 'https://sipaha.github.io';
+const canonical = origin + pagePath(lang, base);
+---
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {languages.map(l => <link rel="alternate" hreflang={l.code} href={origin + pagePath(l.code, base)} />)}
+    <link rel="alternate" hreflang="x-default" href={origin + base} />
+    <link rel="icon" type="image/png" href={base + 'icon.png'} />
+    <meta name="theme-color" content="#101827" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={origin + base + `media/og-${lang === 'ru' ? 'ru' : 'en'}.png`} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script is:inline set:html={languageBootstrap({base, storageKey: 'mm-client-language', codes: languages.map(l => l.code)})} />
+    <script is:inline>
+      (() => {
+        let theme;
+        try { theme = localStorage.getItem('mm-client-theme'); } catch {}
+        document.documentElement.dataset.theme = theme === 'light' || theme === 'dark' ? theme : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      })();
+    </script>
+  </head>
+  <body>
+    <slot />
+    <script src="../scripts/site.ts"></script>
+  </body>
+</html>

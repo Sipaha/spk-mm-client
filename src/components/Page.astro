@@ -1,0 +1,50 @@
+---
+import Base from '../layouts/Base.astro';
+import ThemeIcon from '../assets/theme.svg';
+import GitHubIcon from '../assets/github.svg';
+import { copy, type Lang } from '../i18n/copy';
+import { languages, pagePath } from '../lib/languages.mjs';
+interface Props { lang: Lang }
+const {lang}=Astro.props; const d=copy(lang); const base='/spk-mm-client/';
+const repo='https://github.com/Sipaha/spk-mm-client';
+const docs=repo+'/blob/main/README.md';
+const author='https://sipaha.github.io/about/'+(lang==='ru'?'?lang=ru':lang+'/');
+const shot=(name:string)=>base+'media/'+name+'-en.webp';
+const navigation=[['features',d.features],['interface',d.interface],['downloads',d.builds]];
+const shots=[['chat',d.chat],['threads',d.threads],['attachments',d.attachments]];
+---
+<Base lang={lang} title={d.title} description={d.description}>
+<a class="skip" href="#main">{d.skip}</a>
+<header class="header"><div class="container header-inner">
+  <a class="brand" href={pagePath(lang,base)}><img src={base+'icon.png'} width="32" height="32" alt=""/><span>SPK <strong>MM Client</strong></span></a>
+  <nav class="desktop-nav" aria-label={d.features}>{navigation.map(([id,label])=><a href={'#'+id}>{label}</a>)}<a href={docs}>{d.docs}</a><a class="github-link" href={repo} aria-label="GitHub"><GitHubIcon width="20" height="20"/></a></nav>
+  <div class="header-actions">
+    <details class="language-menu"><summary class="language" aria-label={d.language}>{languages.find(l=>l.code===lang)?.short}<span aria-hidden="true">⌄</span></summary><nav class="language-options" aria-label={d.language}>{languages.map(l=><a href={pagePath(l.code,base)} lang={l.code} data-language={l.code} aria-current={l.code===lang?'page':undefined}>{l.name}</a>)}</nav></details>
+    <button class="theme-toggle" aria-label={d.theme} hidden><ThemeIcon width="20" height="20"/></button>
+    <a class="button compact" href="#downloads">{d.builds}</a>
+  </div>
+</div><nav class="mobile-nav container" aria-label={d.features}>{navigation.map(([id,label])=><a href={'#'+id}>{label}</a>)}</nav></header>
+<main id="main">
+  <section class="hero container">
+    <div class="hero-heading"><h1>{d.hero}</h1><div class="hero-side"><p class="lead">{d.lead}</p><div class="hero-actions"><a class="button" href="#downloads">{d.seeBuilds}<span aria-hidden="true">↓</span></a><a class="text-link" href="#interface">{d.explore}<span aria-hidden="true">↗</span></a></div></div></div>
+    <figure class="hero-visual"><a href={shot('chat')}><img src={shot('chat')} width="1440" height="900" alt={d.shotAlt} fetchpriority="high" decoding="async"/></a><figcaption>{d.demo}</figcaption></figure>
+    <p class="platform-note">{d.platforms}</p>
+  </section>
+  <section id="features" class="container section">
+    <div class="section-head"><h2>{d.serversTitle}</h2><p>{d.serversText}</p></div>
+    <div class="mm-features"><article><h3>{d.messagesTitle}</h3><p>{d.messagesText}</p><a class="text-link" href={docs}>{d.docs}<span aria-hidden="true">↗</span></a></article><figure><a href={shot('threads')}><img src={shot('threads')} width="1440" height="900" alt={d.threads} loading="lazy"/></a><figcaption>{d.demo}</figcaption></figure></div>
+    <div class="mm-file-feature"><h3>{d.filesTitle}</h3><p>{d.filesText}</p><a href={shot('attachments')}><img src={shot('attachments')} width="1440" height="900" alt={d.attachments} loading="lazy"/></a></div>
+  </section>
+  <section id="interface" class="section gallery-section"><div class="container"><div class="section-head"><h2>{d.galleryTitle}</h2><p>{d.appLanguages}</p></div>
+    <div class="gallery-tabs" role="tablist" aria-label={d.interface}>{shots.map(([name,label],i)=><button role="tab" id={'tab-'+name} aria-selected={i===0?'true':'false'} aria-controls={'panel-'+name} tabindex={i===0?0:-1} data-gallery={name}>{label}</button>)}</div>
+    {shots.map(([name,label],i)=><figure role="tabpanel" id={'panel-'+name} aria-labelledby={'tab-'+name} data-gallery-panel={name} hidden={i!==0}><a href={shot(name)}><img src={shot(name)} width="1440" height="900" alt={label} loading="lazy"/></a><figcaption>{d.demo}</figcaption></figure>)}
+  </div></section>
+  <section id="downloads" class="container section"><div class="section-head"><h2>{d.installTitle}</h2></div>
+    <div class="download-box" data-downloads data-labels={JSON.stringify({none:d.noRelease,loading:d.loading,unavailable:d.unavailable,download:d.download,release:d.release})}>
+      <p class="release-status" data-release-status>{d.noRelease}</p><div class="download-actions"><a class="button" href={docs+'#разработка'}>{d.buildSource}<span aria-hidden="true">↗</span></a><a class="text-link" href={repo+'/releases'}>{d.allReleases}</a></div><div class="packages" data-packages hidden></div>
+    </div>
+  </section>
+  <section class="free-section section" id="code"><div class="container"><h2>{d.authorTitle}</h2><p>{d.authorText}</p><div class="code-links"><a class="text-link" href={repo}>{d.source}<span aria-hidden="true">↗</span></a><a class="text-link" href={repo+'/blob/main/LICENSE'}>Apache License 2.0</a><a class="text-link" href={author}>{d.profile}<span aria-hidden="true">↗</span></a></div></div></section>
+</main>
+<footer class="footer"><div class="container"><a class="brand" href={pagePath(lang,base)}><img src={base+'icon.png'} width="24" height="24" alt=""/>SPK MM Client</a><a href={repo}>{d.source}</a><a href={author}>Pavel Simonov / Sipaha</a></div></footer>
+</Base>
