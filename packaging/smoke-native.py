@@ -47,9 +47,24 @@ def smoke(platform,arch,release_version):
             if not png.exists() or png.stat().st_size<4096:raise RuntimeError('Native screenshot is empty')
             report={'platform':platform,'arch':arch,'version':release_version,'pid':child.pid,'window':window,'production':True,'fakeFlagsRefused':True,'screenshot':png.name,'commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()}
             (scratch/'report.json').write_text(json.dumps(report,indent=2));print('PASS native production window, isolated profile, actual CLI version and screenshot',platform,arch)
+        except Exception as error:
+            # Preserve the actual UI failure even if later profile cleanup fails.
+            report_failure(error)
+            raise
         finally:
-            if child.poll() is None:child.terminate();child.wait(timeout=20)
-            shutil.rmtree(profile)
+            if child.poll() is None:
+                if platform=='windows':
+                    # This live Popen PID belongs to our isolated test. WebView2
+                    # children can keep the profile locked after parent-only kill.
+                    subprocess.run(['taskkill.exe','/PID',str(child.pid),'/T','/F'],capture_output=True,check=True)
+                else:child.terminate()
+                child.wait(timeout=20)
+            deadline=time.monotonic()+20
+            while True:
+                try:shutil.rmtree(profile);break
+                except OSError:
+                    if time.monotonic()>=deadline:raise
+                    time.sleep(.5)
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--os',choices=['linux','windows','darwin'],required=True);parser.add_argument('--arch',choices=['amd64','arm64'],required=True);parser.add_argument('--version',required=True);args=parser.parse_args()
     try:smoke(args.os,args.arch,args.version)

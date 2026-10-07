@@ -31,3 +31,5 @@ Windows license generation initially sorted nested Wails notices before its root
 Native build/smoke failures also emit escaped GitHub annotations with compiler or owned-window details; these can be inspected through the public checks API when anonymous job-log downloads are unavailable. No application log or user profile is published.
 
 Static frontend legal buckets also use explicit filename order. The CI source comparison reports a bounded, escaped diff through public annotations instead of only an exit code; the inventory still must match the committed source exactly.
+
+Windows package/license verification and MSI install/remove passed after canonical ordering. Native smoke cleanup exposed a WebView2 descendant holding the isolated profile after parent-only termination. Windows cleanup now terminates only the live owned Popen process tree, retries profile removal briefly, and reports any original UI failure before cleanup. User processes/profiles are never selected.
