@@ -8,7 +8,7 @@ Current repository state: no published GitHub release. The owner enabled GitHub 
 
 ## Publication
 
-The source is an independent orphan `pages` worktree (`.site`), never merged into application `main`. GitHub Actions Pages is enabled, and the `github-pages` environment permits branch `pages`. The pinned workflow builds and verifies the site before uploading and deploying its static artifact. Application release/tag creation is outside this phase.
+The source is an independent orphan `pages` worktree (`.site`), never merged into application `main`. GitHub Actions Pages is enabled, and the `github-pages` environment permits branch `pages`. The pinned workflow builds and verifies the site before uploading and deploying its static artifact. The later authorized release phase adds application packaging and first v1.0.0 publication; see [releases.md](releases.md).
 
 The first successful publication is commit `5e5b999`, workflow https://github.com/Sipaha/spk-mm-client/actions/runs/37644575853: check and deploy both succeeded. All eight live HTTPS language routes, canonical URLs, actual images, light/dark themes, mobile layout, keyboard gallery, author destinations and truthful no-release downloads were checked in a real browser; screenshots were inspected. Nine public icon/media/font-license assets matched source SHA-256 hashes.
 
@@ -40,3 +40,7 @@ As of the final check, both application and website sources are pushed with Pave
 The owner resolved the environment rule, and the site is live. Eight unmocked browser visits returned HTTPS 200 with correct canonical language URLs and real no-release data from GitHub; gallery keyboard control, loaded images, localized author links, both themes and mobile layout passed. The same strict website verifier then passed all 48 language/theme/width combinations against the public site, including WCAG AA axe audits, plus API unavailable/valid-release fixtures, denied storage, reduced motion, language switching and the no-JavaScript fallback. Actual published-site screenshots were inspected. One earlier proxied image wait timed out; the complete direct run passed without changing any assertion or timeout.
 
 Live evidence is retained in `.tmp/mm-site/live/report.json`, `live-check.log`, `live-matrix-final.log`, `published-assets.json`, and the inspected live screenshots. The screenshots contain only the previously verified fictional demonstration data. Native About and application tests from this same phase remain valid; publication changed documentation/hosting only, not application code. No user application was restarted and no application release/tag was created.
+
+## Support links
+
+Commit `308e7b8` added visible localized support links in the desktop/mobile navigation, author section and footer. Website CI https://github.com/Sipaha/spk-mm-client/actions/runs/37651655031 succeeded. All eight live pages contained the four approved links, and real browser clicks reached each localized author page’s visible `#support` section. No wallet addresses are duplicated. Live desktop/mobile screenshots and logs are in the containing Solution `.tmp/mm-release/live-support`.
