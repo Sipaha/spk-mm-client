@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p . && vite build && node scripts/check-pdf-bundle.mjs && node scripts/collect-licenses.mjs",
+    "build": "node scripts/check-portable-imports.mjs && tsc --noEmit -p . && vite build && node scripts/check-pdf-bundle.mjs && node scripts/collect-licenses.mjs",
     "test": "vitest run",
     "lint": "eslint ."
   },

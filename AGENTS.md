@@ -516,7 +516,7 @@
   placeholder until it loads», «wheel and keyboard zoom subscribe once, not on every scale
   change», «double-click on the image zooms from fit to natural size, and again back to fit»,
   «double-click on the empty area around the image (not on the `<img>`) does not toggle zoom»),
-  `frontend/src/components/imageZoom.test.ts`, `frontend/src/components/Viewer.test.tsx`
+  `frontend/src/components/imageZoomMath.test.ts`, `frontend/src/components/Viewer.test.tsx`
   («clicking the empty area around the image closes the viewer, while loading and after load;
   clicking the image itself does not», «at zoom > 1, clicking the visible image still does not
   close; clicking the uncovered area around it still does»).
@@ -863,7 +863,7 @@
   (`docs/backlog.md`). Строки ленты перемеряет их собственный `ResizeObserver` (`v.measureElement`,
   `@tanstack/react-virtual`), а перетаскивание сплиттера — не колёсный/тач-жест, так что
   `ScrollShift` не откладывает компенсацию (см. «Компенсация ленты» выше) — она уходит сразу в
-  `scrollTop`; ленту, стоящую внизу, держит внизу bottom-stick (правило выше). — `frontend/src/components/splitter.test.ts`, `Splitter.test.tsx`,
+  `scrollTop`; ленту, стоящую внизу, держит внизу bottom-stick (правило выше). — `frontend/src/components/splitterGeometry.test.ts`, `Splitter.test.tsx`,
   `internal/store/uiprefs_test.go`, `internal/api/layout_test.go`, `tests/e2e/layout.spec.ts`.
 - Ничто в посте не шире колонки контента: открытая панель треда сужает ленту (окно ≈1035 px →
   колонка ≈340 px), и любой элемент с фиксированной шириной в px или неразрывным min-content

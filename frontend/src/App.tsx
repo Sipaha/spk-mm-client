@@ -14,7 +14,7 @@ import { Sidebar } from './components/Sidebar'
 import { Splitter } from './components/Splitter'
 import {
   RAIL_WIDTH, SIDEBAR_DEFAULT, THREAD_DEFAULT, clampSidebarWidth, clampThreadWidth, sidebarBounds, threadBounds,
-} from './components/splitter'
+} from './components/splitterGeometry'
 import { SearchPane } from './components/SearchPane'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { ThreadPane } from './components/ThreadPane'

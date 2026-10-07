@@ -4,7 +4,7 @@ import { t } from '../i18n'
 import { isShortcut } from '../keyboard'
 import { mediaURL } from '../media'
 import { imageOriginalOk } from './files'
-import { FIT, MAX_ZOOM_OF_NATURAL, ZOOM_STEP, naturalScale, panBy, scalePercent, toggleFitAndNatural, zoomAround, type ZoomState } from './imageZoom'
+import { FIT, MAX_ZOOM_OF_NATURAL, ZOOM_STEP, naturalScale, panBy, scalePercent, toggleFitAndNatural, zoomAround, type ZoomState } from './imageZoomMath'
 
 export interface ImageZoomHandle {
   fit(): void

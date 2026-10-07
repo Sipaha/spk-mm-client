@@ -15,7 +15,7 @@ import {
   stepValue,
   threadBounds,
   threadMax,
-} from './splitter'
+} from './splitterGeometry'
 
 describe('clamp', () => {
   test('keeps a value inside [min, max]', () => {

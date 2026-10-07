@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { FIT, MAX_ZOOM_OF_NATURAL, ZOOM_STEP, clampScale, isFit, naturalScale, panBy, scalePercent, toggleFitAndNatural, zoomAround } from './imageZoom'
+import { FIT, MAX_ZOOM_OF_NATURAL, ZOOM_STEP, clampScale, isFit, naturalScale, panBy, scalePercent, toggleFitAndNatural, zoomAround } from './imageZoomMath'
 
 describe('clampScale', () => {
   test('never goes below fit (1)', () => {

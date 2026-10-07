@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { dragValue, stepValue, type StepKey } from './splitter'
+import { dragValue, stepValue, type StepKey } from './splitterGeometry'
 
 interface Props {
   value: number
