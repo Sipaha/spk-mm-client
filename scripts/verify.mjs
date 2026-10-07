@@ -17,6 +17,7 @@ try{
    assert.equal(await page.locator('html').getAttribute('lang'),code);assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    assert.equal(await page.locator('a[href="https://github.com/Sipaha/spk-mm-client/blob/main/LICENSE"]').count(),1);
+   assert.equal(await page.locator('a[href="https://github.com/Sipaha/spk-mm-client/blob/main/README.md#build-from-source"]').count(),1);
    assert.equal(await page.locator(`a[href="https://sipaha.github.io/about/${code==='ru'?'?lang=ru':code+'/'}"]`).count(),2);
    await page.waitForFunction(()=>document.querySelector('[data-release-status]').textContent!==JSON.parse(document.querySelector('[data-downloads]').dataset.labels).loading);
    assert.equal(await page.locator('a[href*="/releases/download/"]').count(),0);

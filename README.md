@@ -21,3 +21,5 @@ Verification jobs replace superseded checks; deployments have a separate seriali
 Publication was verified on 2026-10-07: the Website check and deploy jobs passed, all eight live HTTPS routes loaded with their canonical language URLs, real images, both themes, working keyboard gallery and truthful no-release downloads. Public icon/media/font-license bytes matched the source SHA-256 hashes. Application release/tag publication is separate and was not performed.
 
 Support links in desktop/mobile navigation, the author section and footer point to the approved localized author profile #support section. Wallets and funding rules are maintained on the author page; the product site does not duplicate or invent them.
+
+The source-build fallback links to the English application README’s `#build-from-source` section.

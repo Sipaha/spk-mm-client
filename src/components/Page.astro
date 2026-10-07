@@ -41,7 +41,7 @@ const shots=[['chat',d.chat],['threads',d.threads],['attachments',d.attachments]
   </div></section>
   <section id="downloads" class="container section"><div class="section-head"><h2>{d.installTitle}</h2></div>
     <div class="download-box" data-downloads data-labels={JSON.stringify({none:d.noRelease,loading:d.loading,unavailable:d.unavailable,download:d.download,release:d.release})}>
-      <p class="release-status" data-release-status>{d.noRelease}</p><div class="download-actions"><a class="button" href={docs+'#разработка'}>{d.buildSource}<span aria-hidden="true">↗</span></a><a class="text-link" href={repo+'/releases'}>{d.allReleases}</a></div><div class="packages" data-packages hidden></div>
+      <p class="release-status" data-release-status>{d.noRelease}</p><div class="download-actions"><a class="button" href={docs+'#build-from-source'}>{d.buildSource}<span aria-hidden="true">↗</span></a><a class="text-link" href={repo+'/releases'}>{d.allReleases}</a></div><div class="packages" data-packages hidden></div>
     </div>
   </section>
   <section class="free-section section" id="code"><div class="container"><h2>{d.authorTitle}</h2><p>{d.authorText}</p><div class="code-links"><a class="text-link" href={repo}>{d.source}<span aria-hidden="true">↗</span></a><a class="text-link" href={repo+'/blob/main/LICENSE'}>Apache License 2.0</a><a class="text-link" href={author}>{d.profile}<span aria-hidden="true">↗</span></a><a class="text-link support-link" href={author+'#support'}>{d.support}<span aria-hidden="true">↗</span></a></div></div></section>
