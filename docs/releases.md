@@ -19,3 +19,5 @@ Local pre-publication verification: 1125 frontend tests, Go race/lint, 28 packag
 Publication preparation: GitHub temporarily rejected SSH writes with `Internal Server Error`, including a ref pointing to an existing commit. The writes recovered and main reached `f45a271` on 2026-10-08 (Asia/Novosibirsk). The English README is published. Six-platform CI is now required before creating the first release tag; no v1.0.0 tag or release has been created yet.
 
 Main CI runs are serialized without cancelling the running commit: an older queued push was observed starting late and cancelling a newer run. Pull-request checks remain replaceable. The published English README was compared byte-for-byte with the source and inspected as rendered on GitHub.
+
+Both the full validation job and every native build reject a regenerated third-party inventory that differs from the committed source, so rebuilding cannot silently hide stale notices or platform-specific discrepancies.
