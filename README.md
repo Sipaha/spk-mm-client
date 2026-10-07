@@ -8,7 +8,7 @@ The current project has no packaged GitHub release. Downloads display that fact 
 
 The visual shell and language-routing helpers follow SPK Ocular. Inter fonts retain their bundled upstream license. Existing two-message MM Client icon is unchanged. Design: variance4, motion2, density4; restrained native CSS/Astro, no decorative animations or synthetic screenshots.
 
-Pages is currently disabled. Enable repository Settings → Pages → GitHub Actions, then publish the independent `pages` branch. The pinned workflow verifies before uploading/deploying and never creates application releases.
+Publication uses GitHub Actions Pages from the independent `pages` branch. Repository Settings → Pages → Source must be GitHub Actions. The pinned workflow verifies before uploading/deploying and never creates application releases.
 
 Run `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm build`, `pnpm verify`. Verification covers all eight locales, both themes, mobile/desktop, keyboard gallery, language precedence, unavailable/no-release responses and reduced motion. Run Lighthouse and inspect captures before deployment. Scratch belongs in the containing Solution `.tmp/mm-site`.
 
