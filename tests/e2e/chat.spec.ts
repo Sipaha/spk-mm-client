@@ -122,7 +122,8 @@ test('edit with arrow-up, delete with confirmation', async ({ page }) => {
 test('editing a multiline message opens an editor fitted to its content and grows with more text', async ({ page }) => {
   await signInAlice(page)
   const composer = page.getByRole('textbox', { name: 'Message' })
-  const lines = Array.from({ length: 7 }, (_, i) => `editable line ${i + 1}`)
+  const prefix = unique('editable')
+  const lines = Array.from({ length: 7 }, (_, i) => `${prefix} line ${i + 1}`)
   await composer.fill(lines.join('\n'))
   await composer.press('Enter')
   await expect(feed(page).getByText(lines[0], { exact: false })).toBeVisible()

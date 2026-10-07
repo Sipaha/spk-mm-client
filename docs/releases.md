@@ -39,3 +39,5 @@ Validation stages are separate CI steps and run through a wrapper that preserves
 Windows UI Automation found an About-named text element with no Invoke pattern. The smoke now selects the visible enabled Button control by both name and control type before invoking it, retaining the actual version/Apache text and owned screenshot requirements.
 
 A CI browser failure was traced to the multiline-edit test pressing ArrowUp while its new post was still optimistic/pending. The product intentionally edits only confirmed own posts, so the shortcut selected an earlier one-line message. The test now waits for server confirmation and verifies the editor contains the exact seven-line post before retaining all height/growth assertions.
+
+The multiline-edit scenario also uses a unique per-run message prefix so repeated checks cannot match earlier posts retained by the shared demonstration server. Ten consecutive real browser repetitions passed with exact text and unchanged height/growth requirements.
