@@ -12,4 +12,6 @@ Pages is currently disabled. Enable repository Settings → Pages → GitHub Act
 
 Run `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm build`, `pnpm verify`. Verification covers all eight locales, both themes, mobile/desktop, keyboard gallery, language precedence, unavailable/no-release responses and reduced motion. Run Lighthouse and inspect captures before deployment. Scratch belongs in the containing Solution `.tmp/mm-site`.
 
-Use `TMPDIR=<Solution>/.tmp/mm-site/tmp` and `SITE_SCRATCH=<Solution>/.tmp/mm-site/site-verify`. Start `pnpm preview --host 127.0.0.1 --port 53982` before `pnpm verify`. `GENERATE_SOCIAL_CARDS=1 pnpm verify` additionally captures the real site for its social cards. `node scripts/lighthouse.mjs` checks mobile/desktop performance, accessibility, best practices, SEO and layout stability.
+Use `TMPDIR=<Solution>/.tmp/mm-site/tmp` and `SITE_SCRATCH=<Solution>/.tmp/mm-site/site-verify`. Start `pnpm preview --background --host 127.0.0.1 --port 53982` before `pnpm verify`. `GENERATE_SOCIAL_CARDS=1 pnpm verify` additionally captures the real site for its social cards. `node scripts/lighthouse.mjs` checks mobile/desktop performance, accessibility, best practices, SEO and layout stability.
+
+CI starts Astro preview with explicit `--background` and stops its own server with an EXIT trap. Astro 7 only auto-backgrounds agent sessions; plain CI runs otherwise stay in foreground before verification can start.
