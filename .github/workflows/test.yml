@@ -18,19 +18,29 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           pnpm --dir tests/e2e exec playwright install chromium
-      - name: Full validation gate
+      - name: Go and frontend linters
+        run: python3 packaging/check-command.py make lint
+      - name: All Go race tests
+        run: python3 packaging/check-command.py make test-go
+      - name: Packaging contracts
+        run: python3 packaging/check-command.py make check-packaging
+      - name: Frontend tests
+        run: python3 packaging/check-command.py pnpm --dir frontend test --maxWorkers=2
+      - name: Workflow syntax
+        run: python3 packaging/check-command.py actionlint
+      - name: Vulnerability scan
+        run: python3 packaging/check-command.py govulncheck ./...
+      - name: Clean embedded application build and Windows cross-check
+        run: python3 packaging/check-command.py make build cross-check
+      - name: Generated license freshness and source consistency
+        run: |
+          python3 packaging/check-command.py python3 packaging/licenses.py --check
+          python3 packaging/check-command.py python3 packaging/licenses.py --check-source
+      - name: All browser integration tests
         env:
           E2E_PORT: '53981'
           E2E_SHOTS: ${{ github.workspace }}/.tmp/e2e-shots
-        run: |
-          make lint test-go check-packaging
-          pnpm --dir frontend test --maxWorkers=2
-          actionlint
-          govulncheck ./...
-          make build cross-check
-          python3 packaging/licenses.py --check
-          python3 packaging/licenses.py --check-source
-          pnpm --dir tests/e2e exec playwright test
+        run: python3 packaging/check-command.py pnpm --dir tests/e2e exec playwright test
       - if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
