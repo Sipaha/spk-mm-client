@@ -6,6 +6,7 @@ builds on all supported targets. Root legal texts and legal files below used
 package directories/ancestors preserve embedded third-party notices as well.
 """
 import argparse
+from diagnostics import report_failure
 import json
 import os
 from pathlib import Path
@@ -143,4 +144,5 @@ if __name__ == '__main__':
     try:
         main()
     except (ValueError, subprocess.CalledProcessError) as error:
+        report_failure(error)
         raise SystemExit(str(error)) from error

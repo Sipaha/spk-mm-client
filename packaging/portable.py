@@ -14,6 +14,7 @@ import time
 import zipfile
 
 from release import ROOT, archive, document_paths, version
+from diagnostics import report_failure
 
 
 def run(*args, **kwargs):
@@ -185,4 +186,8 @@ if __name__ == '__main__':
     parser.add_argument('--os', choices=['darwin', 'windows'], required=True)
     parser.add_argument('--arch', choices=['amd64', 'arm64'], required=True)
     args = parser.parse_args()
-    package(args.version, args.os, args.arch)
+    try:
+        package(args.version, args.os, args.arch)
+    except Exception as error:
+        report_failure(error)
+        raise

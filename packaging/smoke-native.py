@@ -3,6 +3,7 @@
 import argparse,json,os,re,subprocess,time,tempfile,shutil
 from pathlib import Path
 from release import ROOT
+from diagnostics import report_failure
 
 def smoke(platform,arch,release_version):
     scratch=Path(os.environ['MM_RELEASE_SCRATCH'])/'native-smoke';scratch.mkdir(parents=True,exist_ok=True)
@@ -35,7 +36,9 @@ def smoke(platform,arch,release_version):
                         normalized=re.sub('[^a-z0-9]','',text.lower())
                         if 'spkmmclient' in normalized and 'addamattermostserver' in normalized:break
                 elif platform=='windows':
-                    subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(ROOT/'packaging/windows/smoke-ui.ps1'),'-ProcessId',str(child.pid),'-Version',release_version,'-OutputPath',str(png)],env=env,check=True,timeout=120);break
+                    result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(ROOT/'packaging/windows/smoke-ui.ps1'),'-ProcessId',str(child.pid),'-Version',release_version,'-OutputPath',str(png)],env=env,capture_output=True,text=True,timeout=120)
+                    if result.returncode:raise RuntimeError(result.stdout+'\n'+result.stderr)
+                    print(result.stdout);break
                 else:
                     result=subprocess.run(['swift',str(ROOT/'packaging/macos-smoke.swift'),str(child.pid),str(png)],env=env,capture_output=True,text=True,timeout=60)
                     if result.returncode==0:print(result.stdout);break
@@ -48,4 +51,8 @@ def smoke(platform,arch,release_version):
             if child.poll() is None:child.terminate();child.wait(timeout=20)
             shutil.rmtree(profile)
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--os',choices=['linux','windows','darwin'],required=True);parser.add_argument('--arch',choices=['amd64','arm64'],required=True);parser.add_argument('--version',required=True);args=parser.parse_args();smoke(args.os,args.arch,args.version)
+    parser=argparse.ArgumentParser();parser.add_argument('--os',choices=['linux','windows','darwin'],required=True);parser.add_argument('--arch',choices=['amd64','arm64'],required=True);parser.add_argument('--version',required=True);args=parser.parse_args()
+    try:smoke(args.os,args.arch,args.version)
+    except Exception as error:
+        report_failure(error)
+        raise

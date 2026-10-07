@@ -26,7 +26,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
   if (($names -contains $Version) -and ($names -contains 'Apache License 2.0')) { $verified=$true; break }
   Start-Sleep -Milliseconds 300
 }
-if (!$verified) { throw "Production About did not report version $Version and Apache 2.0" }
+if (!$verified) { throw "Production About did not report version $Version and Apache 2.0. Visible names: $($names -join ' | ')" }
 & pwsh.exe -NoProfile -NonInteractive -File "$PSScriptRoot/screenshot.ps1" -ProcessId $ProcessId -OutputPath $OutputPath
 if ($LASTEXITCODE -ne 0) { throw 'Owned window screenshot failed' }
 Write-Host 'PASS actual production About, build version, license and owned screenshot'

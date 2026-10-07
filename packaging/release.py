@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build native Linux packages and portable archives; never install or publish them."""
 import argparse
+from diagnostics import report_failure
 import gzip
 import hashlib
 import io
@@ -103,4 +104,5 @@ if __name__ == '__main__':
     try:
         package(args.version, args.arch)
     except (ValueError, subprocess.CalledProcessError) as error:
+        report_failure(error)
         sys.exit(str(error))
