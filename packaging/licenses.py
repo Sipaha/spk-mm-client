@@ -18,8 +18,8 @@ LEGAL_NAME = re.compile(r'^(?:(?:third[-_ ]party[-_ ])?(?:licen[cs]es?|notices?)
 
 
 def legal_files(directory):
-    return sorted(p for p in directory.iterdir() if p.is_file() and LEGAL_NAME.fullmatch(p.name)
-                  and p.suffix.lower() not in ('.go', '.c', '.h', '.js', '.json', '.pdf'))
+    return sorted((p for p in directory.iterdir() if p.is_file() and LEGAL_NAME.fullmatch(p.name)
+                  and p.suffix.lower() not in ('.go', '.c', '.h', '.js', '.json', '.pdf')), key=lambda p: p.name)
 
 
 def decode_stream(text):
@@ -77,7 +77,7 @@ def component_files(root, directories):
             if p.is_file() and LEGAL_NAME.fullmatch(p.name) and p in legal_files(p.parent):
                 files.add(p)
     return [{'name': p.relative_to(root).as_posix(), 'text': p.read_text(encoding='utf-8')}
-            for p in sorted(files)]
+            for p in sorted(files, key=lambda p: p.relative_to(root).as_posix())]
 
 
 def render_component(name, files):
