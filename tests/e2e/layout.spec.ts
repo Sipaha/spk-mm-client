@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { crc32, deflateSync } from 'node:zlib'
-import { apiCall, channel, fakePost, fakeURL, feed, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed, threadPane, unique } from './helpers'
+import { screenshotDir, apiCall, channel, fakePost, fakeURL, feed, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed, threadPane, unique } from './helpers'
 
 // Theme brief 2026-09-28, scope 3a: resizable sidebar/thread-panel
 // splitters, app-wide persistence via internal/api's GetLayout/
@@ -243,7 +243,7 @@ test('fractional pointer coordinates save integer widths and survive a reload', 
   await repliesLink(page, root, 1).click()
   await expect(page.getByRole('complementary', { name: 'Server channels' })).toHaveJSProperty('offsetWidth', 313)
   await expect(threadPane(page)).toHaveJSProperty('offsetWidth', 538)
-  await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/fractional-resize.png` })
+  await page.screenshot({ path: `${screenshotDir}/fractional-resize.png` })
   await removeServerFromMenu(page)
 })
 
@@ -313,7 +313,7 @@ test('an open thread panel narrows the feed without horizontal overflow from ima
   await expect(picture).toBeVisible()
   await expect(feed(page).getByRole('button', { name: 'Play clip.webm' })).toBeVisible()
   await expect(threadFeed(page).getByRole('button', { name: 'View wide.png' })).toBeVisible()
-  await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/thread-panel-media-fit.png` })
+  await page.screenshot({ path: `${screenshotDir}/thread-panel-media-fit.png` })
 
   for (const log of [feed(page), threadFeed(page)]) {
     const { scrollWidth, clientWidth } = await log.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))

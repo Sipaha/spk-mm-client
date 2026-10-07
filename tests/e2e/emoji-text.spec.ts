@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+import { screenshotDir, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
 
 // The reported bug (2026-09-28 live check): a GitLab bot post shows
 // ":white_check_mark:"/":arrows_counterclockwise:" as literal text instead
@@ -18,7 +18,7 @@ test('a ":name:" shortcode in a post renders as the emoji, not literal text', as
   await expect(post).toBeVisible()
   await expect(post).toContainText(`✅ ${text}`)
   await expect(post).not.toContainText(':white_check_mark:')
-  await page.screenshot({ path: 'test-results/emoji-text.png' })
+  await page.screenshot({ path: `${screenshotDir}/emoji-text.png` })
 
   await removeServerFromMenu(page)
 })

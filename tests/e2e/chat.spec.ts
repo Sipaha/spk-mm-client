@@ -1,9 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { apiCall, channel, expectSent, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
+import { screenshotDir, apiCall, channel, expectSent, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
-// Sidebar-menu fix/addendum screenshots (2026-09-29): a fixed absolute path
-// per the brief, not the generic E2E_SHOTS default other specs use.
-const SIDEBAR_SHOTS = '/home/spk/.spk/sawe/ss/Mattermost/.agents/tmp/sidebar-shots'
+// Keep verification artifacts in the current runner's scratch directory.
+const SIDEBAR_SHOTS = screenshotDir
 
 // A failed test must not leave its server behind: every later test signs in
 // from the empty start screen (same rule as feed-scroll.spec.ts).
@@ -279,7 +278,7 @@ test('a single server hides the rail; "⋯" → Add server reaches the add-serve
 // the post's own rendered content. Both outcomes assert the toolbar's
 // bounding box is where expected relative to the article's, not just that
 // it renders (a class-only assertion wouldn't catch a real geometry bug).
-const DENSITY_SHOTS = '/home/spk/.spk/sawe/ss/Mattermost/.agents/tmp/density-shots'
+const DENSITY_SHOTS = screenshotDir
 
 test('post toolbar: a short post keeps it inside the post; a long wrapping post or an attachment card overhangs above', async ({ page }) => {
   await signInAlice(page)

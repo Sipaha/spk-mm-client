@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { feed, removeServerFromMenu, serverId, signInAlice, testPost, unique } from './helpers'
+import { screenshotDir, feed, removeServerFromMenu, serverId, signInAlice, testPost, unique } from './helpers'
 
 // Webhook posts (the fake allows EnablePostUsernameOverride and
 // EnablePostIconOverride): the webhook's own name with the account in a
@@ -55,6 +55,6 @@ test('a webhook post shows its own name and icon; without one or a refused one, 
   await expect(rocket.getByText('🚀')).toBeVisible()
 
   await expect(feed(page).locator('article', { hasText: party })).toBeInViewport()
-  await page.screenshot({ path: 'test-results/webhook-override.png' })
+  await page.screenshot({ path: `${screenshotDir}/webhook-override.png` })
   await removeServerFromMenu(page)
 })

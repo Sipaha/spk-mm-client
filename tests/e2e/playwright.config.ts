@@ -10,6 +10,7 @@ const bin = process.env.E2E_BIN ?? '../../build/bin/spk-mm-client'
 
 export default defineConfig({
   testDir: '.',
+  outputDir: join(home, 'results'),
   workers: 1, // one app instance, shared DB — tests clean up after themselves
   use: { baseURL: `http://127.0.0.1:${port}`, locale: 'en-US' },
   webServer: {

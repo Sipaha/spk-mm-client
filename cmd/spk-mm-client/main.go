@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is supplied by the build; direct go builds honestly report dev.
+var version = "dev"
+
 type browserOpts struct {
 	Port    int
 	MMFake  bool

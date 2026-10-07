@@ -1,4 +1,16 @@
 const ru = {
+  'about.open': "О приложении",
+  'about.title': "О SPK MM Client",
+  'about.description': "Десктопный клиент Mattermost: несколько серверов, сообщения, треды, поиск и вложения.",
+  'about.version': "Версия сборки",
+  'about.license': "Лицензия",
+  'about.website': "Сайт приложения",
+  'about.source': "Исходный код",
+  'about.author': "Автор",
+  'about.profile': "Об авторе",
+  'about.close': "Закрыть",
+  'about.linkFailed': "Не удалось открыть ссылку: {detail}",
+
   'app.title': 'spk-mm-client',
   'rail.add': 'Добавить сервер',
   'add.title': 'Добавить сервер Mattermost',
@@ -311,6 +323,18 @@ const ru = {
 type Key = keyof typeof ru
 
 const en: Record<Key, string> = {
+  'about.open': "About",
+  'about.title': "About SPK MM Client",
+  'about.description': "A desktop Mattermost client: multiple servers, messages, threads, search and attachments.",
+  'about.version': "Build version",
+  'about.license': "License",
+  'about.website': "Product website",
+  'about.source': "Source code",
+  'about.author': "Author",
+  'about.profile': "About the author",
+  'about.close': "Close",
+  'about.linkFailed': "Could not open the link: {detail}",
+
   'app.title': 'spk-mm-client',
   'rail.add': 'Add server',
   'add.title': 'Add a Mattermost server',

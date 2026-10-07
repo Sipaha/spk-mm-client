@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 import {
-  apiCall, channel, fakePost, feed, focusedRow, frames, gapLoading, gapOnScreen, hitCard, offsetFromCenter, removeServerFromMenu, search, searchBox, searchPane,
+  screenshotDir, apiCall, channel, fakePost, feed, focusedRow, frames, gapLoading, gapOnScreen, hitCard, offsetFromCenter, removeServerFromMenu, search, searchBox, searchPane,
   serverId, setCRT, signInAlice, testPost, threadFeed, threadPane, unique, walkFeed,
 } from './helpers'
 
@@ -12,7 +12,7 @@ import {
 // posts at the bottom, and chat.spec.ts — which reads the seed's tail — runs
 // before this file).
 
-const shots = process.env.E2E_SHOTS ?? 'test-results'
+const shots = screenshotDir
 
 test.describe.configure({ timeout: 120_000 }) // the scroll walks read a few hundred posts step by step
 

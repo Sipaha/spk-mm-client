@@ -21,6 +21,8 @@ import (
 type Opener func(url string) error
 
 type Service struct {
+	build BuildInfo // immutable constructor metadata, never server credentials
+
 	st       *store.Store
 	em       *events.Emitter
 	sso      *auth.SSO
@@ -80,8 +82,12 @@ const defaultCallTimeout = 15 * time.Second
 
 var _ API = (*Service)(nil)
 
-func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client) *Service {
-	s := &Service{st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
+func NewService(st *store.Store, em *events.Emitter, open Opener, hc *http.Client, builds ...BuildInfo) *Service {
+	build := BuildInfo{Version: "dev"}
+	if len(builds) > 0 {
+		build = builds[0]
+	}
+	s := &Service{build: build, st: st, em: em, sso: auth.NewSSO(), open: open, hc: hc, transfer: &http.Client{Transport: transportOf(hc)}, callTimeout: defaultCallTimeout,
 		co: events.NewCoalescer(coalesceDelay), getenv: os.Getenv,
 		saved: map[string]savedEntry{}, saving: map[string]*download{}, progress: map[int64]int64{}}
 	s.nq = newNotifyQueue(notifyBurst, s.deliver)

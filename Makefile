@@ -4,6 +4,8 @@ BIN_DIR := build/bin
 BIN     := $(BIN_DIR)/spk-mm-client
 DIST    := cmd/spk-mm-client/dist
 DESKTOP_TAGS := wails gtk3
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -w -s -X main.version=$(VERSION)
 
 define with_dist
 	rm -rf $(DIST) && mkdir -p $(DIST) && cp -r frontend/dist/. $(DIST)/
@@ -19,19 +21,19 @@ build-frontend:
 # Browser-mode binary: pure Go (modernc SQLite), no cgo. Desktop keeps cgo (GTK/WebKit).
 build-go:
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o $(BIN) ./cmd/spk-mm-client)
+	$(call with_dist,CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/spk-mm-client)
 
 # Builds to a temp file and mv's it into place atomically: a running
 # instance keeps its old (now-unlinked) inode alive across the replace
 # (see `make run`), and a failed build never touches the existing binary.
 build-desktop: build-frontend
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-desktop.tmp ./cmd/spk-mm-client)
+	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/spk-mm-client-desktop.tmp ./cmd/spk-mm-client)
 	mv -f $(BIN_DIR)/spk-mm-client-desktop.tmp $(BIN_DIR)/spk-mm-client-desktop
 
 release: build-frontend
 	mkdir -p $(BIN_DIR)
-	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS) production" -trimpath -ldflags="-w -s" -o $(BIN_DIR)/spk-mm-client-release ./cmd/spk-mm-client)
+	$(call with_dist,CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS) production" -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/spk-mm-client-release ./cmd/spk-mm-client)
 
 # Windows desktop build needs no cgo (WebView2 via pure Go) — cross-compiles
 # from Linux and catches Windows-only compile errors early. macOS needs cgo +

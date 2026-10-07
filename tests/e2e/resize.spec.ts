@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { fakePost, feed, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed } from './helpers'
+import { screenshotDir, fakePost, feed, removeServerFromMenu, repliesLink, seedThread, signInAlice, threadFeed } from './helpers'
 
 test.afterEach(async ({ page }) => { await removeServerFromMenu(page) })
 
@@ -58,5 +58,5 @@ test('reflow keeps mounted messages separate throughout pane and window resize',
       return rows.every((r, i) => i === 0 || rows[i - 1].bottom <= r.top + 1)
     }))).toBe(true)
   }
-  await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/resize-reflow.png` })
+  await page.screenshot({ path: `${screenshotDir}/resize-reflow.png` })
 })

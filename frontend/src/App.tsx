@@ -5,6 +5,7 @@ import {
   closeThread, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel,
   openFromNotification, refreshChannel, refreshServers, refreshThread, report, selectServer,
 } from './chat'
+import { AboutDialog } from './components/AboutDialog'
 import { AddServerForm } from './components/AddServerForm'
 import { ChannelPane } from './components/ChannelPane'
 import { ServerPanel } from './components/ServerPanel'
@@ -47,13 +48,14 @@ function useWindowWidth(): number {
 export function App() {
   const {
     servers, selectedId, lastError, loginFailures, signInFor, sidebar, channel, thread, rhs, search, heldChannel, setError, loginFailed, setInfo,
-    showSignIn,
+    showSignIn, info,
   } = useStore()
 
   // Sidebar/thread-panel splitter widths (theme brief 2026-09-28 scope 3a):
   // app-wide, not per server. Nothing here blocks startup — these defaults
   // render immediately, client.getLayout() below only overrides them once
   // it resolves.
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [sidebarWidth, setSidebarWidthState] = useState(SIDEBAR_DEFAULT)
   const [threadWidth, setThreadWidthState] = useState(THREAD_DEFAULT)
   const windowWidth = useWindowWidth()
@@ -201,7 +203,13 @@ export function App() {
   )
 
   return (
-    <div className="flex h-screen bg-app text-sm text-fg">
+    <div className="flex h-screen flex-col bg-app text-sm text-fg">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-sidebar px-3">
+        <img src="./icon.png" width="24" height="24" alt="" />
+        <span className="font-semibold">SPK MM Client</span>
+        <button type="button" className="ml-auto rounded border border-line px-2 py-1 text-sm hover:bg-hover" aria-haspopup="dialog" onClick={() => setAboutOpen(true)}>{t('about.open')}</button>
+      </header>
+      <div className="flex min-h-0 flex-1" inert={aboutOpen}>
       <QuickSwitcher />
       {showRail && <ServerRail servers={servers} selectedId={selectedId} onSelect={selectServer} />}
       {chat ? (
@@ -273,6 +281,8 @@ export function App() {
       )}
       <Toast />
       <Announcer />
+      </div>
+      {aboutOpen && <AboutDialog info={info} onClose={() => setAboutOpen(false)} />}
     </div>
   )
 }

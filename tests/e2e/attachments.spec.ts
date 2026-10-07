@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { channel, expectSent, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+import { screenshotDir, channel, expectSent, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
 
 test.afterEach(async ({ page }) => {
   if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
@@ -85,7 +85,7 @@ test('paste an image: a chip appears, Enter sends a post with the image', async 
   const name = unique('shot') + '.png'
   await pasteFiles(page, [{ base64: PNG_1PX_BASE64, name, mime: 'image/png' }])
   await expect(tray(page).getByText(name)).toBeVisible()
-  await page.screenshot({ path: 'test-results/attachments-paste-chip.png' })
+  await page.screenshot({ path: `${screenshotDir}/attachments-paste-chip.png` })
 
   const text = unique('paste image post')
   await page.getByRole('textbox', { name: 'Message' }).fill(text)
@@ -96,7 +96,7 @@ test('paste an image: a chip appears, Enter sends a post with the image', async 
   await expect(post.getByRole('img', { name })).toBeVisible()
   await expectSent(post)
   await feed(page).evaluate((el) => { el.scrollTop = el.scrollHeight })
-  await page.screenshot({ path: 'test-results/attachments-sent-post.png' })
+  await page.screenshot({ path: `${screenshotDir}/attachments-sent-post.png` })
   await removeServerFromMenu(page)
 })
 

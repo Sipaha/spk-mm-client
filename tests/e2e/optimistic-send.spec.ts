@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { apiCall, feed, removeServerFromMenu, repliesLink, seedThread, serverId, signInAlice, testPost, threadComposer, threadFeed, unique } from './helpers'
+import { screenshotDir, apiCall, feed, removeServerFromMenu, repliesLink, seedThread, serverId, signInAlice, testPost, threadComposer, threadFeed, unique } from './helpers'
 
 test.afterEach(async ({ page }) => {
   await testPost(page, 'fake/post-latency', { ms: 0 })
@@ -43,7 +43,7 @@ for (const variant of ['channel', 'thread'] as const) {
     const slowRow = log.locator('article').filter({ hasText: slow })
     await expect(slowRow).toBeVisible()
     await expect(slowRow.getByText('Sending…')).toHaveCount(0)
-    await page.screenshot({ path: `${process.env.E2E_SHOTS ?? 'test-results'}/optimistic-${variant}.png` })
+    await page.screenshot({ path: `${screenshotDir}/optimistic-${variant}.png` })
     await expect(slowRow.getByRole('status')).toHaveText('Sending…', { timeout: 4000 })
     await expect(slowRow.getByRole('alert')).toHaveCount(0)
     await expect.poll(async () => (await view()).posts.find(p => p.message === slow)?.pending ?? false).toBe(false)

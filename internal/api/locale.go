@@ -24,5 +24,5 @@ func formatLocale(getenv func(string) string) string {
 }
 
 func (s *Service) AppInfo(context.Context) (AppInfo, error) {
-	return AppInfo{FormatLocale: formatLocale(s.getenv)}, nil
+	return AppInfo{Name: "SPK MM Client", Version: s.build.Version, Mode: s.build.Mode, FormatLocale: formatLocale(s.getenv)}, nil
 }

@@ -1,11 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
-  apiCall, channel, expectSent, fakePost, feed, removeServerFromMenu, repliesLink, rootRow, seedThread, serverId, setCRT, signInAlice,
+  screenshotDir, apiCall, channel, expectSent, fakePost, feed, removeServerFromMenu, repliesLink, rootRow, seedThread, serverId, setCRT, signInAlice,
   testGet, testPost, threadComposer, threadFeed, threadPane, unique,
 } from './helpers'
 
 // Screenshots of scenarios 1, 5, 7 and 8 (Task 7): outside the repository.
-const shots = process.env.E2E_SHOTS ?? 'test-results'
+const shots = screenshotDir
 
 // Every test sets the fake's CRT mode before signing in (the client reads
 // it at bootstrap) and puts it back to the suite's default afterwards; a

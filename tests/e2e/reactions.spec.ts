@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
+import { screenshotDir, feed, removeServerFromMenu, signInAlice, testPost, unique } from './helpers'
 
 // Town Square (c-town), not Off-Topic: carol isn't a member of c-offtopic
 // (AGENTS.md — the fake's ...As test helpers panic on a non-member), and
@@ -28,7 +28,7 @@ test('hovering a reaction chip shows who reacted; "and N others" opens the full 
   await expect(tooltip).toBeVisible()
   await expect(tooltip).toHaveText('bob and carol')
   await expect(chip).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id') ?? '')
-  await page.screenshot({ path: 'test-results/reactions-tooltip.png' })
+  await page.screenshot({ path: `${screenshotDir}/reactions-tooltip.png` })
 
   // Ten more real, named fake accounts (mmfake.Options.ExtraUsers — dave,
   // erin, frank, ... — seeded as c-town members precisely so this works)
@@ -48,7 +48,7 @@ test('hovering a reaction chip shows who reacted; "and N others" opens the full 
   await expect(dialog.getByRole('listitem')).toHaveCount(names.length)
   for (const name of names) await expect(dialog.getByText(name, { exact: true })).toBeVisible()
   await expect(dialog.getByText('Unknown user')).toHaveCount(0) // every reactor here has a real, resolved profile
-  await page.screenshot({ path: 'test-results/reactions-modal.png' })
+  await page.screenshot({ path: `${screenshotDir}/reactions-modal.png` })
 
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)

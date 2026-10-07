@@ -13,6 +13,9 @@ export interface ServerDTO {
 }
 
 export interface AppInfo {
+  name?: string
+  version?: string
+  mode?: string
   format_locale: string // BCP 47 for dates/times; '' = navigator.language
 }
 

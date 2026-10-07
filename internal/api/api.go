@@ -35,7 +35,15 @@ type (
 	ThreadDTO = state.ThreadView
 )
 
+type BuildInfo struct {
+	Version string
+	Mode    string
+}
+
 type AppInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Mode    string `json:"mode"`
 	// FormatLocale is a BCP 47 tag for dates and times (from LC_TIME), "" = use the UI language.
 	FormatLocale string `json:"format_locale"`
 }

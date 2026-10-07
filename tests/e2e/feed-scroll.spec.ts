@@ -57,6 +57,9 @@ async function seedPictures(page: Page) {
 // the viewport don't count: a row measured there, and the rows above it,
 // legitimately move while what is on screen stays put.
 async function openSecret(page: Page) {
+  // The wheel fixture relies on the original 720px window's feed geometry.
+  // Reserve the visible product header while keeping that viewport for chat.
+  await page.setViewportSize({ width: 1280, height: 760 })
   await signInAlice(page)
   await seedPictures(page)
   await channel(page, /Secret/).click()

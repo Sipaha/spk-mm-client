@@ -44,7 +44,7 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 
 	em := events.NewEmitter()
 	open := func(u string) error { return application.Get().Browser.OpenURL(u) }
-	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second})
+	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second}, api.BuildInfo{Version: version, Mode: "desktop"})
 	// xdg-open (Wails Browser.OpenFile) starts and returns at once.
 	svc.SetFileOpener(func(path string) error { return application.Get().Browser.OpenFile(path) })
 	// "Show in folder": FileManager1.ShowItems (bounded), else the folder

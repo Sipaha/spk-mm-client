@@ -1,4 +1,8 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
+
+export const screenshotDir = process.env.E2E_SHOTS ?? join(tmpdir(), 'spk-mm-e2e-shots')
 
 export async function apiToken(page: Page) {
   return (await page.locator('meta[name="spk-mm-client-api-token"]').getAttribute('content'))!

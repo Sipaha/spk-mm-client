@@ -8,3 +8,5 @@
 /cmd/spk-mm-client/dist/*
 !/cmd/spk-mm-client/dist/.gitkeep
 coverage.*
+
+/.site/

@@ -15,7 +15,8 @@ test('bottom pill: a DM below the fold shows the "more mentions" variant (every 
   // Short enough that, scrolled to the top (the default), a second Unreads
   // row is below the fold (measured: header 52px, so a 53px-tall scroller
   // shows only the Unreads header + its first row, each 32px).
-  await page.setViewportSize({ width: 1280, height: 105 })
+  // Reserve the new 40px product header: the sidebar scroller stays 53px.
+  await page.setViewportSize({ width: 1280, height: 145 })
   const bottomPill = page.getByRole('button', { name: /More (unreads|mentions) below/ })
   await expect(bottomPill).toBeHidden()
 
@@ -55,7 +56,7 @@ test('bottom pill: a DM below the fold shows the "more mentions" variant (every 
 
 test('top pill: a plain unread channel above the fold shows the "more unreads" variant; clicking scrolls the channel into view and reading it clears both', async ({ page }) => {
   await signInAlice(page)
-  await page.setViewportSize({ width: 1280, height: 190 })
+  await page.setViewportSize({ width: 1280, height: 230 })
   const list = page.getByRole('complementary', { name: 'Server channels' })
 
   // Scroll the channel list itself to the bottom so Off-Topic (the first
