@@ -341,3 +341,6 @@ select { padding: 10px 36px 10px 12px; border: 1px solid var(--line); border-rad
 .download-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px 28px; margin-top: 24px; }
 .footer > .container { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px 28px; }
 @media(max-width: 600px) { .footer > .container { align-items: flex-start; flex-direction: column; } }
+
+.header-support { color: var(--accent); }
+.code-links .support-link { margin-top: 0; }

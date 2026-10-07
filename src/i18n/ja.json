@@ -38,5 +38,7 @@
   "shotAlt": "SPK MM Clientのスクリーンショット",
   "release": "リリース",
   "title": "SPK MM Client. Mattermostのデスクトップクライアント",
-  "description": "複数のサーバー、メッセージ、スレッド、ファイルを専用アプリで。"
+  "description": "複数のサーバー、メッセージ、スレッド、ファイルを専用アプリで。",
+  "support": "作者を支援する",
+  "supportNav": "支援"
 }

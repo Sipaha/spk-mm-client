@@ -38,5 +38,7 @@
   "shotAlt": "SPK MM Client screenshot",
   "release": "Release",
   "title": "SPK MM Client. A desktop client for Mattermost",
-  "description": "Multiple servers, messages, threads and files in a dedicated application."
+  "description": "Multiple servers, messages, threads and files in a dedicated application.",
+  "support": "Support the author",
+  "supportNav": "Support"
 }

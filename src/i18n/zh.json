@@ -38,5 +38,7 @@
   "shotAlt": "SPK MM Client 截图",
   "release": "版本",
   "title": "SPK MM Client. Mattermost 桌面客户端",
-  "description": "在独立应用中使用多个服务器、消息、讨论串和文件。"
+  "description": "在独立应用中使用多个服务器、消息、讨论串和文件。",
+  "support": "支持作者",
+  "supportNav": "支持"
 }

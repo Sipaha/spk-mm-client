@@ -19,3 +19,5 @@ CI uses `/usr/bin/google-chrome` when present, matching the local verification r
 Verification jobs replace superseded checks; deployments have a separate serialized group and are not cancelled by a newer check. A stalled dependency setup must not keep the current source waiting behind an obsolete verification run.
 
 Publication was verified on 2026-10-07: the Website check and deploy jobs passed, all eight live HTTPS routes loaded with their canonical language URLs, real images, both themes, working keyboard gallery and truthful no-release downloads. Public icon/media/font-license bytes matched the source SHA-256 hashes. Application release/tag publication is separate and was not performed.
+
+Support links in desktop/mobile navigation, the author section and footer point to the approved localized author profile #support section. Wallets and funding rules are maintained on the author page; the product site does not duplicate or invent them.

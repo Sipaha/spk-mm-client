@@ -20,6 +20,7 @@ try{
    assert.equal(await page.locator(`a[href="https://sipaha.github.io/about/${code==='ru'?'?lang=ru':code+'/'}"]`).count(),2);
    await page.waitForFunction(()=>document.querySelector('[data-release-status]').textContent!==JSON.parse(document.querySelector('[data-downloads]').dataset.labels).loading);
    assert.equal(await page.locator('a[href*="/releases/download/"]').count(),0);
+   assert.equal(await page.locator(`a[href="https://sipaha.github.io/about/${code==='ru'?'?lang=ru':code+'/'}#support"]`).count(),4);
    for(const image of await page.locator('img:visible').all()){await image.scrollIntoViewIfNeeded();await page.waitForFunction(e=>e.complete&&e.naturalWidth>0,await image.elementHandle());}
    for(const tab of await page.locator('[role=tab]').all()){
     await tab.click();const panel=page.locator('[role=tabpanel]:visible');assert.equal(await panel.count(),1);const img=panel.locator('img');await img.scrollIntoViewIfNeeded();await page.waitForFunction(e=>e.complete&&e.naturalWidth>0,await img.elementHandle());

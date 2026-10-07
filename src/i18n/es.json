@@ -38,5 +38,7 @@
   "shotAlt": "Captura de SPK MM Client",
   "release": "Versión",
   "title": "SPK MM Client. Un cliente de escritorio para Mattermost",
-  "description": "Varios servidores, mensajes, hilos y archivos en una aplicación independiente."
+  "description": "Varios servidores, mensajes, hilos y archivos en una aplicación independiente.",
+  "support": "Apoyar al autor",
+  "supportNav": "Apoyar"
 }

@@ -38,5 +38,7 @@
   "shotAlt": "Capture de SPK MM Client",
   "release": "Version",
   "title": "SPK MM Client. Un client de bureau pour Mattermost",
-  "description": "Plusieurs serveurs, messages, fils et fichiers dans une application dédiée."
+  "description": "Plusieurs serveurs, messages, fils et fichiers dans une application dédiée.",
+  "support": "Soutenir l’auteur",
+  "supportNav": "Soutenir"
 }
