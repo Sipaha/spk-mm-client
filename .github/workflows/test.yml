@@ -1,0 +1,40 @@
+name: Test
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install validation tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          pnpm --dir tests/e2e exec playwright install chromium
+      - name: Full validation gate
+        env:
+          E2E_PORT: '53981'
+          E2E_SHOTS: ${{ github.workspace }}/.tmp/e2e-shots
+        run: |
+          make lint test-go check-packaging
+          pnpm --dir frontend test --maxWorkers=2
+          actionlint
+          govulncheck ./...
+          make build cross-check
+          python3 packaging/licenses.py --check
+          pnpm --dir tests/e2e exec playwright test
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: test-diagnostics
+          path: |
+            .tmp/e2e-shots/
+            .tmp/tmp/spk-mm-e2e-*/results/
+          retention-days: 7

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Inspect real release artifacts, including RPM payloads, without installing them."""
+import argparse
+import gzip
+import hashlib
+import io
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tarfile
+import tempfile
+from release import ROOT, document_paths, elf_arch, version
+
+
+PLATFORMS = ('linux', 'darwin', 'windows')
+
+
+def assets(release_version, arch, platform='linux'):
+    if platform != 'linux':
+        base = f'spk-mm-client_{release_version}_{platform}_{arch}'
+        extension, installer = ('.zip', '.msi') if platform == 'windows' else ('.tar.gz', '.dmg')
+        return [base + extension, base + installer, f'spk-mm-client-browser_{release_version}_{platform}_{arch}' + extension]
+    base = f'spk-mm-client_{release_version}_linux_{arch}'
+    return [base + ext for ext in ('.tar.gz', '.deb', '.rpm')] + [f'spk-mm-client-browser_{release_version}_linux_{arch}.tar.gz']
+
+
+def verify_checksums(directory, release_version, arches, platforms=("linux",)):
+    expected = sorted(name for platform in platforms for arch in arches for name in assets(release_version, arch, platform))
+    if set(platforms)==set(PLATFORMS) and set(arches)=={'amd64','arm64'}:
+        expected.append('NATIVE-VERIFICATION.zip')
+        expected.sort()
+    actual = sorted(p.name for p in directory.iterdir() if p.is_file() and p.name != 'SHA256SUMS')
+    if actual != sorted(expected + [name + '.sha256' for name in expected]):
+        raise ValueError(f'incomplete or unexpected asset set: {actual}')
+    lines = []
+    for name in expected:
+        digest = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        line = f'{digest}  {name}\n'
+        if (directory / (name + '.sha256')).read_text() != line:
+            raise ValueError(f'checksum mismatch: {name}')
+        lines.append(line)
+    return ''.join(lines)
+
+
+def rpm_header(data, start):
+    magic, ver, _, count, size = struct.unpack_from('>3sB4sII', data, start)
+    if magic != b'\x8e\xad\xe8' or ver != 1:
+        raise ValueError('invalid RPM header')
+    store = start + 16 + count * 16
+    values = {}
+    for i in range(count):
+        tag, typ, offset, length = struct.unpack_from('>IIII', data, start + 16 + i * 16)
+        at = store + offset
+        if typ in (6, 8, 9):
+            values[tag] = data[at:store + size].split(b'\0', length)[:length]
+    return values, store + size
+
+
+def rpm_contents(path):
+    data = path.read_bytes()
+    if data[:4] != b'\xed\xab\xee\xdb':
+        raise ValueError('invalid RPM lead')
+    _, end = rpm_header(data, 96)
+    tags, end = rpm_header(data, (end + 7) & ~7)
+    payload = gzip.decompress(data[end:])
+    files, offset = {}, 0
+    while offset < len(payload):
+        if payload[offset:offset + 6] not in (b'070701', b'070702'):
+            raise ValueError('invalid RPM cpio payload')
+        fields = [int(payload[offset + 6 + i * 8:offset + 14 + i * 8], 16) for i in range(13)]
+        mode, size, namesize = fields[1], fields[6], fields[11]
+        name = payload[offset + 110:offset + 110 + namesize - 1].decode()
+        offset = (offset + 110 + namesize + 3) & ~3
+        if name == 'TRAILER!!!':
+            break
+        files[name.removeprefix('./').lstrip('/')] = (payload[offset:offset + size], mode & 0o777)
+        offset = (offset + size + 3) & ~3
+    return {tag: [value.decode() for value in values] for tag, values in tags.items()}, files
+
+
+def tar_contents(data):
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:*') as tar:
+        files = {}
+        for member in tar:
+            if member.isfile():
+                if '..' in Path(member.name).parts or member.name.startswith('/'):
+                    raise ValueError('unsafe archive path')
+                files[member.name.removeprefix('./')] = (tar.extractfile(member).read(), member.mode)
+        return files
+
+
+def verify_native(directory, release_version, arch):
+    base = f'spk-mm-client_{release_version}_linux_{arch}'
+    deb = directory / (base + '.deb')
+    for field, expected_value in [('Package', 'spk-mm-client'), ('Architecture', arch), ('Maintainer', 'Pavel Simonov <sipahabk@gmail.com>')]:
+        if subprocess.check_output(['dpkg-deb', '--field', str(deb), field], text=True).strip() != expected_value:
+            raise ValueError(f'wrong DEB {field}')
+    depends = subprocess.check_output(['dpkg-deb', '--field', str(deb), 'Depends'], text=True)
+    for dependency in ['libc6 (>= 2.39)', 'libgtk-3-0', 'libwebkit2gtk-4.1-0']:
+        if dependency not in depends:
+            raise ValueError(f'DEB dependency missing: {dependency}')
+    deb_version = subprocess.check_output(['dpkg-deb', '--field', str(deb), 'Version'], text=True).strip()
+    if deb_version != release_version.replace('-', '~', 1):
+        raise ValueError(f'wrong DEB version: {deb_version}')
+    deb_files = tar_contents(subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(deb)]))
+    tags, rpm_files = rpm_contents(directory / (base + '.rpm'))
+    rpm_arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}[arch]
+    if tags[1000] != ['spk-mm-client'] or tags[1022] != [rpm_arch] or tags[1014] != ['Apache-2.0']:
+        raise ValueError('wrong RPM identity, architecture or license')
+    base_version, sep, prerelease = release_version.partition('-')
+    rpm_version = base_version + ('~' + prerelease.replace('-', '_') if sep else '')
+    if tags[1001] != [rpm_version]:
+        raise ValueError('wrong RPM version')
+    for dependency in ['glibc', 'gtk3', 'webkit2gtk4.1']:
+        if dependency not in tags[1049]:
+            raise ValueError(f'RPM dependency missing: {dependency}')
+    expected = {
+        'usr/bin/spk-mm-client': (ROOT / 'build/bin/spk-mm-client-release', 0o755),
+        'usr/share/applications/spk-mm-client.desktop': (ROOT / 'packaging/linux/spk-mm-client.desktop', 0o644),
+        'usr/share/icons/hicolor/256x256/apps/spk-mm-client.png': (ROOT / 'internal/appfiles/icons/icon.png', 0o644),
+        'usr/share/pixmaps/spk-mm-client.png': (ROOT / 'internal/appfiles/icons/icon.png', 0o644),
+        'usr/share/metainfo/ru.spk.spk-mm-client.metainfo.xml': (ROOT / 'packaging/linux/ru.spk.spk-mm-client.metainfo.xml', 0o644),
+        'usr/share/doc/spk-mm-client/LICENSE': (ROOT / 'LICENSE', 0o644),
+        'usr/share/doc/spk-mm-client/NOTICE': (ROOT / 'NOTICE', 0o644),
+        'usr/share/doc/spk-mm-client/THIRD-PARTY-NOTICES.txt': (ROOT / 'THIRD-PARTY-NOTICES.txt', 0o644),
+    }
+    for name, (source, mode) in expected.items():
+        for kind, files in [('DEB', deb_files), ('RPM', rpm_files)]:
+            if files.get(name) != (source.read_bytes(), mode):
+                raise ValueError(f'{kind}: wrong contents or mode for {name}')
+    for filename, member in [(base + '.tar.gz', 'spk-mm-client'), (f'spk-mm-client-browser_{release_version}_linux_{arch}.tar.gz', 'spk-mm-client-browser')]:
+        contents = tar_contents((directory / filename).read_bytes())
+        for path in document_paths():
+            if contents.get(str(path.relative_to(ROOT))) != (path.read_bytes(), 0o644):
+                raise ValueError(f'{filename}: missing or incorrect document {path.name}')
+        commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+        expected_info=f'version={release_version}\ncommit={commit}\nplatform=linux/{arch}\n'.encode()
+        if contents.get('BUILD-INFO') != (expected_info,0o644):raise ValueError('incorrect source/version BUILD-INFO')
+        for required in [member, 'BUILD-INFO']:
+            if required not in contents:
+                raise ValueError(f'{filename}: missing {required}')
+        data, mode = contents[member]
+        if mode != 0o755:
+            raise ValueError('archive binary must be executable')
+        source = ROOT / ('build/bin/spk-mm-client-release' if member == 'spk-mm-client' else 'build/bin/spk-mm-client')
+        if data != source.read_bytes():
+            raise ValueError('archive binary differs from the verified build')
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            binary = root / member
+            binary.write_bytes(data)
+            binary.chmod(mode)
+            if elf_arch(binary) != arch:
+                raise ValueError('archive architecture mismatch')
+            env = {**os.environ, 'HOME': str(root / 'home'), 'SPK_MM_CLIENT_HOME': str(root / 'data')}
+            actual = subprocess.check_output([str(binary), 'version'], env=env, text=True).strip()
+            if actual != f'spk-mm-client {release_version}':
+                raise ValueError('archive version mismatch')
+            notices = subprocess.check_output([str(binary), 'licenses'], env=env)
+            if notices != (ROOT / 'THIRD-PARTY-NOTICES.txt').read_bytes():
+                raise ValueError('embedded third-party notices differ from the packaged document')
+    print(f'Validated DEB, RPM and both archives for linux/{arch} {release_version}')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--version', required=True)
+    choice = parser.add_mutually_exclusive_group(required=True)
+    choice.add_argument('--arch', choices=['amd64', 'arm64'])
+    choice.add_argument('--all-architectures', action='store_true')
+    choice.add_argument('--all-platforms', action='store_true')
+    parser.add_argument('--directory', type=Path)
+    args = parser.parse_args()
+    release_version = version(args.version)
+    directory = args.directory or ROOT / 'dist' / release_version / f'linux-{args.arch}'
+    checksums = verify_checksums(directory, release_version, ['amd64', 'arm64'] if args.all_architectures or args.all_platforms else [args.arch], PLATFORMS if args.all_platforms else ('linux',))
+    if args.all_architectures or args.all_platforms:
+        (directory / 'SHA256SUMS').write_text(checksums)
+        print('Verified the complete release asset set and wrote SHA256SUMS')
+    else:
+        verify_native(directory, release_version, args.arch)

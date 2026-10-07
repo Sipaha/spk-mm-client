@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="SPK MM Client $(DisplayVersion)" Manufacturer="Pavel Simonov"
+           Version="$(Version)" UpgradeCode="7B480BA7-D90B-4FA1-91D9-79B89AD6542E"
+           Scope="perUser" Compressed="yes">
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of SPK MM Client is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="$(Stage)/app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="SPK MM Client" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <Component Id="MainExe" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="MMClientExe" Source="$(Stage)/spk-mm-client.exe" KeyPath="yes" />
+    </Component>
+    <Component Id="License" Directory="INSTALLFOLDER" Guid="*">
+      <File Source="LICENSE" KeyPath="yes" />
+    </Component>
+    <Component Id="Notice" Directory="INSTALLFOLDER" Guid="*"><File Source="NOTICE" KeyPath="yes" /></Component>
+    <Component Id="ThirdPartyNotices" Directory="INSTALLFOLDER" Guid="*">
+      <File Source="THIRD-PARTY-NOTICES.txt" KeyPath="yes" />
+    </Component>
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*">
+      <Shortcut Id="AppShortcut" Name="SPK MM Client" Target="[INSTALLFOLDER]spk-mm-client.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+      <RegistryValue Root="HKCU" Key="Software\SPK\MMClient" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="DeepLink" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKCU" Key="Software\Classes\mmauth" Value="URL:SPK MM Client" Type="string" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\mmauth" Name="URL Protocol" Value="" Type="string" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\mmauth\shell\open\command" Value="&quot;[INSTALLFOLDER]spk-mm-client.exe&quot; &quot;%1&quot;" Type="string" />
+    </Component>
+    <Feature Id="Main" Title="SPK MM Client" Level="1">
+      <ComponentRef Id="MainExe" /><ComponentRef Id="License" /><ComponentRef Id="Notice" /><ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="ThirdPartyNotices" /><ComponentRef Id="DeepLink" />
+    </Feature>
+  </Package>
+</Wix>

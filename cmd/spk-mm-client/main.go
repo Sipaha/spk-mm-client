@@ -46,6 +46,7 @@ func newRootCmd(run runners) *cobra.Command {
 	var fakePDFCycles int
 	root := &cobra.Command{
 		Use:           "spk-mm-client [mmauth://callback?...]",
+		Version:       version,
 		Short:         "Lightweight Mattermost desktop client",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -61,6 +62,21 @@ func newRootCmd(run runners) *cobra.Command {
 			})
 		},
 	}
+	root.SetVersionTemplate("spk-mm-client {{.Version}}\n")
+	root.AddCommand(&cobra.Command{Use: "version", Short: "Print the actual build version", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "spk-mm-client "+version)
+			return err
+		}})
+	root.AddCommand(&cobra.Command{Use: "licenses", Short: "Print bundled third-party licenses", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			text, err := distFS.ReadFile("dist/THIRD-PARTY-NOTICES.txt")
+			if err != nil {
+				return fmt.Errorf("third-party notices are not embedded; build with make build or make release: %w", err)
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), string(text))
+			return err
+		}})
 	root.Flags().BoolVar(&browser, "browser", false, "Serve the UI over HTTP on localhost instead of opening a window")
 	root.Flags().IntVar(&o.Port, "port", 5180, "HTTP port for --browser")
 	root.Flags().BoolVar(&o.MMFake, "mm-fake", false, "Start an in-process fake Mattermost server (development/e2e only; desktop: dev builds, signs in as alice)")

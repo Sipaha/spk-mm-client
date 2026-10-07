@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>ru.spk.spk-mm-client</id><metadata_license>CC0-1.0</metadata_license><project_license>Apache-2.0</project_license>
+  <name>SPK MM Client</name><summary>Desktop client for Mattermost</summary>
+  <description><p>Multiple Mattermost servers, messages, threads, search and attachments in a native desktop window using the system WebView.</p></description>
+  <launchable type="desktop-id">spk-mm-client.desktop</launchable><provides><binary>spk-mm-client</binary></provides>
+  <developer id="io.github.sipaha"><name>Pavel Simonov</name></developer>
+  <url type="homepage">https://sipaha.github.io/spk-mm-client/</url><url type="bugtracker">https://github.com/Sipaha/spk-mm-client/issues</url><content_rating type="oars-1.1"/>
+</component>

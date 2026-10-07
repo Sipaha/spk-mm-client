@@ -1,0 +1,64 @@
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: read
+concurrency:
+  group: mm-client-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 packaging/validate-tag.py
+  test:
+    needs: validate
+    uses: ./.github/workflows/test.yml
+  packages:
+    needs: [validate, test]
+    uses: ./.github/workflows/packages.yml
+    with:
+      version: ${{ needs.validate.outputs.version }}
+  publish:
+    needs: [validate, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist/release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: native-diagnostics-*
+          path: .tmp/native-evidence
+      - name: Bundle verified native production screenshots
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python3 packaging/native-evidence.py --source .tmp/native-evidence --output dist/release/NATIVE-VERIFICATION.zip --version "$RELEASE_VERSION"
+      - name: Workspace scratch
+        run: mkdir -p .tmp/publish
+      - name: Verify complete release asset set
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: python3 packaging/verify.py --version "$RELEASE_VERSION" --all-platforms --directory dist/release
+      - name: Publish verified draft only after every asset upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 packaging/publish.py

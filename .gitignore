@@ -10,3 +10,8 @@
 coverage.*
 
 /.site/
+
+/dist/
+/frontend/license-inputs.json
+/.tmp/
+/cmd/spk-mm-client/rsrc_windows_*.syso

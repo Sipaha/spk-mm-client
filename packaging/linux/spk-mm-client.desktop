@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=SPK MM Client
+Comment=Desktop client for Mattermost
+Exec=spk-mm-client %u
+Icon=spk-mm-client
+Terminal=false
+Categories=Network;Chat;
+Keywords=Mattermost;chat;messages;
+MimeType=x-scheme-handler/mmauth;
+StartupNotify=true
+StartupWMClass=spk-mm-client

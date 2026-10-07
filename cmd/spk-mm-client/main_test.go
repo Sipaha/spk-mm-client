@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -66,4 +67,18 @@ func TestDesktopSoakFlags(t *testing.T) {
 	cmd.SetArgs([]string{"--mm-fake", "--mm-fake-servers", "3", "--mm-fake-churn", "2s"})
 	require.NoError(t, cmd.ExecuteContext(context.Background()))
 	assert.Equal(t, desktopOpts{MMFake: true, FakeServers: 3, FakeChurn: 2 * time.Second}, got)
+}
+
+func TestVersionNeverStartsApplication(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		cmd := newRootCmd(runners{
+			browser: func(context.Context, browserOpts) error { t.Fatal("browser started"); return nil },
+			desktop: func(context.Context, desktopOpts) error { t.Fatal("desktop started"); return nil },
+		})
+		var output bytes.Buffer
+		cmd.SetOut(&output)
+		cmd.SetArgs(args)
+		require.NoError(t, cmd.ExecuteContext(context.Background()))
+		assert.Equal(t, "spk-mm-client "+version+"\n", output.String())
+	}
 }

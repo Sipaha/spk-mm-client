@@ -1,0 +1,107 @@
+name: Native packages
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: windows
+            arch: amd64
+            runner: windows-2025
+          - os: windows
+            arch: arm64
+            runner: windows-11-arm
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      TARGET_OS: ${{ matrix.os }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Native platform tests
+        run: |
+          if [ "$TARGET_OS" = linux ]; then
+            go vet -tags "wails gtk3" ./...
+          else
+            go vet -tags wails ./...
+          fi
+          if [ "$TARGET_OS" = windows ]; then
+            go test -timeout 180s ./internal/paths ./internal/store ./internal/desktop ./internal/api/transport
+          else
+            go test -race -timeout 180s ./internal/paths ./internal/store ./internal/desktop ./internal/api/transport
+          fi
+      - if: runner.os == 'Linux'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0
+      - if: runner.os == 'Windows'
+        run: dotnet tool install wix --version 5.0.2 --tool-path "$GOBIN"
+      - name: Build production application and packages
+        run: |
+          if [ "$TARGET_OS" = linux ]; then
+            python3 packaging/release.py --version "$RELEASE_VERSION" --arch "$ARCH"
+            python3 packaging/verify.py --version "$RELEASE_VERSION" --arch "$ARCH"
+          else
+            python packaging/portable.py --version "$RELEASE_VERSION" --os "$TARGET_OS" --arch "$ARCH"
+            python packaging/verify-portable.py --version "$RELEASE_VERSION" --os "$TARGET_OS" --arch "$ARCH"
+          fi
+      - name: Install and remove DEB on disposable runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y "$PWD/dist/$RELEASE_VERSION/linux-$ARCH/spk-mm-client_${RELEASE_VERSION}_linux_${ARCH}.deb"
+          test "$(spk-mm-client version)" = "spk-mm-client $RELEASE_VERSION"
+          desktop-file-validate /usr/share/applications/spk-mm-client.desktop
+          test -s /usr/share/icons/hicolor/256x256/apps/spk-mm-client.png
+          test -s /usr/share/doc/spk-mm-client/NOTICE
+          sudo apt-get remove -y spk-mm-client
+      - name: Install and remove MSI on disposable runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows/verify-install.ps1 -Version $env:RELEASE_VERSION -Arch $env:ARCH
+      - name: Actual native production window and screenshot
+        run: |
+          if [ "$TARGET_OS" = linux ]; then
+            xvfb-run -a python3 packaging/smoke-native.py --os "$TARGET_OS" --arch "$ARCH" --version "$RELEASE_VERSION"
+          else
+            python packaging/smoke-native.py --os "$TARGET_OS" --arch "$ARCH" --version "$RELEASE_VERSION"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: package-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/${{ env.RELEASE_VERSION }}/${{ matrix.os }}-${{ matrix.arch }}/*
+          if-no-files-found: error
+          retention-days: 7
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-diagnostics-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            .tmp/native-smoke/*.png
+            .tmp/native-smoke/report.json
+          if-no-files-found: error
+          retention-days: 7

@@ -1,4 +1,4 @@
-.PHONY: build build-frontend build-go build-desktop release test test-go test-front test-e2e lint fmt tidy clean run run-browser cross-check install-dev-linux pss
+.PHONY: build build-frontend build-go build-desktop release test test-go test-front test-e2e lint fmt tidy clean run run-browser cross-check install-dev-linux pss licenses package-linux package-native check-packaging
 
 BIN_DIR := build/bin
 BIN     := $(BIN_DIR)/spk-mm-client
@@ -17,6 +17,7 @@ build: build-frontend build-go
 
 build-frontend:
 	cd frontend && pnpm install --frozen-lockfile --silent && pnpm build
+	python3 packaging/licenses.py
 
 # Browser-mode binary: pure Go (modernc SQLite), no cgo. Desktop keeps cgo (GTK/WebKit).
 build-go:
@@ -82,3 +83,15 @@ install-dev-linux: build-desktop
 
 pss:
 	bash scripts/pss.sh $(PID)
+
+licenses: build-frontend
+	python3 packaging/licenses.py --check
+
+package-linux:
+	python3 packaging/release.py --version "$(RELEASE_VERSION)" --arch "$(ARCH)"
+
+package-native:
+	python3 packaging/portable.py --version "$(RELEASE_VERSION)" --os "$(TARGET_OS)" --arch "$(ARCH)"
+
+check-packaging:
+	python3 -m unittest discover -s packaging/tests -v

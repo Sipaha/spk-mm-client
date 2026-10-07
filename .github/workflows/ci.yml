@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: mm-client-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+  packages:
+    needs: test
+    uses: ./.github/workflows/packages.yml
+    with:
+      version: 1.0.0-dev.${{ github.run_number }}
