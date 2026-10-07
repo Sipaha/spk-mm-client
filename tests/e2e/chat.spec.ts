@@ -126,9 +126,13 @@ test('editing a multiline message opens an editor fitted to its content and grow
   await composer.fill(lines.join('\n'))
   await composer.press('Enter')
   await expect(feed(page).getByText(lines[0], { exact: false })).toBeVisible()
+  // ArrowUp intentionally skips optimistic pending posts. Confirm this post
+  // first, otherwise the shortcut can edit an earlier one-line own message.
+  await expectSent(feed(page).locator('article', { hasText: lines[0] }))
   await composer.press('ArrowUp')
 
   const edit = page.getByRole('textbox', { name: 'Edit message' })
+  await expect(edit).toHaveValue(lines.join('\n'))
   const initial = await edit.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }))
   expect(initial.client).toBeGreaterThan(100)
   // clientHeight excludes the 1px border on each side; scrollHeight does not.

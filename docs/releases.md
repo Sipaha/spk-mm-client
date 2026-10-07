@@ -37,3 +37,5 @@ Windows package/license verification and MSI install/remove passed after canonic
 Validation stages are separate CI steps and run through a wrapper that preserves the original exit code, stores logs in workspace scratch, and emits only a bounded failure tail as an escaped public annotation. This makes browser/Go failures reviewable without authenticated log downloads; no validation command was removed.
 
 Windows UI Automation found an About-named text element with no Invoke pattern. The smoke now selects the visible enabled Button control by both name and control type before invoking it, retaining the actual version/Apache text and owned screenshot requirements.
+
+A CI browser failure was traced to the multiline-edit test pressing ArrowUp while its new post was still optimistic/pending. The product intentionally edits only confirmed own posts, so the shortcut selected an earlier one-line message. The test now waits for server confirmation and verifies the editor contains the exact seven-line post before retaining all height/growth assertions.
