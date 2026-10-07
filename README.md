@@ -16,3 +16,4 @@ Use `TMPDIR=<Solution>/.tmp/mm-site/tmp` and `SITE_SCRATCH=<Solution>/.tmp/mm-si
 
 CI starts Astro preview with explicit `--background` and stops its own server with an EXIT trap. Astro 7 only auto-backgrounds agent sessions; plain CI runs otherwise stay in foreground before verification can start.
 CI uses `/usr/bin/google-chrome` when present, matching the local verification runner. GitHub's Ubuntu 24.04 image includes Chrome (https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md). If absent, the workflow installs Playwright Chromium and its dependencies. Both paths execute the same complete browser/axe matrix; browser installation is not a substitute for verification.
+Verification jobs replace superseded checks; deployments have a separate serialized group and are not cancelled by a newer check. A stalled dependency setup must not keep the current source waiting behind an obsolete verification run.

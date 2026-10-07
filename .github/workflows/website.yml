@@ -10,11 +10,11 @@ on:
         default: false
 permissions:
   contents: read
-concurrency:
-  group: mm-client-website
-  cancel-in-progress: false
 jobs:
   check:
+    concurrency:
+      group: mm-client-website-check
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -83,6 +83,9 @@ jobs:
             .tmp/site/*.json
           retention-days: 7
   deploy:
+    concurrency:
+      group: mm-client-website-deploy
+      cancel-in-progress: false
     if: needs.check.outputs.pages-enabled == 'true' && (github.event_name == 'push' || inputs.deploy)
     needs: check
     runs-on: ubuntu-24.04
