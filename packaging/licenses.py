@@ -8,6 +8,7 @@ package directories/ancestors preserve embedded third-party notices as well.
 import argparse
 from diagnostics import report_failure
 import json
+import difflib
 import os
 from pathlib import Path
 import re
@@ -127,17 +128,23 @@ def collect():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', action='store_true', help='Fail if the committed notices are stale')
+    parser.add_argument('--check', action='store_true', help='Fail if the generated notices are stale')
+    parser.add_argument('--check-source', action='store_true', help='Fail if regenerated notices differ from Git source')
     args = parser.parse_args()
     text, go_count, web_count = collect()
-    if args.check:
+    if args.check_source:
+        committed = subprocess.check_output(['git', 'show', 'HEAD:THIRD-PARTY-NOTICES.txt'], cwd=ROOT, encoding='utf-8')
+        if committed != text:
+            difference = ''.join(difflib.unified_diff(committed.splitlines(True), text.splitlines(True), fromfile='Git source', tofile='generated inventory'))
+            raise ValueError('Generated notices differ from Git source:\n' + difference[:10000])
+    if args.check or args.check_source:
         if not OUTPUT.exists() or OUTPUT.read_text(encoding='utf-8') != text:
             raise ValueError('THIRD-PARTY-NOTICES.txt is stale; run make licenses')
     else:
         OUTPUT.write_text(text, encoding='utf-8', newline='\n')
         (ROOT / 'frontend/dist/THIRD-PARTY-NOTICES.txt').write_text(text, encoding='utf-8', newline='\n')
     print(f'licenses: {go_count} Go modules, Go runtime, {web_count} frontend components; '
-          f'{"verified" if args.check else "wrote"} THIRD-PARTY-NOTICES.txt')
+          f'{"verified" if args.check or args.check_source else "wrote"} THIRD-PARTY-NOTICES.txt')
 
 
 if __name__ == '__main__':

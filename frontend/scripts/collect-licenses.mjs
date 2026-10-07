@@ -41,7 +41,7 @@ collect(vite, false)
 collect(resolveDependency('rolldown', vite), false)
 for (const folder of ['public/licenses', 'node_modules/pdfjs-dist/standard_fonts', 'node_modules/pdfjs-dist/cmaps', 'node_modules/pdfjs-dist/wasm']) {
   if (!existsSync(folder)) continue
-  const files=readdirSync(folder).filter(n=>/LICENSE|NOTICE|COPYING/i.test(n)).map(name=>({name,text:readFileSync(join(folder,name),'utf8')}))
+  const files=readdirSync(folder).filter(n=>/LICENSE|NOTICE|COPYING/i.test(n)).sort().map(name=>({name,text:readFileSync(join(folder,name),'utf8')}))
   if(files.length) seen.set(folder,{name:folder,version:'bundled',license:'SEE INCLUDED LICENSES',files})
 }
 const packages = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'en'))

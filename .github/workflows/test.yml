@@ -29,7 +29,7 @@ jobs:
           govulncheck ./...
           make build cross-check
           python3 packaging/licenses.py --check
-          git diff --exit-code -- THIRD-PARTY-NOTICES.txt
+          python3 packaging/licenses.py --check-source
           pnpm --dir tests/e2e exec playwright test
       - if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

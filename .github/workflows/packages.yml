@@ -71,7 +71,7 @@ jobs:
             python packaging/verify-portable.py --version "$RELEASE_VERSION" --os "$TARGET_OS" --arch "$ARCH"
           fi
       - name: Generated licenses must match tagged source
-        run: git diff --exit-code -- THIRD-PARTY-NOTICES.txt
+        run: python3 packaging/licenses.py --check-source
       - name: Install and remove DEB on disposable runner
         if: runner.os == 'Linux'
         run: |

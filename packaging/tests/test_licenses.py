@@ -111,6 +111,17 @@ class LicenseInputs(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'versions differ'):
                     licenses.collect()
 
+    def test_source_check_rejects_rewritten_inventory_even_when_it_is_fresh(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            output = Path(scratch) / 'THIRD-PARTY-NOTICES.txt'
+            output.write_text('generated\n')
+            with patch.object(licenses, 'OUTPUT', output), patch.object(licenses, 'collect', return_value=('generated\n', 1, 1)), patch.object(licenses.subprocess, 'check_output', return_value='committed\n'), patch.object(sys, 'argv', ['licenses.py', '--check-source']):
+                with self.assertRaisesRegex(ValueError, 'Git source') as failure:
+                    licenses.main()
+            self.assertIn('-committed', str(failure.exception))
+            self.assertIn('+generated', str(failure.exception))
+            self.assertEqual(output.read_text(), 'generated\n')
+
     def test_stale_notice_fails_check_without_overwriting_it(self):
         with tempfile.TemporaryDirectory() as scratch:
             output = Path(scratch) / 'THIRD-PARTY-NOTICES.txt'
