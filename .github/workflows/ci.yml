@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: mm-client-ci-${{ github.ref }}
+  group: spk-mm-client-ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:

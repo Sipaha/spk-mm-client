@@ -23,3 +23,5 @@ Main CI runs are serialized without cancelling the running commit: an older queu
 Both the full validation job and every native build reject a regenerated third-party inventory that differs from the committed source, so rebuilding cannot silently hide stale notices or platform-specific discrepancies.
 
 Native Windows/macOS CI exposed module names that differed only by case (`ImageZoom.tsx` / `imageZoom.ts`, `Splitter.tsx` / `splitter.ts`). Pure utility modules and their tests were renamed to `imageZoomMath` and `splitterGeometry`, with no UI behavior change. The frontend build checks module paths for case-insensitive resolution collisions before TypeScript compilation.
+
+The corrected CI uses a fresh concurrency group during migration, so obsolete runs from the earlier pipeline cannot hold the fixed build in their queue. The full test-before-packaging gate is unchanged.
