@@ -37,7 +37,13 @@ jobs:
           echo "TMPDIR=$GITHUB_WORKSPACE/.tmp/site/tmp" >> "$GITHUB_ENV"
           echo "PLAYWRIGHT_BROWSERS_PATH=$GITHUB_WORKSPACE/.tmp/site/browsers" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile --store-dir .tmp/pnpm-store
-      - run: pnpm exec playwright install --with-deps chromium
+      - name: Prepare browser
+        run: |
+          if [ -x /usr/bin/google-chrome ]; then
+            /usr/bin/google-chrome --version
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
       - run: pnpm test && pnpm build
       - name: Browser verification
         run: |
