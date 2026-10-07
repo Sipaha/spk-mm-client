@@ -23,8 +23,32 @@ if (!$button) {
   throw "Production webview did not expose its About Button control. Named controls: $($types -join ', ')"
 }
 if ($button.Current.IsOffscreen -or !$button.Current.IsEnabled) { throw 'Owned About button is not visibly usable' }
-$invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-$invoke.Invoke()
+$invoke = $null
+if ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) {
+  $invoke.Invoke()
+} else {
+  # WebView2 can expose the semantic Button without an Invoke provider.
+  # Use a real pointer click only after proving foreground/window ownership.
+  Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class MMNativePointer {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+}
+"@
+  [void][MMNativePointer]::SetForegroundWindow($window)
+  if ([MMNativePointer]::GetForegroundWindow() -ne $window) { throw 'Owned production window could not become foreground' }
+  $bounds=$root.Current.BoundingRectangle
+  $rect=$button.Current.BoundingRectangle
+  $x=[int]($rect.Left+$rect.Width/2);$y=[int]($rect.Top+$rect.Height/2)
+  if ($rect.Width -le 0 -or $rect.Height -le 0 -or $x -lt $bounds.Left -or $x -ge $bounds.Right -or $y -lt $bounds.Top -or $y -ge $bounds.Bottom) { throw 'About click is outside the owned window' }
+  if (![MMNativePointer]::SetCursorPos($x,$y)) { throw 'Owned pointer positioning failed' }
+  [MMNativePointer]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+  [MMNativePointer]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
+}
 $deadline = [DateTime]::UtcNow.AddSeconds(20)
 $verified = $false
 while ([DateTime]::UtcNow -lt $deadline) {

@@ -41,3 +41,5 @@ Windows UI Automation found an About-named text element with no Invoke pattern. 
 A CI browser failure was traced to the multiline-edit test pressing ArrowUp while its new post was still optimistic/pending. The product intentionally edits only confirmed own posts, so the shortcut selected an earlier one-line message. The test now waits for server confirmation and verifies the editor contains the exact seven-line post before retaining all height/growth assertions.
 
 The multiline-edit scenario also uses a unique per-run message prefix so repeated checks cannot match earlier posts retained by the shared demonstration server. Ten consecutive real browser repetitions passed with exact text and unchanged height/growth requirements.
+
+Windows WebView2 exposes the semantic About Button but lacks the UIA Invoke provider. The native test uses Invoke when supported, otherwise a real pointer click after checking the owned Popen window is foreground and the button center lies inside that window. Actual About version/license and screenshot checks remain unchanged. Both Linux and both macOS native jobs passed in CI 37676680110.
