@@ -1,166 +1,119 @@
-# spk-mm-client
+# SPK MM Client
 
-Лёгкий десктопный клиент Mattermost (Linux, Windows, macOS) на Wails v3 + React.
-Спецификация — `docs/specs/2026-09-24-spk-mattermost-design.md`.
-Результаты спайков — `docs/spikes/2026-09-24-stage1-spikes.md`.
+A desktop client for Mattermost, built with Go, Wails v3 and React. It uses the
+system WebView on Linux, Windows and macOS. The application interface is available
+in English and Russian.
 
-После этапа 2: несколько серверов (вход по логину/паролю и через GitLab SSO),
-сайдбар с категориями/непрочитанными/упоминаниями, виртуализированная лента с
-markdown и подгрузкой истории, отправка/правка/удаление сообщений,
-ручное растягивание редактора вверх и превью Markdown перед отправкой,
-«отметить непрочитанным», тёмная тема по референсу редактора пользователя (без
-настройки): холодный серый фон `#282c34`, более светлые панели `#30343e`,
-светло-серый текст, приглушённые голубые ссылки и выделение,
-мягкие разделители и служебные подписи, приглушённая подсветка сообщения под курсором
-(35% цвета hover), встроенный Open Sans (обычный вес 450) с серым сглаживанием
-в WebKit (без цветной каймы), десктопные уведомления (клик открывает окно и канал/тред
-уведомления) и бейдж в трее (сумма упоминаний по серверам + признак
-непрочитанного), автономная работа при разрывах сети (переподключение с
-дозапросом пропущенного: посты и счётчики не теряются и не удваиваются —
-кроме гонки двух REST-чтений при ресинке, которую исправляет следующий
-ресинк) и при истёкшей сессии (кэш остаётся читаемым).
+[Website](https://sipaha.github.io/spk-mm-client/en/) ·
+[Releases](https://github.com/Sipaha/spk-mm-client/releases) ·
+[Support the author](https://sipaha.github.io/about/en/#support)
 
-После этапа 3, часть 1: аватары участников и точки статуса присутствия (свой
-и собеседников — опросом, обновляются на открытии канала и в течение живого
-сеанса), превью картинок в ленте с фиксированным размером рамки (лента не
-прыгает при догрузке) и полноэкранным просмотрщиком (клавиатура: Esc — закрыть, ←/→ — соседние
-вложения сообщения, колесо — зум вокруг курсора, перетаскивание — пан,
-двойной клик и +/-/0 — вписать/100%; оригинал грузится сразу, превью —
-плейсхолдер на время загрузки), превью текстовых файлов (фрагмент до 64 КиБ
-в ленте, до 1 МиБ и с поиском по файлу в просмотрщике), карточки прочих
-файлов, скачивание в каталог загрузок (`SPK_MM_CLIENT_DOWNLOADS`, иначе XDG
-`~/Загрузки`) и открытие системным приложением (только безопасные типы —
-картинки, PDF, текст/лог/csv/json/md, макро-свободные офисные документы,
-аудио/видео, архивы; лаунчеры и скрипты — только сохраняются), список
-загрузок (кнопка «⬇» в шапке канала, панель с прогрессом, «Открыть»,
-«Показать в папке», «Убрать из списка»), реакции на сообщения (клик по чипу
-ставит/снимает, пикер эмодзи с поиском, «Недавние» и кастомные эмодзи
-сервера). Дисковый кэш картинок/аватаров/эмодзи — в каталоге данных
-(`media/`, лимит 256 МиБ, LRU).
+## Features
 
-После дополнения к этапу 3 (2026-09-27): превью видео (рамка с постером,
-плеер по клику) и аудио (компактный плеер в строке файла) — поток через
-`/media/…/stream/…` (desktop — свой loopback-сервер с токеном в URL, GStreamer
-не читает `wails://`), без дискового кэша; превью markdown-файлов —
-отрендеренный фрагмент в ленте и полноэкранный рендер с переключателем
-«Оформление»/«Исходный текст» в просмотрщике. Полноэкранный рендер использует
-отдельную документную типографику; поиск находится в шапке, работает в обоих
-режимах и сохраняет запрос при переключении. Клик по свободной полосе шапки
-закрывает просмотрщик, как клик по фону. Блоки кода получают базовую подсветку
-для shell/YAML/JSON/Go/JavaScript/Python; фрагмент в ленте использует отдельную
-компактную документную типографику.
+- Connect to multiple Mattermost servers with password sign-in or GitLab SSO,
+  when enabled by the server.
+- Read and write messages, edit or delete your posts, react with emoji, save
+  posts and mark messages unread.
+- Open threads alongside the channel, search messages and jump to a result in
+  its conversation.
+- Keep separate drafts, preview Markdown and attach files through the file
+  picker, drag and drop or clipboard.
+- Preview images, PDFs, text, Markdown, audio and video; download attachments
+  and open supported file types with system applications.
+- Receive desktop notifications and track unread messages and mentions across
+  servers. Cached conversations remain readable when disconnected.
 
-После этапа 3, части 2 (вложения, 2026-09-27/28): три источника — Ctrl+V
-(картинка из буфера или список файлов), перетаскивание в область канала,
-кнопка 📎 (системный диалог выбора файлов). Полоса вложений над полем ввода
-показывает миниатюру/иконку, размер, прогресс загрузки или ошибку с
-«Повторить» («×» и Delete/Backspace убирают вложение, фокус после этого
-переходит на соседний чип или в поле ввода). Лимиты — включены ли вложения
-и `MaxFileSize` (по умолчанию 100 МиБ) берутся с сервера, не больше 10
-вложений на пост. Отправлять можно и одни вложения без текста; ожидающий
-пост с ещё не загруженными файлами ждёт без ограничения по времени (текстовый
-пост без вложений считается неотправленным через 30 с). Ошибка загрузки не
-повторяется сама — только по «Повторить».
+The interface uses a dark gray palette and bundled Open Sans. Screenshots on the
+website show the actual application connected to a demonstration server with
+fictional conversations.
 
-После тредов (2026-09-28): панель треда справа от ленты (в узком окне —
-поверх неё): корень, ответы, свой редактор с черновиком и вложениями.
-Открывается кликом по тексту ответа в ленте или корневого сообщения с ответами,
-строкой «Ответов: N · последний ответ …» под корнем, кнопкой
-«Ответить в треде» в панели действий поста и кликом по уведомлению об ответе.
-Работает в обоих режимах CRT: при CRT в ленте только корни, открытый тред
-помечается прочитанным на сервере, упоминания в тредах поднимают бейдж
-сервера; без CRT ответы идут в ленте со строкой «Ответ <автору>: …».
-Длинный тред догружается прокруткой вверх до 200 последних ответов (дальше —
-«Открыть в браузере»). Кэш тредов только в памяти и ограничен (3 треда на
-сервер). Отдельного вида «Треды» в сайдбаре нет — решение пользователя.
-Автодополнение `@ ~ : /` и глобальный быстрый переход `Ctrl+K` сделаны позже.
-с пользователем (`docs/backlog.md`).
+## Downloads
 
-После поиска (2026-09-30): поле поиска в шапке канала (Ctrl+F) ищет по
-сообщениям текущей команды на сервере, с подсказками `from:` и `in:`.
-Результаты — в правой панели: карточки с каналом, подсветкой найденных слов
-(и кириллицы), догрузкой страниц при прокрутке (до 500 результатов);
-переживают смену канала. Клик переходит к сообщению в контексте — даже к
-очень старому: лента открывается вокруг него (по центру, с подсветкой),
-между ним и последними сообщениями — строка «Загрузить более новые
-сообщения», которая догружается прокруткой. Ответ в треде при CRT
-открывается в панели треда вокруг ответа (и за пределами 200 последних),
-«← К результатам» возвращает к списку.
+Get published packages from [GitHub Releases](https://github.com/Sipaha/spk-mm-client/releases).
+The first release selected for publication is **v1.0.0**; publication is being
+verified. Until it appears there, build from source using the instructions below.
 
-Отправленное сообщение сразу отображается обычным цветом. «Отправка…» появляется,
-только если подтверждение задержалось больше чем на 3 секунды; явная ошибка — сразу,
-с возможностью повторить или убрать сообщение. Быстрое подтверждение не добавляет
-и не убирает служебную строку, поэтому высота текстового сообщения не скачет.
+| Platform | Native package formats | Requirements |
+| --- | --- | --- |
+| Linux amd64 / arm64 | DEB, RPM, tar.gz | glibc 2.39+, GTK 3, WebKitGTK 4.1 |
+| Windows amd64 / arm64 | Per-user MSI, ZIP | Microsoft Edge WebView2 Runtime |
+| macOS amd64 / arm64 | App bundle in DMG or tar.gz | macOS 12 or later |
 
-При изменении ширины окна или панелей видимые сообщения перестраиваются общим
-потоком: перенос текста не ждёт обновления отдельных координат строк. Замеры
-виртуализатора объединяются, история и треды остаются виртуализированными.
+Windows packages are unsigned. macOS packages use an ad-hoc signature and are not
+notarized. Each release includes SHA-256 checksums and third-party license texts.
+Browser-mode archives are separately named developer builds. Automatic updates
+and AppImage packages are not available in this release.
 
-## Разработка
+See [release documentation](docs/releases.md) for verification and packaging details.
 
-Иконка приложения — два перекрывающихся сообщения (белое и бирюзовое) на
-синей плитке. В трее янтарная точка означает непрочитанное, красная — упоминание.
-Все три PNG в `internal/appfiles/icons/` воспроизводятся командой
-`go run scripts/gen-icon.go`: геометрия и цвета находятся в генераторе,
-сглаживание выполняется при генерации, дополнительных затрат в рантайме нет.
-После изменения ресурсов нужен `make build-desktop` и перезапуск клиента.
-По выбору пользователя возвращён вариант с двумя сообщениями: объёмная «М»
-оказалась хуже и выглядела пиксельной на системной панели.
+## Build from source
 
-    make build          # фронт + бинарь (browser-режим)
-    make run-browser    # http://127.0.0.1:5180 с фейковым сервером
-    make run            # пересобрать всё (фронт + desktop-бинарь) и запустить в foreground;
-                        # уже запущенный экземпляр не останавливает — Ctrl+C его сначала
-                        # (SIGINT/SIGTERM оба гасят приложение чисто за ~1 с)
-    make test           # go + фронт + e2e
-    make install-dev-linux  # зарегистрировать dev-сборку для mmauth:// (Linux)
-    make pss PID=<pid>  # память процесса и потомков: Private_Dirty (бюджет) и PSS (Linux)
+Use **Go 1.26.8 or later**, **Node.js 22** and **pnpm 10.33.0**. Native Linux builds
+also need the GTK 3 and WebKitGTK 4.1 development libraries. On Ubuntu 24.04:
 
-Данные: `~/.spk/mm-client/` (переопределяется `SPK_MM_CLIENT_HOME`; с
-нестандартным каталогом клиент запускается как отдельный экземпляр рядом с
-основным; при первом запуске после переименования проекта данные один раз
-переезжают из старого `~/.spk/spk-mattermost/`, см. AGENTS.md).
-`SPK_MM_CLIENT_GPU=always|ondemand|never` — политика аппаратного ускорения
-WebKitGTK (по умолчанию always; `never` — если GPU-драйвер сбоит).
+```sh
+sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+make build-desktop
+./build/bin/spk-mm-client-desktop
+```
 
-Фейковый Mattermost-сервер для разработки и замеров памяти (development only,
-не для продакшн-сборок):
+`make run` rebuilds and starts the desktop client in the foreground. It does not
+stop an existing instance. `make release VERSION=1.0.0` builds the production
+Linux desktop binary; production desktop builds reject development fake-server
+flags. Windows and macOS packages are built on their native CI runners.
 
-- `--mm-fake-channels N` — добавляет N открытых каналов (`c-load-001`…, по
-  20 постов) в фейковый сервер, поверх обычного набора (`c-town`,
-  `c-offtopic`, `c-secret`, DM/GM) — для проверки памяти на ~100 каналах;
-  действует и в browser-режиме, и вместе с desktop-флагом `--mm-fake` ниже.
-- `--mm-fake` в browser- и desktop-режиме поднимает фейковый сервер в
-  процессе (`--test-api` в browser-режиме открывает ещё `/api/_test/*` для
-  e2e — см. AGENTS.md); в desktop-сборке — только dev-сборки, не `release` —
-  сразу входит как alice. Запускать с отдельным `SPK_MM_CLIENT_HOME`
-  (временный каталог), чтобы не задеть данные боевого клиента — при старте
-  он сам убирает устаревшие записи фейкового сервера из предыдущего
-  dev-запуска и добавляет свежую.
+For browser-mode development:
 
-## Сайт и сведения о приложении
+```sh
+make build
+make run-browser
+```
 
-Кнопка «О приложении» видна в верхней панели до и после входа. Диалог показывает
-версию текущей сборки, Apache License 2.0, исходный код, сайт продукта и профиль
-Павла Симонова / Sipaha. Открытие диалога сохраняет чат, тред, черновик и позицию
-прокрутки; Escape закрывает его и возвращает фокус.
+The development UI opens at `http://127.0.0.1:5180` with an in-process demonstration
+Mattermost server and a separate temporary data directory. Browser mode is bound
+to loopback. For a desktop demonstration, use `--mm-fake` with an isolated
+`SPK_MM_CLIENT_HOME`; never point development fake-server runs at your real profile.
 
-Сайт продукта: https://sipaha.github.io/spk-mm-client/. Исходники сайта находятся в отдельной ветке
-`pages`, которая не объединяется с `main`. У сайта восемь языков и светлая/тёмная
-темы; у приложения по-прежнему русский и английский интерфейс. Снимки сделаны
-на фейковом сервере с вымышленной перепиской. Готовые релизные пакеты пока не
-опубликованы; сайт предлагает сборку из исходников. Подробнее: [docs/site.md](docs/site.md).
+## Data and configuration
 
-Лицензия проекта: [Apache License 2.0](LICENSE); сведения об авторских правах:
-[NOTICE](NOTICE). Лицензии сторонних компонентов сохраняются.
+The default data directory is `~/.spk/mm-client/`. Override it with
+`SPK_MM_CLIENT_HOME` to use a separate profile. `SPK_MM_CLIENT_DOWNLOADS` selects
+the downloads directory; otherwise the system downloads directory is used.
 
-## Релизные сборки
+On Linux, `SPK_MM_CLIENT_GPU=always|ondemand|never` controls WebKitGTK hardware
+acceleration. The default is `always`; use `never` if your graphics driver causes
+rendering problems.
 
-GitHub Actions проверяет исходники и собирает нативные пакеты Linux, Windows и macOS
-для amd64 и arm64. Тег `vMAJOR.MINOR.PATCH` запускает публикацию GitHub Release
-после тестов, проверки пакетов и реальных окон приложения на всех шести платформах.
-Первый выбранный релиз — `v1.0.0`. Форматы, зависимости, ограничения подписи
-и контрольные суммы описаны в [docs/releases.md](docs/releases.md).
-Команды `version` / `--version` печатают версию, `licenses` — встроенные лицензии
-сторонних компонентов. Ссылки «Поддержать» на сайте ведут к локализованному
-разделу поддержки автора.
+`spk-mm-client version` and `spk-mm-client --version` print the build version.
+`spk-mm-client licenses` prints the bundled third-party notices. The visible
+**About** button also shows the version, license and project links.
+
+## Development and checks
+
+```sh
+make lint                 # Go vet, golangci-lint and frontend ESLint
+make test-go              # Go tests with the race detector
+make test-front           # Frontend tests
+make test-e2e             # Browser integration tests
+make check-packaging      # Packaging and publication contract tests
+make cross-check          # Windows desktop cross-build and vet
+```
+
+CI runs these checks, scans Go dependencies for vulnerabilities, builds packages
+on six native OS/architecture runners and verifies a real isolated production
+window on each runner. A validated `vMAJOR.MINOR.PATCH` tag publishes a GitHub
+Release only after the complete asset set is uploaded and checked.
+
+Architecture, protocol findings and development notes are in
+[docs](docs/), including the [design specification](docs/specs/2026-09-24-spk-mattermost-design.md)
+and [known limitations](docs/backlog.md). The website source lives on the separate
+`pages` branch.
+
+## License and author
+
+SPK MM Client is licensed under [Apache License 2.0](LICENSE).
+See [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) for
+copyright and dependency notices.
+
+Author: [Pavel Simonov / Sipaha](https://sipaha.github.io/about/en/).
+[Support the project’s author](https://sipaha.github.io/about/en/#support).
