@@ -32,7 +32,61 @@ if ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Patt
   Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+[ComImport, Guid("618736E0-3C3D-11CF-810C-00AA00389B71"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+public interface MMAccessible {
+  [DispId(-5001)] int accChildCount { get; }
+  [DispId(-5002)] object get_accChild(object child);
+  [DispId(-5003)] string get_accName(object child);
+  [DispId(-5006)] object get_accRole(object child);
+  [DispId(-5007)] object get_accState(object child);
+  [DispId(-5018)] void accDoDefaultAction(object child);
+}
 public static class MMNativePointer {
+  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr window, uint objectId, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out MMAccessible accessible);
+  public delegate bool EnumWindow(IntPtr window, IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumWindow callback, IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+  static bool InvokeAbout(MMAccessible accessible, object child, int depth, ref int visited) {
+    if (depth > 64 || ++visited > 10000) return false;
+    try {
+      var role = accessible.get_accRole(child);
+      var state = accessible.get_accState(child);
+      if (Convert.ToInt32(role) == 43 && accessible.get_accName(child) == "About"
+          && (Convert.ToInt32(state) & (1 | 0x8000 | 0x10000)) == 0) {
+        accessible.accDoDefaultAction(child);
+        return true;
+      }
+    } catch (COMException) { }
+    if (Convert.ToInt32(child) != 0) return false;
+    int count;
+    try { count = Math.Min(accessible.accChildCount, 10000); }
+    catch (COMException) { return false; }
+    for (int i = 1; i <= count; i++) {
+      MMAccessible nested = null;
+      try { nested = accessible.get_accChild(i) as MMAccessible; }
+      catch (COMException) { }
+      if (nested != null ? InvokeAbout(nested, 0, depth + 1, ref visited)
+                         : InvokeAbout(accessible, i, depth + 1, ref visited)) return true;
+    }
+    return false;
+  }
+  public static bool InvokeAccessibleAbout(IntPtr window, uint expectedPid) {
+    uint owner; GetWindowThreadProcessId(window, out owner);
+    if (owner != expectedPid) throw new InvalidOperationException("Accessible root ownership changed");
+    bool invoked = false; int visited = 0;
+    EnumWindow search = (candidate, parameter) => {
+      if (candidate != window && !IsChild(window, candidate)) return true;
+      var iid = typeof(MMAccessible).GUID;
+      MMAccessible accessible;
+      if (AccessibleObjectFromWindow(candidate, 0xFFFFFFFC, ref iid, out accessible) == 0 && accessible != null)
+        invoked = InvokeAbout(accessible, 0, 0, ref visited);
+      return !invoked;
+    };
+    search(window, IntPtr.Zero);
+    if (!invoked) EnumChildWindows(window, search, IntPtr.Zero);
+    GC.KeepAlive(search);
+    return invoked;
+  }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
@@ -66,49 +120,55 @@ public static class MMNativePointer {
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 "@
-  [uint32]$owner = 0
-  $ownedThread=[MMNativePointer]::GetWindowThreadProcessId($window,[ref]$owner)
-  if ($owner -ne $ProcessId) { throw 'Production window ownership changed before focus' }
-  $callerThread=[MMNativePointer]::GetCurrentThreadId()
-  $attached=$false
-  try {
-    if ($callerThread -ne $ownedThread) { $attached=[MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$true) }
-    [void][MMNativePointer]::ShowWindow($window,9)
-    [void][MMNativePointer]::BringWindowToTop($window)
-    [void][MMNativePointer]::SetForegroundWindow($window)
-    $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
-    while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+  # The MSAA bridge can expose a real button default action when WebView2
+  # supplies no UIA Invoke provider. Act only in the owned HWND subtree.
+  if ([MMNativePointer]::InvokeAccessibleAbout($window,[uint32]$ProcessId)) {
+    Write-Host 'Invoked actual owned About button through Microsoft Active Accessibility'
+  } else {
+    [uint32]$owner = 0
+    $ownedThread=[MMNativePointer]::GetWindowThreadProcessId($window,[ref]$owner)
+    if ($owner -ne $ProcessId) { throw 'Production window ownership changed before focus' }
+    $callerThread=[MMNativePointer]::GetCurrentThreadId()
+    $attached=$false
+    try {
+      if ($callerThread -ne $ownedThread) { $attached=[MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$true) }
+      [void][MMNativePointer]::ShowWindow($window,9)
+      [void][MMNativePointer]::BringWindowToTop($window)
       [void][MMNativePointer]::SetForegroundWindow($window)
-      Start-Sleep -Milliseconds 100
+      $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
+      while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+        [void][MMNativePointer]::SetForegroundWindow($window)
+        Start-Sleep -Milliseconds 100
+      }
+    } finally {
+      if ($attached) { [void][MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$false) }
     }
-  } finally {
-    if ($attached) { [void][MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$false) }
-  }
-  if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
-    # Windows enables foreground changes after ALT input (LockSetForegroundWindow
-    # documentation). This is a real key press/release on the disposable runner,
-    # not a persistent setting change. Never click before foreground is proved.
-    [MMNativePointer]::ReleaseForegroundLock()
-    [void][MMNativePointer]::SetForegroundWindow($window)
-    $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
-    while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+    if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
+      # Windows enables foreground changes after ALT input (LockSetForegroundWindow
+      # documentation). This is a real key press/release on the disposable runner,
+      # not a persistent setting change. Never click before foreground is proved.
+      [MMNativePointer]::ReleaseForegroundLock()
       [void][MMNativePointer]::SetForegroundWindow($window)
-      Start-Sleep -Milliseconds 100
+      $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
+      while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+        [void][MMNativePointer]::SetForegroundWindow($window)
+        Start-Sleep -Milliseconds 100
+      }
     }
+    if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
+      $foreground=[MMNativePointer]::GetForegroundWindow()
+      [uint32]$foregroundOwner=0
+      [void][MMNativePointer]::GetWindowThreadProcessId($foreground,[ref]$foregroundOwner)
+      throw "Owned production window could not become foreground: owned=$window foreground=$foreground foregroundPID=$foregroundOwner session=$($process.SessionId)"
+    }
+    $bounds=$root.Current.BoundingRectangle
+    $rect=$button.Current.BoundingRectangle
+    $x=[int]($rect.Left+$rect.Width/2);$y=[int]($rect.Top+$rect.Height/2)
+    if ($rect.Width -le 0 -or $rect.Height -le 0 -or $x -lt $bounds.Left -or $x -ge $bounds.Right -or $y -lt $bounds.Top -or $y -ge $bounds.Bottom) { throw 'About click is outside the owned window' }
+    if (![MMNativePointer]::SetCursorPos($x,$y)) { throw 'Owned pointer positioning failed' }
+    [MMNativePointer]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+    [MMNativePointer]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
   }
-  if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
-    $foreground=[MMNativePointer]::GetForegroundWindow()
-    [uint32]$foregroundOwner=0
-    [void][MMNativePointer]::GetWindowThreadProcessId($foreground,[ref]$foregroundOwner)
-    throw "Owned production window could not become foreground: owned=$window foreground=$foreground foregroundPID=$foregroundOwner session=$($process.SessionId)"
-  }
-  $bounds=$root.Current.BoundingRectangle
-  $rect=$button.Current.BoundingRectangle
-  $x=[int]($rect.Left+$rect.Width/2);$y=[int]($rect.Top+$rect.Height/2)
-  if ($rect.Width -le 0 -or $rect.Height -le 0 -or $x -lt $bounds.Left -or $x -ge $bounds.Right -or $y -lt $bounds.Top -or $y -ge $bounds.Bottom) { throw 'About click is outside the owned window' }
-  if (![MMNativePointer]::SetCursorPos($x,$y)) { throw 'Owned pointer positioning failed' }
-  [MMNativePointer]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
-  [MMNativePointer]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
 }
 $deadline = [DateTime]::UtcNow.AddSeconds(20)
 $verified = $false
