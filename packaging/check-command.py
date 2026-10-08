@@ -8,6 +8,23 @@ import sys
 from diagnostics import report_failure
 
 
+def failure_blocks(log):
+    """Keep test names and adjacent details even if later tests flood the tail."""
+    blocks = []
+    previous = deque(maxlen=5)
+    remaining = 0
+    with log.open(encoding='utf-8') as source:
+        for line in source:
+            if line.lstrip().startswith(('--- FAIL:', 'WARNING: DATA RACE', 'panic:')) and len(blocks) < 8:
+                blocks.append(''.join(previous) + line)
+                remaining = 30
+            elif remaining:
+                blocks[-1] += line
+                remaining -= 1
+            previous.append(line)
+    return [block[:4000] for block in blocks]
+
+
 def run(command):
     root = Path(os.environ['MM_RELEASE_SCRATCH']) / 'validation-logs'
     root.mkdir(parents=True, exist_ok=True)
@@ -22,6 +39,8 @@ def run(command):
             tail.append(line)
         code = child.wait()
     if code:
+        for block in failure_blocks(log):
+            report_failure(subprocess.CalledProcessError(code, command, stderr=block))
         report_failure(subprocess.CalledProcessError(code, command, stderr=''.join(tail)))
     return code
 

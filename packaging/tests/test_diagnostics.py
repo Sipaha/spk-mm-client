@@ -1,5 +1,7 @@
 import contextlib
 import io
+import importlib.util
+import tempfile
 import os
 from pathlib import Path
 import subprocess
@@ -26,3 +28,16 @@ class PublicFailureDetails(unittest.TestCase):
         with patch.dict(os.environ, {'GITHUB_ACTIONS': 'false'}), contextlib.redirect_stdout(output):
             report_failure(ValueError('local failure'))
         self.assertEqual(output.getvalue(), '')
+
+    def test_early_failed_test_is_retained_when_later_logs_overwrite_the_tail(self):
+        spec = importlib.util.spec_from_file_location('check_command', Path(__file__).parents[1] / 'check-command.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / 'check.log'
+            log.write_text('setup\n--- FAIL: TestActualFailure (0.1s)\n    worker_test.go:42: expected state\n' + 'later test log\n' * 300)
+            blocks = module.failure_blocks(log)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn('TestActualFailure', blocks[0])
+        self.assertIn('worker_test.go:42: expected state', blocks[0])
+        self.assertLess(len(blocks[0]), 4096)
