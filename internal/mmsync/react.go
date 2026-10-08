@@ -97,6 +97,7 @@ func (w *Worker) React(ctx context.Context, postID, emoji string, add bool) erro
 	default:
 		mine = &reactPair{postID: postID, emoji: emoji, want: add, server: was, running: true}
 		w.reactPairs[key] = mine
+		w.st.PinReactIntent(postID, emoji, true)
 	}
 	w.reactMu.Unlock()
 	w.changed(ch)
@@ -118,6 +119,8 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 			delete(w.reactPairs, key)
 			if !sentAny { // no request of this run carries the last click's echo
 				w.st.ForgetReactIntent(p.postID, p.emoji)
+			} else {
+				w.st.PinReactIntent(p.postID, p.emoji, false)
 			}
 			w.reactMu.Unlock()
 			return nil
@@ -132,6 +135,7 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 		// retried on network errors": saving an existing reaction returns
 		// 200 and deleting a missing one is harmless (api facts §7.4), so a
 		// request that did land is not doubled.
+		echo := w.st.ExpectReactEcho(p.postID, p.emoji, want)
 		err := w.sendReaction(ctx, p.postID, p.emoji, want)
 		if err == nil {
 			if want {
@@ -142,7 +146,6 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 			}
 			w.reactMu.Lock()
 			p.server, p.attempts, p.unsure = want, 0, false
-			w.st.PinReactIntent(p.postID, p.emoji, false) // its echo is due now
 			w.reactMu.Unlock()
 			sentAny = true
 			continue
@@ -152,6 +155,9 @@ func (w *Worker) sendPair(ctx context.Context, key string, p *reactPair) error {
 			p.attempts++
 		}
 		if refused(err) || p.attempts >= reactAttempts {
+			if refused(err) {
+				w.st.CancelReactEcho(p.postID, p.emoji, echo)
+			}
 			delete(w.reactPairs, key)
 			back := w.st.SetMyReaction(p.postID, p.emoji, p.server)
 			w.reactMu.Unlock()

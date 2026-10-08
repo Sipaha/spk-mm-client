@@ -17,12 +17,18 @@ const (
 	maxRecentEmoji = 27 // the webapp's MAXIMUM_RECENT_EMOJI
 )
 
+type reactionEcho struct {
+	id  uint64
+	add bool
+}
+
 type intent struct {
 	add   bool
 	until time.Time
-	// pinned: the click's request is waiting for a retry — the intent does
-	// not expire until it is sent (PinReactIntent).
+	// pinned: a request is running or waiting for retry; do not expire its intent.
 	pinned bool
+	echoes []reactionEcho // requests sent in order; their WS echoes may arrive after later clicks
+	echoed bool           // latest desired state was echoed while the pair remained pinned
 }
 
 func intentKey(postID, emoji string) string { return postID + "/" + emoji }
@@ -63,9 +69,9 @@ func (s *Server) ReactLocalWas(postID, emoji string, add bool) (ch Change, was, 
 		}
 	}
 	k := intentKey(postID, emoji)
-	// A pinned intent's request waits for a retry, which will send this
-	// click: it stays pinned.
-	s.intents[k] = intent{add: add, until: now.Add(intentTTL), pinned: s.intents[k].pinned}
+	// Preserve the running/retrying pair and echoes of earlier requests.
+	previous := s.intents[k]
+	s.intents[k] = intent{add: add, until: now.Add(intentTTL), pinned: previous.pinned, echoes: previous.echoes}
 	// "Was mine" is read from the copies before the click. When they
 	// disagree (feed vs thread) the truth is unknown: was = !add, so the
 	// request is always sent — both endpoints are idempotent.
@@ -113,12 +119,18 @@ func (s *Server) mineInCopiesLocked(postID, emoji string) (some, all bool) {
 }
 
 // SetMyReaction sets our reaction on a post to a state known from the
-// server (a rollback) and ends the intent for the pair: the
-// post shows exactly mine, whatever clicks were applied before.
+// server (a rollback). Only echoes of previously sent requests remain
+// guarded, so they cannot overwrite the rollback.
 func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.intents, intentKey(postID, emoji))
+	k := intentKey(postID, emoji)
+	if in := s.intents[k]; len(in.echoes) > 0 {
+		in.add, in.pinned, in.echoed, in.until = mine, false, false, s.now().Add(intentTTL)
+		s.intents[k] = in
+	} else {
+		delete(s.intents, k)
+	}
 	ch, ok := s.channelOfPostLocked(postID)
 	if !ok {
 		return Change{}
@@ -128,16 +140,23 @@ func (s *Server) SetMyReaction(postID, emoji string, mine bool) Change {
 }
 
 // ForgetReactIntent drops the intent of a click that was never sent (a
-// later click cancelled it before the request went out): no echo will end it.
+// later click cancelled it before sending). Earlier outstanding echoes still
+// need protection until their acknowledgements arrive.
 func (s *Server) ForgetReactIntent(postID, emoji string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.intents, intentKey(postID, emoji))
+	k := intentKey(postID, emoji)
+	if in := s.intents[k]; len(in.echoes) > 0 {
+		in.pinned, in.until = false, s.now().Add(intentTTL)
+		s.intents[k] = in
+	} else {
+		delete(s.intents, k)
+	}
 }
 
 // PinReactIntent keeps the intent of the pair from expiring while its
-// request waits for a retry (pin), or lets it expire intentTTL from now once
-// the request went through (unpin). A missing intent — its echo already
+// request runs or waits for retry (pin), or lets it expire intentTTL from now
+// once the pair settles (unpin). A missing intent — its echo already
 // came — stays missing.
 func (s *Server) PinReactIntent(postID, emoji string, pin bool) {
 	s.mu.Lock()
@@ -145,13 +164,47 @@ func (s *Server) PinReactIntent(postID, emoji string, pin bool) {
 	k := intentKey(postID, emoji)
 	if in, ok := s.intents[k]; ok {
 		in.pinned, in.until = pin, s.now().Add(intentTTL)
+		if !pin && in.echoed && len(in.echoes) == 0 {
+			delete(s.intents, k)
+		} else {
+			s.intents[k] = in
+		}
+	}
+}
+
+// ExpectReactEcho records an actual outgoing request before it starts, so a
+// later coalesced click cannot discard protection against its delayed echo.
+func (s *Server) ExpectReactEcho(postID, emoji string, add bool) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := intentKey(postID, emoji)
+	in, ok := s.intents[k]
+	if !ok {
+		return 0
+	}
+	s.reactEchoID++
+	in.echoes = append(in.echoes, reactionEcho{id: s.reactEchoID, add: add})
+	in.pinned, in.echoed = true, false
+	s.intents[k] = in
+	return s.reactEchoID
+}
+
+// CancelReactEcho removes a request that the server definitively refused.
+// Unknown outcomes keep their marker until its echo or the ordinary TTL.
+func (s *Server) CancelReactEcho(postID, emoji string, token uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := intentKey(postID, emoji)
+	if in, ok := s.intents[k]; ok {
+		in.echoes = slices.DeleteFunc(in.echoes, func(e reactionEcho) bool { return e.id == token })
 		s.intents[k] = in
 	}
 }
 
 // staleEchoLocked: an event about our own reaction that contradicts our
 // latest click is the late echo of an earlier click — drop it. The echo
-// that matches the click ends the intent; an expired intent decides nothing.
+// that matches the final outstanding request ends an unpinned intent; an
+// expired intent decides nothing.
 func (s *Server) staleEchoLocked(r model.Reaction, add bool) bool {
 	if r.UserID != s.me.ID {
 		return false
@@ -161,11 +214,25 @@ func (s *Server) staleEchoLocked(r model.Reaction, add bool) bool {
 	if !ok {
 		return false
 	}
-	if (!in.pinned && s.now().After(in.until)) || in.add == add {
+	if !in.pinned && s.now().After(in.until) {
 		delete(s.intents, k)
 		return false
 	}
-	return true
+	// Requests for this pair are serialized; the websocket delivers their
+	// echoes in server order. A matching older echo must not retire the
+	// newest intent while a later opposite echo is still outstanding.
+	if len(in.echoes) > 0 && in.echoes[0].add == add {
+		in.echoes = in.echoes[1:]
+	}
+	if in.add == add {
+		in.echoed = true
+		if !in.pinned && len(in.echoes) == 0 {
+			delete(s.intents, k)
+			return false
+		}
+	}
+	s.intents[k] = in
+	return in.add != add
 }
 
 type recentEmoji struct {

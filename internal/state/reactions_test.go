@@ -198,6 +198,55 @@ func TestAClickKeepsThePinOfAWaitingIntent(t *testing.T) {
 	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "still pinned")
 }
 
+func TestOlderMatchingEchoDoesNotRetireNewerReactionRequests(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocalWas("p", "+1", true)
+	s.ExpectReactEcho("p", "+1", true)
+	s.ReactLocalWas("p", "+1", false)
+	s.ExpectReactEcho("p", "+1", false)
+	s.ReactLocalWas("p", "+1", true)
+	s.ExpectReactEcho("p", "+1", true)
+	s.PinReactIntent("p", "+1", false) // HTTP completed; WS echoes are still queued
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"), "older opposite echo cannot undo the last click")
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // another device after all our echoes
+	assert.Empty(t, reactions(s, "p"), "final echo retires the guard")
+}
+
+func TestCoalescedUnsentClicksKeepEarlierPendingEchoProtection(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocalWas("p", "+1", true)
+	s.ExpectReactEcho("p", "+1", true)
+	s.ReactLocalWas("p", "+1", false)
+	s.ExpectReactEcho("p", "+1", false)
+	s.ReactLocalWas("p", "+1", true) // this add/remove pair was coalesced before sending
+	s.ReactLocalWas("p", "+1", false)
+	s.ForgetReactIntent("p", "+1")
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	assert.Empty(t, reactions(s, "p"), "unsent cancellation does not let an older echo restore the reaction")
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1"))
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1")) // another device
+	assert.Equal(t, []ReactionView{{Emoji: "+1", Count: 1, Mine: true}}, reactions(s, "p"))
+}
+
+func TestRefusedRequestDoesNotWaitForAnEchoThatCannotArrive(t *testing.T) {
+	s := newFixture()
+	withPost(s)
+	s.ReactLocalWas("p", "+1", true)
+	s.ExpectReactEcho("p", "+1", true)
+	s.ReactLocalWas("p", "+1", false)
+	refused := s.ExpectReactEcho("p", "+1", false)
+	s.CancelReactEcho("p", "+1", refused)
+	s.SetMyReaction("p", "+1", true)
+	s.ApplyEvent(reactionEv("reaction_added", "u1", "p", "+1"))
+	s.ApplyEvent(reactionEv("reaction_removed", "u1", "p", "+1")) // another device
+	assert.Empty(t, reactions(s, "p"), "refusal must not keep an impossible echo pending")
+}
+
 // ---- who reacted (reactor tooltip/modal) ----
 
 func TestReactorIDsOrderedOldestFirstExcludingMe(t *testing.T) {

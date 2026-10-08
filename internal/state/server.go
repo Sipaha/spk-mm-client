@@ -110,10 +110,11 @@ type Server struct {
 	suppressView  string
 	guard         map[string]int64
 	seen          seenSet
-	gone          seenSet           // deleted replies already taken off their root's count
-	winGen        uint64            // bumped by ResetWindows, see FetchMode
-	orphans       []orphan          // posted events for channels not known yet
-	ephemeral     []model.Post      // ephemeral_message posts, oldest first (ephemeral.go)
+	gone          seenSet      // deleted replies already taken off their root's count
+	winGen        uint64       // bumped by ResetWindows, see FetchMode
+	orphans       []orphan     // posted events for channels not known yet
+	ephemeral     []model.Post // ephemeral_message posts, oldest first (ephemeral.go)
+	reactEchoID   uint64
 	intents       map[string]intent // our latest reaction clicks (post/emoji), see staleEchoLocked
 
 	// The held history of the open channel (segment.go): a gap between it

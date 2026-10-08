@@ -5,6 +5,7 @@ First packaged release of the native Mattermost client.
 - Multiple servers, password/GitLab sign-in, messages, threads, search and drafts.
 - Attachments and image/PDF/text/Markdown/audio/video previews.
 - Russian and English application interface, system WebViews and native desktop integration.
+- Rapid reaction toggles preserve the final choice while delayed server events arrive.
 - Visible About dialog with the actual build version, Apache License 2.0 and project/author links.
 - Native Linux, Windows and macOS packages for amd64 and arm64, with SHA-256 checksums and bundled upstream license texts.
 
