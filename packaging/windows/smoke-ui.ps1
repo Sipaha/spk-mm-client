@@ -40,6 +40,28 @@ public static class MMNativePointer {
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx, dy; public uint mouseData, flags, time; public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT {
+    public ushort key, scan; public uint flags, time; public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public MOUSEINPUT mouse;
+    [FieldOffset(0)] public KEYBDINPUT keyboard;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT {
+    public uint type; public INPUTUNION data;
+  }
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] input, int size);
+  public static void ReleaseForegroundLock() {
+    var input = new INPUT[2];
+    input[0].type = input[1].type = 1;
+    input[0].data.keyboard.key = input[1].data.keyboard.key = 0x12;
+    input[1].data.keyboard.flags = 2;
+    if (SendInput(2, input, Marshal.SizeOf(typeof(INPUT))) != 2)
+      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Native ALT input failed");
+  }
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
@@ -62,7 +84,24 @@ public static class MMNativePointer {
   } finally {
     if ($attached) { [void][MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$false) }
   }
-  if ([MMNativePointer]::GetForegroundWindow() -ne $window) { throw 'Owned production window could not become foreground' }
+  if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
+    # Windows enables foreground changes after ALT input (LockSetForegroundWindow
+    # documentation). This is a real key press/release on the disposable runner,
+    # not a persistent setting change. Never click before foreground is proved.
+    [MMNativePointer]::ReleaseForegroundLock()
+    [void][MMNativePointer]::SetForegroundWindow($window)
+    $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
+    while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+      [void][MMNativePointer]::SetForegroundWindow($window)
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  if ([MMNativePointer]::GetForegroundWindow() -ne $window) {
+    $foreground=[MMNativePointer]::GetForegroundWindow()
+    [uint32]$foregroundOwner=0
+    [void][MMNativePointer]::GetWindowThreadProcessId($foreground,[ref]$foregroundOwner)
+    throw "Owned production window could not become foreground: owned=$window foreground=$foreground foregroundPID=$foregroundOwner session=$($process.SessionId)"
+  }
   $bounds=$root.Current.BoundingRectangle
   $rect=$button.Current.BoundingRectangle
   $x=[int]($rect.Left+$rect.Width/2);$y=[int]($rect.Top+$rect.Height/2)
