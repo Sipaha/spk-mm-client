@@ -16,7 +16,7 @@ Archives include BUILD-INFO with version, source commit and platform; Apache LIC
 
 ## Validation and publication
 
-Main CI runs linters, all Go race tests, frontend tests, packaging tests, workflow validation, vulnerability scans, Windows cross-build/vet, committed license-inventory checks and the full browser integration suite before native packaging. Native builds run on all six OS/architecture targets. They verify executable architecture and actual version, archive contents, installer install/remove where supported, and a real production window in an isolated profile. User applications and profiles are never used or restarted.
+Main CI isolates concurrency by commit SHA so older pushes cannot cancel or block newer commits. Pull-request checks can replace earlier checks for the same PR. Main CI runs linters, all Go race tests, frontend tests, packaging tests, workflow validation, vulnerability scans, Windows cross-build/vet, committed license-inventory checks and the full browser integration suite before native packaging. Native builds run on all six OS/architecture targets. They verify executable architecture and actual version, archive contents, installer install/remove where supported, and a real production window in an isolated profile. User applications and profiles are never used or restarted.
 
 License collection uses explicit POSIX filename ordering on every platform and fails if regenerated notices differ from committed source. The frontend build rejects module paths that collide under case-insensitive resolution. Compiler and smoke failures emit bounded escaped GitHub annotations, while private application logs and profiles are excluded from public assets.
 
