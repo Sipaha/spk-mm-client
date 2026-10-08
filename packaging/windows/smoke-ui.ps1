@@ -34,12 +34,34 @@ using System;
 using System.Runtime.InteropServices;
 public static class MMNativePointer {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 "@
-  [void][MMNativePointer]::SetForegroundWindow($window)
+  [uint32]$owner = 0
+  $ownedThread=[MMNativePointer]::GetWindowThreadProcessId($window,[ref]$owner)
+  if ($owner -ne $ProcessId) { throw 'Production window ownership changed before focus' }
+  $callerThread=[MMNativePointer]::GetCurrentThreadId()
+  $attached=$false
+  try {
+    if ($callerThread -ne $ownedThread) { $attached=[MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$true) }
+    [void][MMNativePointer]::ShowWindow($window,9)
+    [void][MMNativePointer]::BringWindowToTop($window)
+    [void][MMNativePointer]::SetForegroundWindow($window)
+    $focusDeadline=[DateTime]::UtcNow.AddSeconds(5)
+    while ([MMNativePointer]::GetForegroundWindow() -ne $window -and [DateTime]::UtcNow -lt $focusDeadline) {
+      [void][MMNativePointer]::SetForegroundWindow($window)
+      Start-Sleep -Milliseconds 100
+    }
+  } finally {
+    if ($attached) { [void][MMNativePointer]::AttachThreadInput($callerThread,$ownedThread,$false) }
+  }
   if ([MMNativePointer]::GetForegroundWindow() -ne $window) { throw 'Owned production window could not become foreground' }
   $bounds=$root.Current.BoundingRectangle
   $rect=$button.Current.BoundingRectangle
