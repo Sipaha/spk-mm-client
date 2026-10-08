@@ -31,7 +31,7 @@ if ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Patt
   # Use the framework MSAA contract for its semantic action; pointer fallback
   # still requires actual foreground/window ownership.
   Add-Type -AssemblyName Accessibility
-  Add-Type -ReferencedAssemblies ([Accessibility.IAccessible].Assembly.Location) -TypeDefinition @"
+  Add-Type -ReferencedAssemblies @([Accessibility.IAccessible].Assembly.Location, 'System.dll', 'System.Core.dll') -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using Accessibility;
