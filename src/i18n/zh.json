@@ -40,5 +40,18 @@
   "title": "SPK MM Client. Mattermost 桌面客户端",
   "description": "在独立应用中使用多个服务器、消息、讨论串和文件。",
   "support": "支持作者",
-  "supportNav": "支持"
+  "supportNav": "支持",
+  "downloadCompactFormat": "下载 {format}",
+  "downloadFormatFor": "下载适用于 {os} 的 {format}",
+  "chooseDownload": "选择下载包",
+  "chooseCompact": "选择",
+  "chooseDownloadFor": "选择安装包：",
+  "os": "操作系统",
+  "arch": "架构",
+  "allOS": "所有系统",
+  "allArch": "两种架构",
+  "checksum": "校验和",
+  "desktopMode": "桌面应用",
+  "noMatch": "没有匹配的安装包。请选择其他架构，或打开版本发布页。",
+  "releaseFallback": "请选择适合您系统的软件包。GitHub Releases也提供软件包和校验值。"
 }

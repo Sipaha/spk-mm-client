@@ -40,5 +40,18 @@
   "title": "SPK MM Client. Клиент Mattermost для рабочего стола",
   "description": "Несколько серверов, сообщения, треды и файлы в отдельном приложении.",
   "support": "Поддержать автора",
-  "supportNav": "Поддержать"
+  "supportNav": "Поддержать",
+  "downloadCompactFormat": "Скачать {format}",
+  "downloadFormatFor": "Скачать {format} для {os}",
+  "chooseDownload": "Выбрать пакет",
+  "chooseCompact": "Выбрать",
+  "chooseDownloadFor": "Выбрать для",
+  "os": "Операционная система",
+  "arch": "Архитектура",
+  "allOS": "Все системы",
+  "allArch": "Обе архитектуры",
+  "checksum": "Контрольная сумма",
+  "desktopMode": "Приложение",
+  "noMatch": "Для этого выбора нет пакета. Выберите другую архитектуру или откройте страницу релиза.",
+  "releaseFallback": "Выберите пакет для своей системы. Пакеты и контрольные суммы также доступны в GitHub Releases."
 }

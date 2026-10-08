@@ -40,5 +40,18 @@
   "title": "SPK MM Client. A desktop client for Mattermost",
   "description": "Multiple servers, messages, threads and files in a dedicated application.",
   "support": "Support the author",
-  "supportNav": "Support"
+  "supportNav": "Support",
+  "downloadCompactFormat": "Download {format}",
+  "downloadFormatFor": "Download {format} for {os}",
+  "chooseDownload": "Choose a download",
+  "chooseCompact": "Choose",
+  "chooseDownloadFor": "Choose for",
+  "os": "Operating system",
+  "arch": "Architecture",
+  "allOS": "All systems",
+  "allArch": "Both architectures",
+  "checksum": "Checksum",
+  "desktopMode": "Desktop app",
+  "noMatch": "No package matches this selection. Choose another architecture or open the release page.",
+  "releaseFallback": "Choose a package for your system. Packages and checksums are also available on GitHub Releases."
 }

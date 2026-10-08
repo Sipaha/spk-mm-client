@@ -40,5 +40,18 @@
   "title": "SPK MM Client. Un client de bureau pour Mattermost",
   "description": "Plusieurs serveurs, messages, fils et fichiers dans une application dédiée.",
   "support": "Soutenir l’auteur",
-  "supportNav": "Soutenir"
+  "supportNav": "Soutenir",
+  "downloadCompactFormat": "Télécharger {format}",
+  "downloadFormatFor": "Télécharger {format} pour {os}",
+  "chooseDownload": "Choisir un paquet",
+  "chooseCompact": "Choisir",
+  "chooseDownloadFor": "Choisir pour",
+  "os": "Système d’exploitation",
+  "arch": "Architecture",
+  "allOS": "Tous les systèmes",
+  "allArch": "Les deux architectures",
+  "checksum": "Somme de contrôle",
+  "desktopMode": "Application de bureau",
+  "noMatch": "Aucun paquet ne correspond à cette sélection. Choisissez une autre architecture ou ouvrez la page du release.",
+  "releaseFallback": "Choisissez un paquet pour votre système. Les paquets et leurs sommes de contrôle sont aussi sur GitHub Releases."
 }

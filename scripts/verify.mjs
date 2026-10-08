@@ -42,7 +42,7 @@ try{
    await page.route(API,r=>mode==='unavailable'?r.fulfill({status:503,json:{message:'Unavailable'}}):mode==='valid-release'?r.fulfill({json:{tag_name:'v1.0.0',assets:[{name:'spk-mm-client_1.0.0_linux_amd64.deb',browser_download_url:url},{name:'spk-mm-client.exe',browser_download_url:'https://foreign.invalid/app.exe'}]}}):r.fulfill({status:404,json:{}}));
    await page.goto(base+'/spk-mm-client/en/');await page.waitForFunction(()=>document.querySelector('[data-release-status]').textContent!==JSON.parse(document.querySelector('[data-downloads]').dataset.labels).loading);
    if(mode==='unavailable')assert.match(await page.locator('[data-release-status]').innerText(),/Could not load/);
-   if(mode==='valid-release'){assert.equal(await page.locator(`a[href="${url}"]`).count(),1);assert.equal(await page.locator('a[href*="foreign.invalid"]').count(),0);await audit(page);}
+   if(mode==='valid-release'){assert.equal(await page.locator(`[data-packages] a[href="${url}"]`).count(),1);assert.equal(await page.locator('a[href*="foreign.invalid"]').count(),0);await audit(page);}
    if(mode==='denied-storage'){await page.locator('.theme-toggle').click();assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');}
    if(mode==='reduced-motion')assert.equal(await page.locator('.hero-heading').evaluate(el=>getComputedStyle(el).animationName),'none');
    if(mode==='language'){await page.locator('.language-menu summary').click();await page.locator('[data-language=de]').click();await page.waitForURL('**/de/');assert.equal(await page.locator('html').getAttribute('lang'),'de');await page.locator('.language-menu summary').click();await page.locator('[data-language=ru]').click();await page.waitForURL('**/?lang=ru');assert.equal(await page.locator('html').getAttribute('lang'),'ru');}
@@ -53,3 +53,4 @@ try{
  // Social cards are unmodified captures of the real product website.
  for(const code of (process.env.GENERATE_SOCIAL_CARDS==='1'?['en','ru']:[])){const ctx=await browser.newContext({viewport:{width:1200,height:630},colorScheme:'light',reducedMotion:'reduce'});try{const p=await ctx.newPage();await p.route(API,r=>r.fulfill({status:404,json:{}}));await p.goto(base+pagePath(code,'/spk-mm-client/'));await p.evaluate(()=>document.fonts.ready);await p.locator('.hero img').evaluate(e=>e.decode());await p.screenshot({path:path.resolve(`public/media/og-${code}.png`)});}finally{await ctx.close();}}
 }finally{await browser.close();}
+await import('./verify-downloads.mjs');

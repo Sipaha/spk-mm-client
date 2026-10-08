@@ -40,5 +40,18 @@
   "title": "SPK MM Client. Mattermostのデスクトップクライアント",
   "description": "複数のサーバー、メッセージ、スレッド、ファイルを専用アプリで。",
   "support": "作者を支援する",
-  "supportNav": "支援"
+  "supportNav": "支援",
+  "downloadCompactFormat": "{format} を取得",
+  "downloadFormatFor": "{os} 用の {format} をダウンロード",
+  "chooseDownload": "パッケージを選択",
+  "chooseCompact": "選択",
+  "chooseDownloadFor": "パッケージを選択：",
+  "os": "OS",
+  "arch": "アーキテクチャ",
+  "allOS": "すべての OS",
+  "allArch": "両方のアーキテクチャ",
+  "checksum": "チェックサム",
+  "desktopMode": "デスクトップアプリ",
+  "noMatch": "選択に一致するパッケージがありません。別のアーキテクチャを選ぶか、リリースページを開いてください。",
+  "releaseFallback": "お使いのシステムに合ったパッケージを選んでください。GitHub Releasesにもパッケージとチェックサムがあります。"
 }
