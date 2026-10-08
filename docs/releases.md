@@ -1,6 +1,6 @@
 # Release builds
 
-SPK MM Client uses GitHub Actions to test, build and publish native releases. The first selected version is **v1.0.0**. The application source and release workflows are on `main`; the website remains an independent orphan `pages` branch and is never merged into `main`.
+SPK MM Client uses GitHub Actions to test, build and publish native releases. The first published version is [v1.0.0](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.0). The application source and release workflows are on `main`; the website remains an independent orphan `pages` branch and is never merged into `main`.
 
 ## Packages and runtime requirements
 

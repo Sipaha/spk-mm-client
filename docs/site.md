@@ -44,3 +44,5 @@ Live evidence is retained in `.tmp/mm-site/live/report.json`, `live-check.log`, 
 ## Support links
 
 Commit `308e7b8` added visible localized support links in the desktop/mobile navigation, author section and footer. Website CI https://github.com/Sipaha/spk-mm-client/actions/runs/37651655031 succeeded. All eight live pages contained the four approved links, and real browser clicks reached each localized author page’s visible `#support` section. No wallet addresses are duplicated. Live desktop/mobile screenshots and logs are in the containing Solution `.tmp/mm-release/live-support`.
+
+The application release [v1.0.0](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.0) is public. All eight live languages display the 14 native package links and matching SHA-256 sidecars. Download links, localized support destinations, actual images and WCAG AA checks pass across both themes and three viewport widths. The English README and source-build anchor are published.
