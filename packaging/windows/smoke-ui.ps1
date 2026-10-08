@@ -28,25 +28,23 @@ if ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Patt
   $invoke.Invoke()
 } else {
   # WebView2 can expose the semantic Button without an Invoke provider.
-  # Use a real pointer click only after proving foreground/window ownership.
-  Add-Type @"
+  # Use the framework MSAA contract for its semantic action; pointer fallback
+  # still requires actual foreground/window ownership.
+  Add-Type -AssemblyName Accessibility
+  Add-Type -ReferencedAssemblies ([Accessibility.IAccessible].Assembly.Location) -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-[ComImport, Guid("618736E0-3C3D-11CF-810C-00AA00389B71"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
-public interface MMAccessible {
-  [DispId(-5001)] int accChildCount { get; }
-  [DispId(-5002)] object get_accChild(object child);
-  [DispId(-5003)] string get_accName(object child);
-  [DispId(-5006)] object get_accRole(object child);
-  [DispId(-5007)] object get_accState(object child);
-  [DispId(-5018)] void accDoDefaultAction(object child);
-}
+using Accessibility;
 public static class MMNativePointer {
-  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr window, uint objectId, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out MMAccessible accessible);
+  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr window, uint objectId, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IAccessible accessible);
   public delegate bool EnumWindow(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumWindow callback, IntPtr parameter);
   [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
-  static bool InvokeAbout(MMAccessible accessible, object child, int depth, ref int visited) {
+  static int errorsReported;
+  static void ReportAccessibleError(COMException error) {
+    if (errorsReported++ < 5) Console.Error.WriteLine("Owned MSAA interface HRESULT " + error.ErrorCode.ToString("X8"));
+  }
+  static bool InvokeAbout(IAccessible accessible, object child, int depth, ref int visited) {
     if (depth > 64 || ++visited > 10000) return false;
     try {
       var role = accessible.get_accRole(child);
@@ -56,15 +54,15 @@ public static class MMNativePointer {
         accessible.accDoDefaultAction(child);
         return true;
       }
-    } catch (COMException) { }
+    } catch (COMException error) { ReportAccessibleError(error); }
     if (Convert.ToInt32(child) != 0) return false;
     int count;
     try { count = Math.Min(accessible.accChildCount, 10000); }
-    catch (COMException) { return false; }
+    catch (COMException error) { ReportAccessibleError(error); return false; }
     for (int i = 1; i <= count; i++) {
-      MMAccessible nested = null;
-      try { nested = accessible.get_accChild(i) as MMAccessible; }
-      catch (COMException) { }
+      IAccessible nested = null;
+      try { nested = accessible.get_accChild(i) as IAccessible; }
+      catch (COMException error) { ReportAccessibleError(error); }
       if (nested != null ? InvokeAbout(nested, 0, depth + 1, ref visited)
                          : InvokeAbout(accessible, i, depth + 1, ref visited)) return true;
     }
@@ -76,8 +74,8 @@ public static class MMNativePointer {
     bool invoked = false; int visited = 0;
     EnumWindow search = (candidate, parameter) => {
       if (candidate != window && !IsChild(window, candidate)) return true;
-      var iid = typeof(MMAccessible).GUID;
-      MMAccessible accessible;
+      var iid = typeof(IAccessible).GUID;
+      IAccessible accessible;
       if (AccessibleObjectFromWindow(candidate, 0xFFFFFFFC, ref iid, out accessible) == 0 && accessible != null)
         invoked = InvokeAbout(accessible, 0, 0, ref visited);
       return !invoked;
@@ -85,6 +83,7 @@ public static class MMNativePointer {
     search(window, IntPtr.Zero);
     if (!invoked) EnumChildWindows(window, search, IntPtr.Zero);
     GC.KeepAlive(search);
+    Console.WriteLine("Owned MSAA nodes=" + visited + " invoked=" + invoked);
     return invoked;
   }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
