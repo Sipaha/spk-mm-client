@@ -45,6 +45,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      - name: Compile the native macOS capture and OCR verifier
+        if: runner.os == 'macOS'
+        run: swiftc -O -o "$GOBIN/native-macos-smoke" packaging/macos-smoke.swift
       - name: Native platform tests
         run: |
           if [ "$TARGET_OS" = linux ]; then

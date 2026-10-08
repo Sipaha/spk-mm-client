@@ -40,7 +40,7 @@ def smoke(platform,arch,release_version):
                     if result.returncode:raise RuntimeError(result.stdout+'\n'+result.stderr)
                     print(result.stdout);break
                 else:
-                    result=subprocess.run(['swift',str(ROOT/'packaging/macos-smoke.swift'),str(child.pid),str(png)],env=env,capture_output=True,text=True,timeout=60)
+                    result=subprocess.run([str(Path(os.environ['GOBIN'])/'native-macos-smoke'),str(child.pid),str(png)],env=env,capture_output=True,text=True,timeout=60)
                     if result.returncode==0:print(result.stdout);break
                 time.sleep(1)
             else:raise RuntimeError('Production webview did not render the actual application')
