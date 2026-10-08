@@ -37,14 +37,24 @@ using System.Runtime.InteropServices;
 using Accessibility;
 public static class MMNativePointer {
   [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr window, uint objectId, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IAccessible accessible);
+  [DllImport("oleacc.dll")] static extern int AccessibleChildren(IAccessible parent, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.Struct, SizeParamIndex=2)] object[] children, out int obtained);
+  static object[] NativeChildren(IAccessible accessible) {
+    int count = Math.Min(accessible.accChildCount, 10000);
+    if (count <= 0) return new object[0];
+    var children = new object[count]; int obtained;
+    int result = AccessibleChildren(accessible, 0, count, children, out obtained);
+    if (result < 0) Marshal.ThrowExceptionForHR(result);
+    Array.Resize(ref children, Math.Min(count, obtained));
+    return children;
+  }
   public delegate bool EnumWindow(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumWindow callback, IntPtr parameter);
   [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
   static int errorsReported;
-  static void ReportAccessibleError(COMException error) {
-    if (errorsReported++ < 5) Console.Error.WriteLine("Owned MSAA interface HRESULT " + error.ErrorCode.ToString("X8"));
+  static void ReportAccessibleError(Exception error) {
+    if (errorsReported++ < 5) Console.Error.WriteLine("Owned MSAA interface HRESULT " + error.HResult.ToString("X8"));
   }
-  static bool InvokeAbout(IAccessible accessible, object child, int depth, ref int visited) {
+  static bool InvokeAbout(IAccessible accessible, object child, int depth, ref int visited, Func<IAccessible, object[]> enumerate) {
     if (depth > 64 || ++visited > 10000) return false;
     try {
       var role = accessible.get_accRole(child);
@@ -55,16 +65,16 @@ public static class MMNativePointer {
         return true;
       }
     } catch (COMException error) { ReportAccessibleError(error); }
+    catch (ArgumentException error) { ReportAccessibleError(error); }
     if (Convert.ToInt32(child) != 0) return false;
-    int count;
-    try { count = Math.Min(accessible.accChildCount, 10000); }
+    object[] children;
+    try { children = enumerate(accessible); }
     catch (COMException error) { ReportAccessibleError(error); return false; }
-    for (int i = 1; i <= count; i++) {
-      IAccessible nested = null;
-      try { nested = accessible.get_accChild(i) as IAccessible; }
-      catch (COMException error) { ReportAccessibleError(error); }
-      if (nested != null ? InvokeAbout(nested, 0, depth + 1, ref visited)
-                         : InvokeAbout(accessible, i, depth + 1, ref visited)) return true;
+    catch (ArgumentException error) { ReportAccessibleError(error); return false; }
+    foreach (var item in children) {
+      var nested = item as IAccessible;
+      if (nested != null ? InvokeAbout(nested, 0, depth + 1, ref visited, enumerate)
+                         : InvokeAbout(accessible, item, depth + 1, ref visited, enumerate)) return true;
     }
     return false;
   }
@@ -77,7 +87,7 @@ public static class MMNativePointer {
       var iid = typeof(IAccessible).GUID;
       IAccessible accessible;
       if (AccessibleObjectFromWindow(candidate, 0xFFFFFFFC, ref iid, out accessible) == 0 && accessible != null)
-        invoked = InvokeAbout(accessible, 0, 0, ref visited);
+        invoked = InvokeAbout(accessible, 0, 0, ref visited, NativeChildren);
       return !invoked;
     };
     search(window, IntPtr.Zero);
