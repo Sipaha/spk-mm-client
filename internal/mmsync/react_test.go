@@ -2,6 +2,7 @@ package mmsync
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -41,6 +42,25 @@ func welcomeHarness(t *testing.T) (*harness, string) {
 	return h, h.fake.FindPost("c-offtopic", "Welcome to off-topic")
 }
 
+// Hold an actual outbound add, not a timed delay or optimistic UI change:
+// sendPair may legitimately coalesce clicks before its first request starts.
+func reactionGateHarness(t *testing.T) (*harness, string, *gate) {
+	t.Helper()
+	g := newGate()
+	h := newHarness(t, mmfake.Options{RequestHook: g.hook})
+	t.Cleanup(g.open)
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
+	return h, h.fake.FindPost("c-offtopic", "Welcome to off-topic"), g
+}
+
+func holdReactionAdd(g *gate) {
+	g.hold(func(r *http.Request) bool {
+		return r.Method == http.MethodPost && r.URL.Path == "/api/v4/reactions"
+	})
+}
+
 func TestReactionRoundTrip(t *testing.T) {
 	h, id := welcomeHarness(t)
 	ctx := context.Background()
@@ -65,20 +85,22 @@ func TestReactionRoundTrip(t *testing.T) {
 // returned. Saving the preference to the server stays gated on the reaction
 // actually landing, unchanged — checked here too.
 func TestReactionBumpsRecentEmojiWhenIssued(t *testing.T) {
-	h, id := welcomeHarness(t)
+	h, id, g := reactionGateHarness(t)
 	ctx := context.Background()
-	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	holdReactionAdd(g)
 	done := make(chan error, 1)
 	go func() { done <- h.w.React(ctx, id, "tada", true) }()
+	g.wait(t)
 
 	h.eventually(func() bool { return slices.Contains(h.w.State().RecentEmojis(), "tada") }, "not bumped at issue time")
 	select {
 	case <-done:
 		t.Fatal("React already returned — this does not prove the bump happened before the network call did")
-	default: // good: SaveReaction is still in flight (300ms latency), the local bump already landed
+	default: // SaveReaction is explicitly held; the local bump already landed
 	}
 	assert.NotContains(t, h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"tada"`, "the server-side preference save must still wait for the add to land")
 
+	g.open()
 	require.NoError(t, <-done)
 	h.eventually(func() bool {
 		return strings.Contains(h.fake.Preference("alice", "recent_emojis", "u-alice"), `"name":"tada"`)
@@ -100,24 +122,29 @@ func TestReactionRefusedIsRolledBack(t *testing.T) {
 }
 
 func TestReactionClicksWhileInFlightAreQueuedLastWins(t *testing.T) {
-	h, id := welcomeHarness(t)
+	h, id, g := reactionGateHarness(t)
 	ctx := context.Background()
-	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	holdReactionAdd(g)
 	del := "/api/v4/users/u-alice/posts/" + id + "/reactions/"
 
 	done := make(chan error, 1)
 	go func() { done <- h.w.React(ctx, id, "fire", true) }()
+	g.wait(t)
 	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "not applied at once")
 	require.NoError(t, h.w.React(ctx, id, "fire", false), "a click while the add is in flight returns at once")
 	assert.False(t, reactionOf(h, id, "fire").Mine, "…and shows at once")
+	g.open()
 	require.NoError(t, <-done)
 	assert.False(t, serverHas(h, id, "u-alice", "fire"), "the last click was sent after the first")
 	assert.Equal(t, 1, h.fake.Hits("DELETE", del+"fire"))
 
+	holdReactionAdd(g)
 	go func() { done <- h.w.React(ctx, id, "rocket", true) }()
+	g.wait(t)
 	h.eventually(func() bool { return reactionOf(h, id, "rocket").Mine }, "not applied at once")
 	require.NoError(t, h.w.React(ctx, id, "rocket", false))
 	require.NoError(t, h.w.React(ctx, id, "rocket", true))
+	g.open()
 	require.NoError(t, <-done)
 	assert.True(t, serverHas(h, id, "u-alice", "rocket"))
 	assert.Zero(t, h.fake.Hits("DELETE", del+"rocket"), "add, remove, add: nothing more to send")
@@ -130,17 +157,23 @@ func TestOthersReactionsArriveLive(t *testing.T) {
 }
 
 func TestReactionQueuedClickRefusedRollsBackOnlyItself(t *testing.T) {
-	h, id := welcomeHarness(t)
+	h, id, g := reactionGateHarness(t)
 	ctx := context.Background()
-	h.fake.SetLatency("/api/v4/reactions", 300*time.Millisecond)
+	holdReactionAdd(g)
 	h.fake.SetFailure("/reactions/fire", 403) // the DELETE only
 
 	done := make(chan error, 1)
 	go func() { done <- h.w.React(ctx, id, "fire", true) }()
+	g.wait(t)
 	h.eventually(func() bool { return reactionOf(h, id, "fire").Mine }, "not applied at once")
 	require.NoError(t, h.w.React(ctx, id, "fire", false), "queued behind the add")
+	assert.Zero(t, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/fire"), "remove remains queued while add is held")
+	g.open()
 	var re *rest.Error
 	require.ErrorAs(t, <-done, &re, "the queued remove was refused")
+	assert.Equal(t, 403, re.Status)
+	assert.Equal(t, 1, h.fake.Hits("POST", "/api/v4/reactions"))
+	assert.Equal(t, 1, h.fake.Hits("DELETE", "/api/v4/users/u-alice/posts/"+id+"/reactions/fire"))
 	assert.True(t, serverHas(h, id, "u-alice", "fire"), "the add went through")
 	assert.Equal(t, state.ReactionView{Emoji: "fire", Count: 1, Mine: true}, reactionOf(h, id, "fire"),
 		"only the refused remove is rolled back")
