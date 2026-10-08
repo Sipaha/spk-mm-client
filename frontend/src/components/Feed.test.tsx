@@ -31,7 +31,11 @@ afterAll(() => {
 })
 beforeEach(() => setLocale('en'))
 
-const now = Date.now()
+// Geometry fixtures must stay within one calendar day at every run hour.
+// Real clock time around midnight adds a 40px date row to five-hour-old posts.
+const fixtureNoon = new Date()
+fixtureNoon.setHours(12, 0, 0, 0)
+const now = fixtureNoon.getTime()
 const P = (id: string, user: string, minAgo: number): PostView => ({ id, user_id: user, author: user, message: `text ${id}`, create_at: now - minAgo * 60_000 })
 const channel = (o: Partial<ChannelDTO> = {}): ChannelDTO => ({
   id: 'c1', name: 'C', type: 'O', header: '', purpose: '', team_id: 't', team_name: 'team',

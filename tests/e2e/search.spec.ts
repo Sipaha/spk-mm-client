@@ -164,34 +164,50 @@ test('a gap reached from below, a live post while its page loads: the post on sc
   await jumpToTen(page)
   const log = feed(page)
   const held = await hold(page, 'LoadNewer', 'request')
-  // From the window's end upwards until the gap row shows.
-  await expect
-    .poll(() => log.evaluate((el) => {
+  const box = (await log.boundingBox())!
+  const rowAt = () => log.evaluate((el) => {
+    const row = el.querySelector('[data-gap-open]')
+    return row ? Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) : null
+  })
+  const scrollTop = () => log.evaluate((el) => el.scrollTop)
+  // Establish the reader's position before capturing the probe. Wheel events
+  // are asynchronous: a first observed gap can still move out of the mounted
+  // range while the preceding wheel/virtualizer update finishes.
+  await expect(async () => {
+    await expect.poll(() => log.evaluate((el) => {
       el.scrollTo({ top: el.scrollHeight })
       return el.scrollHeight - el.clientHeight - el.scrollTop
-    }))
-    .toBeLessThan(2)
-  // Up with the mouse wheel, as a reader does (a wheel gesture is what
-  // the feed must hold the posts through — review, fix round 1).
-  const box = (await log.boundingBox())!
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await expect
-    .poll(async () => {
+    })).toBeLessThan(2)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await expect.poll(async () => {
       if (await gapOnScreen(log)) return true
       await page.mouse.wheel(0, -Math.round(box.height * 0.6))
       await frames(page)
       return false
-    }, { timeout: 30_000, intervals: [50] })
-    .toBe(true)
-  await held.seen()
-  // The row in the upper part of the viewport: the reader came from the
-  // window below, so the first post under the row is what must stay put.
-  const rowAt = () => log.evaluate((el) => Math.round(el.querySelector('[data-gap-open]')!.getBoundingClientRect().top - el.getBoundingClientRect().top))
-  await page.mouse.wheel(0, (await rowAt()) - Math.round(box.height * 0.2))
-  const scrollTop = () => log.evaluate((el) => el.scrollTop)
-  let last = -1
-  await expect.poll(async () => { const t = await scrollTop(); const same = t === last; last = t; await frames(page); return same }).toBe(true)
-  expect(await rowAt()).toBeLessThan(box.height / 2)
+    }, { timeout: 5000, intervals: [50] }).toBe(true)
+    await held.seen()
+    await frames(page)
+    const y = await rowAt()
+    expect(y).not.toBeNull()
+    await page.mouse.wheel(0, y! - Math.round(box.height * 0.2))
+    await expect.poll(async () => {
+      await frames(page)
+      const top = await rowAt()
+      return top !== null && top >= 0 && top < box.height / 2
+    }).toBe(true)
+    let last = -1
+    let stableSince = Date.now()
+    await expect.poll(async () => {
+      await frames(page)
+      const top = await scrollTop()
+      if (top !== last) stableSince = Date.now()
+      last = top
+      // ScrollShift flushes gesture compensation after 150ms of idle.
+      // Two animation frames can precede that flush; require settled layout.
+      return Date.now() - stableSince >= 300 && await gapOnScreen(log)
+    }, { intervals: [50] }).toBe(true)
+    expect(await rowAt()).toBeLessThan(box.height / 2)
+  }).toPass({ timeout: 30000 })
   // The probe: a window post under the row, mid-screen — not the window's
   // first post, which the live post below pushes out of the window (with the
   // gap open it goes into the gap and comes back with the page).

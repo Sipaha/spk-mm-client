@@ -30,8 +30,7 @@ fictional conversations.
 ## Downloads
 
 Get published packages from [GitHub Releases](https://github.com/Sipaha/spk-mm-client/releases).
-The first release selected for publication is **v1.0.0**; publication is being
-verified. Until it appears there, build from source using the instructions below.
+For development, follow the [source build instructions](#build-from-source) below.
 
 | Platform | Native package formats | Requirements |
 | --- | --- | --- |
