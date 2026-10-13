@@ -1,5 +1,7 @@
 # SPK MM Client 1.0.1
 
+This version was tagged but not published because its release CI failed. These changes are published in 1.0.2.
+
 - Build with Go 1.26.9, including its standard-library security fixes.
 - Recover promptly after the network returns or the device wakes, including interrupted sign-in validation and synchronization.
 - Prevent late GitLab/password sign-in responses from restoring a session after sign-out, server removal or a newer login.

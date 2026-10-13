@@ -2,7 +2,7 @@
 
 SPK MM Client uses GitHub Actions to test, build and publish native releases. The first published version is [v1.0.0](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.0). The application source and release workflows are on `main`; the website remains an independent orphan `pages` branch and is never merged into `main`.
 
-## 1.0.1 release candidate
+## Unpublished 1.0.1 tag
 
 The annotated `v1.0.1` tag points to
 `a5c6ac452db558f1f235d73a1d86f18988f34db7`. Main CI
@@ -15,17 +15,19 @@ The fixture can consume its injected upload failure before `SendReply`, which
 intentionally retries uploads failed in the composer; the test then waits for
 a failure after a successful retry. A deterministic fixture correction holds
 that first upload until `SendReply` returns. Publishing corrected source requires
-a new version; the release-version decision is pending.
+a new version; corrected source is being released as v1.0.2.
 The original ordering was reproduced deterministically by waiting for the
 composer upload to fail before sending. The corrected fixture passed 100 race
 repetitions (63.191s) and the complete API race suite (51.137s); channel/thread
 event assertions and production behavior are unchanged.
 
+## 1.0.2 release candidate
+
 This patch release pins Go 1.26.9 with its standard-library security fixes and
 includes reconnect recovery, generation-ordered sign-in and
 navigation, account-scoped media, joined service/session-owned downloads, and
-native Copy Image in the image viewer. [English notes](../changelog/1.0.1/en.md)
-and [Russian notes](../changelog/1.0.1/ru.md) describe user-visible changes.
+native Copy Image in the image viewer. [English notes](../changelog/1.0.2/en.md)
+and [Russian notes](../changelog/1.0.2/ru.md) describe user-visible changes.
 
 Long-history refreshes use acknowledged-baseline channel deltas. The retained
 history has no new cap; initial/reset responses remain full, and Go traversal
