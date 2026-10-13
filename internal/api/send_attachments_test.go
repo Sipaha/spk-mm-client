@@ -5,8 +5,10 @@ import (
 	"context"
 	"image"
 	"image/png"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,9 +220,28 @@ func TestSendPostShowsUploadProgressAndTellsTheUI(t *testing.T) {
 // own — so any channel_changed/thread_changed seen afterwards can only come
 // from onAttachments noticing the retried upload's progress.
 func TestSendReplyUploadProgressTellsBothChannelAndThread(t *testing.T) {
+	held, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	fake := mmfake.Start(mmfake.Options{RequestHook: func(_ http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v4/files" {
+			select {
+			case <-held:
+			default:
+				close(held)
+			}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return true
+			}
+		}
+		return false
+	}})
+	t.Cleanup(fake.Close)
 	f := newChatFixture(t)
 	f.withAttachments()
-	fake := startFake(t)
 	id := f.live(fake)
 	ctx := context.Background()
 	f.eventually(func() bool { _, err := f.svc.GetChannel(ctx, id, "c-town"); return err == nil }, "c-town never loaded")
@@ -234,6 +255,15 @@ func TestSendReplyUploadProgressTellsBothChannelAndThread(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, f.svc.SendReply(ctx, id, "c-town", root, "", []string{a.ID}))
+	// Send retries an upload that already failed in the composer. Hold the
+	// first failure until SendReply has returned so it belongs to this send,
+	// rather than racing with that intentional composer retry.
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upload request was never held")
+	}
+	unblock()
 	var pendingID string
 	f.eventually(func() bool {
 		v, err := f.svc.GetThread(ctx, id, root)
