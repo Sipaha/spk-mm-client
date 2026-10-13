@@ -147,7 +147,7 @@ Production cache после смены канала не остаётся уде
 `shots-complete/account-isolation.png`, `native-complete/native-smoke.png`.
 Архивные исходные probes сохраняются; runner больше не ожидает наличие дефектов.
 
-Замеры Ryzen 7 260, Go 1.26.9, Linux amd64, 500-byte text posts, без `-race`:
+Замеры Ryzen 7 260, Go 1.26.x, Linux amd64, 500-byte text posts, без `-race`:
 
 | Удержано posts | Исходный full view+JSON | Новый full view+JSON | Recurring delta+JSON |
 |---:|---:|---:|---:|
@@ -173,3 +173,12 @@ receipts остаются вне публичного исходного дер�
 считал чужие sync.Pool victims: методика исправлена двумя GC-итерациями,
 после чего весь state race и весь Go race прошли. Это ошибка тестовой методики,
 не дополнительный production-дефект.
+
+## Release toolchain verification
+
+Release preparation found that the older scratch environment selected Go 1.26.8,
+although the default system command selected 1.26.9. Accordingly, the post-fix
+benchmark numbers above are from the 1.26.x series; they should not be read as
+an exact single-patch-version comparison. The release now pins Go 1.26.9 in
+`go.mod`, with regenerated runtime notices and a fresh vulnerability scan.
+The compiler is checked explicitly for subsequent release verification.

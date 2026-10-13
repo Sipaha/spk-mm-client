@@ -4,7 +4,8 @@ SPK MM Client uses GitHub Actions to test, build and publish native releases. Th
 
 ## 1.0.1 release candidate
 
-This patch release includes reconnect recovery, generation-ordered sign-in and
+This patch release pins Go 1.26.9 with its standard-library security fixes and
+includes reconnect recovery, generation-ordered sign-in and
 navigation, account-scoped media, joined service/session-owned downloads, and
 native Copy Image in the image viewer. [English notes](../changelog/1.0.1/en.md)
 and [Russian notes](../changelog/1.0.1/ru.md) describe user-visible changes.
