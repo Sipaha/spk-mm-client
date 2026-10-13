@@ -1,0 +1,91 @@
+package api
+
+import (
+ "context"
+ "fmt"
+ "io"
+ "net/http"
+ "net/http/httptest"
+ "path/filepath"
+ "sync/atomic"
+ "testing"
+ "time"
+
+ "github.com/stretchr/testify/require"
+ "github.com/spk/spk-mm-client/internal/auth"
+ "github.com/spk/spk-mm-client/internal/media"
+ "github.com/spk/spk-mm-client/internal/mmfake"
+)
+
+// These probes assert observed defects, not the desired regression contract.
+// They live outside the source tree and enter go test through -overlay.
+func TestAuditSSOCanFinishAfterLogout(t *testing.T) {
+ var armed atomic.Bool
+ held, release := make(chan struct{}), make(chan struct{})
+ fake:=mmfake.Start(mmfake.Options{RequestHook:func(_ http.ResponseWriter,r *http.Request)bool{
+  if r.URL.Path=="/api/v4/users/me" && armed.CompareAndSwap(true,false) {
+   close(held); select {case <-release: case <-r.Context().Done():return true}
+  }; return false
+ }})
+ t.Cleanup(fake.Close)
+ f:=newChatFixture(t); ctx:=context.Background()
+ id:=f.signIn(fake,"alice"); f.eventually(func()bool{return f.server(id).State=="live"},"live")
+ f.eventually(func()bool{return f.loaded(id,"c-town")},"loaded")
+ require.NoError(t,f.svc.StartGitLabLogin(ctx,id))
+ cb:=completeGitLab(t,auth.GitLabLoginURL(fake.URL()))
+ armed.Store(true)
+ done:=make(chan error,1); go func(){done<-f.svc.HandleDeepLink(ctx,cb)}()
+ select {case <-held:case <-time.After(3*time.Second):t.Fatal("SSO validation not held")}
+ require.NoError(t,f.svc.Logout(ctx,id))
+ require.False(t,f.server(id).SignedIn)
+ close(release); require.NoError(t,<-done)
+ require.True(t,f.server(id).SignedIn,"observed defect: old SSO completion signs in after Logout")
+ t.Log("AUDIT: logout returned signed_in=false; older SSO completion changed it to signed_in=true")
+}
+
+func TestAuditCachedMediaSurvivesLogoutAndAccountSwitch(t *testing.T) {
+ f:=newChatFixture(t); fake:=startFake(t); ctx:=context.Background()
+ id:=f.signIn(fake,"alice"); f.eventually(func()bool{return f.server(id).State=="live"},"live")
+ cache,err:=media.New(media.Options{Dir:filepath.Join(t.TempDir(),"media"),Origin:f.svc})
+ require.NoError(t,err)
+ path:=fmt.Sprintf("/media/%d/thumb/f-build",id)
+ get:=func()int{r:=httptest.NewRecorder();cache.ServeHTTP(r,httptest.NewRequest("GET",path,nil));return r.Code}
+ require.Equal(t,200,get())
+ hits:=fake.Hits("GET","/api/v4/files/f-build/thumbnail")
+ require.NoError(t,f.svc.Logout(ctx,id)); require.False(t,f.server(id).SignedIn)
+ require.Equal(t,200,get(),"observed defect: cache still serves signed-out account's bytes")
+ fake.SetFailure("/files/f-build/thumbnail",http.StatusForbidden)
+ _,err=f.svc.LoginWithPassword(ctx,id,"bob","secret");require.NoError(t,err)
+ f.eventually(func()bool{return f.server(id).State=="live"},"bob live")
+ _,err=f.svc.Get(ctx,id,"/api/v4/files/f-build/thumbnail",nil)
+ require.Error(t,err,"upstream now refuses the object")
+ hits=fake.Hits("GET","/api/v4/files/f-build/thumbnail")
+ require.Equal(t,200,get(),"cache bypasses new account's access refusal")
+ require.Equal(t,hits,fake.Hits("GET","/api/v4/files/f-build/thumbnail"))
+ t.Log("AUDIT: cached thumbnail returned HTTP 200 after logout, and HTTP 200 under bob while upstream returned 403; cache did not reauthorize")
+}
+
+func TestAuditDownloadOutlivesServiceClose(t *testing.T) {
+ var armed atomic.Bool
+ held,release,cancelled:=make(chan struct{}),make(chan struct{}),make(chan struct{})
+ var data []byte
+ fake:=mmfake.Start(mmfake.Options{RequestHook:func(w http.ResponseWriter,r *http.Request)bool{
+  if r.URL.Path!="/api/v4/files/f-build" || !armed.CompareAndSwap(true,false){return false}
+  w.WriteHeader(200); w.(http.Flusher).Flush();close(held)
+  select{case <-release:_,_=w.Write(data);case <-r.Context().Done():close(cancelled)}
+  return true
+ }})
+ t.Cleanup(fake.Close)
+ f:=newChatFixture(t);ctx:=context.Background();id:=f.signIn(fake,"alice")
+ f.eventually(func()bool{return f.server(id).State=="live"},"live")
+ f.svc.getenv=func(k string)string{if k=="SPK_MM_CLIENT_DOWNLOADS"{return t.TempDir()};return ""}
+ resp,err:=f.svc.Get(ctx,id,"/api/v4/files/f-build",nil);require.NoError(t,err)
+ data,err=io.ReadAll(resp.Body);require.NoError(t,err);_=resp.Body.Close()
+ armed.Store(true)
+ done:=make(chan error,1);go func(){_,e:=f.svc.DownloadFile(ctx,id,"f-build");done<-e}()
+ select{case <-held:case <-time.After(3*time.Second):t.Fatal("download not held")}
+ f.svc.Close()
+ select{case <-cancelled:t.Fatal("not reproduced: Close cancelled transfer");case <-time.After(200*time.Millisecond):}
+ close(release); require.NoError(t,<-done)
+ t.Log("AUDIT: Close returned while download request stayed alive; file was successfully saved after service shutdown")
+}

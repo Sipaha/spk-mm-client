@@ -25,13 +25,16 @@ type serverMark struct {
 // local database — network work happens in the workers' goroutines — so it
 // never delays application startup. Calling it again replaces the manager.
 func (s *Service) Start(ctx context.Context) error {
+	if s.life.ctx.Err() != nil {
+		return coded(CodeCancelled, nil)
+	}
 	cfg := mmsync.Config{Store: s.st, HTTPClient: s.hc, CallTimeout: s.callTimeout, Files: postFiles{s}, Hooks: mmsync.Hooks{
 		Changed: s.onChanged, Status: s.onStatus, Notify: s.onNotify,
 	}}
 	if s.tune != nil {
 		s.tune(&cfg)
 	}
-	m := mmsync.NewManager(context.Background(), cfg)
+	m := mmsync.NewManager(s.life.ctx, cfg)
 	s.mu.Lock()
 	old := s.mgr
 	s.mgr = m
@@ -46,14 +49,17 @@ func (s *Service) Start(ctx context.Context) error {
 // (each flushes its snapshot) and drops pending UI events and
 // notifications.
 func (s *Service) Close() {
-	if s.att != nil {
-		s.att.Close()
-	}
-	if m := s.manager(); m != nil {
-		m.Close()
-	}
-	s.co.Close()
-	s.nq.close()
+	s.closeOnce.Do(func() {
+		s.life.close()
+		if s.att != nil {
+			s.att.Close()
+		}
+		if m := s.manager(); m != nil {
+			m.Close()
+		}
+		s.co.Close()
+		s.nq.close()
+	})
 }
 
 func (s *Service) manager() *mmsync.Manager {
@@ -99,9 +105,6 @@ func (s *Service) activate(ctx context.Context, before store.Server) {
 	}
 	m.Stop(before.ID)
 	if before.UserID != after.UserID {
-		if err := s.st.ClearCache(ctx, before.ID); err != nil {
-			slog.Warn("cache clear failed", "srv", before.ID, "err", err)
-		}
 		// The previous user's files must not be sent as the new user's.
 		s.dropAttachments(before.ID)
 	}
@@ -129,6 +132,7 @@ func (s *Service) deactivate(id int64) {
 	if m := s.manager(); m != nil {
 		m.Stop(id)
 	}
+	s.joinDownloads(id)
 	if s.att != nil {
 		s.att.Pause(id)
 	}

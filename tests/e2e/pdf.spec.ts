@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost } from './helpers'
+import { apiCall, channel, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost } from './helpers'
 
 // A failed test must not leave its server behind (chat.spec.ts rule); every
 // test below also closes the viewer (Escape) before it ends, but a failed
@@ -64,7 +64,9 @@ test('closing the viewer mid-load cancels the pending PDF fetch', async ({ page 
     // already confirmed the cancel server-side above (not just inferred it
     // from timing), this fast-completion check is no longer racing anything.
     await testPost(page, 'fake/throttle-file', { bytes_per_sec: 0 })
-    const resp = await page.request.get(`/media/${srv}/pdf/f-manual`, { timeout: 8_000 })
+    const servers = await apiCall(page, 'ListServers', {}) as { id: number; media_scope: string }[]
+    const account = servers.find(s => s.id === srv)!.media_scope
+    const resp = await page.request.get(`/media/${srv}/pdf/f-manual?account=${account}`, { timeout: 8_000 })
     expect(resp.ok()).toBe(true)
   } finally {
     await testPost(page, 'fake/throttle-file', { bytes_per_sec: 0 })

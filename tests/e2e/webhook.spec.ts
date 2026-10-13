@@ -37,7 +37,7 @@ test('a webhook post shows its own name and icon; without one or a refused one, 
   await expect(post.getByText('GitLab', { exact: true })).toHaveAttribute('title', 'bob')
   await expect(post.getByText('BOT', { exact: true })).toBeVisible()
   const icon = post.locator('img').first()
-  await expect(icon).toHaveAttribute('src', new RegExp(`^/media/${srv}/posticon/${id}\\?v=[0-9a-f]{16}$`))
+  await expect(icon).toHaveAttribute('src', new RegExp(`^/media/${srv}/posticon/${id}\\?account=[0-9a-f]{64}&v=[0-9a-f]{16}$`))
   await expect.poll(() => icon.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(64)
 
   const refused = feed(page).locator('article', { hasText: lan })

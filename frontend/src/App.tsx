@@ -215,6 +215,7 @@ export function App() {
       {chat ? (
         <>
           <Sidebar
+            key={`sidebar/${selected.id}/${selected.media_scope ?? ""}`}
             server={selected}
             sidebar={sidebar}
             activeChannelId={channel?.id ?? null}
@@ -235,7 +236,7 @@ export function App() {
             label={t('layout.resizeSidebar')}
             onCommit={commitSidebarWidth}
           />
-          <main className="flex min-w-0 flex-1 flex-col">
+          <main key={`channel/${selected.id}/${selected.media_scope ?? ""}`} className="flex min-w-0 flex-1 flex-col">
             {banner}
             <div className="relative flex min-h-0 flex-1">
               <ChannelPane server={selected} channel={channel} onReauth={() => showSignIn(selected.id)} />

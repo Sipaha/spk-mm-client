@@ -328,12 +328,12 @@ func TestStagedPicturesAreServedByTheMediaCache(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, b
 	}
-	code, body := get(fmt.Sprintf("/media/%d/staged/%s", id, img.ID))
+	code, body := get(fmt.Sprintf("/media/%d/staged/%s?account=%s", id, img.ID, f.server(id).MediaScope))
 	assert.Equal(t, 200, code)
 	assert.Equal(t, pic.Bytes(), body)
-	code, _ = get(fmt.Sprintf("/media/%d/staged/%s", id, txt.ID))
+	code, _ = get(fmt.Sprintf("/media/%d/staged/%s?account=%s", id, txt.ID, f.server(id).MediaScope))
 	assert.Equal(t, 404, code, "not a picture")
-	code, _ = get(fmt.Sprintf("/media/%d/staged/%s", id+1, img.ID))
+	code, _ = get(fmt.Sprintf("/media/%d/staged/%s?account=%s", id+1, img.ID, f.server(id).MediaScope))
 	assert.Equal(t, 404, code, "another server's key")
 }
 

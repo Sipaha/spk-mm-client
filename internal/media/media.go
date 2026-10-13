@@ -85,6 +85,21 @@ var (
 	errNoObject = errors.New("media: no such object")
 )
 
+// Accounts binds media reads to a signed-in account and its worker lifetime.
+// Implementations without accounts are intended for isolated public/test origins.
+type Accounts interface {
+	MediaAccount(serverID int64) (string, context.Context, error)
+}
+
+// AccountScope is a non-secret, stable account discriminator for cache keys.
+func AccountScope(userID string) string {
+	if userID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("media-account-v1/" + userID))
+	return hex.EncodeToString(sum[:])
+}
+
 // Origin fetches objects from signed-in servers (implemented by api.Service).
 type Origin interface {
 	// Get GETs an API path through the server's REST client; the caller
@@ -218,6 +233,8 @@ func (c *Cache) Size() int64 {
 }
 
 type request struct {
+	scope   string
+	owner   context.Context
 	server  int64
 	kind    Kind
 	key     string    // user id, file id or emoji name
@@ -345,6 +362,18 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad media path", http.StatusBadRequest)
 		return
 	}
+	if a, ok := c.o.Origin.(Accounts); ok {
+		scope, owner, err := a.MediaAccount(q.server)
+		if err != nil || scope == "" || r.URL.Query().Get("account") != scope {
+			http.Error(w, "media account unavailable", http.StatusNotFound)
+			return
+		}
+		q.scope, q.owner = scope, owner
+		ctx, cancel := context.WithCancel(owner)
+		stop := context.AfterFunc(r.Context(), cancel)
+		defer func() { stop(); cancel() }()
+		r = r.WithContext(ctx)
+	}
 	if q.kind == KindPDF {
 		w = pdfWriter{w}
 	}
@@ -371,6 +400,16 @@ func (c *Cache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			http.Error(w, "cache read failed", http.StatusInternalServerError)
+			return
+		}
+		valid := true
+		if a, ok := c.o.Origin.(Accounts); ok {
+			scope, _, err := a.MediaAccount(q.server)
+			valid = err == nil && scope == q.scope && q.owner.Err() == nil
+		}
+		if !valid {
+			_ = f.Close()
+			http.Error(w, "media account unavailable", http.StatusNotFound)
 			return
 		}
 		c.serve(w, r, q, name, f)
@@ -452,7 +491,7 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 	default:
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
-	http.ServeContent(w, r, "", time.Time{}, body)
+	http.ServeContent(w, r, "", time.Time{}, accountReader{ctx: r.Context(), ReadSeeker: body})
 }
 
 // get makes sure the object is on disk and returns its file name, or an
@@ -472,6 +511,9 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 		}
 	}
 	key := fmt.Sprintf("%d/%s/%s/%s", q.server, q.kind, id, q.variant)
+	if q.scope != "" {
+		key = q.scope + "/" + key
+	}
 	name := fileName(key)
 	now := c.o.Now()
 	c.mu.Lock()
@@ -487,8 +529,12 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 	cl := c.inflight[key]
 	if cl == nil || cl.cancelled {
 		cl = &call{done: make(chan struct{})}
-		if q.kind == KindPDF {
-			cl.ctx, cl.cancel = context.WithCancel(context.Background())
+		if q.kind == KindPDF || q.owner != nil {
+			parent := q.owner
+			if parent == nil {
+				parent = context.Background()
+			}
+			cl.ctx, cl.cancel = context.WithCancel(parent)
 		}
 		c.inflight[key] = cl
 		go c.fill(key, name, q, id, cl)
@@ -504,7 +550,7 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 	case <-ctx.Done():
 		c.mu.Lock()
 		cl.waiters--
-		if cl.waiters == 0 && cl.cancel != nil {
+		if cl.waiters == 0 && cl.cancel != nil && q.kind == KindPDF {
 			cl.cancelled = true
 			cl.cancel()
 		}
@@ -702,6 +748,9 @@ func (c *Cache) fetch(parent context.Context, q request, id, name string, sl *sl
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil && parent.Err() != nil {
+		err = parent.Err()
+	}
 	if err == nil {
 		err = os.Rename(tmp.Name(), filepath.Join(c.o.Dir, name))
 	}
@@ -825,4 +874,18 @@ func statusFor(err error) int {
 		return http.StatusNotFound // no thumbnail/preview, deleted file, custom emoji off
 	}
 	return http.StatusBadGateway
+}
+
+// A cached body also belongs to its session: stop reading it on logout,
+// even though disk I/O does not automatically observe request cancellation.
+type accountReader struct {
+	io.ReadSeeker
+	ctx context.Context
+}
+
+func (r accountReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.ReadSeeker.Read(p)
 }

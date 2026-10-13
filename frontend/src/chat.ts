@@ -1,3 +1,4 @@
+import { applyChannelPatch } from './channelPatch'
 import { ApiError, client, uploadAttachmentBrowser } from './api/client'
 import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, SearchHit, SidebarDTO, ThreadDTO } from './api/types'
 import { errorMessage } from './errors'
@@ -16,6 +17,8 @@ function findChannelItem(sidebar: SidebarDTO | null, channelId: string): Channel
 
 // Responses can land out of order (a click while a refresh is in flight):
 // each request takes a sequence number and only the latest one lands.
+let serversSeq = 0
+let navigationSeq = 0
 let sidebarSeq = 0
 let channelSeq = 0
 let attachmentsSeq = 0
@@ -82,6 +85,7 @@ export function resetChat() {
 }
 
 function dropJump() {
+  navigationSeq++
   jumpSeq++
   jumpAbort?.abort()
   jumpAbort = null
@@ -103,12 +107,15 @@ export function selectServer(id: number | null) {
 }
 
 export async function refreshServers() {
+  const my = ++serversSeq
   try {
     const list = await client.listServers()
+    if (my !== serversSeq) return
     const before = useStore.getState().selectedId
+    const account = useStore.getState().servers.find(s => s.id === before)?.media_scope
     useStore.getState().setServers(list)
     const s = useStore.getState()
-    if (s.selectedId !== before) {
+    if (s.selectedId !== before || s.servers.find(x => x.id === s.selectedId)?.media_scope !== account) {
       selectServer(s.selectedId)
       return
     }
@@ -121,7 +128,7 @@ export async function refreshServers() {
     }
     if (sel.signed_in && !s.sidebar) void loadSidebar(sel.id)
   } catch (e) {
-    report(e)
+    if (my === serversSeq) report(e)
   }
 }
 
@@ -140,7 +147,7 @@ export async function loadSidebar(serverId: number, teamId = '', openSelected = 
 
 export async function openChannel(serverId: number, channelId: string) {
   dropJump() // the user went somewhere: a jump still on its way stops
-  await enterChannel(serverId, channelId)
+  return await enterChannel(serverId, channelId)
 }
 
 async function enterChannel(serverId: number, channelId: string) {
@@ -164,7 +171,7 @@ async function enterChannel(serverId: number, channelId: string) {
   const item = s.selectedId === serverId ? findChannelItem(s.sidebar, channelId) : null
   s.setHeldChannel(item?.unread ? { id: item.id, hadMentions: item.mentions > 0 } : null)
   s.setEditing(null)
-  await fetchChannel(serverId, channelId, true)
+  return await fetchChannel(serverId, channelId, true)
 }
 
 // refreshChannel re-reads the open channel after a channel_changed event.
@@ -182,8 +189,18 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
   inFlight = true
   again = false
   try {
-    const ch = open ? await client.openChannel(serverId, channelId) : await client.getChannel(serverId, channelId)
-    if (my !== channelSeq) return
+    let ch
+    if (!open && client.getChannelDelta) {
+      const before = useStore.getState()
+      const previous = before.selectedId === serverId && before.channel?.id === channelId ? before.channel : null
+      const patch = await client.getChannelDelta(serverId, channelId, previous?.projection_rev ?? 0)
+      if (my !== channelSeq) return false
+      ch = applyChannelPatch(previous, patch)
+      if (!ch) { again = true; return false }
+    } else {
+      ch = open ? await client.openChannel(serverId, channelId) : await client.getChannel(serverId, channelId)
+    }
+    if (my !== channelSeq) return false
     const s = useStore.getState()
     s.setChannel(serverId, ch)
     // Opened a channel of another team (e.g. from a notification): follow it.
@@ -192,8 +209,10 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
     // channel — see AGENTS.md "Вложения"); fire-and-forget so a slow
     // attachments fetch never delays showing the channel itself.
     void refreshAttachments(serverId, channelId, '')
+    return true
   } catch (e) {
     if (my === channelSeq) report(e)
+    return false
   } finally {
     if (my === channelSeq) {
       inFlight = false
@@ -211,7 +230,11 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
 // and the sidebar/team follow-along above have already happened.
 export async function openFromNotification(serverId: number, channelId: string, rootId?: string) {
   if (useStore.getState().selectedId !== serverId) selectServer(serverId)
-  await openChannel(serverId, channelId)
+  const pending = openChannel(serverId, channelId)
+  const my = navigationSeq
+  const landed = await pending
+  const s = useStore.getState()
+  if (!landed || my !== navigationSeq || s.selectedId !== serverId || s.channel?.id !== channelId || wanted?.serverId !== serverId || wanted.channelId !== channelId) return
   if (rootId) void openThread(serverId, channelId, rootId)
 }
 
@@ -590,6 +613,7 @@ export async function openThread(serverId: number, channelId: string, rootId: st
 // server switch that must take the panel down with it (openChannel/
 // selectServer above). A no-op if nothing is open for that server.
 export function closeThread(serverId: number) {
+  navigationSeq++
   // Also an open still on its way to Go (goThread): it is closed too.
   if (threadWanted?.serverId !== serverId && goThread?.serverId !== serverId) return
   threadWanted = null

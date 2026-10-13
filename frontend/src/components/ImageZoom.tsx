@@ -294,7 +294,7 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
             if (!hasFileDims && !originalReady) setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
           }}
           onError={() => setPreviewBroken(true)}
-          className={`max-h-full max-w-full object-contain ${showPreview ? '' : 'hidden'}`}
+          className={`viewer-image max-h-full max-w-full object-contain ${showPreview ? '' : 'hidden'}`}
           style={styleFor(showPreview)}
         />
       )}
@@ -309,7 +309,7 @@ export const ImageZoom = forwardRef<ImageZoomHandle, Props>(function ImageZoom(
             setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
           }}
           onError={() => setOriginalBroken(true)}
-          className={`max-h-full max-w-full object-contain ${showOriginal ? '' : 'hidden'}`}
+          className={`viewer-image max-h-full max-w-full object-contain ${showOriginal ? '' : 'hidden'}`}
           style={styleFor(showOriginal)}
         />
       )}

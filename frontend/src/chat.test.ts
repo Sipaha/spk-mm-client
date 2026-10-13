@@ -71,8 +71,9 @@ const dl = (over: Partial<DownloadView> = {}): DownloadView => ({
 
 function deferred<T>() {
   let resolve!: (v: T) => void
-  const p = new Promise<T>((r) => (resolve = r))
-  return { p, resolve }
+  let reject!: (e: unknown) => void
+  const p = new Promise<T>((r, fail) => { resolve = r; reject = fail })
+  return { p, resolve, reject }
 }
 
 const srv = (id: number): ServerDTO => ({
@@ -1646,4 +1647,57 @@ test('a channel really left: its hit stays, the jump fails on the card (the exis
   vi.mocked(client.jumpToPost).mockRejectedValueOnce(new ApiError('forbidden', ''))
   await expect(openHit(hit('h1'))).rejects.toMatchObject({ code: 'forbidden' })
   expect(useStore.getState().search?.hits).toHaveLength(1)
+})
+
+test('newer server refresh wins over a late signed-in list', async () => {
+ const { refreshServers } = await import('./chat')
+ const old = deferred<ServerDTO[]>()
+ useStore.setState({ sidebar: sidebar(), channel: chan('a') })
+ vi.mocked(client.sidebar).mockResolvedValue(sidebar({selected_channel_id: ''}))
+ vi.mocked(client.listServers).mockReturnValueOnce(old.p).mockResolvedValueOnce([{...srv(1),signed_in:false}])
+ const pending = refreshServers()
+ await refreshServers()
+ expect(useStore.getState().servers[0].signed_in).toBe(false)
+ old.resolve([srv(1)])
+ await pending
+ expect(useStore.getState().servers[0].signed_in).toBe(false)
+})
+
+test('notification cannot open a stale thread after navigation', async () => {
+ const old = deferred<ChannelDTO>()
+ vi.mocked(client.openChannel).mockReturnValueOnce(old.p).mockResolvedValueOnce(chan('b'))
+ vi.mocked(client.openThread).mockResolvedValue(thread('ra',{channel_id:'a'}))
+ const pending = openFromNotification(1,'a','ra')
+ await openChannel(1,'b')
+ old.resolve(chan('a'))
+ await pending
+ await Promise.resolve()
+ expect(client.openThread).not.toHaveBeenCalled()
+ expect(useStore.getState().channel?.id).toBe('b')
+ expect(useStore.getState().thread).toBeNull()
+})
+
+test.each(['server', 'close', 'error'])('pending notification does not open a thread after %s', async (action) => {
+ const old = deferred<ChannelDTO>()
+ vi.mocked(client.openChannel).mockReturnValueOnce(old.p)
+ const pending = openFromNotification(1, 'a', 'ra')
+ if (action === 'server') selectServer(2)
+ if (action === 'close') closeThread(1)
+ if (action === 'error') old.reject(new Error('offline'))
+ else old.resolve(chan('a'))
+ await pending
+ expect(client.openThread).not.toHaveBeenCalled()
+})
+
+test('late server refresh error cannot overwrite a newer success', async () => {
+ const { refreshServers } = await import('./chat')
+ const old = deferred<ServerDTO[]>()
+ vi.mocked(client.listServers).mockReturnValueOnce(old.p).mockResolvedValueOnce([srv(1)])
+ vi.mocked(client.sidebar).mockResolvedValue(sidebar({ selected_channel_id: '' }))
+ const pending = refreshServers()
+ await refreshServers()
+ useStore.getState().setError(null)
+ old.reject(new Error('old failure'))
+ await pending
+ expect(useStore.getState().lastError).toBeNull()
 })

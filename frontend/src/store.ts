@@ -247,6 +247,7 @@ export const useStore = create<State>((set, get) => ({
     const selectedId = stillThere ? sel : adding ? null : (list[0]?.id ?? null)
     // A sign-in or sign-out supersedes an earlier error; badge and
     // connection-state updates (now frequent) do not.
+    const accountChanged = list.find(s => s.id === sel)?.media_scope !== prev.find(s => s.id === sel)?.media_scope
     const signInChanged = list.some((s) => prev.find((p) => p.id === s.id)?.signed_in !== s.signed_in)
     const reauth = list.find((s) => s.id === signInFor)
     let liveEpochs = get().liveEpochs
@@ -267,7 +268,7 @@ export const useStore = create<State>((set, get) => ({
       selectedId,
       lastError: signInChanged ? null : lastError,
       signInFor: reauth?.state === 'needs_reauth' ? signInFor : null,
-      ...(selectedId !== sel ? cleared : {}),
+      ...(selectedId !== sel || accountChanged ? cleared : {}),
     })
   },
   select: (id) => set({ selectedId: id, adding: id === null, lastError: null, signInFor: null, ...cleared }),

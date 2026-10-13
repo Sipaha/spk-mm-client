@@ -139,6 +139,10 @@ type HistGap struct {
 func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.channelViewLocked(channelID, nil)
+}
+
+func (s *Server) channelViewLocked(channelID string, emit func(PostView, *model.PostMetadata)) (ChannelView, bool) {
 	ch := s.chans[channelID]
 	if ch == nil {
 		return ChannelView{}, false
@@ -149,20 +153,48 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		GapAfter: ch.Win.GapAfter, Draft: s.drafts[channelID], MeID: s.me.ID, MeAvatar: s.avatarLocked(s.me.ID), CRT: s.crtLocked(), Muted: ch.Member.Muted(),
 		Posts: []PostView{},
 	}
-	var posts []model.Post
+	var older []model.Post
 	if channelID == s.active {
 		v.NewSince = s.newSince
-		posts = append(posts, s.older...)
+		older = s.older
 		v.Gap = HistGap{Open: s.olderGap, Gen: s.gapGen, Stale: s.segStale}
 		if s.olderGap && len(ch.Win.Posts) > 0 {
 			v.Gap.BeforeID = ch.Win.Posts[0].ID
 		}
 		v.HistRev = s.histRev
 	}
-	posts = append(posts, ch.Win.Posts...)
-	posts = s.withEphemeralLocked(posts, func(p model.Post) bool {
-		return p.ChannelID == channelID && (p.RootID == "" || !v.CRT)
-	})
+	// Walk the held ranges directly; ordinary updates do not copy raw history.
+	each := func(fn func(model.Post)) {
+		for _, p := range older {
+			fn(p)
+		}
+		for _, p := range ch.Win.Posts {
+			fn(p)
+		}
+	}
+	// Ephemeral posts can interleave by timestamp. Only that uncommon case
+	// needs a combined sorted range (withEphemeralLocked preserves ordering).
+	if len(s.ephemeral) > 0 {
+		posts := make([]model.Post, 0, len(older)+len(ch.Win.Posts))
+		posts = append(posts, older...)
+		posts = append(posts, ch.Win.Posts...)
+		posts = s.withEphemeralLocked(posts, func(p model.Post) bool { return p.ChannelID == channelID && (p.RootID == "" || !v.CRT) })
+		each = func(fn func(model.Post)) {
+			for _, p := range posts {
+				fn(p)
+			}
+		}
+	}
+	if emit == nil {
+		v.Posts = make([]PostView, 0, len(older)+len(ch.Win.Posts)+len(s.pending[channelID]))
+	}
+	appendView := func(pv PostView, metadata *model.PostMetadata) {
+		if emit != nil {
+			emit(pv, metadata)
+		} else {
+			v.Posts = append(v.Posts, pv)
+		}
+	}
 	if channelID == s.active && s.historyHeldLocked() {
 		v.HasMore = !s.olderComplete
 	} else {
@@ -170,28 +202,40 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 	}
 	// Without CRT replies sit in the feed and carry their root's context,
 	// looked up in what is shown (history + window).
-	var roots map[string]int
+	var roots map[string]model.Post
 	rootContext := func(pv *PostView) {
 		if v.CRT || pv.RootID == "" {
 			return
 		}
 		if roots == nil {
-			roots = make(map[string]int, len(posts))
-			for i, p := range posts {
-				roots[p.ID] = i
-			}
+			roots = make(map[string]model.Post, len(older)+len(ch.Win.Posts))
+			each(func(p model.Post) { roots[p.ID] = p })
 		}
-		if i, ok := roots[pv.RootID]; ok {
-			pv.RootAuthor, pv.RootSnippet = s.authorLocked(posts[i]), rootSnippet(posts[i])
+		if root, ok := roots[pv.RootID]; ok {
+			pv.RootAuthor, pv.RootSnippet = s.authorLocked(root), rootSnippet(root)
 		} else if t := s.threads[pv.RootID]; t != nil && t.root.ID == pv.RootID {
 			pv.RootAuthor, pv.RootSnippet = s.authorLocked(t.root), rootSnippet(t.root)
 		}
 	}
-	for _, p := range posts {
+	each(func(p model.Post) {
+		metadata := p.Metadata
+		var cached *projectedPost
+		if emit != nil {
+			cached = s.projection.posts[p.ID]
+		}
+		// Metadata is replaced rather than mutated by state reducers. Reuse its
+		// already projected files/reactions while still recomputing all live scalars.
+		reuse := cached != nil && cached.metadata == metadata
+		if reuse {
+			p.Metadata = nil
+		}
 		pv := s.postViewLocked(p)
+		if reuse {
+			pv.Files, pv.Reactions = cached.view.Files, cached.view.Reactions
+		}
 		rootContext(&pv)
-		v.Posts = append(v.Posts, pv)
-	}
+		appendView(pv, metadata)
+	})
 	pend := append([]Pending(nil), s.pending[channelID]...)
 	sort.SliceStable(pend, func(i, j int) bool { return pend[i].CreateAt < pend[j].CreateAt })
 	for _, p := range pend {
@@ -200,7 +244,7 @@ func (s *Server) ChannelView(channelID string) (ChannelView, bool) {
 		}
 		pv := s.pendingViewLocked(p)
 		rootContext(&pv)
-		v.Posts = append(v.Posts, pv)
+		appendView(pv, nil)
 	}
 	return v, true
 }

@@ -1,0 +1,5 @@
+=== RUN   TestProjectionCacheHeapReleasedOnNavigation
+    projection_test.go:146: 50000 posts: projection retained delta=19.37 MiB; after navigation delta=0.01 MiB
+--- PASS: TestProjectionCacheHeapReleasedOnNavigation (0.12s)
+PASS
+ok  	github.com/spk/spk-mm-client/internal/state	0.132s

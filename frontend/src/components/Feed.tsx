@@ -180,7 +180,12 @@ export function useFrames(): (purpose: string, fn: () => void) => void {
 // Feed must be keyed by channel id: another channel is a fresh mount, so
 // the scroll bookkeeping below never leaks between channels.
 export function Feed({ data, variant, serverId, me, locale, actions, editingId, onLoadOlder, onLoadNewer, onRetryStale, focus, onFocusShown, toastHost }: Props) {
-  const rows = useMemo(() => buildRows(data, variant), [data, variant])
+  const rowData = useMemo(() => ({
+    posts: data.posts, new_since: data.new_since, me_id: data.me_id,
+    gap_after: data.gap_after, has_more: data.has_more, crt: data.crt,
+    gap: data.gap ? { open: data.gap.open, gen: data.gap.gen, before_id: data.gap.before_id, stale: data.gap.stale } : undefined,
+  }), [data.posts, data.new_since, data.me_id, data.gap_after, data.has_more, data.crt, data.gap?.open, data.gap?.gen, data.gap?.before_id, data.gap?.stale])
+  const rows = useMemo(() => buildRows(rowData, variant), [rowData, variant])
   const scroller = useRef<HTMLDivElement>(null)
   const ready = useRef(false)
   const atBottom = useRef(true)

@@ -273,3 +273,10 @@ html {
 body:has([data-overlay]) :is(.overflow-auto, .overflow-y-auto, .overflow-x-auto):not([data-overlay] *) {
   scrollbar-color: transparent transparent;
 }
+
+/* Wails production defaults hide the native menu on non-editable elements.
+   The viewer's image needs WebView's Copy Image action (decoded image bytes,
+   not a URL or a scaled canvas); keep the backdrop and other surfaces unchanged. */
+.viewer-image {
+  --default-contextmenu: show;
+}

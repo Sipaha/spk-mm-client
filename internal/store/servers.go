@@ -103,6 +103,46 @@ func (s *Store) SetSession(ctx context.Context, id int64, token, userID, usernam
 	return s.execOne(ctx, `UPDATE servers SET token = ?, user_id = ?, username = ? WHERE id = ?`, token, userID, username, id)
 }
 
+// ReplaceSession commits the credentials and removal of another account's
+// snapshot together. The old worker must be stopped before this call.
+func (s *Store) ReplaceSession(ctx context.Context, id int64, token, userID, username string) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		var old string
+		if err := tx.QueryRowContext(ctx, `SELECT user_id FROM servers WHERE id = ?`, id).Scan(&old); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if old != userID {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM cache_entries WHERE server_id = ?`, id); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE servers SET token = ?, user_id = ?, username = ? WHERE id = ?`, token, userID, username, id)
+		return err
+	})
+}
+
+// EndSession never leaves signed-out credentials paired with old chat data.
+func (s *Store) EndSession(ctx context.Context, id int64) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE servers SET token = '', user_id = '', username = '' WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM cache_entries WHERE server_id = ?`, id)
+		return err
+	})
+}
+
 func (s *Store) ClearSession(ctx context.Context, id int64) error {
 	return s.execOne(ctx, `UPDATE servers SET token = '', user_id = '', username = '' WHERE id = ?`, id)
 }

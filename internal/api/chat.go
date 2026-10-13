@@ -45,6 +45,8 @@ func actionError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return coded(CodeCancelled, err)
 	case errors.Is(err, mmsync.ErrEmptyMessage):
 		return coded(CodeEmptyMessage, nil)
 	case errors.Is(err, mmsync.ErrNoAttachments):
@@ -76,7 +78,7 @@ func (s *Service) OpenChannel(ctx context.Context, id int64, channelID string) (
 	if err != nil {
 		return ChannelDTO{}, err
 	}
-	if _, ok := w.State().ChannelView(channelID); !ok {
+	if !w.State().HasChannel(channelID) {
 		return ChannelDTO{}, coded(CodeNoChannel, nil)
 	}
 	s.mu.Lock()
@@ -274,4 +276,17 @@ func (s *Service) OpenURL(_ context.Context, raw string) error {
 		return coded(CodeInternal, err)
 	}
 	return nil
+}
+
+// GetChannelDelta returns only rows changed since the acknowledged baseline.
+func (s *Service) GetChannelDelta(ctx context.Context, id int64, channelID string, base uint64) (state.ChannelPatch, error) {
+	w, err := s.worker(ctx, id)
+	if err != nil {
+		return state.ChannelPatch{}, err
+	}
+	patch, ok := w.State().ChannelDelta(channelID, base)
+	if !ok {
+		return state.ChannelPatch{}, coded(CodeNoChannel, nil)
+	}
+	return patch, nil
 }

@@ -44,6 +44,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(unsub)
 	f := &fixture{fake: fake, evs: ch}
 	f.svc = NewService(st, em, func(u string) error { f.opened = append(f.opened, u); return nil }, &http.Client{Timeout: 5 * time.Second})
+	t.Cleanup(f.svc.Close)
 	return f
 }
 
@@ -330,7 +331,8 @@ func TestServerDTOHasNoToken(t *testing.T) {
 	raw, _ := json.Marshal(list)
 	var generic []map[string]any
 	require.NoError(t, json.Unmarshal(raw, &generic))
-	assert.ElementsMatch(t, []string{"id", "name", "url", "signed_in", "username", "gitlab", "state", "unread", "mentions"}, keys(generic[0]))
+	assert.ElementsMatch(t, []string{"id", "name", "url", "signed_in", "username", "gitlab", "state", "unread", "mentions", "media_scope"}, keys(generic[0]))
+	assert.Regexp(t, `^[0-9a-f]{64}$`, generic[0]["media_scope"])
 }
 
 func keys(m map[string]any) []string {

@@ -1,0 +1,30 @@
+=== RUN   TestAuditLongHistoryWireSize
+    audit_probe_test.go:23: AUDIT posts=60 JSON bytes=35587
+    audit_probe_test.go:23: AUDIT posts=1000 JSON bytes=590109
+    audit_probe_test.go:23: AUDIT posts=10000 JSON bytes=5918110
+    audit_probe_test.go:23: AUDIT posts=50000 JSON bytes=29678110
+--- PASS: TestAuditLongHistoryWireSize (0.32s)
+goos: linux
+goarch: amd64
+pkg: github.com/spk/spk-mm-client/internal/state
+cpu: AMD Ryzen 7 260 w/ Radeon 780M Graphics
+BenchmarkAuditChannelView
+BenchmarkAuditChannelView/60
+BenchmarkAuditChannelView/60-14        	   25612	     20198 ns/op	   20976 B/op	       7 allocs/op
+BenchmarkAuditChannelView/1000
+BenchmarkAuditChannelView/1000-14      	    2415	    250779 ns/op	  344560 B/op	       7 allocs/op
+BenchmarkAuditChannelView/10000
+BenchmarkAuditChannelView/10000-14     	     279	   3964562 ns/op	 3367414 B/op	       7 allocs/op
+BenchmarkAuditChannelView/50000
+BenchmarkAuditChannelView/50000-14     	      39	  13052095 ns/op	16802293 B/op	       7 allocs/op
+BenchmarkAuditChannelViewAndJSON
+BenchmarkAuditChannelViewAndJSON/60
+BenchmarkAuditChannelViewAndJSON/60-14 	    9295	    108826 ns/op	   63449 B/op	       9 allocs/op
+BenchmarkAuditChannelViewAndJSON/1000
+BenchmarkAuditChannelViewAndJSON/1000-14         	     498	   1176819 ns/op	 1320694 B/op	      15 allocs/op
+BenchmarkAuditChannelViewAndJSON/10000
+BenchmarkAuditChannelViewAndJSON/10000-14        	      55	  10371835 ns/op	13640501 B/op	      20 allocs/op
+BenchmarkAuditChannelViewAndJSON/50000
+BenchmarkAuditChannelViewAndJSON/50000-14        	       9	  61301526 ns/op	80040678 B/op	      22 allocs/op
+PASS
+ok  	github.com/spk/spk-mm-client/internal/state	5.869s

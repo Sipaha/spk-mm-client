@@ -82,8 +82,9 @@ type Badge struct {
 type prefKey struct{ cat, name string }
 
 type Server struct {
-	mu  sync.Mutex
-	now func() time.Time
+	projection channelProjection
+	mu         sync.Mutex
+	now        func() time.Time
 
 	me       model.User
 	status   model.Status

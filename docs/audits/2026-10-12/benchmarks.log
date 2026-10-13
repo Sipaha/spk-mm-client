@@ -1,0 +1,14 @@
+goos: linux
+goarch: amd64
+pkg: github.com/spk/spk-mm-client/internal/state
+cpu: AMD Ryzen 7 260 w/ Radeon 780M Graphics
+BenchmarkAuditChannelView/60-14        	   30578	     19315 ns/op	   66976 B/op	       8 allocs/op
+BenchmarkAuditChannelView/1000-14      	    1015	    597996 ns/op	 1842596 B/op	      14 allocs/op
+BenchmarkAuditChannelView/10000-14     	      97	   5855910 ns/op	23838115 B/op	      22 allocs/op
+BenchmarkAuditChannelView/50000-14     	      22	  26169336 ns/op	130956741 B/op	      29 allocs/op
+BenchmarkAuditChannelViewAndJSON/60-14 	    7459	     69896 ns/op	  110339 B/op	      10 allocs/op
+BenchmarkAuditChannelViewAndJSON/1000-14         	     380	   1660893 ns/op	 3219450 B/op	      30 allocs/op
+BenchmarkAuditChannelViewAndJSON/10000-14        	      33	  16601544 ns/op	40064760 B/op	      52 allocs/op
+BenchmarkAuditChannelViewAndJSON/50000-14        	       7	  77952126 ns/op	218166337 B/op	      54 allocs/op
+PASS
+ok  	github.com/spk/spk-mm-client/internal/state	4.853s

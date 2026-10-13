@@ -62,13 +62,13 @@ func TestMediaNeedsThePageCookie(t *testing.T) {
 	ctx := context.Background()
 	srv, err := svc.AddServer(ctx, fake.URL())
 	require.NoError(t, err)
-	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
+	signed, err := svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { // media is fetched only while live
 		list, err := svc.ListServers(ctx)
 		return err == nil && len(list) == 1 && list[0].State == "live"
 	}, 10*time.Second, 20*time.Millisecond)
-	u := fmt.Sprintf("%s/media/%d/avatar/u-bob?v=0", ts.URL, srv.ID)
+	u := fmt.Sprintf("%s/media/%d/avatar/u-bob?v=0&account=%s", ts.URL, srv.ID, signed.MediaScope)
 
 	resp, err := http.Get(u)
 	require.NoError(t, err)
@@ -522,7 +522,7 @@ func TestMediaStreamBaseComposesInBrowserMode(t *testing.T) {
 	ctx := context.Background()
 	srv, err := svc.AddServer(ctx, fake.URL())
 	require.NoError(t, err)
-	_, err = svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
+	signed, err := svc.LoginWithPassword(ctx, srv.ID, "alice", "secret")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		list, err := svc.ListServers(ctx)
@@ -541,7 +541,7 @@ func TestMediaStreamBaseComposesInBrowserMode(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, "/media", base)
 
-	req, err = http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s/%d/stream/%s", ts.URL, base, srv.ID, "f-clip-webm"), nil)
+	req, err = http.NewRequest(http.MethodGet, fmt.Sprintf("%s%s/%d/stream/%s?account=%s", ts.URL, base, srv.ID, "f-clip-webm", signed.MediaScope), nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Range", "bytes=0-99")

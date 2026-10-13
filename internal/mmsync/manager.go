@@ -19,6 +19,7 @@ type Manager struct {
 }
 
 type entry struct {
+	ctx    context.Context
 	w      *Worker
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -53,7 +54,7 @@ func (m *Manager) Start(srv store.Server) {
 	m.stopLocked(srv.ID)
 	w := NewWorker(m.cfg, srv)
 	ctx, cancel := context.WithCancel(m.root)
-	e := &entry{w: w, cancel: cancel, done: make(chan struct{})}
+	e := &entry{ctx: ctx, w: w, cancel: cancel, done: make(chan struct{})}
 	m.mu.Lock()
 	m.ws[srv.ID] = e
 	m.mu.Unlock()
@@ -122,4 +123,14 @@ func (m *Manager) Close() {
 	for _, id := range ids {
 		m.stopLocked(id)
 	}
+}
+
+// Session captures immutable account identity and the lifetime of this worker.
+func (m *Manager) Session(id int64) (*Worker, context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e := m.ws[id]; e != nil {
+		return e.w, e.ctx
+	}
+	return nil, nil
 }

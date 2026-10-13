@@ -1,0 +1,20 @@
+=== RUN   TestChannelDeltaMatchesFullProjection
+--- PASS: TestChannelDeltaMatchesFullProjection (0.00s)
+=== RUN   TestLongHistoryDeltaWireSize
+    projection_test.go:106: 50000 held posts: reset=30317065 bytes, single old-post edit=483 bytes
+--- PASS: TestLongHistoryDeltaWireSize (0.19s)
+goos: linux
+goarch: amd64
+pkg: github.com/spk/spk-mm-client/internal/state
+cpu: AMD Ryzen 7 260 w/ Radeon 780M Graphics
+BenchmarkChannelDeltaAndJSON
+BenchmarkChannelDeltaAndJSON/60
+BenchmarkChannelDeltaAndJSON/60-14 	   36775	     16519 ns/op	    1785 B/op	      12 allocs/op
+BenchmarkChannelDeltaAndJSON/1000
+BenchmarkChannelDeltaAndJSON/1000-14         	    2486	    245911 ns/op	    1788 B/op	      12 allocs/op
+BenchmarkChannelDeltaAndJSON/10000
+BenchmarkChannelDeltaAndJSON/10000-14        	     235	   2563477 ns/op	    1800 B/op	      12 allocs/op
+BenchmarkChannelDeltaAndJSON/50000
+BenchmarkChannelDeltaAndJSON/50000-14        	      33	  19696301 ns/op	    1935 B/op	      12 allocs/op
+PASS
+ok  	github.com/spk/spk-mm-client/internal/state	2.804s

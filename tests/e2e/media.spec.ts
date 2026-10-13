@@ -17,7 +17,7 @@ test('avatars and presence in the sidebar and the feed', async ({ page }) => {
   const bob = channel(page, /^bob, Online$/)
   await expect(bob).toBeVisible()
   const avatar = bob.locator('img')
-  await expect(avatar).toHaveAttribute('src', /^\/media\/\d+\/avatar\/u-bob\?v=/)
+  await expect(avatar).toHaveAttribute('src', /^\/media\/\d+\/avatar\/u-bob\?account=[0-9a-f]{64}&v=/)
   await expect.poll(() => naturalWidth(avatar)).toBeGreaterThan(0)
   await expect(feed(page).locator('article img[src*="/avatar/u-carol"]').first()).toBeVisible()
 
@@ -48,7 +48,7 @@ test('image preview, viewer, text snippet, download and open', async ({ page }) 
   await expect(img).toHaveAttribute('width', '480')
   await expect(img).toHaveAttribute('height', '270')
   await expect.poll(() => naturalWidth(img)).toBe(960)
-  await expect(feed(page).getByRole('button', { name: 'View flow.png' }).locator('img')).toHaveAttribute('src', /\/thumb\/f-diag1$/)
+  await expect(feed(page).getByRole('button', { name: 'View flow.png' }).locator('img')).toHaveAttribute('src', /\/thumb\/f-diag1\?account=[0-9a-f]{64}$/)
   await expect(feed(page).getByText('request #1 handled', { exact: false })).toBeVisible()
 
   await shot.click()

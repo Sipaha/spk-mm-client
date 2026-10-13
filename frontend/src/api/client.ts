@@ -6,6 +6,7 @@ import type {
   AppInfo,
   AttachmentView,
   ChannelDTO,
+  ChannelPatch,
   DownloadView,
   EmojiDTO,
   EventType,
@@ -55,6 +56,7 @@ export interface Client {
   pinnedPosts(id: number, channelId: string): Promise<PostView[]>
   openChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
+  getChannelDelta(id: number, channelId: string, base: number): Promise<ChannelPatch>
   loadOlder(id: number, channelId: string): Promise<void>
   /**
    * Shows postId of the open channel: held already → as is; else the segment
@@ -208,6 +210,7 @@ export const httpClient: Client = {
   pinnedPosts: (id, channel_id) => post('PinnedPosts', { id, channel_id }),
   openChannel: (id, channel_id) => post('OpenChannel', { id, channel_id }),
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
+  getChannelDelta: (id, channel_id, base) => post('GetChannelDelta', { id, channel_id, base }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
   jumpToPost: (id, channel_id, post_id, signal) => post('JumpToPost', { id, channel_id, post_id }, signal),
   loadNewer: (id, channel_id) => done(post('LoadNewer', { id, channel_id })),
@@ -353,6 +356,7 @@ export const wailsClient: Client = {
   pinnedPosts: (id, channelId) => wcall('PinnedPosts', id, channelId),
   openChannel: (id, channelId) => wcall('OpenChannel', id, channelId),
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
+  getChannelDelta: (id, channelId, base) => wcall('GetChannelDelta', id, channelId, base),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
   jumpToPost: (id, channelId, postId, signal) => cancellable<JumpDTO>(signal, 'JumpToPost', id, channelId, postId),
   loadNewer: (id, channelId) => wcall('LoadNewer', id, channelId),

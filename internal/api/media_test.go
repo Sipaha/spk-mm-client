@@ -55,7 +55,7 @@ func TestMediaCacheThroughTheService(t *testing.T) {
 	ts := httptest.NewServer(mc)
 	defer ts.Close()
 	for i := 0; i < 2; i++ {
-		resp, err := http.Get(fmt.Sprintf("%s/media/%d/thumb/f-build", ts.URL, id))
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/thumb/f-build?account=%s", ts.URL, id, f.server(id).MediaScope))
 		require.NoError(t, err)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
@@ -152,7 +152,7 @@ func TestMediaStreamThroughTheLoopbackServer(t *testing.T) {
 	require.NoError(t, err)
 
 	get := func(file, rng string) *http.Response {
-		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%d/stream/%s", base, id, file), nil) // the documented <base>/<srv>/stream/<id>
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%d/stream/%s?account=%s", base, id, file, f.server(id).MediaScope), nil) // the documented <base>/<srv>/stream/<id>
 		require.NoError(t, err)
 		if rng != "" {
 			req.Header.Set("Range", rng)
@@ -206,7 +206,7 @@ func TestMediaPostIconThroughTheService(t *testing.T) {
 	ts := httptest.NewServer(mc)
 	defer ts.Close()
 	for _, pid := range []string{p.ID, p.ID, plain.ID} {
-		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s", ts.URL, id, pid))
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s?account=%s", ts.URL, id, pid, f.server(id).MediaScope))
 		require.NoError(t, err)
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
@@ -247,7 +247,7 @@ func TestMediaPostIconDoesNotSignOutOrFollowTheTokenAway(t *testing.T) {
 	ts := httptest.NewServer(mc)
 	defer ts.Close()
 	get := func(pid string) int {
-		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s", ts.URL, id, pid))
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/posticon/%s?account=%s", ts.URL, id, pid, f.server(id).MediaScope))
 		require.NoError(t, err)
 		_ = resp.Body.Close()
 		return resp.StatusCode
@@ -276,7 +276,7 @@ func TestPDFOnlyWhileLive(t *testing.T) {
 	ts := httptest.NewServer(mc)
 	defer ts.Close()
 	get := func(file string) (*http.Response, []byte) {
-		resp, err := http.Get(fmt.Sprintf("%s/media/%d/pdf/%s", ts.URL, id, file))
+		resp, err := http.Get(fmt.Sprintf("%s/media/%d/pdf/%s?account=%s", ts.URL, id, file, f.server(id).MediaScope))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)

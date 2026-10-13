@@ -1,0 +1,77 @@
+[
+  {
+    "seconds": 15,
+    "processes": [
+      {
+        "name": "WebKitNetworkPr",
+        "pid": 2930017,
+        "private_dirty_kib": 7576,
+        "cpu_ticks": 3
+      },
+      {
+        "name": "WebKitWebProces",
+        "pid": 2930018,
+        "private_dirty_kib": 96056,
+        "cpu_ticks": 265
+      },
+      {
+        "name": "spk-mm-client-d",
+        "pid": 2929980,
+        "private_dirty_kib": 89952,
+        "cpu_ticks": 196
+      }
+    ],
+    "private_dirty_mib": 189.05,
+    "cpu_seconds": 4.64
+  },
+  {
+    "seconds": 45,
+    "processes": [
+      {
+        "name": "WebKitNetworkPr",
+        "pid": 2930017,
+        "private_dirty_kib": 7580,
+        "cpu_ticks": 4
+      },
+      {
+        "name": "WebKitWebProces",
+        "pid": 2930018,
+        "private_dirty_kib": 82984,
+        "cpu_ticks": 465
+      },
+      {
+        "name": "spk-mm-client-d",
+        "pid": 2929980,
+        "private_dirty_kib": 89928,
+        "cpu_ticks": 265
+      }
+    ],
+    "private_dirty_mib": 176.26,
+    "cpu_seconds": 7.34
+  },
+  {
+    "seconds": 90,
+    "processes": [
+      {
+        "name": "WebKitNetworkPr",
+        "pid": 2930017,
+        "private_dirty_kib": 7588,
+        "cpu_ticks": 4
+      },
+      {
+        "name": "WebKitWebProces",
+        "pid": 2930018,
+        "private_dirty_kib": 111336,
+        "cpu_ticks": 801
+      },
+      {
+        "name": "spk-mm-client-d",
+        "pid": 2929980,
+        "private_dirty_kib": 90124,
+        "cpu_ticks": 371
+      }
+    ],
+    "private_dirty_mib": 204.15,
+    "cpu_seconds": 11.76
+  }
+]

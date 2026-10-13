@@ -82,6 +82,8 @@ func validRange(v string) bool {
 // away closes it. It fetches through Origin like the cache: only while the
 // server's worker is live (ErrNoServer → 404), and a 401 there is the
 // session dying (the worker asks for a new sign-in).
+type accountScopeKey struct{}
+
 type Streamer struct {
 	origin  Origin
 	timeout time.Duration // file info lookup
@@ -103,6 +105,17 @@ func (s *Streamer) Serve(w http.ResponseWriter, r *http.Request, server int64, f
 
 // serve is Serve with the Cache-Control of a successful answer.
 func (s *Streamer) serve(w http.ResponseWriter, r *http.Request, server int64, fileID, cacheControl string) {
+	if a, ok := s.origin.(Accounts); ok {
+		scope, owner, err := a.MediaAccount(server)
+		if err != nil || scope == "" || r.URL.Query().Get("account") != scope {
+			s.fail(w, server, fileID, http.StatusNotFound, ErrNoServer)
+			return
+		}
+		ctx, cancel := context.WithCancel(context.WithValue(owner, accountScopeKey{}, scope))
+		stop := context.AfterFunc(r.Context(), cancel)
+		defer func() { stop(); cancel() }()
+		r = r.WithContext(ctx)
+	}
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	rng := r.Header.Get("Range")
@@ -163,6 +176,20 @@ func (s *Streamer) fail(w http.ResponseWriter, server int64, fileID string, stat
 // failures to look it up are not remembered.
 func (s *Streamer) contentType(ctx context.Context, server int64, fileID string) (string, error) {
 	key := strconv.FormatInt(server, 10) + "/" + fileID
+	if a, ok := s.origin.(Accounts); ok {
+		scope, bound := ctx.Value(accountScopeKey{}).(string)
+		if !bound {
+			var err error
+			scope, _, err = a.MediaAccount(server)
+			if err != nil {
+				return "", err
+			}
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		key = scope + "/" + key
+	}
 	s.mu.Lock()
 	t, ok := s.types[key]
 	s.mu.Unlock()

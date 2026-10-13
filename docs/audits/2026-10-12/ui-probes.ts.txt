@@ -1,0 +1,30 @@
+// Audit probes: these assert observed defects, not desired behavior.
+test('AUDIT older server list rolls back completed logout state', async () => {
+ const { refreshServers } = await import('./chat')
+ const old = deferred<ServerDTO[]>()
+ useStore.setState({ sidebar: sidebar(), channel: chan('a') })
+ vi.mocked(client.sidebar).mockResolvedValue(sidebar({selected_channel_id: ''}))
+ vi.mocked(client.listServers).mockReturnValueOnce(old.p).mockResolvedValueOnce([{...srv(1),signed_in:false}])
+ const pending = refreshServers()
+ await refreshServers()
+ expect(useStore.getState().servers[0].signed_in).toBe(false)
+ old.resolve([srv(1)])
+ await pending
+ expect(useStore.getState().servers[0].signed_in).toBe(true)
+ console.log('AUDIT: newer list signed_in=false overwritten by older list signed_in=true')
+})
+
+test('AUDIT notification opens old thread after user moves to another channel', async () => {
+ const old = deferred<ChannelDTO>()
+ vi.mocked(client.openChannel).mockReturnValueOnce(old.p).mockResolvedValueOnce(chan('b'))
+ vi.mocked(client.openThread).mockResolvedValue(thread('ra',{channel_id:'a'}))
+ const pending = openFromNotification(1,'a','ra')
+ await openChannel(1,'b')
+ old.resolve(chan('a'))
+ await pending
+ await Promise.resolve()
+ expect(client.openThread).toHaveBeenCalledWith(1,'a','ra')
+ expect(useStore.getState().channel?.id).toBe('b')
+ expect(useStore.getState().thread?.channel_id).toBe('a')
+ console.log('AUDIT: channel b remains open; stale notification nevertheless opens channel a thread')
+})

@@ -2,6 +2,25 @@
 
 SPK MM Client uses GitHub Actions to test, build and publish native releases. The first published version is [v1.0.0](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.0). The application source and release workflows are on `main`; the website remains an independent orphan `pages` branch and is never merged into `main`.
 
+## 1.0.1 release candidate
+
+This patch release includes reconnect recovery, generation-ordered sign-in and
+navigation, account-scoped media, joined service/session-owned downloads, and
+native Copy Image in the image viewer. [English notes](../changelog/1.0.1/en.md)
+and [Russian notes](../changelog/1.0.1/ru.md) describe user-visible changes.
+
+Long-history refreshes use acknowledged-baseline channel deltas. The retained
+history has no new cap; initial/reset responses remain full, and Go traversal
+remains linear. A 50,000-post projection cache retains about 19.4 MiB until
+navigation replaces it, in exchange for much smaller recurring IPC. Benchmarks
+and correctness evidence are in [audit fixes](audits/2026-10-12/fixes.md).
+
+Local validation: all Go race tests; 1135 frontend tests; 109 complete browser
+integration tests; lint and Windows cross-build/vet; clean browser/Linux desktop
+builds; a 90-second isolated native smoke with screenshot inspection. Copy Image
+was additionally tested using actual production-tag WebKit native input and a
+PNG clipboard read. Publication is gated by the tagged CI and all six native jobs.
+
 ## Packages and runtime requirements
 
 | Platform | Architectures | Native formats | Requirements |

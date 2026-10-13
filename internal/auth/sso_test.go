@@ -32,6 +32,14 @@ func TestCompleteMatchesPendingBySrv(t *testing.T) {
 	assert.Equal(t, Result{ServerID: 2, Token: "tok"}, res)
 }
 
+func TestCompleteCarriesTheLoginAttemptGeneration(t *testing.T) {
+	s := NewSSO()
+	s.BeginAttempt(1, 12, "https://a.example.com")
+	result, err := s.Complete(cb("tok", "https://a.example.com"))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(12), result.Generation)
+}
+
 func TestCompleteMatchesSiteURLAlias(t *testing.T) {
 	s := NewSSO()
 	// user typed "mm.example.com"; server reports a different SiteURL

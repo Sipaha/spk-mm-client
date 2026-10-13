@@ -5,6 +5,7 @@ export interface ServerDTO {
   name: string
   url: string
   signed_in: boolean
+  media_scope?: string
   username: string
   gitlab: boolean
   state: ServerState
@@ -222,7 +223,18 @@ export interface PostView {
   root_snippet?: string
 }
 
+export interface ChannelPatch {
+ view: ChannelDTO
+ base: number
+ revision: number
+ reset: boolean
+ posts: PostView[]
+ removed?: string[]
+ order?: string[]
+}
+
 export interface ChannelDTO {
+ projection_rev?: number
   id: string
   name: string
   type: string

@@ -96,6 +96,11 @@ func (s *Service) OpenFile(ctx context.Context, id int64, fileID string) (SavedF
 }
 
 func (s *Service) saveFile(ctx context.Context, id int64, fileID string, open bool) (SavedFile, error) {
+	ctx, finish, err := s.life.start(ctx)
+	if err != nil {
+		return SavedFile{}, err
+	}
+	defer finish()
 	if !fileIDRe.MatchString(fileID) {
 		return SavedFile{}, coded(CodeNoFile, nil)
 	}
@@ -103,12 +108,26 @@ func (s *Service) saveFile(ctx context.Context, id int64, fileID string, open bo
 	if err != nil {
 		return SavedFile{}, err
 	}
-	key := fmt.Sprintf("%d/%s", id, fileID)
-	path, err := s.shared(ctx, key, func() (string, error) {
-		return s.fetchFile(ctx, w.REST().WithHTTPClient(s.transfer), id, fileID, key)
+	m := s.manager()
+	if m == nil {
+		return SavedFile{}, coded(CodeCancelled, nil)
+	}
+	current, owner := m.Session(id)
+	if current != w || owner.Err() != nil {
+		return SavedFile{}, coded(CodeCancelled, nil)
+	}
+	key := fmt.Sprintf("%d/%s/%s", id, w.AccountID(), fileID)
+	path, err := s.shared(ctx, owner, id, key, func(owned context.Context) (string, error) {
+		return s.fetchFile(owned, w.REST().WithHTTPClient(s.transfer), id, fileID, key)
 	})
 	if err != nil {
 		return SavedFile{}, err
+	}
+	g := s.sessionChange(id)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if ctx.Err() != nil || owner.Err() != nil {
+		return SavedFile{}, coded(CodeCancelled, nil)
 	}
 	res := SavedFile{Path: path}
 	s.mu.Lock()
@@ -127,28 +146,39 @@ func (s *Service) saveFile(ctx context.Context, id int64, fileID string, open bo
 // download is a save of one file in progress; callers asking for the same
 // file meanwhile wait for it instead of saving a second copy.
 type download struct {
-	done chan struct{}
-	path string
-	err  error
+	server int64
+	done   chan struct{}
+	path   string
+	err    error
 }
 
 // shared runs fetch for key unless a save of key is already running, in
 // which case it waits for that one's result (each caller then opens the
 // file or not as it asked). A waiter whose ctx ends stops waiting; the save
 // goes on for the others.
-func (s *Service) shared(ctx context.Context, key string, fetch func() (string, error)) (string, error) {
+func (s *Service) shared(ctx, owner context.Context, server int64, key string, fetch func(context.Context) (string, error)) (string, error) {
 	s.filesMu.Lock()
+	if owner.Err() != nil || ctx.Err() != nil {
+		s.filesMu.Unlock()
+		return "", coded(CodeCancelled, nil)
+	}
 	d := s.saving[key]
 	if d == nil {
-		d = &download{done: make(chan struct{})}
+		owned, finish, err := s.life.start(owner)
+		if err != nil {
+			s.filesMu.Unlock()
+			return "", err
+		}
+		d = &download{server: server, done: make(chan struct{})}
 		s.saving[key] = d
-		s.filesMu.Unlock()
-		d.path, d.err = fetch()
-		s.filesMu.Lock()
-		delete(s.saving, key)
-		s.filesMu.Unlock()
-		close(d.done)
-		return d.path, d.err
+		go func() {
+			defer finish()
+			d.path, d.err = fetch(owned)
+			s.filesMu.Lock()
+			delete(s.saving, key)
+			close(d.done)
+			s.filesMu.Unlock()
+		}()
 	}
 	s.filesMu.Unlock()
 	select {
@@ -156,6 +186,22 @@ func (s *Service) shared(ctx context.Context, key string, fetch func() (string, 
 		return d.path, d.err
 	case <-ctx.Done():
 		return "", actionError(ctx.Err())
+	}
+}
+
+// Worker cancellation precedes this join. Registration checks that lifetime
+// under filesMu, so no transfer of the old worker can appear after the join.
+func (s *Service) joinDownloads(server int64) {
+	s.filesMu.Lock()
+	var pending []<-chan struct{}
+	for _, d := range s.saving {
+		if d.server == server {
+			pending = append(pending, d.done)
+		}
+	}
+	s.filesMu.Unlock()
+	for _, done := range pending {
+		<-done
 	}
 }
 
@@ -302,6 +348,9 @@ func saveInto(ctx context.Context, rc *rest.Client, dir, fileID string, info mod
 	n, err := io.Copy(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
 	}
 	if err == nil && n != info.Size {
 		err = fmt.Errorf("%w: got %d bytes, want %d", errSizeMismatch, n, info.Size)

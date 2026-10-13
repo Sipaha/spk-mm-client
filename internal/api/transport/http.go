@@ -183,6 +183,13 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/OpenChannel", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return h.api.OpenChannel(ctx, r.ID, r.ChannelID)
 	}))
+	h.mux.HandleFunc("POST /api/GetChannelDelta", handle(func(ctx context.Context, r *struct {
+		ID        int64  `json:"id"`
+		ChannelID string `json:"channel_id"`
+		Base      uint64 `json:"base"`
+	}) (any, error) {
+		return h.api.GetChannelDelta(ctx, r.ID, r.ChannelID, r.Base)
+	}))
 	h.mux.HandleFunc("POST /api/GetChannel", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return h.api.GetChannel(ctx, r.ID, r.ChannelID)
 	}))

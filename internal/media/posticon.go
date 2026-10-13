@@ -212,6 +212,11 @@ func (c *Cache) postIcon(q request) (string, iconRoute, int) {
 		return "", iconRoute{}, http.StatusNotFound
 	}
 	ic, ok := c.o.PostIcons.PostIcon(q.server, q.key)
+	if scoped, yes := c.o.PostIcons.(interface {
+		PostIconContext(context.Context, int64, string) (PostIcon, bool)
+	}); yes && q.owner != nil {
+		ic, ok = scoped.PostIconContext(q.owner, q.server, q.key)
+	}
 	if !ok {
 		return "", iconRoute{}, http.StatusNotFound
 	}

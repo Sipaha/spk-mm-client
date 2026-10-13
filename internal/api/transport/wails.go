@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/spk/spk-mm-client/internal/api"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 // API is the Wails service. Bindings are addressed by Go FQN:
@@ -210,4 +211,8 @@ func (w *API) SearchSuggest(ctx context.Context, id int64, teamID, kind, prefix 
 // runs to its end (like SendPost).
 func (w *API) ExecuteCommand(id int64, channelID, rootID, command string) error {
 	return w.a.ExecuteCommand(context.Background(), id, channelID, rootID, command)
+}
+
+func (w *API) GetChannelDelta(id int64, channelID string, base uint64) (state.ChannelPatch, error) {
+	return w.a.GetChannelDelta(context.Background(), id, channelID, base)
 }

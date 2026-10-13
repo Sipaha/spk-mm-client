@@ -83,12 +83,13 @@ type Config struct {
 
 	sinceLimit int // test seam: the server's since= cap; 0 → rest.SinceLimit
 	// test seams: 0 → refreshTimeout / refreshRetryFirst
-	refreshTimeout time.Duration
-	refreshRetry   time.Duration
-	reactBackoff   []time.Duration // test seam: nil → defaultReactBackoff
-	revalIdle      time.Duration   // test seam: 0 → revalRetryIn
-	metaDebounce   time.Duration   // test seam: 0 → metaDebounce
-	resumeSettle   time.Duration   // test seam: 0 → resumeSettle
+	refreshTimeout   time.Duration
+	refreshRetry     time.Duration
+	bootstrapTimeout time.Duration   // test seam: 0 → refreshTimeout
+	reactBackoff     []time.Duration // test seam: nil → defaultReactBackoff
+	revalIdle        time.Duration   // test seam: 0 → revalRetryIn
+	metaDebounce     time.Duration   // test seam: 0 → metaDebounce
+	resumeSettle     time.Duration   // test seam: 0 → resumeSettle
 	// limiter: nil → rest.NewLimiter() (10 req/s, burst 20 — the real
 	// server's per-server budget). A test harness that drives dozens of
 	// requests per reconnect/bootstrap cycle spends most of its wall time
@@ -130,6 +131,9 @@ func (c *Config) defaults() {
 	}
 	if c.refreshTimeout <= 0 {
 		c.refreshTimeout = refreshTimeout
+	}
+	if c.bootstrapTimeout <= 0 {
+		c.bootstrapTimeout = refreshTimeout
 	}
 	if c.refreshRetry <= 0 {
 		c.refreshRetry = refreshRetryFirst
@@ -433,6 +437,30 @@ func (w *Worker) wsOptions() ws.Options {
 // event in sequence, or resumeSettle without a hello). A refused resume
 // (reset hello) therefore marks the windows stale from the real gap start.
 func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
+	// Network recovery must interrupt REST validation, the WS handshake and
+	// bootstrap too, not just the live event loop. Join the watcher before
+	// returning so it cannot steal a nudge belonging to the next attempt.
+	ctx, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-ctx.Done():
+		case <-w.nudge:
+			cancel(errNudged)
+		}
+	}()
+	defer func() {
+		cancel(nil)
+		<-done
+		if errors.Is(context.Cause(ctx), errNudged) {
+			err = errNudged
+		}
+	}()
+	return w.runSession(ctx, onLive)
+}
+
+func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 	var refreshes sync.WaitGroup
 	defer refreshes.Wait() // runs after cancel: an in-flight refresh ends with sctx
 	sctx, cancel := context.WithCancel(ctx)
@@ -441,7 +469,10 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 	case <-w.authFail:
 	default:
 	}
-	if _, err := w.rc.Me(sctx); err != nil {
+	mctx, mcancel := context.WithTimeout(sctx, w.cfg.CallTimeout)
+	_, err = w.rc.Me(mctx)
+	mcancel()
+	if err != nil {
 		return err
 	}
 	dctx, dcancel := context.WithTimeout(sctx, dialTimeout)
@@ -502,8 +533,6 @@ func (w *Worker) session(ctx context.Context, onLive func()) (err error) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-w.nudge:
-			return errNudged
 		case <-w.authFail:
 			return &rest.Error{Kind: rest.KindAuth, Status: http.StatusUnauthorized, Err: errors.New("request rejected with 401")}
 		case <-settle:
@@ -738,6 +767,10 @@ func (w *Worker) replayOrphans() {
 // window may miss posts since the gap start — needResync stays set until
 // this succeeds, so a failure is retried by the next session.
 func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
+	// Bound the whole read, including paging, limiter waits and retries.
+	// A per-request HTTP timeout alone allows setup to stall for minutes.
+	ctx, cancel := context.WithTimeout(ctx, w.cfg.bootstrapTimeout)
+	defer cancel()
 	if lost {
 		w.needResync = true
 	}
@@ -764,6 +797,10 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	w.replayOrphans()
 	w.booted, w.needResync = true, false
 	w.loadUsers(ctx)
+	if err := ctx.Err(); err != nil {
+		w.needResync = true
+		return err
+	}
 	w.goBG(func(ctx context.Context) { w.refreshUsers(ctx, known, since) })
 	w.enqueueAll()
 	w.reloadOpenThread() // stale since the gap, or reset
@@ -1130,3 +1167,6 @@ func (w *Worker) wakeLoop(ctx context.Context) {
 		w.Nudge()
 	})
 }
+
+// AccountID is immutable for the lifetime of a worker.
+func (w *Worker) AccountID() string { return w.srv.UserID }

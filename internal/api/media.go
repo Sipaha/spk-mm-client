@@ -35,7 +35,7 @@ func (s *Service) running(id int64) *mmsync.Worker {
 // server — its token and its rate limiter, shared with sync — on the
 // transfer HTTP client (no whole-request timeout; ctx bounds it).
 func (s *Service) Get(ctx context.Context, serverID int64, path string, hdr http.Header) (*http.Response, error) {
-	w := s.running(serverID)
+	w := s.mediaWorker(ctx, serverID)
 	if w == nil {
 		return nil, media.ErrNoServer
 	}
@@ -51,13 +51,17 @@ func (s *Service) Get(ctx context.Context, serverID int64, path string, hdr http
 // asking the server needs a live worker.
 func (s *Service) EmojiID(ctx context.Context, serverID int64, name string) (string, error) {
 	if m := s.manager(); m != nil {
-		if w := m.Worker(serverID); w != nil && w.Status() != mmsync.StatusNeedsReauth {
+		w := m.Worker(serverID)
+		if bound, ok := ctx.Value(mediaWorkerKey{}).(*mmsync.Worker); ok {
+			w = bound
+		}
+		if w != nil && ctx.Err() == nil && w.Status() != mmsync.StatusNeedsReauth {
 			if id, ok := w.State().CustomEmojiID(name); ok {
 				return id, nil
 			}
 		}
 	}
-	w := s.running(serverID)
+	w := s.mediaWorker(ctx, serverID)
 	if w == nil {
 		return "", media.ErrNoServer
 	}
@@ -70,12 +74,19 @@ func (s *Service) EmojiID(ctx context.Context, serverID int64, name string) (str
 // image-proxy flag. Known offline too (its picture may be on disk); Live
 // says whether one may be fetched.
 func (s *Service) PostIcon(serverID int64, postID string) (media.PostIcon, bool) {
+	return s.PostIconContext(context.Background(), serverID, postID)
+}
+
+func (s *Service) PostIconContext(ctx context.Context, serverID int64, postID string) (media.PostIcon, bool) {
 	m := s.manager()
 	if m == nil {
 		return media.PostIcon{}, false
 	}
 	w := m.Worker(serverID)
-	if w == nil {
+	if bound, ok := ctx.Value(mediaWorkerKey{}).(*mmsync.Worker); ok {
+		w = bound
+	}
+	if w == nil || ctx.Err() != nil {
 		return media.PostIcon{}, false
 	}
 	st := w.State()
@@ -92,7 +103,7 @@ func (s *Service) PostIcon(serverID int64, postID string) (media.PostIcon, bool)
 // redirect allows (the transfer transport, no whole-request timeout). A
 // 401 here is the path's answer, not the session's: no CheckAuth.
 func (s *Service) GetIcon(ctx context.Context, serverID int64, path string, redirect func(*http.Request, []*http.Request) error) (*http.Response, error) {
-	w := s.running(serverID)
+	w := s.mediaWorker(ctx, serverID)
 	if w == nil {
 		return nil, media.ErrNoServer
 	}
@@ -128,4 +139,34 @@ func transportOf(hc *http.Client) http.RoundTripper {
 		return hc.Transport
 	}
 	return http.DefaultTransport
+}
+
+type mediaWorkerKey struct{}
+
+// MediaAccount captures the worker before any cache lookup; a stopped or expired
+// session cannot authorize disk reads. The context binds upstream fetches too.
+func (s *Service) MediaAccount(id int64) (string, context.Context, error) {
+	m := s.manager()
+	if m == nil {
+		return "", nil, media.ErrNoServer
+	}
+	w, ctx := m.Session(id)
+	if w == nil || ctx.Err() != nil || w.Status() == mmsync.StatusNeedsReauth {
+		return "", nil, media.ErrNoServer
+	}
+	scope := media.AccountScope(w.AccountID())
+	if scope == "" {
+		return "", nil, media.ErrNoServer
+	}
+	return scope, context.WithValue(ctx, mediaWorkerKey{}, w), nil
+}
+
+func (s *Service) mediaWorker(ctx context.Context, id int64) *mmsync.Worker {
+	if w, ok := ctx.Value(mediaWorkerKey{}).(*mmsync.Worker); ok {
+		if ctx.Err() != nil || w.Status() != mmsync.StatusLive {
+			return nil
+		}
+		return w
+	}
+	return s.running(id)
 }

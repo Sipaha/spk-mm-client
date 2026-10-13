@@ -34,8 +34,9 @@ var (
 )
 
 type Result struct {
-	ServerID int64
-	Token    string
+	ServerID   int64
+	Token      string
+	Generation uint64 // the application login attempt that began this flow
 }
 
 func GitLabLoginURL(serverURL string) string {
@@ -56,8 +57,9 @@ func FindCallbackArg(args []string) (string, bool) {
 }
 
 type pending struct {
-	urls    []string
-	started time.Time
+	urls       []string
+	started    time.Time
+	generation uint64
 }
 
 type SSO struct {
@@ -74,6 +76,10 @@ func NewSSO() *SSO {
 // Begin records that serverID is signing in; urls are every URL the server
 // may report as srv (entered URL and SiteURL). Restarting replaces the entry.
 func (s *SSO) Begin(serverID int64, urls ...string) {
+	s.BeginAttempt(serverID, 0, urls...)
+}
+
+func (s *SSO) BeginAttempt(serverID int64, generation uint64, urls ...string) {
 	var norm []string
 	for _, u := range urls {
 		if n, err := rest.NormalizeURL(u); err == nil {
@@ -82,7 +88,7 @@ func (s *SSO) Begin(serverID int64, urls ...string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending[serverID] = pending{urls: norm, started: s.now()}
+	s.pending[serverID] = pending{urls: norm, started: s.now(), generation: generation}
 }
 
 func (s *SSO) Cancel(serverID int64) {
@@ -155,7 +161,8 @@ func (s *SSO) Complete(raw string) (Result, error) {
 			id = pid
 		}
 	}
+	generation := s.pending[id].generation
 	delete(s.pending, id)
 	s.recent[token] = now
-	return Result{ServerID: id, Token: token}, nil
+	return Result{ServerID: id, Token: token, Generation: generation}, nil
 }

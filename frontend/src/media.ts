@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import { client } from './api/client'
-import { useLiveEpoch } from './store'
+import { useStore, useLiveEpoch } from './store'
+
+function accountScope(serverId: number): string {
+  return useStore.getState().servers.find(s => s.id === serverId && s.signed_in)?.media_scope ?? ''
+}
 
 export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' | 'staged' | 'posticon' | 'pdf'
 
@@ -8,7 +12,11 @@ export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' 
 // own origin (internal/media): the UI never talks to a Mattermost server
 // and never sees its tokens.
 export function mediaURL(serverId: number, kind: MediaKind, key: string, params: Record<string, string> = {}): string {
-  const q = new URLSearchParams(params).toString()
+  const scope = accountScope(serverId)
+  const query = new URLSearchParams(scope ? { account: scope, ...params } : params)
+  if (!scope) query.delete('account')
+  else query.set('account', scope)
+  const q = query.toString()
   return `/media/${serverId}/${kind}/${encodeURIComponent(key)}${q ? `?${q}` : ''}`
 }
 
@@ -52,10 +60,11 @@ export function resetStreamBaseForTests(): void {
 }
 
 // streamURL: the one shape <video>/<audio> read from in both modes,
-// `${base}/${serverId}/stream/${fileId}` — only the base differs (a
+// `${base}/${serverId}/stream/${fileId}?account=${encodeURIComponent(accountScope(serverId))}` — only the base differs (a
 // same-origin "/media" path in the browser, a loopback URL with a token on
 // desktop), and it is asked for at most once per session.
 export async function streamURL(serverId: number, fileId: string): Promise<string> {
   const base = await getStreamBase()
-  return `${base}/${serverId}/stream/${fileId}`
+  const scope = accountScope(serverId)
+  return `${base}/${serverId}/stream/${fileId}${scope ? `?account=${encodeURIComponent(scope)}` : ''}`
 }

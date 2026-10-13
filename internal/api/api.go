@@ -10,12 +10,13 @@ import (
 )
 
 type ServerDTO struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	SignedIn bool   `json:"signed_in"`
-	Username string `json:"username"`
-	GitLab   bool   `json:"gitlab"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	SignedIn   bool   `json:"signed_in"`
+	Username   string `json:"username"`
+	MediaScope string `json:"media_scope"`
+	GitLab     bool   `json:"gitlab"`
 	// State of the sync worker: off | connecting | live | reconnecting | needs_reauth.
 	State    string `json:"state"`
 	Unread   bool   `json:"unread"`
@@ -81,6 +82,7 @@ type API interface {
 	PinnedPosts(ctx context.Context, id int64, channelID string) ([]PinnedPostDTO, error)
 	OpenChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
+	GetChannelDelta(ctx context.Context, id int64, channelID string, base uint64) (state.ChannelPatch, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error
 	// JumpToPost shows postID of the open channel channelID: a post it
 	// holds as is, else the segment around it replaces the held history,

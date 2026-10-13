@@ -4,6 +4,13 @@
 `docs/specs/2026-09-24-spk-mattermost-design.md`. Планы: `docs/plans/`.
 Результаты спайков: `docs/spikes/`.
 
+Аудит 2026-10-12: `docs/audits/2026-10-12/README.md` — подтверждённые
+дефекты сессий/кэша/загрузок/навигации и замеры полной проекции
+длинной истории. Воспроизведение: `python3 docs/audits/2026-10-12/reproduce.py all`;
+Runner запускает текущие регрессионные тесты A1–A6 и сравнимые benchmarks;
+исходные probes сохранены только как историческое свидетельство. Состояние реализации всех A1–A6 — `docs/audits/2026-10-12/fixes.md`.
+Новые приоритеты — в `docs/backlog.md`, не смешивать их с историческими мелочами.
+
 ## Переименование (Task 0, 2026-09-25)
 
 Проект был переименован из spk-mattermost в **spk-mm-client** по запросу
@@ -42,6 +49,12 @@
 - `gofmt` — часть `make lint` (`golangci-lint` с `formatters: gofmt` в `.golangci.yml`), отдельно
   гонять `gofmt -l .` не обязательно, но неотформатированный файл роняет линт.
 - Токены сервера не покидают Go: нет в DTO, логах, событиях. — `TestServerDTOHasNoToken`, `TestServerLogValueHidesToken`.
+- Смена сессии проходит через `api.sessionChange`: SSO/password-попытка имеет
+  поколение и отменяемый контекст; Logout/Remove/new-login/Close не допускают
+  старую фиксацию. Сеть выполняется вне session mutex, локальная установка
+  credentials + очистка снимка другого аккаунта — атомарно (`Store.ReplaceSession`;
+  Logout — `Store.EndSession`). — `internal/api/sessions_test.go`,
+  `internal/store/sessions_test.go`. Снимок того же аккаунта при re-login сохраняется.
 - Никаких блокирующих системных вызовов на старте (урок официального клиента, завис на gnome-keyring). Токены — в SQLite.
 - Browser-режим отвечает только на loopback-`Host` (127.0.0.1, localhost, ::1), иначе 403 — защита от DNS rebinding (иначе `/` отдаст API-токен чужому сайту). — `TestNonLoopbackHostIsRejected`, `transport.LoopbackHostGuard`.
 - `events.Emitter.Emit` не блокирует: полный буфер подписчика — событие отбрасывается.
@@ -51,6 +64,14 @@
   они не должны блокировать и не должны звать `Manager.Start/Stop/Close` синхронно (`Stop` ждёт
   воркер под локом менеджера — дедлок); тяжёлая работа уходит в отдельную горутину. —
   `internal/mmsync/worker.go` (`Hooks`).
+- Восстановление сети/пробуждение (`Nudge`) отменяет попытку с самого начала:
+  REST `Me`, WS handshake, bootstrap и живой цикл. Сигнал слушает одна горутина
+  сессии, завершаемая перед следующей попыткой; не возвращать отдельного
+  потребителя `nudge` в живой цикл. `Me` ограничен `CallTimeout` (15 с),
+  handshake — 30 с, весь bootstrap — 45 с; без события сети дедлайны возвращают
+  воркер к обычным повторным попыткам. — `internal/mmsync/recovery_test.go`,
+  `tests/e2e/network-recovery.spec.ts`,
+  `docs/research/2026-10-12-network-recovery.md`.
 - UI-события схлопываются на 100 мс (`events.Coalescer`) — очередь бурстов сводится к одному
   вызову с последним состоянием. — `internal/api/sync.go` (`coalesceDelay`), `internal/events/coalesce.go`.
 - `servers_changed` приходит часто (любое изменение состояния воркера, бейджей, непрочитанного);
@@ -89,6 +110,25 @@
   ~120 мс вместо ~75), отвергнуты.
   — `TestTuneGoMemoryDefaults`, `TestTuneGoMemoryRespectsEnvironment`;
   замеры — `docs/spikes/2026-09-24-stage1-spikes.md` S4.
+- Медиа disk/negative/inflight cache и URL WebView включают неперсональный
+  `media_scope` (SHA-256 user id, без токена); текущий signed-in worker разрешает
+  чтение **до** cache-hit. Worker lifetime отменяет старые fetch/streams;
+  свой disk cache читается офлайн, `needs_reauth`/Logout и URL чужого scope
+  отказывают. Metadata stream cache также разделён по аккаунтам. —
+  `internal/api/media_accounts_test.go`, `internal/media/accounts_test.go`.
+- Общая загрузка принадлежит Service + worker lifetime, а не первому waiter.
+  `Close` отменяет и ждёт операции до закрытия Store; `deactivate` отменяет
+  worker и ждёт download cleanup/итогового статуса. Отмена waiter не отменяет
+  остальных. Уже сохранённые пользователем файлы автоматически не удаляются. —
+  `internal/api/download_lifecycle_test.go`.
+- `GetChannelDelta` передаёт изменения относительно явно подтверждённой
+  revision; несовпавший baseline получает reset. Единственный projection cache
+  на worker относится к последнему запрошенному каналу, history cap не вводится.
+  State reducers заменяют `PostMetadata` целиком (не мутируют его slices):
+  projection повторно использует files/reactions по immutable metadata identity.
+  Header/gap/read/presence/preferences/root context пересчитываются каждый раз;
+  неизменённые posts и feed rows сохраняют ссылки в UI. —
+  `internal/state/projection_test.go`, `frontend/src/channelPatch.test.ts`.
 - Картинки и фрагменты файлов UI берёт только с `/media/<srv>/<kind>/<key>`; путь строится
   только из проверенных ключей, открытого прокси к серверу Mattermost нет — обслуживает
   `internal/media`. — `TestBadRequests`.
@@ -1124,3 +1164,15 @@ time); `harness.tune` adjusts the worker `Config` (unexported seams `refreshTime
 - e2e on the virtualized feed: completeness is proven by walking it (`walkFeed` in `tests/e2e/helpers.ts`: from the first post down, ~⅔ viewport per step, waiting for an on-screen gap page, merging every step's `data-post-id`s, checking no duplicates/order changes in each mounted range) — never by counting DOM rows. Playwright's `isVisible()` is true for a row mounted in the overscan **off screen**: use `gapOnScreen`/`toBeInViewport` when "on screen" matters (a gap row loads itself only when really on screen). To hold a UI→Go call (`/api/LoadNewer`, `/api/JumpToPost`), `page.route` it — `hold(page, method, 'request' | 'answer')` in `tests/e2e/search.spec.ts`. With `'answer'` the request reaches Go by Playwright's own `route.fetch`, some time after `seen()` — a UI call made meanwhile can overtake it, and to Go the jump that arrives last is the newest (it wins). A test that means "Go has done it, the UI hears late" waits for `answered()` first (the races test clicked the second result right after `seen()`: under full-suite load Go got #150 first, then the resent #10 superseded it — the one-in-three `make test-e2e` flake).
 - e2e and the clock: the fake stamps its seed from `now − 160 min` (`internal/mmfake/seed.go`, `base`), so for about 2 h 40 min after local midnight the seed straddles two days — a «Today» separator and a new author group appear among the seed posts and push rows around. Never assume a seed post is mounted just because the feed opened: `scrollUntilVisible` (Off-Topic's `build.png` in `media.spec.ts` failed twice at 00:02/00:06 before it used it).
 - e2e shared-fake budget: `tests/e2e/search.spec.ts` adds a lot to Town Square (70 burst posts, a 250-reply thread, 450 long-list posts). It runs after `chat.spec.ts`, the only spec that reads the seed's tail («Message #150» on screen); any new spec that relies on Town Square's last seed posts must run before it (file order) or post its own posts. And leave nothing unread: a post by someone else into a channel alice is not viewing stays unread on the fake for every later spec (`sidebar-unread.spec.ts` checks the Unreads section and the "more unreads" pill) — post into the channel on screen, or open the channel before the test ends.
+
+## Viewer: native Copy Image (2026-10-13)
+
+`ImageZoom` помечает original и placeholder preview классом `viewer-image`;
+CSS `--default-contextmenu: show` разрешает стандартное меню именно на этих
+изображениях. Wails v3 beta.25 production по умолчанию отменяет contextmenu
+на non-editable элементах; debug build всегда разрешает меню и не доказывает
+это исправление. Copy Image выполняет сам WebView и кладёт decoded raster в
+системный clipboard; канвас, UI→Go передача bytes или токенов не нужны.
+Проверять в production-tag native build, в отдельном Xvfb/fake profile: реальный
+ПКМ, выбрать Copy Image, прочитать `image/png` из clipboard и проверить размер.
+Доказательства/методика: `docs/research/2026-10-13-viewer-copy-image.md`.
