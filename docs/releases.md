@@ -67,6 +67,39 @@ PNG clipboard read. Publication is gated by the tagged CI and all six native job
 
 ## Packages and runtime requirements
 
+### Linux menu launcher shadowing
+
+A pre-existing user launcher at
+`~/.local/share/applications/spk-mm-client.desktop` takes precedence over the
+package's `/usr/share/applications/spk-mm-client.desktop`. The legacy dev
+registration can have no `Icon` and an `Exec` pointing to a deleted checkout;
+then the menu shows a generic icon and cannot start the installed release.
+On the inspected installation, `/usr/bin/spk-mm-client` reports 1.0.2 and its
+SHA-256 matches the public release binary, but the user launcher pointed to a
+missing old dev build. The user explicitly authorized removal of that stale
+override, and it was removed after preserving a local backup. GIO now resolves
+`spk-mm-client.desktop` to `/usr/share/applications/spk-mm-client.desktop`,
+with the correct name, command and icon. Future package upgrades update that
+system entry. Copying it back into the user applications directory would create
+another override, so removing a known-obsolete user entry is preferable.
+The installed production binary was also started on its own Xvfb with a fresh
+scratch profile: its real window rendered correctly, OCR passed and the PNG was
+visually checked. The proposed packaged launcher passes
+`desktop-file-validate`; the installed icon file exists.
+
+`make install-dev-linux` now registers `spk-mm-client-dev.desktop`, named
+**SPK MM Client (development)**, with the checkout's icon. It requires an
+existing executable at an absolute path and intentionally makes the dev entry
+the `mmauth` handler. Existing user release/legacy entries are preserved and
+reported for explicit migration. The dev desktop ID cannot shadow the packaged
+release ID. Exec escaping applies both Desktop Entry string escaping and quoted
+argument escaping, as required by the
+[Desktop Entry specification](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html).
+Scratch-only registration checks validate the file, preserve existing entries,
+verify GIO's actual default-handler selection and URI delivery, refuse missing
+binaries, and launch an executable whose path includes quotes, spaces, dollar,
+backtick and backslash characters.
+
 | Platform | Architectures | Native formats | Requirements |
 | --- | --- | --- | --- |
 | Linux | amd64, arm64 | DEB, RPM, tar.gz | glibc 2.39+, GTK 3, WebKitGTK 4.1 |
