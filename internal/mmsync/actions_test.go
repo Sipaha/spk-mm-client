@@ -1,11 +1,14 @@
 package mmsync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,7 +46,32 @@ func crtFilesHarness(t *testing.T) (*harness, *fakeFiles) {
 // feed (Task 2's rule) until the confirming echo — where it still only
 // shows in the thread, never the feed.
 func TestReplyIsCreatedWithRootID(t *testing.T) {
-	h := crtHarness(t)
+	// Hold the real create request until pending state has been inspected.
+	// Otherwise a fast REST/WS confirmation can legitimately replace Pending
+	// between the change notification and ThreadView (seen on CI).
+	released := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	defer release()
+	h := newHarness(t, mmfake.Options{CRT: true, RequestHook: func(_ http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/posts" {
+			return false
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return true
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		select {
+		case <-released:
+			return false
+		case <-r.Context().Done():
+			return true
+		}
+	}})
+	h.start()
+	h.live()
+	h.eventually(h.allLoaded, "prefetch")
 	root := h.fake.SeedThread("c-town", "alice", 2)
 	h.openThread(root, 3)
 
@@ -58,6 +86,8 @@ func TestReplyIsCreatedWithRootID(t *testing.T) {
 	assert.Equal(t, "a reply", last.Message)
 	assert.True(t, last.Pending)
 	assert.False(t, h.hasMessage("c-town", "a reply"), "a CRT reply never joins the channel feed, even pending")
+	assert.Equal(t, root, last.RootID)
+	release()
 
 	h.eventually(func() bool { return h.threadHas(root, "a reply") == 1 }, "reply not confirmed in the thread")
 	assert.False(t, h.hasMessage("c-town", "a reply"), "still out of the feed once confirmed (CRT)")

@@ -55,3 +55,12 @@ Reaction requests record their expected WebSocket echoes before sending. Delayed
 Geometry fixtures use local noon so five-hour-old posts cannot unexpectedly add a date-separator row around midnight. Browser tests wait for confirmed posts before editing. The gap-anchor setup waits for stable scrolling beyond the 150ms ScrollShift idle flush and retries only positioning before the measured event. Exact pixel-position assertions after a live post and the held history response remain unchanged. Reaction in-flight tests hold a real received HTTP request instead of relying on a 300ms delay: optimistic state alone does not prove sending has started, and unsent opposite clicks may legitimately coalesce. The tests retain refusal/rollback checks and verify exact POST/DELETE counts. All three corrected scenarios passed 100 repetitions each under the race detector. Verification included 1125 frontend tests, 33 packaging tests, all 107 browser integration tests and 20 consecutive gap-anchor repetitions.
 
 Website support links use the approved author's localized `#support` page. Wallets are not duplicated and this release introduces no new funding policy.
+
+## Deterministic reply pending-state verification
+
+Release CI exposed a timing assumption in `TestReplyIsCreatedWithRootID`: a
+fast create response or WebSocket echo can confirm the post after the change
+notification but before the test reads the pending view. The fixture now holds
+the actual create request until pending state, root ID and CRT feed exclusion
+have been inspected, then releases it and verifies confirmation and root count.
+Assertions are retained; no production delay or timeout relaxation was added.
