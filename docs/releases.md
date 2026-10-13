@@ -15,13 +15,37 @@ The fixture can consume its injected upload failure before `SendReply`, which
 intentionally retries uploads failed in the composer; the test then waits for
 a failure after a successful retry. A deterministic fixture correction holds
 that first upload until `SendReply` returns. Publishing corrected source requires
-a new version; corrected source is being released as v1.0.2.
+a new version; corrected source was released as v1.0.2.
 The original ordering was reproduced deterministically by waiting for the
 composer upload to fail before sending. The corrected fixture passed 100 race
 repetitions (63.191s) and the complete API race suite (51.137s); channel/thread
 event assertions and production behavior are unchanged.
 
-## 1.0.2 release candidate
+## Published 1.0.2
+
+[v1.0.2](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.2) was
+published on 2026-10-13 from
+`0b02d53a36077654d72b77dc08d54536899d3324`. Candidate main CI
+[38365077462](https://github.com/Sipaha/spk-mm-client/actions/runs/38365077462)
+passed its common job and all six native targets. Tagged Release workflow
+[38367478835](https://github.com/Sipaha/spk-mm-client/actions/runs/38367478835)
+passed validation, the full common suite, all six native jobs and publication.
+
+The actual 43 public assets were downloaded and verified: 21 payload SHA-256
+entries and sidecars, 12 archives, version/source/architecture, Go 1.26.9 build
+info, tagged legal and documentation contents, DEB/RPM metadata and payloads,
+extracted MSI binaries/notices and DMG app contents. Production Linux CLI
+`version` and `licenses` matched the tagged source. All six production PNGs
+matched their source/version/hash reports and were visually reviewed.
+
+The live website returned v1.0.2 from GitHub `releases/latest`. All 48
+language/theme/width combinations passed: eight languages, light/dark themes,
+375/768/1440px widths, 14 native packages and matching checksum links,
+loaded images, support/source destinations, no horizontal overflow or page
+errors, and WCAG AA checks. The first page used the live latest endpoint;
+remaining layout audits reused the downloaded actual release metadata to
+avoid exhausting anonymous GitHub quota. OS/architecture filters were set to
+all when checking the complete package list. Website screenshots were reviewed.
 
 This patch release pins Go 1.26.9 with its standard-library security fixes and
 includes reconnect recovery, generation-ordered sign-in and
