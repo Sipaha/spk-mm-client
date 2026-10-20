@@ -1,12 +1,28 @@
-# SPK MM Client
+<p align="center">
+  <img src="frontend/public/icon.png" alt="SPK MM Client" width="72" height="72" />
+</p>
+
+<h1 align="center">SPK MM Client</h1>
+
+<p align="center">A lightweight desktop client for Mattermost.</p>
+
+<p align="center">
+  <a href="https://github.com/Sipaha/spk-mm-client/releases/latest"><img src="https://img.shields.io/github/v/release/Sipaha/spk-mm-client?sort=semver&amp;style=flat-square" alt="Latest release" /></a>
+  <a href="https://github.com/Sipaha/spk-mm-client/releases"><img src="https://img.shields.io/github/downloads/Sipaha/spk-mm-client/total?style=flat-square" alt="Total release asset downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache 2.0 license" /></a>
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-grey?style=flat-square" alt="Linux, Windows and macOS" />
+</p>
+
+<p align="center">
+  <a href="https://sipaha.github.io/spk-mm-client/en/">Website</a> ·
+  <a href="docs/releases.md">Documentation</a> ·
+  <a href="https://sipaha.github.io/about/en/">About the author</a> ·
+  <a href="https://sipaha.github.io/about/en/#support">Support</a>
+</p>
 
 A desktop client for Mattermost, built with Go, Wails v3 and React. It uses the
 system WebView on Linux, Windows and macOS. The application interface is available
 in English and Russian.
-
-[Website](https://sipaha.github.io/spk-mm-client/en/) ·
-[Releases](https://github.com/Sipaha/spk-mm-client/releases) ·
-[Support the author](https://sipaha.github.io/about/en/#support)
 
 ## Features
 

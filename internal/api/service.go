@@ -54,6 +54,9 @@ type Service struct {
 	// get a stale total after a newer one. Never held together with a
 	// callback-reachable s.mu section.
 	badgeMu sync.Mutex
+	// Serializes OS notification delivery/retraction, including delayed bursts.
+	notificationsMu        sync.Mutex
+	deliveredNotifications map[string]Notification
 
 	filesMu  sync.Mutex
 	saved    map[string]savedEntry // "server/file id" → file saved this session

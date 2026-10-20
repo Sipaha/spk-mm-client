@@ -150,6 +150,8 @@ type Server struct {
 	threadRedirect [2]string
 	// openRead: the server read state of the open thread (ThreadReadTarget).
 	openRead threadRead
+	// Only notification groups awaiting a read receipt; never persisted.
+	notificationReads map[ComposerKey]*notificationWatch
 
 	// Thread mention totals (threadcounts.go): by team, "" for DM/GM; CRT
 	// only, never in the snapshot.
@@ -224,6 +226,7 @@ func (s *Server) Bootstrap(b Bootstrap) (crtChanged bool) {
 			ch = &Chan{}
 		}
 		ch.Info, ch.Member = c, m
+		s.readNotificationsLocked(c.ID, "", m.LastViewedAt)
 		next[c.ID] = ch
 		s.guard[c.ID] = c.LastPostAt
 		s.dirty.chans[c.ID] = true
@@ -255,6 +258,7 @@ func (s *Server) Bootstrap(b Bootstrap) (crtChanged bool) {
 // forgetChannelLocked drops everything local about a channel (left, kicked,
 // deleted server-side). The caller removes it from s.chans.
 func (s *Server) forgetChannelLocked(id string) {
+	s.forgetNotificationsLocked(id)
 	if id == s.active {
 		s.resetHistoryLocked()
 	}

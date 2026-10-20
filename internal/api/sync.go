@@ -223,6 +223,7 @@ func (s *Service) dropAttachments(id int64) {
 // refreshBadges runs on the coalescer: servers_changed only when a server's
 // state or badge really changed, OnBadge only when the total did.
 func (s *Service) refreshBadges() {
+	defer s.reconcileNotifications()
 	marks := map[int64]serverMark{}
 	var total Badge
 	if m := s.manager(); m != nil {
@@ -263,15 +264,37 @@ func (s *Service) onNotify(id int64, c state.NotifyCandidate) {
 		slog.Debug("notification skipped", "srv", id, "channel", c.Post.ChannelID, "reason", why)
 		return
 	}
-	s.nq.push(notificationFor(id, c))
+	n := notificationFor(id, c)
+	m := s.manager()
+	if m == nil {
+		return
+	}
+	w := m.Worker(id)
+	if w == nil || w.State().Me().ID != c.Me.ID {
+		return // the notification's account was removed/replaced before this callback
+	}
+	n.owner = w.State()
+	n.receipt = n.owner.WatchNotification(c.Post)
+	s.nq.push(n)
 }
 
 func (s *Service) deliver(n Notification) {
+	s.notificationsMu.Lock()
+	defer s.notificationsMu.Unlock()
+	if !s.notificationCurrent(n) {
+		return
+	}
 	s.mu.Lock()
 	nt := s.notifier
 	s.mu.Unlock()
 	if nt != nil {
 		nt.Notify(n)
+		if _, ok := nt.(NotificationRemover); ok {
+			if s.deliveredNotifications == nil {
+				s.deliveredNotifications = map[string]Notification{}
+			}
+			s.deliveredNotifications[n.ID] = n
+		}
 	}
 }
 

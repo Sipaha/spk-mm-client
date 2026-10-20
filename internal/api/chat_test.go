@@ -161,6 +161,8 @@ func TestMentionUpdatesBadgeAndNotifies(t *testing.T) {
 	}, "OnBadge total")
 	f.eventually(func() bool { return len(f.notes.List()) == 1 }, "notification")
 	n := f.notes.List()[0]
+	assert.NotNil(t, n.receipt)
+	n.receipt, n.owner = nil, nil
 	assert.Equal(t, Notification{ID: "mm-" + itoa(id) + "-c-offtopic", Title: "Off-Topic", Body: "bob: hi @alice", ServerID: id, ChannelID: "c-offtopic"}, n)
 }
 

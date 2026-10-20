@@ -102,6 +102,10 @@ func (s *Server) onThreadUpdatedLocked(ev ws.Event, eff *Effects) {
 		return
 	}
 	th := d.Thread
+	if th.Post != nil {
+		s.readNotificationsLocked(th.Post.ChannelID, th.PostID, th.LastViewedAt)
+		eff.Badge = true // also reconciles delivered notifications, even with no mention delta
+	}
 	channelID, count, last := "", th.ReplyCount, th.LastReplyAt
 	if th.Post != nil {
 		channelID = th.Post.ChannelID
@@ -163,10 +167,19 @@ func (s *Server) onThreadReadChangedLocked(ev ws.Event, eff *Effects) {
 	if err != nil || !s.crtLocked() {
 		return
 	}
+	eff.Badge = true
 	if d.ThreadID == "" {
+		for key := range s.notificationReads {
+			ch := s.chans[key.Channel]
+			if key.Root != "" && ch != nil && ((d.ChannelID != "" && key.Channel == d.ChannelID) ||
+				(d.ChannelID == "" && d.TeamID != "" && (ch.Info.TeamID == d.TeamID || isDirect(ch)))) {
+				s.readNotificationsLocked(key.Channel, key.Root, d.Timestamp)
+			}
+		}
 		s.threadCountsChangedLocked(eff)
 		return
 	}
+	s.readNotificationsLocked(d.ChannelID, d.ThreadID, d.Timestamp)
 	s.threadMentionDeltaLocked(d.ChannelID, d.UnreadMentions-d.PreviousUnreadMentions, eff)
 }
 

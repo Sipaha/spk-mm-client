@@ -536,6 +536,9 @@ func (s *Server) ThreadReadDone(rootID string, opening uint64, ts int64) {
 	defer s.mu.Unlock()
 	if s.openReadLocked(rootID, opening) {
 		s.openRead.ts = max(s.openRead.ts, ts)
+		if t := s.threads[rootID]; t != nil {
+			s.readNotificationsLocked(t.channelID, rootID, ts)
+		}
 	}
 }
 

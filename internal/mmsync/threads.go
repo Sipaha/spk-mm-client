@@ -254,6 +254,7 @@ func (w *Worker) markThreadRead(ctx context.Context, rootID string, r state.Thre
 	switch {
 	case err == nil:
 		w.st.ThreadReadDone(rootID, r.Opening, r.TS)
+		w.changed(state.Change{Badge: true}) // retract read OS notifications even before the WS echo
 		return true
 	case ctx.Err() != nil:
 	case errors.As(err, &re) && re.Status == http.StatusNotFound:

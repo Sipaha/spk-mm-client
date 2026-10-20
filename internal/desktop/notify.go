@@ -20,10 +20,10 @@ import (
 // notifications as unavailable. See notifier.ServiceStartup.
 const notifyStartupTimeout = 2 * time.Second
 
-// notifyQueueSize bounds notifications waiting for the OS backend, and
-// notifySendTimeout bounds one send: the D-Bus Notify call has no timeout of
-// its own, so a hung one is detached and later notifications are dropped
-// until it returns (see asyncSender) — callers never wait.
+// notifyQueueSize bounds the OS sender's work queue. notificationUpdates
+// retains the latest desired send/remove for up to 512 outstanding groups.
+// notifySendTimeout bounds one call: D-Bus has no timeout of its own, so a
+// hung call is detached, with retained updates retried once it returns.
 const (
 	notifyQueueSize   = 16
 	notifySendTimeout = 10 * time.Second
@@ -45,7 +45,7 @@ const (
 // and marks notifications unavailable, degrading test()/sends to no-ops.
 type notifier struct {
 	svc       *notifications.NotificationService
-	out       *asyncSender[notifications.NotificationOptions] // sends off the caller's goroutine
+	out       *notificationUpdates // sends/retractions off the caller's goroutine
 	available atomic.Bool
 	disabled  bool // set before app.Run when the D-Bus probe failed
 }
@@ -58,11 +58,7 @@ func (n *notifier) disable() { n.disabled = true }
 func newNotifier(ctx context.Context, onClick func(data map[string]any)) *notifier {
 	svc := notifications.New()
 	n := &notifier{svc: svc}
-	n.out = newAsyncSender(ctx, "notification", notifyQueueSize, notifySendTimeout, func(o notifications.NotificationOptions) {
-		if err := svc.SendNotification(o); err != nil {
-			slog.Warn("notification failed", "id", o.ID, "err", err)
-		}
-	})
+	n.out = newNotificationUpdates(ctx, notifyQueueSize, notifySendTimeout, time.Second)
 	svc.OnNotificationResponse(func(r notifications.NotificationResult) {
 		if r.Error != nil {
 			slog.Warn("notification response error", "err", r.Error)
@@ -130,12 +126,24 @@ func (n *notifier) Notify(m api.Notification) {
 		slog.Debug("notification dropped: notifications unavailable", "id", m.ID)
 		return
 	}
-	n.send(notifications.NotificationOptions{
+	o := notifications.NotificationOptions{
 		ID: m.ID, Title: m.Title, Body: m.Body,
 		Data: map[string]any{"server_id": m.ServerID, "channel_id": m.ChannelID, "root_id": m.RootID},
+	}
+	n.out.put(m.ID, func() error {
+		if m.Read() {
+			return n.svc.RemoveNotification(m.ID)
+		}
+		return n.svc.SendNotification(o)
 	})
 }
 
 func (n *notifier) send(o notifications.NotificationOptions) {
-	n.out.enqueue(o) // drops are logged by the sender, once per episode
+	n.out.put(o.ID, func() error { return n.svc.SendNotification(o) })
+}
+
+func (n *notifier) RemoveNotification(id string) {
+	if n.available.Load() {
+		n.out.remove(id, func() error { return n.svc.RemoveNotification(id) })
+	}
 }

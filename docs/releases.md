@@ -65,6 +65,31 @@ builds; a 90-second isolated native smoke with screenshot inspection. Copy Image
 was additionally tested using actual production-tag WebKit native input and a
 PNG clipboard read. Publication is gated by the tagged CI and all six native jobs.
 
+## Release 1.0.3
+
+The next patch release improves paragraph spacing in messages, threads and
+draft previews. Markdown blank lines have an 8 px paragraph gap; single
+newlines remain line breaks, and outer block margins are trimmed.
+
+Linux system notifications are retracted after a confirmed channel/thread
+read, including reads from another client. Delayed bursts cannot recreate a
+read notification. Notification sends and retractions share a bounded queue
+of desired updates, retried after a temporarily unresponsive backend. CRT
+replies require their own thread read; viewing the channel alone does not
+mark them read. Retained notifications of a removed/replaced account are
+retracted as well.
+
+Cinnamon's taskbar counts retained system notifications, whereas the tray
+uses the client's unread/mention state. Clearing stale notifications fixes
+the lingering taskbar indicator; it does not make these two counters
+identical. This release adds no Cinnamon extension and changes no desktop
+settings. The development launcher isolation described below is also
+included, along with the updated repository README and its support link.
+
+[English notes](../changelog/1.0.3/en.md) and
+[Russian notes](../changelog/1.0.3/ru.md) describe this release. Publication
+uses the same tagged test, six-target packaging and verified draft gates.
+
 ## Packages and runtime requirements
 
 ### Linux menu launcher shadowing

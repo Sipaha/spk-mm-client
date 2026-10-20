@@ -23,11 +23,56 @@ type Notification struct {
 	ChannelID string `json:"channel_id"`
 	// RootID: a reply's thread — the click opens it after the channel.
 	RootID string `json:"root_id,omitempty"`
+	// Internal read receipt and worker identity survive delayed burst delivery.
+	// Neither is exposed to the UI or the OS notification payload.
+	receipt *state.NotificationReceipt
+	owner   *state.Server
 }
 
 // Notifier shows a notification; it may block (D-Bus), the service calls it
 // from its own goroutine.
 type Notifier interface{ Notify(Notification) }
+
+// NotificationRemover optionally retracts a delivered OS notification.
+// Like the desktop Notify implementation, it must queue work without waiting
+// for the OS: reconciliation runs on the service's coalescer.
+type NotificationRemover interface{ RemoveNotification(string) }
+
+// Read reports a confirmed read, including one received after this item
+// entered the desktop delivery queue.
+func (n Notification) Read() bool { return n.receipt != nil && n.receipt.Read() }
+
+func (s *Service) notificationCurrent(n Notification) bool {
+	if n.receipt == nil { // hand-built/test notifications have no receipt
+		return true
+	}
+	m := s.manager()
+	if m == nil || n.receipt.Read() {
+		return false
+	}
+	w := m.Worker(n.ServerID)
+	return w != nil && w.State() == n.owner
+}
+
+// reconcileNotifications is also called for read changes that leave the
+// aggregate badge unchanged (another channel/server may still be unread).
+func (s *Service) reconcileNotifications() {
+	s.notificationsMu.Lock()
+	defer s.notificationsMu.Unlock()
+	s.mu.Lock()
+	nt := s.notifier
+	s.mu.Unlock()
+	remover, ok := nt.(NotificationRemover)
+	if !ok {
+		return
+	}
+	for id, n := range s.deliveredNotifications {
+		if !s.notificationCurrent(n) {
+			remover.RemoveNotification(id)
+			delete(s.deliveredNotifications, id)
+		}
+	}
+}
 
 // RecordingNotifier keeps notifications in memory (browser mode, tests).
 type RecordingNotifier struct {

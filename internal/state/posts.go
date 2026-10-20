@@ -679,6 +679,7 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		if root || !crt {
 			ch.Member.MsgCount, ch.Member.MsgCountRoot = ch.Info.TotalMsgCount, ch.Info.TotalMsgCountRoot
 			ch.Member.LastViewedAt = max(ch.Member.LastViewedAt, p.CreateAt)
+			s.readNotificationsLocked(ch.Info.ID, "", p.CreateAt)
 		}
 	} else if slices.Contains(mentions, s.me.ID) {
 		ch.Member.MentionCount++
@@ -931,6 +932,7 @@ func (s *Server) NeedsView(channelID string) bool {
 }
 
 func (s *Server) markReadLocked(ch *Chan, at int64) {
+	s.readNotificationsLocked(ch.Info.ID, "", at)
 	ch.Member.MsgCount, ch.Member.MsgCountRoot = ch.Info.TotalMsgCount, ch.Info.TotalMsgCountRoot
 	ch.Member.MentionCount, ch.Member.MentionCountRoot, ch.Member.UrgentMentionCount = 0, 0, 0
 	ch.Member.LastViewedAt = max(ch.Member.LastViewedAt, at)
