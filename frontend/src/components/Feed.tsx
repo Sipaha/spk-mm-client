@@ -35,6 +35,8 @@ interface Props {
   onLoadOlder(): Promise<boolean>
   // onLoadNewer loads one page of the history gap (resolves once done — a
   // cancelled one too); rejects with the error the gap row shows.
+  // A numeric result is the applied history revision: the next operation
+  // waits for that snapshot to reach this component's committed render.
   onLoadNewer?(): Promise<unknown>
   // onRetryStale: "Retry" of a stale history's reread.
   onRetryStale?(): void
@@ -224,6 +226,8 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
   const lastLoad = useRef<{ rows: number; top: number } | null>(null) // rows and scrollTop when the last load started
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [loadingGap, setLoadingGap] = useState(false)
+  const gapRevision = useRef<{ revision: number; generation: number | undefined } | null>(null)
+  const [gapSettled, settleGap] = useReducer((n: number) => n + 1, 0)
   const [gapError, setGapError] = useState<string | null>(null)
   const gapAutoLoads = useRef(0) // gap pages loaded on their own since the user last acted or the row left the screen
   // A jump: the target waiting for its row (focusPending), the last nonce
@@ -545,12 +549,18 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     const t = restoreTarget.current
     const el = scroller.current
     const row = t !== null ? el?.querySelector(`[data-key="${CSS.escape(t.key)}"]`) : null
-    if (restoring.current && t !== null && t.side === side && el && row) {
+    if (restoring.current && t !== null && t.side === side && rows.some((r) => r.key === t.key)) {
       anchor.current = t.key
       anchorOffset.current = t.offset
       anchorEdge.current = t.edge
-      const b = row.getBoundingClientRect()
-      captureRefs((t.edge === 'bottom' ? b.bottom : b.top) - el.getBoundingClientRect().top - t.offset)
+      // A full page can push the target out of the mounted range until the
+      // virtualizer catches up with the restoring scroll. Its data still
+      // exists: keep the target and previous fallbacks rather than anchoring
+      // on the temporary history rows occupying the old mounted range.
+      if (el && row) {
+        const b = row.getBoundingClientRect()
+        captureRefs((t.edge === 'bottom' ? b.bottom : b.top) - el.getBoundingClientRect().top - t.offset)
+      }
       return
     }
     captureAnchor()
@@ -593,15 +603,22 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     setLoadingGap(true)
     setGapError(null)
     beginAnchor('gap')
+    const generation = data.gap?.gen
+    let revision: unknown
     try {
-      await onLoadNewer()
+      revision = await onLoadNewer()
     } catch (e) {
       anchor.current = null
       setGapError(errorMessage(e))
     } finally {
-      loading.current = false
-      setLoadingGap(false)
-      afterHistoryOp()
+      if (typeof revision === 'number') {
+        gapRevision.current = { revision, generation }
+        settleGap()
+      } else {
+        loading.current = false
+        setLoadingGap(false)
+        afterHistoryOp()
+      }
     }
   }
 
@@ -615,6 +632,27 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       checkGap()
     }
   }
+
+  useLayoutEffect(() => {
+    const pending = gapRevision.current
+    if (pending === null) return
+    const reached = (data.hist_rev ?? -1) >= pending.revision
+    if (!reached && data.gap?.gen === pending.generation) return
+    if (!reached) {
+      // Replaced history (e.g. a restored session) can restart revisions.
+      // An old operation must neither lock nor anchor the new generation.
+      anchor.current = null
+      restoring.current = false
+      restoreTarget.current = null
+      frame('anchor', () => {})
+    }
+    gapRevision.current = null
+    loading.current = false
+    setLoadingGap(false)
+    // Let this commit restore its anchor before a queued click starts the
+    // next page. Scroll and mount checks also see the committed revision.
+    frame('history', afterHistoryOp)
+  }, [gapSettled, data.hist_rev, data.gap?.gen])
 
   // checkGap: in the next frame (after layout), load the gap when its row
   // is on screen; off screen it gets a fresh budget for the next time the
@@ -828,6 +866,17 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       checkGap()
       return
     }
+    if (newSend) {
+      // Sending explicitly follows the new post, including while a history
+      // page is pending. Its old reading anchor must not undo that intent.
+      atBottom.current = true
+      bottomTop.current = null
+      anchor.current = null
+      anchorRev.current = undefined
+      restoring.current = false
+      restoreTarget.current = null
+      frame('anchor', () => {})
+    }
     if (!ready.current) {
       // First rows: the "new messages" line, else the latest post.
       ready.current = true
@@ -874,11 +923,16 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
       checkGap()
       return
     }
-    if (anchor.current !== null && !atBottom.current && !newSend) holdAnchor()
     if (atBottom.current || newSend) scrollToIndex(rows.length - 1, { align: 'end' })
     fillViewportIfShort()
     checkGap()
   }, [rows, v]) // loadOlder is recreated every render; the effect only needs rows
+
+  // Virtualizer measurements can move mounted rows without changing rows.
+  // Keep a pending page's reading position in those commits too.
+  useLayoutEffect(() => {
+    if (anchor.current !== null && !restoring.current && !atBottom.current) holdAnchor()
+  })
 
   // A jump (a new nonce): from now on nothing else moves the feed — not the
   // bottom (atBottom off at once, before any scroll event), not a history
@@ -959,7 +1013,9 @@ export function Feed({ data, variant, serverId, me, locale, actions, editingId, 
     if (!wasAtBottom && atBottom.current) resetNewPosts()
     // Still waiting for the page's revision: track where the user is now —
     // not the scroll events of a restore still converging (beginAnchor).
-    if (anchor.current && !restoring.current) captureAnchor()
+    // A fast jump can temporarily outrun the mounted range and capture no
+    // post. Keep trying during the pending page when the reader returns.
+    if (!restoring.current && (anchor.current !== null || (loading.current && anchorRev.current !== undefined && !atBottom.current))) captureAnchor()
     if (el.scrollTop < NEAR_TOP) void loadOlder()
     else autoLoads.current = 0 // away from the top: the next arrival there is a new episode
     checkGap()

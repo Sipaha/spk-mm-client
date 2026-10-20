@@ -822,6 +822,32 @@ test('loadNewer loads a gap page and re-reads the channel; a cancel is silent, a
   expect(useStore.getState().lastError).toBeNull()
 })
 
+test('loadNewer waits for its fresh snapshot when an older refresh is still in flight', async () => {
+  vi.mocked(client.openChannel).mockResolvedValue(chan('a', { hist_rev: 1 }))
+  await openChannel(1, 'a')
+  const stale = deferred<ChannelDTO>()
+  const fresh = deferred<ChannelDTO>()
+  vi.mocked(client.getChannel).mockReturnValueOnce(stale.p).mockReturnValueOnce(fresh.p)
+  const refresh = refreshChannel(1, 'a')
+  let completed = false
+  const page = loadNewer(1, 'a').then(() => { completed = true })
+  try {
+    await vi.waitFor(() => expect(client.loadNewer).toHaveBeenCalled())
+    expect(completed).toBe(false)
+    expect(client.getChannel).toHaveBeenCalledTimes(2)
+    fresh.resolve(chan('a', { hist_rev: 2 }))
+    await page
+    expect(useStore.getState().channel?.hist_rev).toBe(2)
+    stale.resolve(chan('a', { hist_rev: 1 }))
+    await refresh
+    expect(useStore.getState().channel?.hist_rev).toBe(2)
+  } finally {
+    stale.resolve(chan('a', { hist_rev: 1 }))
+    fresh.resolve(chan('a', { hist_rev: 2 }))
+    await Promise.all([refresh, page])
+  }
+})
+
 test('retryRevalidation / retryThreadRevalidation call the API; a failure is reported, a cancel is not', async () => {
   vi.mocked(client.openChannel).mockResolvedValue(chan('a'))
   await openChannel(1, 'a')

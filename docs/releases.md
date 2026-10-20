@@ -71,6 +71,22 @@ The next patch release improves paragraph spacing in messages, threads and
 draft previews. Markdown blank lines have an 8 px paragraph gap; single
 newlines remain line breaks, and outer block margins are trimmed.
 
+Chained history-gap loads preserve the reading position while the
+virtualizer remounts rows or commits new measurements without changing the
+messages. A pending page recaptures the reading position after a fast
+scroll temporarily outruns the mounted range. An own send explicitly follows
+the bottom and supersedes the old anchor. History reads bypass event-refresh coalescing and
+return the applied revision; another gap operation waits until that
+revision reaches the rendered feed. Replacing the history generation
+releases an obsolete wait. Pixel-position assertions remain exact; the
+browser fixture prepares a long gap independently of earlier tests.
+
+Local regression verification includes 1142 frontend tests and 25 consecutive
+long-gap browser repetitions with 4× CPU throttling and exact pixel assertions.
+The empty-DOM recapture regression fails on the earlier condition (140 px
+instead of 180 px) and passes with the fix. The isolated native Linux smoke
+observed notification count 1→0, matching tray reset and no delayed resurrection.
+
 Linux system notifications are retracted after a confirmed channel/thread
 read, including reads from another client. Delayed bursts cannot recreate a
 read notification. Notification sends and retractions share a bounded queue

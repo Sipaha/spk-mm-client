@@ -251,7 +251,11 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         actions={actions}
         editingId={editingId}
         onLoadOlder={() => (focus ? loadThreadFocus(server.id, thread.root_id, false) : loadOlderReplies(server.id, thread.root_id))}
-        onLoadNewer={() => loadThreadFocus(server.id, thread.root_id, true)}
+        onLoadNewer={async () => {
+          await loadThreadFocus(server.id, thread.root_id, true)
+          const s = useStore.getState()
+          return s.selectedId === server.id && s.thread?.root_id === thread.root_id ? s.thread.focus?.rev : undefined
+        }}
         onRetryStale={() => void retryThreadRevalidation(server.id, thread.root_id)}
         focus={threadFocus}
         onFocusShown={focusShown}

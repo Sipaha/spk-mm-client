@@ -184,6 +184,16 @@ export async function refreshChannel(serverId: number, channelId: string) {
   await fetchChannel(serverId, channelId, false)
 }
 
+// History cannot use an event refresh's fire-and-forget coalescing: its
+// caller must see the page before it starts another anchored operation.
+// A fresh, generation-ordered read supersedes any older snapshot in flight.
+async function refreshHistoryChannel(serverId: number, channelId: string): Promise<number | undefined> {
+  if (wanted?.serverId !== serverId || wanted.channelId !== channelId) return
+  if (!(await fetchChannel(serverId, channelId, false))) return
+  const s = useStore.getState()
+  if (wanted?.serverId === serverId && wanted.channelId === channelId && s.selectedId === serverId && s.channel?.id === channelId) return s.channel.hist_rev
+}
+
 async function fetchChannel(serverId: number, channelId: string, open: boolean) {
   const my = ++channelSeq
   inFlight = true
@@ -401,14 +411,14 @@ async function restoreThread(panel: PanelThread) {
 // loadNewer loads one page of the gap between the held history and the
 // window, then re-reads the channel. A cancelled one is quiet; a failure
 // (no_progress, offline…) is thrown: the gap row shows it with "Retry".
-export async function loadNewer(serverId: number, channelId: string): Promise<void> {
+export async function loadNewer(serverId: number, channelId: string): Promise<number | undefined> {
   try {
     await client.loadNewer(serverId, channelId)
   } catch (e) {
     if (cancelled(e)) return
     throw e
   }
-  await refreshChannel(serverId, channelId)
+  return await refreshHistoryChannel(serverId, channelId)
 }
 
 // retryRevalidation: "Retry" of a stale history's reread (Go retries on
@@ -774,8 +784,7 @@ export const openLink = (href: string) => {
 export async function loadOlder(serverId: number, channelId: string): Promise<boolean> {
   try {
     await client.loadOlder(serverId, channelId)
-    await refreshChannel(serverId, channelId)
-    return true
+    return (await refreshHistoryChannel(serverId, channelId)) !== undefined
   } catch (e) {
     report(e)
     return false

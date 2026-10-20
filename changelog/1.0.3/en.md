@@ -3,6 +3,7 @@
 - Separate paragraphs more clearly in messages, threads and draft previews. Single line breaks and short messages stay compact.
 - On Linux, retract system notifications after their messages are read, including reads from another client. This clears stale notification badges on Cinnamon's taskbar.
 - Keep already-read notifications from reappearing when a delayed message burst finishes. Retry notification updates after a temporarily unresponsive desktop notification service.
+- Preserve the message being read when a history gap loads several pages in succession, including on a busy UI.
 - Keep the Linux development launcher separate from the installed release, with its own name and icon.
 - Improve the repository README with the application icon, release badges and navigation links.
 

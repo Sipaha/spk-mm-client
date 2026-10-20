@@ -16,7 +16,10 @@ const shots = screenshotDir
 
 test.describe.configure({ timeout: 120_000 }) // the scroll walks read a few hundred posts step by step
 
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus) {
+    await page.screenshot({ path: info.outputPath('failure-before-cleanup.png'), timeout: 5000 }).catch(() => {})
+  }
   if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
   if (page.url().startsWith('http')) await testPost(page, 'fake/crt', { mode: 'disabled' })
 })
@@ -161,6 +164,13 @@ test('an open segment and 70 new posts: the gap fills without losing or repeatin
 
 test('a gap reached from below, a live post while its page loads: the post on screen does not move', async ({ page }, info) => {
   await signInAlice(page)
+  // Always exercise chained full pages, even when this test runs alone.
+  // Wait for the last setup post in the UI so it cannot masquerade as the
+  // live arrival measured below on a slower browser.
+  const setup = unique('gap fixture')
+  for (let i = 0; i < 150; i++) await fakePost(page, 'c-town', 'bob', `${setup} ${i}`)
+  await expect(feed(page).getByText(`${setup} 149`, { exact: true })).toBeVisible()
+  await frames(page)
   await jumpToTen(page)
   const log = feed(page)
   const held = await hold(page, 'LoadNewer', 'request')
@@ -262,6 +272,7 @@ test('a gap reached from below, a live post while its page loads: the post on sc
   if (moved) {
     const rows = `before:\n${rowsBefore}\nafter:\n${await onScreen()}`
     info.annotations.push({ type: 'rows', description: rows })
+    await info.attach('gap-anchor-rows', { body: rows, contentType: 'text/plain' })
     console.log(`the probe ${JSON.stringify(before)} moved; rows on screen ${rows}`)
     throw moved
   }

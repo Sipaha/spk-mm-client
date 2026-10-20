@@ -1209,6 +1209,127 @@ test('a chained gap page: the anchored post leaving the window keeps the rest on
   }
 })
 
+test('a chained gap page keeps its reading position while the target is being remounted', async () => {
+  const pages = [pending(), pending()]
+  let call = 0
+  const onLoadNewer = vi.fn(() => pages[Math.min(call++, 1)].promise)
+  const r = await channelRig(400, {}, { onLoadNewer })
+  const query = r.log.querySelector.bind(r.log)
+  const queryAll = r.log.querySelectorAll.bind(r.log)
+  let hidden = false
+  const one = vi.spyOn(r.log, 'querySelector').mockImplementation(<E extends Element = Element>(selector: string) =>
+    hidden && selector === '[data-key="w1"]' ? null : query<E>(selector),
+  )
+  const all = vi.spyOn(r.log, 'querySelectorAll').mockImplementation(<E extends Element = Element>(selector: string) =>
+    queryAll<E>(hidden && selector === '[data-kind="post"]' ? `${selector}:not([data-key="w1"])` : selector),
+  )
+  try {
+    await r.scrollTo(380)
+    const seen = r.onScreen('w3')!
+    pages[0].resolve()
+    await act(async () => {})
+    r.st.skew = 10
+    hidden = true // the virtualizer has not remounted the restoring target yet
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(onLoadNewer).toHaveBeenCalledTimes(2)
+    hidden = false
+    pages[1].resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...seg(1, 3, 'm', 150), ...win(1, 10)], hist_rev: 3 })
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    one.mockRestore()
+    all.mockRestore()
+    r.restore()
+  }
+})
+
+test('a gap page stays serialized until its returned revision reaches the rendered feed', async () => {
+  const pages = [pending<number>(), pending<number>()]
+  let call = 0
+  const onLoadNewer = vi.fn(() => pages[Math.min(call++, 1)].promise)
+  const r = await channelRig(400, {}, { onLoadNewer })
+  try {
+    await r.scrollTo(380)
+    const seen = r.onScreen('w3')!
+    pages[0].resolve(2)
+    await act(async () => {})
+    await r.flush()
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(onLoadNewer).toHaveBeenCalledTimes(2)
+    pages[1].resolve(3)
+    await act(async () => {})
+    await r.flush()
+    expect(onLoadNewer).toHaveBeenCalledTimes(2)
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...seg(1, 3, 'm', 150), ...win(1, 10)], hist_rev: 3,
+      gap: openGap({ open: false, before_id: '' }) })
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
+test('a replaced history generation releases a gap operation waiting for an old revision', async () => {
+  const page = pending<number>()
+  const onLoadNewer = vi.fn(() => page.promise)
+  const r = await channelRig(400, {}, { onLoadNewer })
+  try {
+    await r.scrollTo(380)
+    page.resolve(10)
+    await act(async () => {})
+    await r.flush()
+    expect(onLoadNewer).toHaveBeenCalledTimes(1)
+    await r.update({ hist_rev: 0, gap: openGap({ gen: 2, open: false, before_id: '' }) })
+    await r.update({ gap: openGap({ gen: 3 }) })
+    expect(onLoadNewer).toHaveBeenCalledTimes(2)
+  } finally {
+    r.restore()
+  }
+})
+
+test('a pending page recaptures after a scroll temporarily finds no mounted posts', async () => {
+  const page = pending()
+  const r = await channelRig(400, {}, { onLoadNewer: () => page.promise })
+  const queryAll = r.log.querySelectorAll.bind(r.log)
+  let hidden = false
+  const all = vi.spyOn(r.log, 'querySelectorAll').mockImplementation(<E extends Element = Element>(selector: string) =>
+    queryAll<E>(hidden && selector === '[data-kind="post"]' ? '[data-no-mounted-posts]' : selector),
+  )
+  try {
+    await r.scrollTo(380)
+    hidden = true // a scrollbar jump outran the virtualizer's mounted range
+    await r.scrollTo(r.log.scrollHeight - 400)
+    hidden = false
+    await r.scrollTo(380)
+    const seen = r.onScreen('w3')!
+    await r.update({ posts: [...seg(1, 10), ...win(2, 11)], gap: openGap({ before_id: 'w2' }) })
+    expect(r.onScreen('w3')).toBe(seen)
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 11)], hist_rev: 2, gap: openGap({ open: false, before_id: '' }) })
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    all.mockRestore()
+    r.restore()
+  }
+})
+
+test('a pending gap anchor holds through a layout-only virtualizer commit', async () => {
+  const page = pending()
+  const r = await channelRig(400, {}, { onLoadNewer: () => page.promise })
+  try {
+    await r.scrollTo(380)
+    const seen = r.onScreen('w3')!
+    r.st.skew = 10
+    await r.update({}) // row positions changed, the data/rows did not
+    expect(r.onScreen('w3')).toBe(seen)
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10)], hist_rev: 2 })
+    expect(r.onScreen('w3')).toBe(seen)
+  } finally {
+    r.restore()
+  }
+})
+
 // Fix c1efe70: a gap row the virtualizer mounts later than the scroll's own
 // check still loads, with no scroll event and no rows change. Here the
 // virtualizer's viewport (its ResizeObserver) grows while the feed's box
@@ -1426,6 +1547,23 @@ test('fix: a new own send after a jump still goes to the bottom', async () => {
     expect(r.onScreen('s8')).toBe(280)
     await r.update({ posts: [...posts, { ...P('mine', 'me', 0), pending: true }] })
     expect(r.st.top).toBe(r.log.scrollHeight - 600)
+  } finally {
+    r.restore()
+  }
+})
+
+test('a new own send supersedes a pending gap anchor', async () => {
+  const page = pending()
+  const posts = [...seg(1, 10), ...win(1, 10)]
+  const mine = { ...P('mine', 'me', 0), pending: true }
+  const r = await channelRig(400, {}, { onLoadNewer: () => page.promise })
+  try {
+    await r.scrollTo(380)
+    await r.update({ posts: [...posts, mine] })
+    expect(r.st.top).toBe(r.log.scrollHeight - 400)
+    page.resolve()
+    await r.update({ posts: [...seg(1, 10), ...seg(1, 3, 'n', 200), ...win(1, 10), mine], hist_rev: 2 })
+    expect(r.st.top).toBe(r.log.scrollHeight - 400)
   } finally {
     r.restore()
   }
