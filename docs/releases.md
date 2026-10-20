@@ -65,9 +65,34 @@ builds; a 90-second isolated native smoke with screenshot inspection. Copy Image
 was additionally tested using actual production-tag WebKit native input and a
 PNG clipboard read. Publication is gated by the tagged CI and all six native jobs.
 
-## Release 1.0.3
+## Published 1.0.3
 
-The next patch release improves paragraph spacing in messages, threads and
+[v1.0.3](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.0.3) was
+published on 2026-10-20 from
+`b08eb9e2e56e0f455639bec565b82ade077dfa1c`. Candidate main CI
+[39379918785](https://github.com/Sipaha/spk-mm-client/actions/runs/39379918785)
+passed its common job and all six native targets. Tagged Release workflow
+[39382802136](https://github.com/Sipaha/spk-mm-client/actions/runs/39382802136)
+passed validation, the complete common suite, all six native jobs and publication.
+
+All 43 actual public assets were downloaded and verified: GitHub sizes/digests,
+21 payload checksums and sidecars, 12 archives, source/version/architecture,
+Go 1.26.9 build metadata, tagged legal and documentation contents, DEB/RPM
+metadata and payloads, extracted MSI binaries/notices and DMG app contents.
+Production Linux CLI version and licenses matched the tagged source. All six
+native PNGs matched their source/version/hash reports and were visually reviewed.
+
+GitHub `releases/latest` and the live download page returned v1.0.3. All 48
+language/theme/width combinations passed with 14 native packages and their
+checksum links, loaded images, correct support destinations, no horizontal
+overflow or JavaScript errors, and WCAG AA checks. The first layout used the
+live latest endpoint; later layouts reused the downloaded release metadata
+to avoid anonymous API quota exhaustion. The current site has one support
+link in each desktop navigation, mobile navigation, code section and footer;
+all four destinations were verified. Representative site screenshots and
+the actual GitHub README screenshot were visually reviewed.
+
+This patch release improves paragraph spacing in messages, threads and
 draft previews. Markdown blank lines have an 8 px paragraph gap; single
 newlines remain line breaks, and outer block margins are trimmed.
 
