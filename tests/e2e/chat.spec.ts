@@ -1,12 +1,15 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { screenshotDir, apiCall, channel, expectSent, feed, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
+import { screenshotDir, apiCall, channel, expectSent, feed, frames, removeServerFromMenu, serverId, signInAlice, testGet, testPost, unique } from './helpers'
 
 // Keep verification artifacts in the current runner's scratch directory.
 const SIDEBAR_SHOTS = screenshotDir
 
 // A failed test must not leave its server behind: every later test signs in
 // from the empty start screen (same rule as feed-scroll.spec.ts).
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus) {
+    await page.screenshot({ path: info.outputPath('failure-before-cleanup.png'), timeout: 5000 }).catch(() => {})
+  }
   if (await page.getByRole('button', { name: 'Server menu' }).isVisible().catch(() => false)) await removeServerFromMenu(page)
 })
 
@@ -146,6 +149,33 @@ test('editing a multiline message opens an editor fitted to its content and grow
   await edit.press('Escape')
 })
 
+async function reachBottom(page: Page) {
+  // Opening can intentionally position at the unread boundary. Establish
+  // the hover fixture's bottom position after the first rows are mounted,
+  // then test that the incoming post is followed without scrolling it.
+  const log = feed(page)
+  await expect(log.locator('article').last()).toBeVisible()
+  let previous = ''
+  let stableSince = Date.now()
+  // Initial unread scrolling can still reconcile measured rows after the
+  // first paint. Retry only this setup position; require stable geometry
+  // through the 150ms scrolling-idle cycle before injecting the target.
+  await expect.poll(async () => {
+    const g = await log.evaluate((el) => ({ top: el.scrollTop, total: el.scrollHeight, height: el.clientHeight }))
+    if (g.total - g.top - g.height >= 1) {
+      await log.evaluate((el) => el.scrollTo({ top: el.scrollHeight }))
+      await frames(page)
+      previous = ''
+      stableSince = Date.now()
+      return false
+    }
+    const key = `${g.top}:${g.total}:${g.height}`
+    if (key !== previous) stableSince = Date.now()
+    previous = key
+    return Date.now() - stableSince >= 300
+  }, { intervals: [50] }).toBe(true)
+}
+
 // latestPost: a fresh post from bob, the feed's last row. The hover tests
 // below used a seed post («Message #140») whose place on screen depends on
 // how much every earlier test posted into Town Square (the fake is shared by
@@ -154,10 +184,12 @@ test('editing a multiline message opens an editor fitted to its content and grow
 // its bottom", the next update right after sign-in (read state, sidebar)
 // pinned it back down, the post slid from under the pointer and its toolbar
 // — rendered only while hovered — was gone for good (the click waited 30 s
-// for a button nothing would show again). The last row is fully on screen
-// at the bottom: hovering it scrolls nothing, and a re-pin moves nothing.
+// for a button nothing would show again). Initial unread positioning also
+// need not be at the bottom. Choose the bottom first, then require the new
+// row fully on screen: hovering it scrolls nothing, and a re-pin moves nothing.
 async function latestPost(page: Page) {
   await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+  await reachBottom(page)
   const text = unique('hover target')
   await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: text })
   const post = feed(page).locator('article', { hasText: text })
@@ -185,22 +217,45 @@ test('mark as unread keeps the channel unread while it is open', async ({ page }
 // The Save button keeps one fixed label ("Save") whether saved or not —
 // toggle state is aria-pressed only, no label swap (final-review RULING
 // #4, UI pass 2026-09-28).
-test('save a post for later: hover, Save, reload keeps it, then unsave', async ({ page }) => {
+for (const unread of [false, true]) test(`save a post for later: hover, Save, reload keeps it, then unsave${unread ? ' — opened at an unread boundary' : ''}`, async ({ page }, info) => {
   await signInAlice(page)
-  const { post, text } = await latestPost(page)
-  await post.hover()
-  await post.getByRole('button', { name: 'Save' }).click()
-  await expect(post.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
+  const fixturePosts: string[] = []
+  try {
+    if (unread) {
+      const boundary = await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: unique('unread boundary') })
+      fixturePosts.push(boundary.id)
+      for (let i = 0; i < 35; i++) {
+        const p = await testPost(page, 'fake/post', { channel_id: 'c-town', username: 'bob', message: unique('unread history') })
+        fixturePosts.push(p.id)
+      }
+      await apiCall(page, 'MarkUnread', { id: await serverId(page), post_id: boundary.id })
+      await removeServerFromMenu(page)
+      await signInAlice(page)
+      await expect(feed(page).getByText('New messages', { exact: true })).toBeInViewport({ ratio: 1 })
+    }
+    const { post, text } = await latestPost(page)
+    await post.hover()
+    await post.getByRole('button', { name: 'Save' }).click()
+    await expect(post.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
 
-  await page.reload()
-  await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
-  const postAfterReload = feed(page).locator('article', { hasText: text })
-  await expect(postAfterReload).toBeInViewport({ ratio: 1 })
-  await postAfterReload.hover()
-  await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
+    await page.reload()
+    await expect(page.getByRole('heading', { name: /Town Square/ })).toBeVisible()
+    await reachBottom(page) // reload may intentionally restore the unread boundary again
+    const postAfterReload = feed(page).locator('article', { hasText: text })
+    await expect(postAfterReload).toBeInViewport({ ratio: 1 })
+    await postAfterReload.hover()
+    await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'true')
+    if (unread) await page.screenshot({ path: info.outputPath('saved-after-unread.png') })
 
-  await postAfterReload.getByRole('button', { name: 'Save' }).click()
-  await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'false')
+    await postAfterReload.getByRole('button', { name: 'Save' }).click()
+    await expect(postAfterReload.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-pressed', 'false')
+  } catch (error) {
+    await page.screenshot({ path: info.outputPath('save-failure-before-fixture-cleanup.png'), timeout: 5000 }).catch(() => {})
+    throw error
+  } finally {
+    // The fake is shared: do not push seed posts out of later tests' windows.
+    for (const post_id of fixturePosts) await testPost(page, 'fake/delete', { post_id })
+  }
   await removeServerFromMenu(page)
 })
 

@@ -206,3 +206,32 @@ notification but before the test reads the pending view. The fixture now holds
 the actual create request until pending state, root ID and CRT feed exclusion
 have been inspected, then releases it and verifies confirmation and root count.
 Assertions are retained; no production delay or timeout relaxation was added.
+
+## Hover fixture position after opening unread history
+
+The documentation-only follow-up CI
+[39385876044](https://github.com/Sipaha/spk-mm-client/actions/runs/39385876044)
+failed before Save at the latest-post full-viewport assertion (ratio 0.68).
+The tagged release and candidate CI had passed on the same application source.
+A deterministic unread-boundary setup demonstrates the fixture defect: opening
+can intentionally position at the first unread message, while `latestPost`
+assumed the feed was already following its bottom. The exact original timing
+was not reproduced in 60 CPU-throttled editing/MarkUnread/Save scenarios.
+
+The hover fixture now waits for the first rows, explicitly reaches the bottom
+and waits for stable bottom geometry through measurement and scrolling-idle
+updates before the new post arrives. Only setup positioning is retried;
+post-arrival and action assertions are unchanged.
+It selects that position again after reload. The incoming target is never
+scrolled into view to satisfy its assertion. A separate Save variant opens a
+known unread history and retains full-viewport, saved-state persistence and
+unsave checks. Failure screenshots are captured before server cleanup.
+Application behavior and the immutable v1.0.3 release are unchanged.
+
+Verification of the fixture correction used the actual published v1.0.3
+browser binary: all 111 browser scenarios passed, plus 75 CPU-throttled
+MarkUnread/Save scenarios (25 repetitions of each variant at 4× CPU).
+The saved-post screenshot after reload was inspected. The unread fixture
+removes its own setup posts in `finally` so the shared fake's later history
+and expired-session checks remain independent. No assertion ratio, action
+check or timeout was relaxed; no application source or release asset changed.
