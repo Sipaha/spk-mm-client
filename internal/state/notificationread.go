@@ -30,10 +30,9 @@ func (s *Server) WatchNotification(p model.Post) *NotificationReceipt {
 	if s.notificationReads == nil {
 		s.notificationReads = map[ComposerKey]*notificationWatch{}
 	}
-	key := ComposerKey{Channel: p.ChannelID}
-	if s.crtLocked() {
-		key.Root = p.RootID
-	}
+	// Keep the actual root even without CRT: the mode may change while the
+	// notification is pending. Read scope follows the mode at read time.
+	key := ComposerKey{Channel: p.ChannelID, Root: p.RootID}
 	w := s.notificationReads[key]
 	if w == nil {
 		if len(s.notificationReads) >= 512 {
@@ -53,7 +52,7 @@ func (s *Server) WatchNotification(p model.Post) *NotificationReceipt {
 	w.at = max(w.at, p.CreateAt)
 	if ch := s.chans[p.ChannelID]; ch == nil {
 		w.read.Store(math.MaxInt64)
-	} else if key.Root == "" {
+	} else if key.Root == "" || !s.crtLocked() {
 		w.read.Store(max(w.read.Load(), ch.Member.LastViewedAt))
 	} else if s.openThread == key.Root {
 		w.read.Store(max(w.read.Load(), s.openRead.ts))
@@ -75,11 +74,23 @@ func (s *Server) forgetNotificationsLocked(channel string) {
 // readNotificationsLocked preserves a monotonic watermark: marking unread
 // later must never resurrect an already dismissed system notification.
 func (s *Server) readNotificationsLocked(channel, root string, at int64) {
+	if root == "" && !s.crtLocked() {
+		for key, w := range s.notificationReads {
+			if key.Channel == channel {
+				s.readNotificationLocked(key, w, at)
+			}
+		}
+		return
+	}
 	key := ComposerKey{Channel: channel, Root: root}
 	if w := s.notificationReads[key]; w != nil {
-		w.read.Store(max(w.read.Load(), at))
-		if w.read.Load() >= w.at {
-			delete(s.notificationReads, key)
-		}
+		s.readNotificationLocked(key, w, at)
+	}
+}
+
+func (s *Server) readNotificationLocked(key ComposerKey, w *notificationWatch, at int64) {
+	w.read.Store(max(w.read.Load(), at))
+	if w.read.Load() >= w.at {
+		delete(s.notificationReads, key)
 	}
 }

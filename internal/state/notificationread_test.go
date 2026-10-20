@@ -83,3 +83,31 @@ func TestLocalThreadReadRetractsOnlyPostsThroughItsTimestamp(t *testing.T) {
 	assert.True(t, first.Read())
 	assert.False(t, newer.Read())
 }
+
+func TestNotificationReceiptsFollowCurrentThreadModeAfterSwitch(t *testing.T) {
+	for _, initiallyCRT := range []bool{false, true} {
+		t.Run(fmt.Sprint(initiallyCRT), func(t *testing.T) {
+			s := newFixture()
+			if initiallyCRT {
+				s = crtCounts(nil)
+			}
+			p := mkPost("reply", "off", "u2", 100)
+			p.RootID = "root"
+			r := s.WatchNotification(p)
+			b := fixture()
+			if !initiallyCRT {
+				b.Config.CollapsedThreads = "always_on"
+			}
+			s.Bootstrap(b)
+			s.ViewedLocally("off", 200)
+			if initiallyCRT {
+				assert.True(t, r.Read(), "after CRT is disabled, a channel view reads its replies")
+			} else {
+				assert.False(t, r.Read(), "after CRT is enabled, replies still need a thread read")
+				s.OpenThread("off", "root")
+				s.ThreadReadDone("root", s.openRead.opening, 100)
+				assert.True(t, r.Read())
+			}
+		})
+	}
+}

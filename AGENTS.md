@@ -1144,7 +1144,9 @@ Runner запускает текущие регрессионные тесты A
   unread/mention summary. Retract a delivered notification on a confirmed channel/thread
   read, including a remote read; changing the aggregate badge alone is insufficient.
   `state.NotificationReceipt` follows monotonic read timestamps (CRT replies need their
-  thread's read), survives delayed bursts, and retires on channel leave. Watches are
+  thread's read), survives delayed bursts, and retires on channel leave. Watches keep
+  their actual reply root across CRT switches; the read's current mode determines
+  whether viewing the channel also reads its replies. Watches are
   bounded to 512 groups per server and never persisted. `api` reconciles delivered IDs
   even when the total badge is unchanged and removes notifications of a replaced worker.
   Desktop `notificationUpdates` serializes send/remove by OS ID, retries retained updates
