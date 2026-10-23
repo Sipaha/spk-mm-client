@@ -131,14 +131,22 @@ included, along with the updated repository README and its support link.
 [Russian notes](../changelog/1.0.3/ru.md) describe this release. Publication
 uses the same tagged test, six-target packaging and verified draft gates.
 
-## Release 1.1.0 candidate
+## Published 1.1.0
+
+[v1.1.0](https://github.com/Sipaha/spk-mm-client/releases/tag/v1.1.0) was
+published on 2026-10-23 at 05:01:09 UTC from
+`ccb8afad21d7a448913ef0c241edfa762379e18e`. All seven
+[candidate CI jobs](https://github.com/Sipaha/spk-mm-client/actions/runs/39896089599)
+and all nine
+[tagged Release jobs](https://github.com/Sipaha/spk-mm-client/actions/runs/39901473871)
+passed, including six native platform/architecture builds and production windows.
 
 The release pins Go 1.26.10 for
 [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), reported by the current
 vulnerability scanner against Go 1.26.9. The README's minimum build version
 is updated to match this required toolchain; its feature catalogue is unchanged.
 
-The next minor release includes the uncommitted dictation implementation from
+This minor release includes the previously uncommitted dictation implementation from
 2026-10-23, plus the previously committed hover-fixture corrections after
 v1.0.3. Channel and thread composers can capture up to 60 seconds of audio
 and append recognized Russian text to the editable draft through local
@@ -162,12 +170,25 @@ synthetic microphone input, with reload/cancel/navigation checks and
 inspected recording/draft screenshots. Native Linux dictation evidence from
 the feature implementation was also reviewed. Physical microphone input
 and native macOS/Windows dictation are not claimed by these local checks;
-all six platform packaging/window gates remain required before publication.
+all six platform packaging/window gates subsequently passed in the tagged release.
+
+Independent public verification downloaded all 43 assets and checked GitHub
+sizes/digests, 21 payload checksums and sidecars, source/version/architecture,
+Go 1.26.10 build metadata, tagged documentation and legal contents, DEB/RPM
+payloads, extracted MSI contents and DMG app contents. Both macOS archives
+include the microphone usage description. Production Linux CLI version and
+licenses matched the tag. All six native PNG/report hashes and source/version
+fields matched; the actual screenshots were visually reviewed.
+
+The live website showed 1.1.0 and passed 48 language/theme/width combinations:
+14 native download links and their checksum links, images, support destinations,
+no horizontal overflow or page errors, and WCAG AA checks. The GitHub-rendered
+English README matched the exact candidate source and its images loaded.
 
 [Dictation setup and verification limits](research/2026-10-23-dictation.md),
 [English notes](../changelog/1.1.0/en.md) and
 [Russian notes](../changelog/1.1.0/ru.md) describe the feature. README remains
-a repository-level introduction and is unchanged.
+a repository-level introduction; only its minimum Go build version changed.
 
 ## Packages and runtime requirements
 
