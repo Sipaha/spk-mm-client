@@ -14,9 +14,10 @@ import { AttachmentsTray } from './AttachmentsTray'
 import { AutocompletePopup } from './AutocompletePopup'
 import { IconBold, IconCode, IconHeading, IconItalic, IconListBulleted, IconListNumbered, IconMood, IconQuote, IconSend, IconStrikethrough } from './composerIcons'
 import { FormattingMenu } from './FormattingMenu'
-import { IconAttach, IconLink, IconMore, IconPreview } from './icons'
+import { IconAttach, IconLink, IconMore, IconPreview, IconMicrophone } from './icons'
 import { Markdown } from './Markdown'
 import { useAutocomplete } from './useAutocomplete'
+import { useDictation } from './useDictation'
 
 const EmojiPicker = lazy(() => import('./EmojiPicker'))
 
@@ -62,13 +63,13 @@ const GROUP_BREAK_INDICES = FORMAT_BUTTONS.reduce<number[]>((acc, b, i) => {
 }, [])
 
 // RIGHT_GROUP_WIDTH: the toolbar's right-hand group (Aa, preview, attach,
-// emoji, send) is always exactly these 5 fixed-size buttons — a constant,
-// no ResizeObserver/ref of its own. 5 buttons have 4 gaps *between* them.
+// emoji, microphone, send) is always exactly these 6 fixed-size buttons — a constant,
+// no ResizeObserver/ref of its own. 6 buttons have 5 gaps *between* them.
 // TOOLBAR_RESERVED is the right group plus the row's px-1.5 padding (6px
 // each side) — not the gap before the group: the last left item's
 // TOOLBAR_ITEM_WIDTH (a button or "more") already carries that trailing gap
 // (re-review M-1; checked against Chromium's layout, composer report).
-const RIGHT_GROUP_BUTTON_COUNT = 5
+const RIGHT_GROUP_BUTTON_COUNT = 6
 const RIGHT_GROUP_WIDTH = RIGHT_GROUP_BUTTON_COUNT * TOOLBAR_BUTTON_SIZE + (RIGHT_GROUP_BUTTON_COUNT - 1) * TOOLBAR_GAP
 const TOOLBAR_ROW_PADDING = 12 // px-1.5, both sides
 const TOOLBAR_RESERVED = RIGHT_GROUP_WIDTH + TOOLBAR_ROW_PADDING
@@ -375,6 +376,14 @@ export function Composer({
     timer.current = setTimeout(flush, DRAFT_DELAY)
   }
 
+  const dictation = useDictation((recognized) => {
+    const current = latest.current
+    change(current + (current && !/\s$/.test(current) ? ' ' : '') + recognized)
+    setPreview(false)
+    flush()
+    textareaRef.current?.focus()
+  }, disabled)
+
   const canSend = text.trim().length > 0 || attachments.length > 0
 
   // restore puts a message that failed to go back into the composer (and
@@ -407,7 +416,7 @@ export function Composer({
 
   // send: asText posts even a "/..." message as text ("send as a message").
   const send = async (asText = false) => {
-    if (disabled) return
+    if (disabled || dictation.busy) return
     ac.close()
     const msg = text
     if (!asText && onCommand && msg.startsWith('/') && msg.trim().length > 1 && commandError?.message !== msg) {
@@ -600,6 +609,13 @@ export function Composer({
           {error}
         </p>
       )}
+      {dictation.error && <p role="alert" className="pb-1 text-xs text-danger">{dictation.error}</p>}
+      {dictation.busy && (
+        <div className="flex items-center gap-2 pb-1 text-xs text-fg-muted">
+          <span role="status">{dictation.state === 'recording' ? t('dictation.recording', { seconds: String(dictation.seconds) }) : t(dictation.state === 'requesting' ? 'dictation.requesting' : 'dictation.transcribing')}</span>
+          <button type="button" onClick={dictation.cancel} className="ml-auto rounded px-2 py-1 hover:bg-hover">{t('dictation.cancel')}</button>
+        </div>
+      )}
       {confirmLeave !== null && (
         <div role="alert" className="flex flex-wrap items-center gap-2 pb-1 text-xs text-danger">
           <span>{t('composer.leavePrivate', { channel: channelName })}</span>
@@ -738,14 +754,23 @@ export function Composer({
             <ToolbarButton label={t('composer.emoji')} onClick={openPicker} disabled={disabled}>
               <IconMood size={18} />
             </ToolbarButton>
+            <ToolbarButton
+              label={t(dictation.state === 'recording' ? 'dictation.stop' : 'dictation.start')}
+              pressed={dictation.state === 'recording'}
+              disabled={disabled || dictation.state === 'requesting' || dictation.state === 'transcribing'}
+              onClick={() => { if (dictation.state === 'recording') void dictation.finish(); else void dictation.start() }}
+              className={dictation.state === 'recording' ? 'text-danger' : 'text-fg-muted'}
+            >
+              <IconMicrophone size={18} />
+            </ToolbarButton>
             <button
               type="button"
               aria-label={t('composer.send')}
               title={t('composer.send')}
               onClick={() => void send()}
-              disabled={disabled || !canSend}
+              disabled={disabled || dictation.busy || !canSend}
               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded ${
-                canSend && !disabled ? 'bg-accent text-accent-fg hover:opacity-90' : 'text-fg-muted opacity-50'
+                canSend && !disabled && !dictation.busy ? 'bg-accent text-accent-fg hover:opacity-90' : 'text-fg-muted opacity-50'
               }`}
             >
               <IconSend size={16} />

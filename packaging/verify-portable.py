@@ -51,6 +51,8 @@ def verify(directory, release_version, platform, arch):
                 plist = plistlib.loads(files['SPK MM Client.app/Contents/Info.plist'][0])
                 if plist['CFBundleIdentifier'] != 'ru.spk.spk-mm-client' or plist['CFBundleShortVersionString'] != release_version.split('-')[0]:
                     raise ValueError('incorrect macOS bundle metadata')
+                if not plist.get('NSMicrophoneUsageDescription', '').strip():
+                    raise ValueError('missing macOS microphone purpose for dictation')
                 for p in (stage / 'SPK MM Client.app').rglob('*'):
                     if p.is_file() and files.get(p.relative_to(stage).as_posix()) != (p.read_bytes(), p.stat().st_mode & 0o777):
                         raise ValueError('archive differs from the signed app bundle')

@@ -736,3 +736,30 @@ func TestAbortedSearchCancelsItsContext(t *testing.T) {
 		t.Fatal("the API call never saw the abort")
 	}
 }
+
+func (f *fakeAPI) TranscribeAudio(_ context.Context, audio string) (string, error) {
+	return fmt.Sprintf("recognized %d bytes", len(audio)), nil
+}
+
+func TestTranscriptionBodyLimitAndAuthentication(t *testing.T) {
+	h := NewHTTP(&fakeAPI{}, events.NewEmitter())
+	for _, tc := range []struct {
+		size   int
+		token  bool
+		status int
+	}{
+		{2600000, true, 200}, // a full minute of base64 PCM fits only this route
+		{3 << 20, true, 400},
+		{10, false, 401},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/TranscribeAudio", strings.NewReader(`{"audio":"`+strings.Repeat("A", tc.size)+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://127.0.0.1")
+		if tc.token {
+			r.Header.Set("Authorization", "Bearer "+h.AuthToken())
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		require.Equal(t, tc.status, w.Code)
+	}
+}

@@ -30,6 +30,7 @@ export class ApiError extends Error {
 }
 
 export interface Client {
+  transcribeAudio(audio: string, signal?: AbortSignal): Promise<string>
   listServers(): Promise<ServerDTO[]>
   addServer(url: string): Promise<ServerDTO>
   removeServer(id: number): Promise<void>
@@ -188,6 +189,7 @@ const done = async (p: Promise<unknown>) => {
 }
 
 export const httpClient: Client = {
+  transcribeAudio: (audio, signal) => post('TranscribeAudio', { audio }, signal),
   listServers: () => post('ListServers', {}),
   addServer: (url) => post('AddServer', { url }),
   removeServer: (id) => done(post('RemoveServer', { id })),
@@ -334,6 +336,7 @@ const EVENT_TYPES: EventType[] = [
 ]
 
 export const wailsClient: Client = {
+  transcribeAudio: (audio, signal) => cancellable<string>(signal, 'TranscribeAudio', audio),
   listServers: () => wcall('ListServers'),
   addServer: (url) => wcall('AddServer', url),
   removeServer: (id) => wcall('RemoveServer', id),

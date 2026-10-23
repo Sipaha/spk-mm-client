@@ -50,6 +50,8 @@ type AppInfo struct {
 }
 
 type API interface {
+	// TranscribeAudio recognizes bounded base64 PCM16 WAV through local LAIHub.
+	TranscribeAudio(ctx context.Context, audio string) (string, error)
 	ListServers(ctx context.Context) ([]ServerDTO, error)
 	AddServer(ctx context.Context, rawURL string) (ServerDTO, error)
 	RemoveServer(ctx context.Context, id int64) error

@@ -216,3 +216,7 @@ func (w *API) ExecuteCommand(id int64, channelID, rootID, command string) error 
 func (w *API) GetChannelDelta(id int64, channelID string, base uint64) (state.ChannelPatch, error) {
 	return w.a.GetChannelDelta(context.Background(), id, channelID, base)
 }
+
+func (w *API) TranscribeAudio(ctx context.Context, audio string) (string, error) {
+	return w.a.TranscribeAudio(ctx, audio)
+}

@@ -35,6 +35,16 @@ class PortableContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             portable.binary_arch(b'not a binary', 'windows')
 
+    def test_mac_bundle_declares_microphone_purpose_for_dictation(self):
+        info = portable.macos_info('1.1.0-dev.42')
+        self.assertEqual(info['CFBundleIdentifier'], 'ru.spk.spk-mm-client')
+        self.assertEqual(info['CFBundleShortVersionString'], '1.1.0')
+        self.assertEqual(info['LSMinimumSystemVersion'], '12.0')
+        purpose = info['NSMicrophoneUsageDescription'].lower()
+        self.assertIn('microphone', purpose)
+        self.assertIn('dictate', purpose)
+        self.assertNotIn('NSCameraUsageDescription', info)
+
     def test_macho_architecture(self):
         for arch, cpu in [('amd64', 0x01000007), ('arm64', 0x0100000C)]:
             self.assertEqual(portable.binary_arch(b'\xcf\xfa\xed\xfe' + struct.pack('<I', cpu), 'darwin'), arch)

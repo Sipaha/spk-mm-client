@@ -63,7 +63,7 @@ See [release documentation](docs/releases.md) for verification and packaging det
 
 ## Build from source
 
-Use **Go 1.26.9 or later**, **Node.js 22** and **pnpm 10.33.0**. Native Linux builds
+Use **Go 1.26.10 or later**, **Node.js 22** and **pnpm 10.33.0**. Native Linux builds
 also need the GTK 3 and WebKitGTK 4.1 development libraries. On Ubuntu 24.04:
 
 ```sh

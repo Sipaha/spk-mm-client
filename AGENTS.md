@@ -1205,3 +1205,15 @@ CSS `--default-contextmenu: show` разрешает стандартное ме
 Проверять в production-tag native build, в отдельном Xvfb/fake profile: реальный
 ПКМ, выбрать Copy Image, прочитать `image/png` из clipboard и проверить размер.
 Доказательства/методика: `docs/research/2026-10-13-viewer-copy-image.md`.
+
+## Диктовка (2026-10-23)
+
+Канал и тред используют `useDictation` и bounded Web Audio PCM16 WAV 16 kHz;
+распознавание идёт только через Go `TranscribeAudio` в локальный LAIHub.
+Один владелец микрофона, отмена/уход/скрытие освобождают capture и не допускают
+позднюю вставку; результат дополняет актуальный черновик, отправка отдельная.
+Маршрут HTTP ограничен 3 MiB, остальные JSON API — прежними 1 MiB. Wails
+binding принимает context для отмены. Настройка/границы реальных проверок:
+`docs/research/2026-10-23-dictation.md`. macOS-пакеты обязаны включать
+`NSMicrophoneUsageDescription`; `packaging/verify-portable.py` проверяет ключ
+в настоящем архиве, а не только в исходном генераторе метаданных.

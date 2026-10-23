@@ -57,9 +57,13 @@ func (h *HTTP) authorized(r *http.Request) bool {
 }
 
 func handle[Req any](fn func(ctx context.Context, req *Req) (any, error)) http.HandlerFunc {
+	return handleSized(fn, MaxAPIBody)
+}
+
+func handleSized[Req any](fn func(ctx context.Context, req *Req) (any, error), limit int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
-		r.Body = http.MaxBytesReader(w, r.Body, MaxAPIBody)
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		if r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeErr(w, &api.CodedError{Code: api.CodeInternal, Detail: "bad request body: " + err.Error()})
@@ -104,6 +108,11 @@ type postReq struct {
 }
 
 func (h *HTTP) routes() {
+	h.mux.HandleFunc("POST /api/TranscribeAudio", handleSized(func(ctx context.Context, r *struct {
+		Audio string `json:"audio"`
+	}) (any, error) {
+		return h.api.TranscribeAudio(ctx, r.Audio)
+	}, 3<<20))
 	h.mux.HandleFunc("POST /api/ListServers", handle(func(ctx context.Context, _ *struct{}) (any, error) {
 		return h.api.ListServers(ctx)
 	}))

@@ -131,6 +131,44 @@ included, along with the updated repository README and its support link.
 [Russian notes](../changelog/1.0.3/ru.md) describe this release. Publication
 uses the same tagged test, six-target packaging and verified draft gates.
 
+## Release 1.1.0 candidate
+
+The release pins Go 1.26.10 for
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), reported by the current
+vulnerability scanner against Go 1.26.9. The README's minimum build version
+is updated to match this required toolchain; its feature catalogue is unchanged.
+
+The next minor release includes the uncommitted dictation implementation from
+2026-10-23, plus the previously committed hover-fixture corrections after
+v1.0.3. Channel and thread composers can capture up to 60 seconds of audio
+and append recognized Russian text to the editable draft through local
+SPK LAIHub/GigaAM. Sending remains explicit. Cancellation, navigation and
+microphone errors retain draft ownership and release capture resources.
+
+The optional service must expose its speech API on numeric loopback HTTP
+(default port 8095). The client does not install/start LAIHub or its models,
+store microphone audio, or attach it to a message. Go bounds and validates
+PCM16 WAV, disables proxy/redirect/credential forwarding and cancels the
+request with the caller/service lifecycle. macOS app bundles declare
+`NSMicrophoneUsageDescription`; package verification checks its presence.
+The permission is requested by the OS/WebView when recording starts.
+
+Local candidate verification on Go 1.26.10 passed all Go race tests,
+1152 frontend tests, 34 packaging contracts and 112 browser scenarios,
+plus clean browser/Linux desktop builds and Windows cross-build/vet.
+The current vulnerability scan reports no vulnerabilities. A separate
+browser run exercised real GigaAM recognition in channel and thread using
+synthetic microphone input, with reload/cancel/navigation checks and
+inspected recording/draft screenshots. Native Linux dictation evidence from
+the feature implementation was also reviewed. Physical microphone input
+and native macOS/Windows dictation are not claimed by these local checks;
+all six platform packaging/window gates remain required before publication.
+
+[Dictation setup and verification limits](research/2026-10-23-dictation.md),
+[English notes](../changelog/1.1.0/en.md) and
+[Russian notes](../changelog/1.1.0/ru.md) describe the feature. README remains
+a repository-level introduction and is unchanged.
+
 ## Packages and runtime requirements
 
 ### Linux menu launcher shadowing

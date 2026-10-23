@@ -7,7 +7,7 @@ Full upstream legal texts are reproduced, including inherited notices.
 Upstream files may describe optional components not linked by MM Client.
 
 ==============================================================================
-Go runtime and standard library (go1.26.9)
+Go runtime and standard library (go1.26.10)
 ==============================================================================
 
 --- LICENSE ---

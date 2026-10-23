@@ -17,6 +17,14 @@ from release import ROOT, archive, document_paths, version
 from diagnostics import report_failure
 
 
+def macos_info(release_version):
+    return {'CFBundleName': 'SPK MM Client', 'CFBundleDisplayName': 'SPK MM Client', 'CFBundleExecutable': 'spk-mm-client',
+            'CFBundleIdentifier': 'ru.spk.spk-mm-client', 'CFBundleIconFile': 'app.icns', 'CFBundlePackageType': 'APPL',
+            'CFBundleShortVersionString': release_version.split('-')[0], 'CFBundleVersion': release_version.split('-')[0],
+            'LSMinimumSystemVersion': '12.0', 'NSHighResolutionCapable': True,
+            'NSMicrophoneUsageDescription': 'Use the microphone to dictate editable messages with your local SPK LAIHub.', 'NSHumanReadableCopyright': 'Copyright 2026 Pavel Simonov', 'CFBundleURLTypes': [{'CFBundleURLName': 'Mattermost authentication', 'CFBundleURLSchemes': ['mmauth']}]}
+
+
 def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], cwd=ROOT, check=True, **kwargs)
 
@@ -151,10 +159,7 @@ def package(release_version, platform, arch):
         shutil.copy2(desktop, macos / 'spk-mm-client')
         _, icns = make_icons(stage)
         shutil.copy2(icns, resources / 'app.icns')
-        info = {'CFBundleName': 'SPK MM Client', 'CFBundleDisplayName': 'SPK MM Client', 'CFBundleExecutable': 'spk-mm-client',
-                'CFBundleIdentifier': 'ru.spk.spk-mm-client', 'CFBundleIconFile': 'app.icns', 'CFBundlePackageType': 'APPL',
-                'CFBundleShortVersionString': release_version.split('-')[0], 'CFBundleVersion': release_version.split('-')[0],
-                'LSMinimumSystemVersion': '12.0', 'NSHighResolutionCapable': True, 'NSHumanReadableCopyright': 'Copyright 2026 Pavel Simonov', 'CFBundleURLTypes': [{'CFBundleURLName': 'Mattermost authentication', 'CFBundleURLSchemes': ['mmauth']}]}
+        info = macos_info(release_version)
         (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
         for name, source, _ in common:
             target = resources / name
