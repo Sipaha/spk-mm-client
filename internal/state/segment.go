@@ -146,6 +146,9 @@ func joinsWindowLocked(ch *Chan, raw []model.Post, next string, newest Cursor) b
 func (s *Server) placeLocked(ch *Chan, raw []model.Post, crt bool) {
 	var add, win []model.Post
 	for _, p := range raw {
+		if p.OriginalID == "" && p.DeleteAt == 0 && !s.gone.has(p.ID) {
+			s.reconcilePendingLocked(ch.Info.ID, p)
+		}
 		if !keep(p, crt) || s.gone.has(p.ID) || indexOf(ch.Win.Posts, p.ID) >= 0 {
 			continue
 		}
@@ -154,7 +157,9 @@ func (s *Server) placeLocked(ch *Chan, raw []model.Post, crt bool) {
 			continue
 		}
 		if len(ch.Win.Posts) == 0 || p.CreateAt <= ch.Win.Posts[0].CreateAt {
-			add = append(add, p)
+			if indexOf(add, p.ID) < 0 {
+				add = append(add, p)
+			}
 		} else {
 			win = append(win, p)
 		}
@@ -327,7 +332,10 @@ func (s *Server) AppendOlder(op HistOp, page model.PostList) {
 	raw := rawPosts(page)
 	var add []model.Post
 	for _, p := range raw {
-		if keep(p, op.CRT) && !s.gone.has(p.ID) && indexOf(s.older, p.ID) < 0 && indexOf(ch.Win.Posts, p.ID) < 0 {
+		if p.OriginalID == "" && p.DeleteAt == 0 && !s.gone.has(p.ID) {
+			s.reconcilePendingLocked(ch.Info.ID, p)
+		}
+		if keep(p, op.CRT) && !s.gone.has(p.ID) && indexOf(s.older, p.ID) < 0 && indexOf(ch.Win.Posts, p.ID) < 0 && indexOf(add, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
@@ -379,7 +387,7 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 	if !ok || op.Gap != s.gapGen {
 		return false
 	}
-	s.older = s.rereadLocked(s.older, createOrder, op.Low, op.High, op.Held, r, append([]Cursor{op.High}, r.Bounds...),
+	s.older = s.rereadLocked(op.Channel, s.older, createOrder, op.Low, op.High, op.Held, r, append([]Cursor{op.High}, r.Bounds...),
 		func(p model.Post) bool { return keep(p, op.CRT) },
 		func(p model.Post) bool { return indexOf(ch.Win.Posts, p.ID) < 0 })
 	if r.Covered {
@@ -400,7 +408,7 @@ func (s *Server) ApplyRevalidation(op RevalOp, r Reread) (applied bool) {
 // copy changed after the start (a live edit or reaction), or it shares the
 // create_at of a bound (a page's cursor the pages cannot have returned it
 // past).
-func (s *Server) rereadLocked(held []model.Post, order func(a, b Cursor) int, low, high Cursor, at map[string]int64,
+func (s *Server) rereadLocked(channelID string, held []model.Post, order func(a, b Cursor) int, low, high Cursor, at map[string]int64,
 	r Reread, bounds []Cursor, ok, admit func(model.Post) bool) []model.Post {
 	var fresh []model.Post
 	if r.High != nil && !r.HighGone {
@@ -410,6 +418,9 @@ func (s *Server) rereadLocked(held []model.Post, order func(a, b Cursor) int, lo
 	seen := map[string]bool{}
 	var add []model.Post
 	for _, p := range fresh {
+		if p.OriginalID == "" && p.DeleteAt == 0 && !s.gone.has(p.ID) {
+			s.reconcilePendingLocked(channelID, p)
+		}
 		seen[p.ID] = true
 		if !ok(p) || s.gone.has(p.ID) {
 			continue
@@ -474,7 +485,13 @@ func (s *Server) windowReplacedLocked(old Window, merged []model.Post) {
 			// The old window joins the history: it stays where the reader
 			// is, as history, up to where it was live (GapAfter: what came
 			// after arrived across a lost stream, not contiguous).
-			s.older = append(s.older, contiguousPart(old)...)
+			for _, p := range contiguousPart(old) {
+				if i := indexOf(s.older, p.ID); i >= 0 {
+					s.older[i] = newerOf(p, s.older[i])
+				} else {
+					s.older = append(s.older, p)
+				}
+			}
 			sortPosts(s.older)
 			s.newerCursor = cursorOf(s.older[len(s.older)-1])
 		}

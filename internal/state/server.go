@@ -100,6 +100,8 @@ type Server struct {
 
 	// Task 7: posts, pending, active channel.
 	pending       map[string][]Pending
+	pendingLastMs int64
+	pendingSeq    int
 	released      []string      // attachments of pending posts dropped since the last TakeReleased
 	forgotten     []ComposerKey // composers (channel/thread) left since the last TakeForgottenComposers
 	drafts        map[string]string

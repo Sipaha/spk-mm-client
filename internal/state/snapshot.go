@@ -209,6 +209,21 @@ func (s *Server) Restore(entries []store.CacheEntry) error {
 		if ch == nil {
 			continue
 		}
+		dedup := make([]model.Post, 0, len(w.Posts))
+		seen := make(map[string]int, len(w.Posts))
+		for _, p := range w.Posts {
+			if p.ID == "" || p.DeleteAt > 0 || p.OriginalID != "" {
+				continue
+			}
+			if idx, ok := seen[p.ID]; ok {
+				dedup[idx] = newerOf(p, dedup[idx])
+				continue
+			}
+			seen[p.ID] = len(dedup)
+			dedup = append(dedup, p)
+		}
+		sortPosts(dedup)
+		w.Posts = dedup
 		w.Loaded = true
 		w.markStale(liveAt)
 		ch.Win = w

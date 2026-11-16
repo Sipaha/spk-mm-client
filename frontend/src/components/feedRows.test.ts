@@ -250,3 +250,51 @@ test('review: an unread boundary between window posts is drawn even with a gap a
   const rows = buildRows(ch([P('s1', 'bob', 0), P('w1', 'bob', 10), P('w2', 'bob', 11), P('w3', 'bob', 12)], { gap: g, new_since: base + 11.5 * 60_000 }))
   expect(shape(rows)).toEqual(['day', 's1*', 'gap', 'w1*', 'w2', 'new', 'w3*'])
 })
+
+test('strict row-key uniqueness: shared/foreign pending_post_id, stale pending, duplicate IDs, non-monotonic days, and identical-text distinct posts', () => {
+  const rows = buildRows(
+    ch([
+      // Foreign/bot posts sharing one pending_post_id must each keep their own post.id key.
+      P('bot-0139', 'bot', 0, { bot: true, pending_post_id: 'shared-bot-key', message: '01:39 status' }),
+      P('bot-next', 'bot', 1, { bot: true, pending_post_id: 'shared-bot-key', message: '01:40 status' }),
+      // Duplicate post ID in input collapses to one row; distinct IDs with identical text & timestamp both remain.
+      P('bot-0139', 'bot', 0, { bot: true, pending_post_id: 'shared-bot-key', message: '01:39 status' }),
+      P('twin-1', 'bob', 2, { message: 'exact same text' }),
+      P('twin-2', 'bob', 2, { message: 'exact same text' }),
+      // Own confirmed post + lingering optimistic placeholder with matching pending_post_id collapse to the confirmed post.
+      P('real-own-1', 'me', 3, { pending_post_id: 'me:100', message: 'mine 1' }),
+      P('me:100', 'me', 3, { pending: true, pending_post_id: 'me:100', message: 'mine 1' }),
+      // Even if two distinct own posts echoed the same pending_post_id, both render with unique keys.
+      P('real-own-2', 'me', 4, { pending_post_id: 'me:100', message: 'mine 2' }),
+      // Next day then clock-skewed return to initial day produces unique day separator keys.
+      P('next-day', 'bob', 24 * 60 + 5),
+      P('skew-back', 'bob', 5),
+    ]),
+  )
+
+  const keys = rows.map((r) => r.key)
+  expect(new Set(keys).size).toBe(keys.length)
+
+  const postIds = rows.filter((r): r is Extract<Row, { kind: 'post' }> => r.kind === 'post').map((r) => r.post.id)
+  expect(postIds).toEqual(['bot-0139', 'bot-next', 'twin-1', 'twin-2', 'real-own-1', 'real-own-2', 'next-day', 'skew-back'])
+
+  const dayKeys = rows.filter((r) => r.kind === 'day').map((r) => r.key)
+  expect(dayKeys).toHaveLength(3)
+  expect(new Set(dayKeys).size).toBe(3)
+})
+
+test('R1: two confirmed own posts sharing pending_post_id are keyed by their server IDs so deleting S1 never reuses S1 row key for S2', () => {
+  const s1 = P('server-old', 'me', 0, { pending_post_id: 'me:1000', message: 'first' })
+  const s2 = P('server-new', 'me', 1, { pending_post_id: 'me:1000', message: 'second' })
+
+  const before = buildRows(ch([s1, s2])).filter((r): r is Extract<Row, { kind: 'post' }> => r.kind === 'post')
+  expect(before.map((r) => ({ key: r.key, id: r.post.id }))).toEqual([
+    { key: 'server-old', id: 'server-old' },
+    { key: 'server-new', id: 'server-new' },
+  ])
+
+  const afterDeleteOld = buildRows(ch([s2])).filter((r): r is Extract<Row, { kind: 'post' }> => r.kind === 'post')
+  // S1's key ('server-old') is absent after S1 is deleted, so React unmounts S1 instead of reusing its Fiber for S2.
+  expect(afterDeleteOld[0].key).not.toBe(before[0].key)
+  expect(afterDeleteOld[0].post.id).toBe('server-new')
+})

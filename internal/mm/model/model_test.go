@@ -57,6 +57,20 @@ func TestPostListAscendingSortsByCreateAtNotOrder(t *testing.T) {
 	assert.Equal(t, "b", got[1].ID)
 }
 
+func TestPostListAscendingDeduplicatesOrderWhileKeepingIdenticalMessages(t *testing.T) {
+	l := PostList{
+		Order: []string{"p-target", "p-same-2", "p-target", "p-same-1", "p-target"},
+		Posts: map[string]Post{
+			"p-target": {ID: "p-target", UserID: "u-bot", Message: "01:39 status", CreateAt: 1000},
+			"p-same-1": {ID: "p-same-1", UserID: "u-bot", Message: "identical body", CreateAt: 1000},
+			"p-same-2": {ID: "p-same-2", UserID: "u-bot", Message: "identical body", CreateAt: 1000},
+		},
+	}
+	got := l.Ascending()
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"p-target", "p-same-2", "p-same-1"}, []string{got[0].ID, got[1].ID, got[2].ID})
+}
+
 func TestDMPartnerAndMuted(t *testing.T) {
 	c := Channel{Type: ChannelDirect, Name: "u1__u2"}
 	assert.Equal(t, "u2", c.DMPartner("u1"))

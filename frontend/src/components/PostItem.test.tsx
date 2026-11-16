@@ -930,3 +930,103 @@ test('an explicit rejection is visible immediately, even during the optimistic g
   expect(screen.getByRole('alert')).toHaveTextContent('Not sent.')
   expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible()
 })
+
+test('moving pointer or focus to another post clears stale hover toolbar when pointerleave was missed during scroll', async () => {
+  const a = actions()
+  const { container } = render(
+    <div>
+      <PostItem serverId={1} post={post({ id: 'post-a', message: 'first' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+      <PostItem serverId={1} post={post({ id: 'post-b', message: 'second' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </div>,
+  )
+  const first = container.querySelector('article[data-post-id="post-a"]')!
+  const second = container.querySelector('article[data-post-id="post-b"]')!
+
+  await act(async () => {
+    fireEvent.pointerEnter(first)
+  })
+  expect(container.querySelectorAll('[data-testid="post-toolbar"]')).toHaveLength(1)
+  expect(first.querySelector('[data-testid="post-toolbar"]')).not.toBeNull()
+
+  // Simulate scroll moving post-a away without firing pointerLeave on post-a before pointerEnter hits post-b.
+  await act(async () => {
+    fireEvent.pointerEnter(second)
+  })
+  const toolbars = container.querySelectorAll('[data-testid="post-toolbar"]')
+  expect(toolbars).toHaveLength(1)
+  expect(first.querySelector('[data-testid="post-toolbar"]')).toBeNull()
+  expect(second.querySelector('[data-testid="post-toolbar"]')).not.toBeNull()
+})
+
+test('focusing or hovering a second post clears focus-held toolbar on the first post, and switching post identity closes open menu', async () => {
+  const a = actions()
+  const { container, rerender } = render(
+    <div>
+      <PostItem serverId={1} post={post({ id: 'post-1', user_id: 'u-alice', message: 'first' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+      <PostItem serverId={1} post={post({ id: 'post-2', user_id: 'u-bob', message: 'second', reactions: [{ emoji: '+1', count: 1, mine: false }] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </div>,
+  )
+  const first = container.querySelector('article[data-post-id="post-1"]')!
+  const second = container.querySelector('article[data-post-id="post-2"]')!
+
+  // Esc-closed menu leaves focus on More actions of post-1; hovering post-2 clears post-1's toolbar so two toolbars never coexist.
+  await hover(first)
+  await userEvent.click(await within(first as HTMLElement).findByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menu')
+  await userEvent.unhover(first)
+  await userEvent.keyboard('{Escape}')
+  expect(first.querySelector('[data-testid="post-toolbar"]')).not.toBeNull()
+
+  await hover(second)
+  expect(container.querySelectorAll('[data-testid="post-toolbar"]')).toHaveLength(1)
+  expect(first.querySelector('[data-testid="post-toolbar"]')).toBeNull()
+  expect(second.querySelector('[data-testid="post-toolbar"]')).not.toBeNull()
+
+  // Open menu on post-2, then switch post-2's row to unrelated post-3: menu closes so actions never hit the wrong post.
+  await userEvent.click(within(second as HTMLElement).getByRole('button', { name: 'More actions' }))
+  expect(await screen.findByRole('menu')).toBeInTheDocument()
+  rerender(
+    <div>
+      <PostItem serverId={1} post={post({ id: 'post-1', user_id: 'u-alice', message: 'first' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+      <PostItem serverId={1} post={post({ id: 'post-3', user_id: 'u-bob', message: 'third' })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />
+    </div>,
+  )
+  expect(screen.queryByRole('menu')).toBeNull()
+})
+
+test('R1: two confirmed own posts sharing pending_post_id never carry open menu, emoji picker, or hot toolbar across post swap, while genuine pending->confirmed ack preserves hover', async () => {
+  const a = actions()
+  a.emojiInfo = vi.fn().mockResolvedValue(dto({ recent: ['tada'] }))
+  const s1 = post({ id: 'server-old', user_id: 'u-alice', pending_post_id: 'u-alice:1000', message: 'old' })
+  const s2 = post({ id: 'server-new', user_id: 'u-alice', pending_post_id: 'u-alice:1000', message: 'new' })
+
+  const { container, rerender } = render(
+    <PostItem serverId={1} post={s1} head me={me} locale="en-US" crt={false} actions={a} editing={false} />,
+  )
+  await hover(container.querySelector('article[data-post-id="server-old"]')!)
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  expect(await screen.findByRole('menu')).toBeInTheDocument()
+
+  // Swapping S1 -> S2 (both confirmed, sharing pending_post_id) must synchronously drop menu and toolbar.
+  rerender(<PostItem serverId={1} post={s2} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+
+  // Same check for EmojiPicker on S2 -> S1 swap.
+  await hover(container.querySelector('article[data-post-id="server-new"]')!)
+  await userEvent.click(await screen.findByRole('button', { name: 'Add reaction' }))
+  expect(await screen.findByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
+  rerender(<PostItem serverId={1} post={s1} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).toBeNull()
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  expect(a.react).not.toHaveBeenCalled()
+
+  // Genuine pending -> confirmed transition keeps hover state so toolbar appears once confirmed.
+  const pend = post({ id: 'u-alice:2000', user_id: 'u-alice', pending: true, pending_post_id: 'u-alice:2000', message: 'sending' })
+  const conf = post({ id: 'server-2000', user_id: 'u-alice', pending: false, pending_post_id: 'u-alice:2000', message: 'sending' })
+  rerender(<PostItem serverId={1} post={pend} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  await hover(container.querySelector('article[data-post-id="u-alice:2000"]')!)
+  expect(screen.queryByTestId('post-toolbar')).toBeNull()
+  rerender(<PostItem serverId={1} post={conf} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  expect(await screen.findByTestId('post-toolbar')).toBeInTheDocument()
+})

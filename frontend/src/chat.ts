@@ -55,6 +55,7 @@ let threadWanted: PanelThread | null = null
 let goThread: (PanelThread & { owner: number }) | null = null
 let inFlight = false
 let again = false
+let forceDeltaReset = false
 // jumpSeq: the latest jump (jumpToPost) — checked after each of its awaits,
 // so a jump overtaken by another one, a channel or server switch does
 // nothing more (no scroll, no thread). jumpAbort lets go of its request.
@@ -79,6 +80,7 @@ export function resetChat() {
   shownGen = null
   inFlight = false
   again = false
+  forceDeltaReset = false
   downloadsSeq++
   dropJump()
   dropSearch()
@@ -202,12 +204,24 @@ async function fetchChannel(serverId: number, channelId: string, open: boolean) 
     let ch
     if (!open && client.getChannelDelta) {
       const before = useStore.getState()
-      const previous = before.selectedId === serverId && before.channel?.id === channelId ? before.channel : null
-      const patch = await client.getChannelDelta(serverId, channelId, previous?.projection_rev ?? 0)
+      const reset = forceDeltaReset
+      forceDeltaReset = false
+      const previous = !reset && before.selectedId === serverId && before.channel?.id === channelId ? before.channel : null
+      const base = previous?.projection_rev ?? 0
+      const patch = await client.getChannelDelta(serverId, channelId, base)
       if (my !== channelSeq) return false
       ch = applyChannelPatch(previous, patch)
-      if (!ch) { again = true; return false }
+      if (!ch) {
+        if (base === 0 || patch.reset) {
+          ch = await client.getChannel(serverId, channelId)
+        } else {
+          forceDeltaReset = true
+          again = true
+          return false
+        }
+      }
     } else {
+      forceDeltaReset = false
       ch = open ? await client.openChannel(serverId, channelId) : await client.getChannel(serverId, channelId)
     }
     if (my !== channelSeq) return false

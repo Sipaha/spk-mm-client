@@ -29,3 +29,28 @@ test('unknown baselines and broken membership are rejected; reset recovers', () 
  const reset = applyChannelPatch(null, patch({ reset: true, posts: [] }))!
  expect(reset.posts).toEqual([])
 })
+
+test('reset deduplicates repeated post IDs while keeping distinct posts with identical text and allowing follow-up deltas', () => {
+ const uniquePosts = [row('p1', 'same'), row('p2', 'same')]
+ const cleanReset = applyChannelPatch(null, patch({ reset: true, revision: 5, posts: uniquePosts }))!
+ expect(cleanReset.posts).toBe(uniquePosts)
+ expect(cleanReset.posts.map(p => p.id)).toEqual(['p1', 'p2'])
+
+ const dupReset = applyChannelPatch(null, patch({
+  reset: true,
+  revision: 6,
+  posts: [row('p-0139', 'old'), row('twin-1', 'ok'), row('p-0139', 'latest'), row('twin-2', 'ok')],
+ }))!
+ expect(dupReset.posts.map(p => p.id)).toEqual(['p-0139', 'twin-1', 'twin-2'])
+ expect(dupReset.posts[0].message).toBe('latest')
+
+ const delta = applyChannelPatch(dupReset, patch({
+  base: 6,
+  revision: 7,
+  posts: [row('p-0139', 'edited again')],
+  order: ['p-0139', 'twin-1', 'twin-2'],
+ }))
+ expect(delta).not.toBeNull()
+ expect(delta!.posts.map(p => p.id)).toEqual(['p-0139', 'twin-1', 'twin-2'])
+ expect(delta!.posts[0].message).toBe('edited again')
+})

@@ -1727,3 +1727,36 @@ test('late server refresh error cannot overwrite a newer success', async () => {
  await pending
  expect(useStore.getState().lastError).toBeNull()
 })
+
+test('rejected incremental channel delta retries once with base 0 and falls back to getChannel if reset is still invalid', async () => {
+ const c = client as unknown as { getChannelDelta?: ReturnType<typeof vi.fn> }
+ const getDelta = vi.fn()
+ c.getChannelDelta = getDelta
+ try {
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('a', { posts: [post({ id: 'p1' })], projection_rev: 4 }))
+  await openChannel(1, 'a')
+
+  // Case 1: incremental delta fails applyChannelPatch -> retries once with base=0 and recovers.
+  getDelta
+   .mockResolvedValueOnce({ view: chan('a'), base: 4, revision: 5, reset: false, posts: [], order: ['p1', 'p1'] })
+   .mockResolvedValueOnce({ view: chan('a'), base: 0, revision: 6, reset: true, posts: [post({ id: 'p1', message: 'recovered' })] })
+  await refreshChannel(1, 'a')
+  await vi.waitFor(() => expect(getDelta).toHaveBeenCalledTimes(2))
+  expect(getDelta.mock.calls[0]).toEqual([1, 'a', 4])
+  expect(getDelta.mock.calls[1]).toEqual([1, 'a', 0])
+  expect(useStore.getState().channel?.posts.map(p => p.message)).toEqual(['recovered'])
+
+  // Case 2: even a base=0 retry fails applyChannelPatch (reset:false) -> falls back to getChannel without looping.
+  getDelta.mockClear()
+  getDelta
+   .mockResolvedValueOnce({ view: chan('a'), base: 6, revision: 7, reset: false, posts: [], order: ['missing'] })
+   .mockResolvedValueOnce({ view: chan('a'), base: 99, revision: 8, reset: false, posts: [] })
+  vi.mocked(client.getChannel).mockResolvedValueOnce(chan('a', { posts: [post({ id: 'p1', message: 'from-getChannel' })], projection_rev: 9 }))
+  await refreshChannel(1, 'a')
+  await vi.waitFor(() => expect(client.getChannel).toHaveBeenCalledTimes(1))
+  expect(getDelta).toHaveBeenCalledTimes(2)
+  expect(useStore.getState().channel?.posts.map(p => p.message)).toEqual(['from-getChannel'])
+ } finally {
+  delete c.getChannelDelta
+ }
+})

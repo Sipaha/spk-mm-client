@@ -195,10 +195,21 @@ type PostList struct {
 // the map (roots fetched alongside replies in since-responses) are skipped.
 func (l PostList) Ascending() []Post {
 	out := make([]Post, 0, len(l.Order))
+	seen := make(map[string]struct{}, len(l.Order))
 	for _, id := range l.Order {
-		if p, ok := l.Posts[id]; ok {
-			out = append(out, p)
+		p, ok := l.Posts[id]
+		if !ok {
+			continue
 		}
+		key := p.ID
+		if key == "" {
+			key = id
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, p)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreateAt < out[j].CreateAt })
 	return out

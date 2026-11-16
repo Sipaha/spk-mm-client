@@ -1617,3 +1617,69 @@ test('fix: open + stale + error — the two Retry buttons have distinct names', 
     r.restore()
   }
 })
+
+test('regression: virtualized scroll over shared foreign pending_post_id, stale pending, and identical-text posts never leaks zombie DOM copies', async () => {
+  const posts: PostView[] = []
+  for (let i = 1; i <= 15; i++) {
+    posts.push({ id: `old-${i}`, user_id: 'bob', author: 'bob', message: `earlier ${i}`, create_at: now - (60 - i) * 60_000 })
+  }
+  posts.push(
+    { id: 'target-0139', user_id: 'bot', author: 'synth-bot', bot: true, pending_post_id: 'shared-bot-key', message: 'Automated 01:39 status', create_at: now - 30 * 60_000 },
+    { id: 'twin-1', user_id: 'bob', author: 'bob', message: 'identical line', create_at: now - 29 * 60_000 },
+    { id: 'twin-2', user_id: 'bob', author: 'bob', message: 'identical line', create_at: now - 29 * 60_000 },
+    { id: 'bot-follow', user_id: 'bot', author: 'synth-bot', bot: true, pending_post_id: 'shared-bot-key', message: 'Automated 01:42 follow-up', create_at: now - 28 * 60_000 },
+    { id: 'own-confirmed', user_id: 'me', author: 'me', pending_post_id: 'me:777', message: 'my message', create_at: now - 27 * 60_000 },
+    { id: 'me:777', user_id: 'me', author: 'me', pending: true, pending_post_id: 'me:777', message: 'my message', create_at: now - 27 * 60_000 },
+  )
+  for (let i = 1; i <= 20; i++) {
+    posts.push({ id: `recent-${i}`, user_id: 'carol', author: 'carol', message: `recent ${i}`, create_at: now - (25 - i) * 60_000 })
+  }
+
+  const r = await channelRig(400, { posts, gap: openGap({ open: false, before_id: '' }), new_since: 0 })
+  try {
+    const assertUniqueMountedPosts = () => {
+      const articles = [...r.log.querySelectorAll('article[data-post-id]')]
+      const ids = articles.map((el) => el.getAttribute('data-post-id')!)
+      expect(new Set(ids).size).toBe(ids.length)
+      expect(r.log.querySelectorAll('article[data-post-id="target-0139"]').length).toBeLessThanOrEqual(1)
+      expect(r.log.querySelectorAll('article[data-post-id="me:777"]').length).toBe(0)
+    }
+
+    assertUniqueMountedPosts()
+    for (const y of [600, 480, 720, 360, 840, 520, 0, 640]) {
+      await r.scrollTo(y)
+      assertUniqueMountedPosts()
+    }
+
+    // Scroll right over target-0139 and twin-1/twin-2 and verify exact 1-to-1 rendering.
+    await r.scrollTo(560)
+    expect(r.log.querySelectorAll('article[data-post-id="target-0139"]')).toHaveLength(1)
+    expect(r.log.querySelectorAll('article[data-post-id="twin-1"]')).toHaveLength(1)
+    expect(r.log.querySelectorAll('article[data-post-id="twin-2"]')).toHaveLength(1)
+    expect(r.log.querySelectorAll('article[data-post-id="own-confirmed"]')).toHaveLength(1)
+  } finally {
+    r.restore()
+  }
+})
+
+test('R1: deleting S1 while its menu or emoji picker is open never retargets S1 UI onto S2 sharing the same pending_post_id', async () => {
+  const s1: PostView = { id: 'server-old', user_id: 'me', author: 'me', pending_post_id: 'me:1000', message: 'first post', create_at: now - 10 * 60_000 }
+  const s2: PostView = { id: 'server-new', user_id: 'me', author: 'me', pending_post_id: 'me:1000', message: 'second post', create_at: now - 9 * 60_000 }
+  const p = props({ posts: [s1, s2], new_since: 0 })
+  const { container, rerender } = render(<Feed {...p} />)
+
+  const oldArticle = container.querySelector('article[data-post-id="server-old"]')!
+  await act(async () => {
+    fireEvent.pointerEnter(oldArticle)
+  })
+  fireEvent.click(within(oldArticle as HTMLElement).getByRole('button', { name: 'More actions' }))
+  expect(screen.getByRole('menu')).toBeInTheDocument()
+
+  // Remote deletion removes S1, leaving only S2 with the same pending_post_id.
+  rerender(<Feed {...p} data={channel({ posts: [s2], new_since: 0 })} />)
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect(container.querySelectorAll('article[data-post-id]')).toHaveLength(1)
+  expect(container.querySelector('article[data-post-id="server-new"]')?.querySelector('[data-testid="post-toolbar"]')).toBeNull()
+  expect(p.actions.remove).not.toHaveBeenCalled()
+  expect(p.actions.edit).not.toHaveBeenCalled()
+})

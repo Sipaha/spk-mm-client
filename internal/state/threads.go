@@ -232,15 +232,23 @@ func (s *Server) ThreadFetch(rootID string) (crt bool, epoch uint64, need bool) 
 
 // threadPageLocked splits a thread page into its root (ID "" if absent) and
 // its live replies, oldest first; hasNext: older replies exist.
-func (s *Server) threadPageLocked(rootID string, l model.PostList) (root model.Post, replies []model.Post, hasNext bool) {
+func (s *Server) threadPageLocked(channelID, rootID string, l model.PostList) (root model.Post, replies []model.Post, hasNext bool) {
+	seen := make(map[string]struct{}, len(l.Order))
 	for _, id := range l.Order {
 		p, ok := l.Posts[id]
 		switch {
 		case !ok:
 		case id == rootID:
+			if p.DeleteAt == 0 && p.OriginalID == "" && !s.gone.has(p.ID) {
+				s.reconcilePendingLocked(channelID, p)
+			}
 			root = p
 		case p.RootID == rootID && p.DeleteAt == 0 && p.OriginalID == "" && !s.gone.has(p.ID):
-			replies = append(replies, p)
+			s.reconcilePendingLocked(channelID, p)
+			if _, dup := seen[p.ID]; !dup {
+				seen[p.ID] = struct{}{}
+				replies = append(replies, p)
+			}
 		}
 	}
 	sortReplies(replies)
@@ -261,7 +269,7 @@ func (s *Server) SetThreadPage(rootID string, epoch uint64, l model.PostList) {
 	if t == nil || epoch != s.threadEpoch || t.rootDeleted {
 		return
 	}
-	root, page, hasNext := s.threadPageLocked(rootID, l)
+	root, page, hasNext := s.threadPageLocked(t.channelID, rootID, l)
 	if s.gone.has(rootID) || root.DeleteAt != 0 {
 		s.rootGoneLocked(t)
 		return
@@ -321,7 +329,7 @@ func (s *Server) AppendOlderReplies(rootID string, epoch uint64, before string, 
 		len(t.replies) == 0 || t.replies[0].ID != before {
 		return
 	}
-	_, page, hasNext := s.threadPageLocked(rootID, l)
+	_, page, hasNext := s.threadPageLocked(t.channelID, rootID, l)
 	var add []model.Post
 	for _, p := range page {
 		if indexOf(t.replies, p.ID) < 0 {
@@ -727,7 +735,19 @@ func (s *Server) ThreadView(rootID string) (ThreadView, bool) {
 	if ch := s.chans[t.channelID]; ch != nil {
 		v.ChannelName, v.TeamName = s.channelNameLocked(ch), s.teamNameLocked(ch)
 	}
+	seen := make(map[string]struct{}, len(t.replies)+len(s.pending[t.channelID])+1)
+	var confirmedOwnPending map[string]struct{}
+	recordConfirmed := func(p model.Post) {
+		if p.PendingPostID != "" && (s.me.ID == "" || p.UserID == s.me.ID) {
+			if confirmedOwnPending == nil {
+				confirmedOwnPending = make(map[string]struct{})
+			}
+			confirmedOwnPending[p.PendingPostID] = struct{}{}
+		}
+	}
 	if t.root.ID != "" {
+		seen[t.root.ID] = struct{}{}
+		recordConfirmed(t.root)
 		v.Posts = append(v.Posts, s.postViewLocked(t.root))
 	}
 	replies := t.replies
@@ -737,14 +757,30 @@ func (s *Server) ThreadView(rootID string) (ThreadView, bool) {
 	}
 	replies = s.withEphemeralLocked(replies, func(p model.Post) bool { return p.RootID == rootID })
 	for _, p := range replies {
+		if p.ID == "" {
+			continue
+		}
+		if _, dup := seen[p.ID]; dup {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		recordConfirmed(p)
 		v.Posts = append(v.Posts, s.postViewLocked(p))
 	}
 	pend := slices.Clone(s.pending[t.channelID])
 	sort.SliceStable(pend, func(i, j int) bool { return pend[i].CreateAt < pend[j].CreateAt })
 	for _, p := range pend {
-		if p.RootID == rootID {
-			v.Posts = append(v.Posts, s.pendingViewLocked(p))
+		if p.RootID != rootID {
+			continue
 		}
+		if _, dup := seen[p.ID]; dup {
+			continue
+		}
+		if _, done := confirmedOwnPending[p.ID]; done {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		v.Posts = append(v.Posts, s.pendingViewLocked(p))
 	}
 	return v, true
 }

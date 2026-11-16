@@ -304,6 +304,24 @@ function QuickReactions({ serverId, post, load, react }: { serverId: number; pos
   )
 }
 
+// Coordinate "hot" state across mounted PostItems so virtualized scroll or
+// missed pointerleave/blur events never leave two hover/focus toolbars open
+// at once when pointer or focus moves to another post.
+let releaseActiveHot: (() => void) | null = null
+
+function claimActiveHot(release: () => void) {
+  if (releaseActiveHot && releaseActiveHot !== release) {
+    releaseActiveHot()
+  }
+  releaseActiveHot = release
+}
+
+function clearActiveHot(release: () => void) {
+  if (releaseActiveHot === release) {
+    releaseActiveHot = null
+  }
+}
+
 export const PostItem = memo(function PostItem({ serverId, post, head, me, locale, actions, editing, variant = 'channel', replyContext = null, isInlineReply = false }: Props) {
   const time = formatTime(post.create_at, locale)
   // Pending posts already live in the local feed. Give quick confirmations
@@ -319,7 +337,8 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     const timer = setTimeout(() => revealPending(pendingDeadline), remaining)
     return () => clearTimeout(timer)
   }, [post.pending, post.failed, pendingDeadline])
-  const [picker, setPicker] = useState<{ anchor: DOMRect; info: EmojiDTO | null } | null>(null)
+  const [picker, setPicker] = useState<{ postId: string; anchor: DOMRect; info: EmojiDTO | null } | null>(null)
+  const activePicker = picker?.postId === post.id ? picker : null
   const trigger = useRef<HTMLElement | null>(null)
   const canReact = !post.system && !post.pending && !post.failed
   const canReply = variant === 'channel' && !post.system && !post.pending && !post.failed
@@ -335,10 +354,11 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     openThread()
   }
   const openPicker = (el: HTMLElement) => {
+    const targetPostId = post.id
     trigger.current = el
-    setPicker({ anchor: el.getBoundingClientRect(), info: null })
+    setPicker({ postId: targetPostId, anchor: el.getBoundingClientRect(), info: null })
     actions.emojiInfo().then(
-      (info) => setPicker((p) => (p ? { ...p, info } : p)),
+      (info) => setPicker((p) => (p && p.postId === targetPostId ? { ...p, info } : p)),
       () => {},
     )
   }
@@ -362,23 +382,58 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
     })
   }
   const pick = (name: string) => {
+    const pickerPostId = activePicker?.postId
     closePicker()
+    if (pickerPostId !== post.id) return
     if (!post.reactions?.some((r) => r.emoji === name && r.mine)) react(name, true)
   }
   // hot: the toolbar renders only for the "hot" post (hovered, focused, or
   // with its own menu/picker open) — see AGENTS.md's Ruling: a toolbar
   // rendered (even CSS-hidden) for every row would load every quick
   // reaction's custom-emoji picture for rows nobody is looking at.
-  const [hot, setHot] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
+  // Bind hot/menu/picker to exact server post.id (allowing only genuine
+  // pending/failed -> confirmed transitions) so two confirmed posts sharing a
+  // reused pending_post_id can never inherit each other's menu or picker.
+  const [boundPost, setBoundPost] = useState({ id: post.id, pendingOrFailed: !!(post.pending || post.failed) })
+  const [hotFor, setHotFor] = useState<{ id: string; pendingOrFailed: boolean } | null>(null)
+  const [menuForId, setMenuForId] = useState<string | null>(null)
   const moreBtn = useRef<HTMLElement | null>(null)
   const articleRef = useRef<HTMLElement | null>(null)
-  const visible = hot || menuOpen || !!picker
+  const releaseHotRef = useRef<() => void>(() => setHotFor(null))
+  if (boundPost.id !== post.id) {
+    const isPendingAck =
+      boundPost.pendingOrFailed &&
+      !post.pending &&
+      !post.failed &&
+      !!post.pending_post_id &&
+      post.pending_post_id === boundPost.id
+    setBoundPost({ id: post.id, pendingOrFailed: !!(post.pending || post.failed) })
+    if (!isPendingAck) {
+      setHotFor(null)
+      setMenuForId(null)
+      setPicker(null)
+    }
+  }
+  const activateHot = () => {
+    claimActiveHot(releaseHotRef.current)
+    setHotFor({ id: post.id, pendingOrFailed: !!(post.pending || post.failed) })
+  }
+  const deactivateHot = () => {
+    clearActiveHot(releaseHotRef.current)
+    setHotFor(null)
+  }
+  useEffect(() => () => clearActiveHot(releaseHotRef.current), [])
+  const hot =
+    hotFor !== null &&
+    (hotFor.id === post.id ||
+      (hotFor.pendingOrFailed && !post.pending && !post.failed && !!post.pending_post_id && post.pending_post_id === hotFor.id))
+  const menuOpen = menuForId === post.id
+  const visible = hot || menuOpen || !!activePicker
   const openMenu = (el: HTMLElement) => {
     moreBtn.current = el
-    setMenuOpen(true)
+    setMenuForId(post.id)
   }
-  const closeMenu = () => setMenuOpen(false)
+  const closeMenu = () => setMenuForId(null)
   // Toolbar placement: one layout read per show (see decideToolbarPlacement
   // above) — reset to the 'inside-top' baseline whenever the toolbar isn't
   // rendered, so the next show always starts from the same measured
@@ -444,12 +499,15 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
       ref={articleRef}
       data-post-id={post.id}
       className={`group relative flex gap-3 px-4 py-0.5 text-fg hover:bg-hover/35 ${head ? 'mt-2' : ''}`}
-      onPointerEnter={() => setHot(true)}
-      onPointerLeave={() => setHot(false)}
-      onFocus={() => setHot(true)}
+      onPointerEnter={activateHot}
+      onPointerLeave={deactivateHot}
+      onFocus={(e) => {
+        if (articleRef.current?.contains(e.target as Node)) activateHot()
+      }}
       onBlur={(e) => {
+        if (!articleRef.current?.contains(e.target as Node)) return
         const next = e.relatedTarget as Node | null
-        if (!next || !articleRef.current?.contains(next)) setHot(false)
+        if (!next || !articleRef.current?.contains(next)) deactivateHot()
       }}
     >
       <div className="flex w-9 shrink-0 justify-end pt-0.5">
@@ -601,10 +659,10 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
           </ToolButton>
         </div>
       )}
-      {picker &&
+      {activePicker &&
         createPortal(
           <Suspense fallback={null}>
-            <EmojiPicker serverId={serverId} anchor={picker.anchor} info={picker.info} onPick={pick} onClose={closePicker} />
+            <EmojiPicker serverId={serverId} anchor={activePicker.anchor} info={activePicker.info} onPick={pick} onClose={closePicker} />
           </Suspense>,
           document.body,
         )}

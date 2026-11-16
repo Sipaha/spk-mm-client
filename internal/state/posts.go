@@ -73,7 +73,13 @@ func (s *Server) trimWindowLocked(ch *Chan) {
 	w.Posts = append([]model.Post(nil), w.Posts[cut:]...)
 	w.Complete = false
 	if ch.Info.ID == s.active && !s.olderGap && s.historyHeldLocked() {
-		s.older = append(s.older, trimmed...)
+		for _, p := range trimmed {
+			if i := indexOf(s.older, p.ID); i >= 0 {
+				s.older[i] = newerOf(p, s.older[i])
+			} else {
+				s.older = append(s.older, p)
+			}
+		}
 		sortPosts(s.older)
 	}
 }
@@ -244,7 +250,10 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	var merged []model.Post
 	var newest int64
 	for _, p := range page {
-		if keep(p, crt) && !s.gone.has(p.ID) {
+		if p.OriginalID == "" && p.DeleteAt == 0 && !s.gone.has(p.ID) {
+			s.reconcilePendingLocked(channelID, p)
+		}
+		if keep(p, crt) && !s.gone.has(p.ID) && indexOf(merged, p.ID) < 0 {
 			if i := indexOf(ch.Win.Posts, p.ID); i >= 0 {
 				p = newerOf(p, ch.Win.Posts[i])
 			} else if i := indexOf(s.older, p.ID); channelID == s.active && i >= 0 {
@@ -301,10 +310,15 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 		case p.OriginalID != "":
 			continue // edit-history row
 		case p.DeleteAt > 0:
+			s.reconcilePendingLocked(channelID, p)
 			s.removeLocked(ch, p)
-		case !keep(p, crt) || s.gone.has(p.ID):
+		case s.gone.has(p.ID):
+			continue
+		case !keep(p, crt):
+			s.reconcilePendingLocked(channelID, p)
 			continue
 		default:
+			s.reconcilePendingLocked(channelID, p)
 			held := false
 			if channelID == s.active {
 				if i := indexOf(s.older, p.ID); i >= 0 {
@@ -453,13 +467,57 @@ func (s *Server) AddPending(channelID, rootID, message string, files ...FileView
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now().UnixMilli()
-	id := s.me.ID + ":" + strconv.FormatInt(now, 10)
-	for n := 1; s.pendingIndexLocked(channelID, id) >= 0; n++ {
-		id = s.me.ID + ":" + strconv.FormatInt(now, 10) + "-" + strconv.Itoa(n)
+	ts := max(now, s.pendingLastMs)
+	if ts == s.pendingLastMs {
+		s.pendingSeq++
+	} else {
+		s.pendingLastMs = ts
+		s.pendingSeq = 0
+	}
+	id := s.me.ID + ":" + strconv.FormatInt(ts, 10)
+	if s.pendingSeq > 0 {
+		id += "-" + strconv.Itoa(s.pendingSeq)
+	}
+	for s.pendingIDInUseLocked(id) {
+		s.pendingSeq++
+		id = s.me.ID + ":" + strconv.FormatInt(ts, 10) + "-" + strconv.Itoa(s.pendingSeq)
 	}
 	p := Pending{ID: id, ChannelID: channelID, RootID: rootID, Message: message, CreateAt: now, Files: slices.Clone(files)}
 	s.pending[channelID] = append(s.pending[channelID], p)
 	return p
+}
+
+func (s *Server) pendingIDInUseLocked(id string) bool {
+	for _, list := range s.pending {
+		for _, p := range list {
+			if p.ID == id {
+				return true
+			}
+		}
+	}
+	for _, p := range s.older {
+		if p.ID == id || p.PendingPostID == id {
+			return true
+		}
+	}
+	for _, ch := range s.chans {
+		for _, p := range ch.Win.Posts {
+			if p.ID == id || p.PendingPostID == id {
+				return true
+			}
+		}
+	}
+	for _, t := range s.threads {
+		if t.root.ID == id || t.root.PendingPostID == id {
+			return true
+		}
+		for _, p := range t.replies {
+			if p.ID == id || p.PendingPostID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) pendingIndexLocked(channelID, id string) int {
@@ -498,6 +556,19 @@ func (s *Server) DropPending(channelID, id string) Change {
 	threads := s.pendingThreadsLocked(channelID, id)
 	s.dropPendingLocked(channelID, id)
 	return Change{Channels: []string{channelID}, Threads: threads}
+}
+
+// reconcilePendingLocked drops our local optimistic Pending placeholder
+// when a confirmed server post carrying its PendingPostID arrives via WS or
+// any REST page/catch-up/segment/thread read.
+func (s *Server) reconcilePendingLocked(channelID string, p model.Post) {
+	if p.PendingPostID == "" || p.OriginalID != "" {
+		return
+	}
+	if s.me.ID != "" && p.UserID != "" && p.UserID != s.me.ID {
+		return
+	}
+	s.dropPendingLocked(channelID, p.PendingPostID)
 }
 
 func (s *Server) dropPendingLocked(channelID, id string) {
@@ -648,7 +719,7 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 	}
 	isNew = !s.seen.has(p.ID)
 	s.seen.add(p.ID)
-	s.dropPendingLocked(ch.Info.ID, p.PendingPostID)
+	s.reconcilePendingLocked(ch.Info.ID, p)
 	root := p.RootID == ""
 	switch {
 	case keep(p, crt):

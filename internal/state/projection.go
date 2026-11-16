@@ -62,6 +62,9 @@ func (s *Server) ChannelDelta(id string, base uint64) (ChannelPatch, bool) {
 	var order []string
 	emit := func(p PostView, metadata *model.PostMetadata) {
 		old := cache.posts[p.ID]
+		if old != nil && old.seen == cache.revision {
+			return
+		}
 		if old == nil {
 			old = &projectedPost{}
 			cache.posts[p.ID] = old

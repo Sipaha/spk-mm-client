@@ -64,9 +64,57 @@ export function buildRows(
   ch: Pick<ChannelDTO, 'posts' | 'new_since' | 'me_id' | 'gap_after' | 'has_more' | 'crt'> & { gap?: HistGap },
   variant: FeedVariant = 'channel',
 ): Row[] {
+  const confirmedOwnPendingIds = new Set<string>()
+  if (ch.me_id) {
+    for (const p of ch.posts) {
+      if (!p.pending && !p.failed && p.user_id === ch.me_id && p.pending_post_id) {
+        confirmedOwnPendingIds.add(p.pending_post_id)
+      }
+    }
+  }
+  const seenPostIds = new Set<string>()
+  const ownPendingCounts = new Map<string, number>()
+  const posts: PostView[] = []
+  for (const p of ch.posts) {
+    if (!p.id) continue
+    if ((p.pending || p.failed) && confirmedOwnPendingIds.has(p.id)) continue
+    if (seenPostIds.has(p.id)) continue
+    seenPostIds.add(p.id)
+    posts.push(p)
+    if (ch.me_id && p.user_id === ch.me_id && p.pending_post_id) {
+      ownPendingCounts.set(p.pending_post_id, (ownPendingCounts.get(p.pending_post_id) ?? 0) + 1)
+    }
+  }
+
+  const usedKeys = new Set<string>()
+  const gap = ch.gap
+  if (ch.has_more) usedKeys.add('more')
+  if (ch.new_since > 0) usedKeys.add('new')
+  if (ch.gap_after) usedKeys.add('gap')
+  if (variant === 'thread') usedKeys.add('thread-replies')
+  if (gap && !gap.open && gap.stale) usedKeys.add(`gap-stale:${gap.gen}`)
+  if (gap?.open) usedKeys.add(`gap:${gap.gen}`)
+
+  const claimKey = (preferred: string, fallbackPrefix?: string): string => {
+    const base = preferred || fallbackPrefix || 'row'
+    if (!usedKeys.has(base)) {
+      usedKeys.add(base)
+      return base
+    }
+    const alt = fallbackPrefix ?? base
+    if (alt !== base && !usedKeys.has(alt)) {
+      usedKeys.add(alt)
+      return alt
+    }
+    let n = 2
+    while (usedKeys.has(`${alt}:${n}`)) n++
+    const unique = `${alt}:${n}`
+    usedKeys.add(unique)
+    return unique
+  }
+
   const rows: Row[] = []
   if (ch.has_more) rows.push({ kind: 'more', key: 'more' })
-  const gap = ch.gap
   if (gap && !gap.open && gap.stale) rows.push({ kind: 'gap', key: `gap-stale:${gap.gen}`, open: false, stale: true })
   let prev: PostView | null = null
   let lineDone = false
@@ -74,19 +122,19 @@ export function buildRows(
   let firstPost = true
   let gapDone = !gap?.open
   // new_since before the window's first post: the boundary may be in the gap.
-  const gapFirst = gap?.open ? ch.posts.find((p) => p.id === gap.before_id) : undefined
+  const gapFirst = gap?.open ? posts.find((p) => p.id === gap.before_id) : undefined
   const lineInGap = !!gapFirst && ch.new_since < gapFirst.create_at
   const pushGap = () => {
     rows.push({ kind: 'gap', key: `gap:${gap!.gen}`, open: true, stale: gap!.stale })
     gapDone = true
     broken = true
   }
-  for (const p of ch.posts) {
+  for (const p of posts) {
     if (!gapDone && gap!.before_id !== '' && p.id === gap!.before_id) pushGap()
     const afterGap = gap?.open === true && gapDone
     let head = true
     if (!prev || dayKey(prev.create_at) !== dayKey(p.create_at)) {
-      rows.push({ kind: 'day', key: `day-${dayKey(p.create_at)}`, ms: p.create_at })
+      rows.push({ kind: 'day', key: claimKey(`day-${dayKey(p.create_at)}`), ms: p.create_at })
     } else {
       head =
         broken ||
@@ -111,10 +159,22 @@ export function buildRows(
       replyContext = { author: p.root_author ?? '', snippet: p.root_snippet ?? '' }
       head = true
     }
-    // A pending post's real post arrives under a different id; keying by
-    // pending_post_id (set on both sides by the Go layer) keeps the row —
-    // and the virtualizer's measured size for it — across the swap.
-    rows.push({ kind: 'post', key: p.pending_post_id || p.id, post: p, head, replyContext, isInlineReply })
+    // A pending post's real post arrives under a different id; keying an own
+    // post by a non-colliding pending_post_id keeps the row — and the
+    // virtualizer's measured size for it — across the pending -> confirmed
+    // swap. When two confirmed own posts share a reused pending_post_id, key
+    // each by its server post.id so deleting S1 never hands S1's row key to S2.
+    const ownPendingKey =
+      ch.me_id !== '' &&
+      p.user_id === ch.me_id &&
+      p.pending_post_id &&
+      ownPendingCounts.get(p.pending_post_id) === 1
+        ? p.pending_post_id
+        : ''
+    const postKey = ownPendingKey && !usedKeys.has(ownPendingKey)
+      ? claimKey(ownPendingKey)
+      : claimKey(p.id, `post:${p.id}`)
+    rows.push({ kind: 'post', key: postKey, post: p, head, replyContext, isInlineReply })
     broken = false
     if (variant === 'thread' && firstPost && !p.root_id) {
       // The root's own reply_count is the thread's true total — never the
@@ -122,7 +182,7 @@ export function buildRows(
       // growing toward ThreadMaxReplies=200 as older pages load; fix round
       // 1 review). Fall back to the loaded count only if reply_count is
       // itself absent (e.g. genuinely zero replies, omitempty on the wire).
-      rows.push({ kind: 'threadReplies', key: 'thread-replies', count: p.reply_count ?? ch.posts.length - 1 })
+      rows.push({ kind: 'threadReplies', key: 'thread-replies', count: p.reply_count ?? posts.length - 1 })
       broken = true
     }
     firstPost = false

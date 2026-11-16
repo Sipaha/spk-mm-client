@@ -221,8 +221,11 @@ func (s *Server) SetThreadFocus(op ThreadFocusOp, target model.Post, up, down mo
 	f := &threadFocus{target: target.ID, gen: op.Gen, gap: true,
 		up: cursorOf(raw[0]), down: cursorOf(raw[len(raw)-1]), upDone: !hasNext(up), downDone: !hasNext(down)}
 	t.focus = f
-	if r, ok := up.Posts[op.Root]; ok && t.root.ID == "" && r.DeleteAt == 0 {
-		t.root = r // not held in the feed: shown before the tail's page lands
+	if r, ok := up.Posts[op.Root]; ok && r.DeleteAt == 0 && r.OriginalID == "" && !s.gone.has(r.ID) {
+		s.reconcilePendingLocked(t.channelID, r)
+		if t.root.ID == "" {
+			t.root = r // not held in the feed: shown before the tail's page lands
+		}
 	}
 	if n := len(t.replies); n > ThreadPage {
 		t.replies = slices.Clone(t.replies[n-ThreadPage:])
@@ -246,6 +249,7 @@ func (s *Server) placeFocusLocked(t *thread, raw []model.Post) {
 		if !s.liveReplyLocked(p) {
 			continue
 		}
+		s.reconcilePendingLocked(t.channelID, p)
 		if i := indexOf(t.replies, p.ID); i >= 0 {
 			t.replies[i] = newerOf(p, t.replies[i])
 			continue
@@ -255,8 +259,10 @@ func (s *Server) placeFocusLocked(t *thread, raw []model.Post) {
 			continue
 		}
 		if len(t.replies) > 0 && cmpReplies(p, t.replies[0]) > 0 {
-			tail = append(tail, p)
-		} else {
+			if indexOf(tail, p.ID) < 0 {
+				tail = append(tail, p)
+			}
+		} else if indexOf(add, p.ID) < 0 {
 			add = append(add, p)
 		}
 	}
@@ -516,7 +522,7 @@ func (s *Server) ApplyFocusRevalidation(op FocusRevalOp, r Reread) (applied bool
 		return false
 	}
 	f := t.focus
-	f.replies = s.rereadLocked(f.replies, replyOrder, op.Low, op.High, op.Held, r, []Cursor{op.High},
+	f.replies = s.rereadLocked(t.channelID, f.replies, replyOrder, op.Low, op.High, op.Held, r, []Cursor{op.High},
 		func(p model.Post) bool { return p.RootID == op.Root && s.liveReplyLocked(p) },
 		func(p model.Post) bool { return indexOf(t.replies, p.ID) < 0 })
 	s.slideFocusLocked(t, true) // replies read into the range count too

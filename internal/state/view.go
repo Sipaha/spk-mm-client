@@ -217,7 +217,22 @@ func (s *Server) channelViewLocked(channelID string, emit func(PostView, *model.
 			pv.RootAuthor, pv.RootSnippet = s.authorLocked(t.root), rootSnippet(t.root)
 		}
 	}
+	emitted := make(map[string]struct{}, len(older)+len(ch.Win.Posts)+len(s.pending[channelID]))
+	var confirmedOwnPending map[string]struct{}
 	each(func(p model.Post) {
+		if p.ID == "" {
+			return
+		}
+		if _, dup := emitted[p.ID]; dup {
+			return
+		}
+		emitted[p.ID] = struct{}{}
+		if p.PendingPostID != "" && (s.me.ID == "" || p.UserID == s.me.ID) {
+			if confirmedOwnPending == nil {
+				confirmedOwnPending = make(map[string]struct{})
+			}
+			confirmedOwnPending[p.PendingPostID] = struct{}{}
+		}
 		metadata := p.Metadata
 		var cached *projectedPost
 		if emit != nil {
@@ -242,6 +257,13 @@ func (s *Server) channelViewLocked(channelID string, emit func(PostView, *model.
 		if v.CRT && p.RootID != "" {
 			continue // a reply being sent shows in its thread only
 		}
+		if _, dup := emitted[p.ID]; dup {
+			continue
+		}
+		if _, done := confirmedOwnPending[p.ID]; done {
+			continue
+		}
+		emitted[p.ID] = struct{}{}
 		pv := s.pendingViewLocked(p)
 		rootContext(&pv)
 		appendView(pv, nil)
