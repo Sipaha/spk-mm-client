@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"runtime"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -46,7 +45,7 @@ func setupTray(app *application.App, icons trayIcons, show, toggle func(), n *no
 
 	tray := app.SystemTray.New()
 	tray.SetIcon(icons.plain)
-	setTrayText(tray, "spk-mm-client")
+	setTrayText(tray, nil, "spk-mm-client")
 	tray.SetMenu(menu)
 	tray.OnClick(toggle)
 	return tray
@@ -54,45 +53,33 @@ func setupTray(app *application.App, icons trayIcons, show, toggle func(), n *no
 
 // trayBadge returns the Service.OnBadge callback. Tray updates go through
 // InvokeSync on the GTK main thread, so they run on their own goroutine,
-// start only after ApplicationStarted + 200 ms (spike S3), and apply just
-// the latest badge — the service's goroutine never waits for GTK.
+// start only once the native tray has finished starting up, and apply the
+// latest badge — the service's goroutine never waits for GTK or D-Bus.
 func trayBadge(ctx context.Context, tray *application.SystemTray, icons trayIcons, lang string, started <-chan struct{}) func(api.Badge) {
 	ch := make(chan api.Badge, 1)
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-started:
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case b := <-ch:
-				if ctx.Err() != nil {
-					return
-				}
-				setTrayText(tray, trayTooltip(lang, b.Unread, b.Mentions))
-				tray.SetIcon(icons.pick(trayIconFor(b.Unread, b.Mentions)))
-			}
-		}
-	}()
+	pt := newPlatformTray(ctx)
+	go runTrayBadge(ctx, ch, lang, trayApplier{
+		waitReady: func(c context.Context) bool { return pt.waitReady(c, started) },
+		setText:   func(text string) { setTrayText(tray, pt, text) },
+		setIcon:   func(ic trayIcon) { tray.SetIcon(icons.pick(ic)) },
+	})
 	return func(b api.Badge) { offerLatest(ch, b) }
 }
 
-// setTrayText shows text on hover over the tray icon. Wails beta.25's Linux
-// tray ignores SetTooltip (a "TBD" no-op) and fixes the StatusNotifierItem
-// Id/ToolTip to the label when the tray starts (default "Wails"), so on Linux
-// the text also goes to the label — the SNI Title, which hosts fall back to.
-// Not on macOS: there the label is drawn next to the menu-bar icon.
-func setTrayText(tray *application.SystemTray, text string) {
-	tray.SetTooltip(text)
+// setTrayText shows text on hover over the tray icon. On Linux, Wails 3.1.0's
+// SetLabel updates both SNI Title and ToolTip.V2 (title), whereas SetTooltip
+// sets ToolTip.V3 (description) under V2 — calling both with the same string
+// makes xapp-sn-watcher and SNI hosts render duplicate lines ("text\ntext").
+// Linux therefore uses SetLabel (keeping V3 empty) plus platformTray.syncTooltip
+// to emit org.kde.StatusNotifierItem.NewToolTip. Off Linux, SetTooltip sets the
+// hover text directly (macOS must not call SetLabel, which draws menu-bar text).
+func setTrayText(tray *application.SystemTray, pt *platformTray, text string) {
 	if runtime.GOOS == "linux" {
 		tray.SetLabel(text)
+	} else {
+		tray.SetTooltip(text)
+	}
+	if pt != nil {
+		pt.syncTooltip(text)
 	}
 }

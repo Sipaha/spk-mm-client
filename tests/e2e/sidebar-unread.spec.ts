@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { channel, removeServerFromMenu, serverId, signInAlice, testPost, unique } from './helpers'
+import { apiCall, channel, removeServerFromMenu, serverId, signInAlice, testPost, unique } from './helpers'
 
 // sidebar-unread-brief.md ruling 2: "More unreads"/"More mentions" overflow
 // pills. Only 3 real channels + a couple of DMs exist in the seed, so a
@@ -147,4 +147,38 @@ test('Unreads: opening an unread channel via a notification click holds it too, 
   await channel(page, 'Town Square').click()
   await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toHaveCount(0)
   await expect(channelsSection.getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+})
+
+test('Unreads and server badge clear completely after reading unread channel and switching to personal DM', async ({ page }) => {
+  await signInAlice(page)
+  const id = await serverId(page)
+
+  // Ensure any pre-existing unread on the shared fake server is cleared first.
+  await channel(page, /Off-Topic/).click()
+  await channel(page, /^bob(,|$)/).click()
+  await expect.poll(async () => {
+    const list = (await apiCall(page, 'ListServers')) as { id: number; unread: boolean; mentions: number }[]
+    const srv = list.find((s) => s.id === id)
+    return srv ? { unread: srv.unread, mentions: srv.mentions } : null
+  }).toEqual({ unread: false, mentions: 0 })
+
+  // Incoming plain unread in Off-Topic while viewing personal DM with bob.
+  await testPost(page, 'fake/post', { channel_id: 'c-offtopic', username: 'bob', message: unique('plain unread badge check') })
+  await expect(unreadsList(page).getByRole('button', { name: /Off-Topic/ })).toBeVisible()
+  await expect.poll(async () => {
+    const list = (await apiCall(page, 'ListServers')) as { id: number; unread: boolean; mentions: number }[]
+    const srv = list.find((s) => s.id === id)
+    return srv ? { unread: srv.unread, mentions: srv.mentions } : null
+  }).toEqual({ unread: true, mentions: 0 })
+
+  // Click unread channel and immediately switch back to personal DM with bob.
+  await unreadsList(page).getByRole('button', { name: /Off-Topic/ }).click()
+  await channel(page, /^bob(,|$)/).click()
+  await expect(page.getByRole('heading', { name: /^@?\s*bob$/ })).toBeVisible()
+  await expect(page.getByText('Unreads', { exact: true })).toHaveCount(0)
+  await expect.poll(async () => {
+    const list = (await apiCall(page, 'ListServers')) as { id: number; unread: boolean; mentions: number }[]
+    const srv = list.find((s) => s.id === id)
+    return srv ? { unread: srv.unread, mentions: srv.mentions } : null
+  }).toEqual({ unread: false, mentions: 0 })
 })

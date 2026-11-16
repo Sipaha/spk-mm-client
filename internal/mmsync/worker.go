@@ -520,6 +520,7 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 	w.requestStatuses()
 	w.retryReactionsNow()
 	w.rereadDirtyThreadCounts()
+	w.viewFocused()
 	onLive()
 	var settle <-chan time.Time
 	if !w.live.proven() {
@@ -723,6 +724,7 @@ func (w *Worker) finishRefresh(r metaResult) error {
 		c.Threads = w.openThreads()
 	}
 	w.changed(c)
+	w.viewFocused()
 	return nil
 }
 
@@ -806,6 +808,7 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 	w.reloadOpenThread() // stale since the gap, or reset
 	w.startEmojiLoad()
 	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
+	w.viewFocused()
 	return nil
 }
 
@@ -1034,7 +1037,7 @@ func (w *Worker) loadUsers(ctx context.Context) {
 		return
 	}
 	w.st.SetUsers(users)
-	w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
+	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 }
 
 // refreshUsers re-reads users held before a bootstrap, once per bootstrap
@@ -1064,7 +1067,7 @@ func (w *Worker) refreshUsers(ctx context.Context, ids []string, since int64) {
 		return
 	}
 	if w.st.RefreshUsers(users) {
-		w.changed(state.Change{Sidebar: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
+		w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 	}
 }
 

@@ -99,6 +99,9 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 				if s.removeLocked(ch, p) {
 					eff.Channels = []string{p.ChannelID}
 				}
+				if s.mayChangeThreadMentionsLocked(ch) {
+					s.threadCountsChangedLocked(&eff)
+				}
 			}
 		}
 	case "reaction_added", "reaction_removed":
@@ -147,6 +150,7 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 	case "user_added":
 		eff.NeedMeta = ev.Str("user_id") == s.me.ID
 	case "direct_added", "group_added", "channel_created", "channel_restored", "channel_converted",
+		"added_to_team", "leave_team", "delete_team", "restore_team", "update_team",
 		"sidebar_category_created", "sidebar_category_updated", "sidebar_category_deleted", "sidebar_category_order_updated":
 		eff.NeedMeta = true
 	case "channel_member_updated":
@@ -201,7 +205,7 @@ func (s *Server) ApplyEvent(ev ws.Event) Effects {
 			}
 			s.users[u.ID] = u
 			s.dirty.users[u.ID] = true
-			eff.Sidebar = true
+			eff.Sidebar, eff.Badge = true, true
 		}
 	case "emoji_added":
 		if e, err := ws.DecodeEmoji(ev); err == nil {

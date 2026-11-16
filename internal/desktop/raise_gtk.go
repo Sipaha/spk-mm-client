@@ -22,6 +22,16 @@ static guint32 spk_raise_stamp(GtkWindow *w) {
 	return t;
 }
 
+static GtkWidget *spk_raise_find_webview(GtkWidget *w) {
+	if (g_strcmp0(G_OBJECT_TYPE_NAME(w), "WebKitWebView") == 0) return w;
+	if (!GTK_IS_CONTAINER(w)) return NULL;
+	GList *kids = gtk_container_get_children(GTK_CONTAINER(w));
+	GtkWidget *found = NULL;
+	for (GList *l = kids; l != NULL && found == NULL; l = l->next) found = spk_raise_find_webview(GTK_WIDGET(l->data));
+	g_list_free(kids);
+	return found;
+}
+
 // Brings a shown window to the front and focuses it: un-minimizes it and
 // asks the WM to activate it (_NET_ACTIVE_WINDOW) with the timestamp t
 // stamped before the show, which the WM honours. t is 0 only when the window
@@ -33,6 +43,10 @@ static void spk_raise_present(GtkWindow *w, guint32 t) {
 	if (t == 0) t = spk_raise_stamp(w);
 	if (t != 0) gtk_window_present_with_time(w, t);
 	else gtk_window_present(w);
+	if (gtk_window_get_focus(w) == NULL) {
+		GtkWidget *wv = spk_raise_find_webview(GTK_WIDGET(w));
+		if (wv != NULL) gtk_widget_grab_focus(wv);
+	}
 }
 */
 import "C"

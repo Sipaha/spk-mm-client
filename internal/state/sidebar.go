@@ -81,7 +81,10 @@ func (s *Server) QuickChannels() []QuickChannel {
 		if c.Info.DeleteAt != 0 {
 			continue
 		}
-		t := teams[c.Info.TeamID]
+		t, ok := teams[c.Info.TeamID]
+		if c.Info.TeamID != "" && !ok {
+			continue
+		}
 		out = append(out, QuickChannel{ID: c.Info.ID, Name: s.channelNameLocked(c), Type: c.Info.Type,
 			TeamID: c.Info.TeamID, TeamName: t.Name, TeamDisplay: t.DisplayName,
 			LastActivityAt: s.lastActivityLocked(&c.Info, s.crtLocked())})
@@ -206,6 +209,12 @@ func (s *Server) categoriesLocked(teamID string) []CategoryView {
 			extraDM = nil
 		}
 	}
+	if len(extraCh) > 0 {
+		cats = append(cats, model.SidebarCategory{ID: "channels", Type: "channels", DisplayName: "Channels", Sorting: "alpha", ChannelIDs: extraCh})
+	}
+	if len(extraDM) > 0 {
+		cats = append(cats, model.SidebarCategory{ID: "direct_messages", Type: "direct_messages", DisplayName: "Direct Messages", Sorting: "recent", ChannelIDs: extraDM})
+	}
 	out := make([]CategoryView, 0, len(cats))
 	for _, c := range cats {
 		ids := c.ChannelIDs
@@ -281,7 +290,7 @@ func (s *Server) visibleDMsLocked(ids []string) []string {
 		seen   int64
 	}
 	var cs []cand
-	unreadN := 0
+	unreadN, activeRead := 0, 0
 	for _, id := range ids {
 		ch := s.chans[id]
 		u, _ := s.unreadLocked(ch)
@@ -290,6 +299,8 @@ func (s *Server) visibleDMsLocked(ids []string) []string {
 		}
 		if u {
 			unreadN++
+		} else if id == s.active {
+			activeRead = 1
 		}
 		cs = append(cs, cand{id, id == s.active, u, s.dmLastSeenLocked(ch)})
 	}
@@ -304,7 +315,7 @@ func (s *Server) visibleDMsLocked(ids []string) []string {
 		return a.seen > b.seen
 	})
 	limit := int(atoiDefault(s.prefLocked("sidebar_settings", "limit_visible_dms_gms", ""), defaultDMLimit))
-	limit = max(limit, unreadN)
+	limit = max(limit, unreadN+activeRead)
 	if limit > 0 && len(cs) > limit {
 		cs = cs[:limit]
 	}

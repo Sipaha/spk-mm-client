@@ -42,7 +42,12 @@ func (s *Service) Start(ctx context.Context) error {
 	if old != nil {
 		old.Close()
 	}
-	return m.StartAll(ctx)
+	if err := m.StartAll(ctx); err != nil {
+		return err
+	}
+	s.applyFocus()
+	s.co.Schedule("badge", s.refreshBadges)
+	return nil
 }
 
 // Close cancels uploads and deletes attachment spools, stops every worker

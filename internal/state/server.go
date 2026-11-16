@@ -443,10 +443,14 @@ func (s *Server) unreadLocked(c *Chan) (unread bool, mentions int) {
 
 // excludedFromSumsLocked reports whether c must be skipped when summing
 // unread/mentions for a badge or a team (the webapp's getUnreadStatus):
-// muted channels, archived channels, and DMs whose partner is known to be
-// deactivated. A DM partner not loaded yet still counts.
+// muted channels, archived channels, channels of archived or non-joined
+// teams, and DMs whose partner is known to be deactivated. A DM partner
+// not loaded yet still counts.
 func (s *Server) excludedFromSumsLocked(c *Chan) bool {
 	if c.Info.DeleteAt != 0 || c.Member.Muted() {
+		return true
+	}
+	if c.Info.TeamID != "" && !s.hasTeamLocked(c.Info.TeamID) {
 		return true
 	}
 	if c.Info.IsDM() {

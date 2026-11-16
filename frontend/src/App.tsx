@@ -21,6 +21,7 @@ import { ThreadPane } from './components/ThreadPane'
 import { Announcer, Toast } from './components/Toast'
 import { IconClose } from './components/icons'
 import { errorMessage } from './errors'
+import { createFocusSync } from './focusSync'
 import { t } from './i18n'
 import { useStore } from './store'
 import { useNarrow } from './useNarrow'
@@ -170,7 +171,7 @@ export function App() {
 
   useEffect(() => {
     // Go marks the open channel read only while the window is focused and visible.
-    const set = (focused: boolean) => void client.setFocused(focused).catch(() => {})
+    const set = createFocusSync((focused) => client.setFocused(focused))
     const visible = () => document.visibilityState === 'visible'
     const onFocus = () => set(visible())
     const onBlur = () => set(false)
@@ -182,6 +183,7 @@ export function App() {
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('online', onOnline)
     return () => {
+      set.dispose()
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('blur', onBlur)
       document.removeEventListener('visibilitychange', onVisibility)

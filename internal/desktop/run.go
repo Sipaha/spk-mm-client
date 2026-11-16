@@ -74,7 +74,7 @@ func Run(ctx context.Context, o Options) error {
 	// can never interleave.
 	//
 	// The mutex also serializes Show()/Hide()/Focus() themselves (raiseWindow
-	// included): Wails v3 beta.25's Show() and Hide()
+	// included): Wails v3's Show() and Hide()
 	// (pkg/application/webview_window.go) both write w.options.Hidden with
 	// no locking of their own, and our usage
 	// pattern — SingleInstance's OnSecondInstanceLaunch calling Show() from
@@ -247,6 +247,7 @@ func Run(ctx context.Context, o Options) error {
 			winMu.Lock()
 			w.Hide()
 			winMu.Unlock()
+			_ = o.Service.SetFocused(ctx, false)
 		})
 	}
 	// Without a tray nothing could bring a hidden window back, so the close
@@ -288,6 +289,7 @@ func Run(ctx context.Context, o Options) error {
 		}
 		if trayClickHides(visible, active, minimized) {
 			win.Hide()
+			_ = o.Service.SetFocused(ctx, false)
 		} else {
 			raiseWindow(win)
 		}

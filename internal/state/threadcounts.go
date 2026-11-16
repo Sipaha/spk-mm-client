@@ -67,6 +67,23 @@ func (s *Server) crtSwitchedLocked(eff *Effects) {
 	}
 }
 
+func (s *Server) threadTeamKeyLocked(ch *Chan) string {
+	if isDirect(ch) {
+		return ""
+	}
+	return ch.Info.TeamID
+}
+
+// mayChangeThreadMentionsLocked reports whether deleting a post in ch can
+// lower followed-thread unread mentions (updateThreadAfterReplyDeletion or
+// root deletion on MM 10.11, which emit post_deleted without thread_updated).
+func (s *Server) mayChangeThreadMentionsLocked(ch *Chan) bool {
+	if !s.crtLocked() || ch == nil {
+		return false
+	}
+	return s.threadGuard || s.threadMentionsLocked(s.threadTeamKeyLocked(ch)) > 0
+}
+
 // threadMentionDeltaLocked moves the thread mentions of channelID's team
 // ("" for a DM/GM — the channel decides: thread_read_changed's broadcast
 // team is the one the read was sent to) by delta. A thread of a channel we
@@ -81,10 +98,7 @@ func (s *Server) threadMentionDeltaLocked(channelID string, delta int64, eff *Ef
 		eff.RereadThreadCounts = true
 		return
 	}
-	key := ch.Info.TeamID
-	if isDirect(ch) {
-		key = ""
-	}
+	key := s.threadTeamKeyLocked(ch)
 	if s.threadMentions == nil {
 		s.threadMentions = map[string]int64{}
 	}

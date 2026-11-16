@@ -144,6 +144,25 @@ test('window focus and network changes are reported to Go', async () => {
   expect(client.setFocused).toHaveBeenLastCalledWith(true)
   await act(async () => window.dispatchEvent(new Event('online')))
   expect(client.networkChanged).toHaveBeenCalled()
+
+  // Slow blur followed immediately by focus must not dispatch focus until blur settles.
+  let finishBlur!: () => void
+  const order: boolean[] = []
+  vi.mocked(client.setFocused).mockImplementationOnce((f) => {
+    order.push(f)
+    return new Promise<void>((r) => {
+      finishBlur = r
+    })
+  }).mockImplementationOnce(async (f) => {
+    order.push(f)
+  })
+  await act(async () => {
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+  })
+  expect(order).toEqual([false])
+  await act(async () => finishBlur())
+  expect(order).toEqual([false, true])
 })
 
 // Task 6: a reply notification's open_channel carries root_id — the channel

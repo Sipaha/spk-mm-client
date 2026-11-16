@@ -948,6 +948,7 @@ func (s *Server) SetActive(channelID string) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if channelID == s.active {
+		s.suppressView = ""
 		return s.newSince
 	}
 	s.resetHistoryLocked()

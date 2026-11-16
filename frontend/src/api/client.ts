@@ -418,7 +418,7 @@ export const wailsClient: Client = {
   },
 }
 
-// Wails v3 beta.25 serves the UI from wails://localhost on Linux and macOS
+// Wails v3 serves the UI from wails://localhost on Linux and macOS
 // (internal/assetserver/assetserver_{linux,darwin}.go) and from
 // http://wails.localhost on Windows (assetserver_windows.go), optionally with a port.
 export const isDesktopLocation = (loc: Pick<Location, 'protocol' | 'hostname'>) =>

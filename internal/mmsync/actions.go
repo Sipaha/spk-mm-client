@@ -33,12 +33,21 @@ func (w *Worker) OpenChannel(channelID string) (state.ChannelView, bool) {
 
 func (w *Worker) SetFocused(f bool) {
 	w.st.SetFocused(f)
-	if a := w.st.Active(); f && a != "" {
+	w.viewFocused()
+}
+
+// viewFocused marks the active channel and open thread read if the window is
+// focused: called on focus gain and after bootstrap, metadata refresh or
+// reconnect, when server counters may have arrived for a channel already on
+// screen or an earlier view request failed while offline.
+func (w *Worker) viewFocused() {
+	if !w.st.Focused() {
+		return
+	}
+	if a := w.st.Active(); a != "" {
 		w.view(a)
 	}
-	if f {
-		w.readThread(w.st.OpenThreadID()) // the open thread (CRT) is on screen now
-	}
+	w.readThread(w.st.OpenThreadID()) // the open thread (CRT) is on screen now
 }
 
 // view marks a channel read on the server, at most one request per channel
@@ -52,7 +61,7 @@ func (w *Worker) view(channelID string) {
 	}
 	started := w.goBG(func(ctx context.Context) {
 		defer w.viewing.Delete(channelID)
-		for i := 0; i < 3 && w.st.NeedsView(channelID) && w.st.Active() == channelID && w.st.Focused(); i++ {
+		for i := 0; i < 3 && w.st.NeedsView(channelID) && (i == 0 || (w.st.Active() == channelID && w.st.Focused())); i++ {
 			if err := w.rc.ViewChannel(ctx, channelID); err != nil {
 				if sessionExpired(err) {
 					w.signalAuth()
