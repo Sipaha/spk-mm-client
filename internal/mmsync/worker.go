@@ -237,6 +237,7 @@ type Worker struct {
 	ac       *acCache             // composer autocomplete answers (aclru.go); cleared when Run ends
 	bg       sync.WaitGroup
 	live     liveMark
+	srvClock serverClock
 
 	// only touched by the Run goroutine
 	resume ws.Resume
@@ -267,7 +268,6 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 	}
 	w := &Worker{
 		cfg: cfg, srv: srv,
-		rc:         rest.New(srv.URL, srv.Token, cfg.HTTPClient).WithLimiter(limiter),
 		st:         state.New(cfg.Now),
 		nudge:      make(chan struct{}, 1),
 		authFail:   make(chan struct{}, 1),
@@ -283,6 +283,9 @@ func NewWorker(cfg Config, srv store.Server) *Worker {
 		ac:         newACCache(cfg.Now),
 		lanes:      map[string]*histLane{},
 	}
+	w.rc = rest.New(srv.URL, srv.Token, cfg.HTTPClient).
+		WithLimiter(limiter).
+		WithOnDate(func(t time.Time) { w.srvClock.observe(t, w.cfg.Now()) })
 	w.life, w.cancelLife = context.WithCancel(context.Background())
 	w.status.Store(StatusOff)
 	return w
@@ -419,8 +422,13 @@ func (w *Worker) Run(ctx context.Context) {
 	w.setStatus(StatusOff)
 }
 
-func (w *Worker) wsOptions() ws.Options {
-	o := ws.Options{BaseURL: w.srv.URL, Token: w.srv.Token, HTTPClient: w.cfg.HTTPClient}
+func (w *Worker) wsOptions(epoch uint64) ws.Options {
+	o := ws.Options{
+		BaseURL:    w.srv.URL,
+		Token:      w.srv.Token,
+		HTTPClient: w.cfg.HTTPClient,
+		OnPong:     func() { w.touchLive(epoch) },
+	}
 	if w.cfg.WS != nil {
 		w.cfg.WS(&o)
 	}
@@ -475,13 +483,20 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 	if err != nil {
 		return err
 	}
+	epoch := w.live.nextEpoch()
 	dctx, dcancel := context.WithTimeout(sctx, dialTimeout)
-	conn, err := ws.Dial(dctx, w.wsOptions(), w.resume)
+	conn, err := ws.Dial(dctx, w.wsOptions(epoch), w.resume)
 	dcancel()
 	if err != nil {
 		return err
 	}
 	resumed := w.resume.ConnectionID != ""
+	// On a resumed session, remember the pre-disconnect gapStart until a
+	// bootstrap or an in-sequence non-hello event arrives: if a late reset
+	// hello arrives after resumeSettle (3 s), catch-up must still start from
+	// this pre-disconnect gapStart, never from post-settle time.Now().
+	resumeGap := w.live.gapStart()
+	resumePending := resumed && w.booted && !w.needResync
 	// A metadata refresh runs while events keep coming: they are held back
 	// and applied after the refreshed metadata, under its guard.
 	var held []ws.Event
@@ -492,14 +507,11 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 		// skipped for good.
 		conn.Close()
 		for _, ev := range held {
-			w.applyDrained(ev)
+			w.applyDrained(ev, &resumePending, resumeGap)
 		}
-		w.drain(conn.Events())
+		w.drainResume(conn.Events(), &resumePending, resumeGap)
 		w.resume = conn.Resume()
-		now := w.cfg.Now().UnixMilli()
-		if w.live.end(now) {
-			w.st.SetLiveAt(now)
-		} else if resumed && ctx.Err() == nil && !errors.Is(err, errNudged) && !sessionExpired(err) {
+		if !w.endLive() && resumed && ctx.Err() == nil && !errors.Is(err, errNudged) && !sessionExpired(err) {
 			w.resumeFails++
 			if w.resumeFails >= maxResumeFails {
 				slog.Info("server keeps refusing the resume, reconnecting fresh", "srv", w.srv.ID)
@@ -514,6 +526,7 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 		if err := w.bootstrap(sctx, w.booted); err != nil {
 			return err
 		}
+		resumePending = false
 		w.proveLive()
 	}
 	w.setStatus(StatusLive)
@@ -543,6 +556,7 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 				settle = time.After(w.cfg.resumeSettle)
 				continue
 			}
+			settle = nil
 			w.proveLive() // no hello: the server accepted the resume
 		case <-due:
 			refresh = w.startRefresh(sctx, &refreshes)
@@ -554,13 +568,15 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 			evs := held
 			held = nil
 			for i, ev := range evs {
-				if err := w.handle(sctx, ev); err != nil {
+				if err := w.handle(sctx, ev, &resumePending, resumeGap); err != nil {
 					held = evs[i+1:] // the cleanup applies the rest
 					return err
 				}
 			}
 			if len(conn.Events()) == 0 {
-				w.st.ClearGuard()
+				if w.st.ClearGuard() {
+					w.reconcileWindows()
+				}
 			}
 		case ev, ok := <-conn.Events():
 			if !ok {
@@ -570,59 +586,196 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 				held = append(held, ev)
 				continue
 			}
-			if err := w.handle(sctx, ev); err != nil {
+			if err := w.handle(sctx, ev, &resumePending, resumeGap); err != nil {
 				return err
 			}
 			if len(conn.Events()) == 0 {
-				w.st.ClearGuard()
+				if w.st.ClearGuard() {
+					w.reconcileWindows()
+				}
 			}
 		}
 	}
 }
 
 // handle applies one event of the live stream.
-func (w *Worker) handle(ctx context.Context, ev ws.Event) error {
+func (w *Worker) handle(ctx context.Context, ev ws.Event, resumePending *bool, resumeGap int64) error {
 	if ev.Type == "hello" {
 		if ev.Reset {
+			if resumePending != nil && *resumePending {
+				w.resetLiveTo(resumeGap)
+			}
 			slog.Info("event stream lost, resyncing", "srv", w.srv.ID)
 			if err := w.bootstrap(ctx, true); err != nil {
 				return err
 			}
+			if resumePending != nil {
+				*resumePending = false
+			}
 		}
 		w.proveLive()
 		return nil
+	}
+	if resumePending != nil {
+		*resumePending = false
 	}
 	w.apply(ev)
 	w.proveLive() // Conn checked the sequence: the stream continues ours
 	return nil
 }
 
-// proveLive records that the current stream is continuous with what we
-// hold: from now on the live mark follows the clock.
+// proveLive records that the current stream is continuous as of now (bootstrap
+// completion, WS event receipt, or accepted resume settle).
 func (w *Worker) proveLive() {
 	if w.live.prove(w.cfg.Now().UnixMilli()) {
 		w.resumeFails = 0
 	}
 }
 
+// touchLive advances the proven live mark on a keepalive Pong for epoch,
+// never jumping across sessions or while the stream is unproven.
+func (w *Worker) touchLive(epoch uint64) {
+	w.live.touch(epoch, w.cfg.Now().UnixMilli())
+}
+
+// syncLiveAt copies the last proven server-alive mark into state for the
+// snapshot without advancing it to time.Now().
+func (w *Worker) syncLiveAt() {
+	w.live.mu.Lock()
+	defer w.live.mu.Unlock()
+	if at, ok := w.live.provenAtLocked(); ok && at != w.st.LiveAt() {
+		w.st.SetLiveAt(at)
+	}
+}
+
+// endLive closes the stream without advancing at to post-freeze/post-sleep
+// time.Now() and persists the last proven mark into state.
+func (w *Worker) endLive() bool {
+	w.live.mu.Lock()
+	defer w.live.mu.Unlock()
+	at, was := w.live.endLocked()
+	if was && at > 0 && at != w.st.LiveAt() {
+		w.st.SetLiveAt(at)
+	}
+	return was
+}
+
+// resetLiveTo rewinds the live mark back to a pre-disconnect gapStart (used
+// when a late reset hello arrives after resumeSettle on a resumed session).
+func (w *Worker) resetLiveTo(gapStart int64) {
+	w.live.mu.Lock()
+	defer w.live.mu.Unlock()
+	w.live.resetToLocked(gapStart)
+	if w.st.LiveAt() != gapStart {
+		w.st.SetLiveAt(gapStart)
+	}
+}
+
+// onWake handles a system suspend/resume detected by watchWake: the stream is
+// no longer proven and the gap start is clamped to at most preSleep so
+// catch-up always starts from before sleep.
+func (w *Worker) onWake(preSleep time.Time) {
+	slog.Info("system woke up, reconnecting", "srv", w.srv.ID)
+	w.live.mu.Lock()
+	at := w.live.wakeLocked(preSleep.UnixMilli())
+	if at > 0 && at != w.st.LiveAt() {
+		w.st.SetLiveAt(at)
+	}
+	w.live.mu.Unlock()
+	w.Nudge()
+}
+
+// reconcileWindows enqueues any loaded, non-stale channel whose server
+// metadata is ahead of what its window accounted for.
+func (w *Worker) reconcileWindows() {
+	for _, it := range w.st.ReconcileMetadata() {
+		w.queue.push(it)
+	}
+}
+
+// serverClock tracks serverTime - localTime observed from REST HTTP Date
+// headers so ?since= catch-up queries stay anchored to the server clock even
+// when the local clock is ahead of the server by more than sinceMargin.
+type serverClock struct {
+	mu     sync.Mutex
+	have   bool
+	offset int64 // serverMs - localMs
+}
+
+func (c *serverClock) observe(serverTime, localTime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset = serverTime.UnixMilli() - localTime.UnixMilli()
+	c.have = true
+}
+
+func (c *serverClock) toServer(localMs int64) (int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.have {
+		return localMs, false
+	}
+	return localMs + c.offset, true
+}
+
+// sinceParam converts a local-clock gap-start timestamp into a server-clock
+// ?since= query parameter (minus sinceMargin). Returns 0 when syncedAt is
+// unset or lies ahead of the current local clock (backward clock jump),
+// signalling callers to fall back to an authoritative full read.
+func (w *Worker) sinceParam(syncedAt int64) int64 {
+	if syncedAt <= 0 {
+		return 0
+	}
+	localNow := w.cfg.Now().UnixMilli()
+	if syncedAt > localNow+sinceMargin.Milliseconds() {
+		return 0
+	}
+	anchor := syncedAt
+	if srv, ok := w.srvClock.toServer(anchor); ok && srv < anchor {
+		anchor = srv
+	}
+	return max(1, anchor-sinceMargin.Milliseconds())
+}
+
 // liveMark tracks up to when the event stream is known to be continuous.
-// After a disconnect, at is where the gap starts; it moves forward again
-// only once the new stream is proven. Shared by the Run goroutine and the
-// flush loop.
+// After a disconnect, at is where the gap starts; it moves forward only on
+// proven server liveness (bootstrap completion, WS event receipt, keepalive
+// Pong, or accepted resume settle) — never on a blind flush or disconnect
+// time.Now() that could jump past a system suspend/freeze.
 type liveMark struct {
 	mu     sync.Mutex
 	isLive bool
 	at     int64
+	epoch  uint64
 }
 
-// prove marks the stream continuous as of now; false if it already was.
+func (m *liveMark) nextEpoch() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.epoch++
+	return m.epoch
+}
+
+// prove marks the stream continuous as of now and advances at; reports
+// whether the stream transitioned from unproven to proven.
 func (m *liveMark) prove(now int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.isLive {
+	newly := !m.isLive
+	m.isLive = true
+	m.at = max(m.at, now)
+	return newly
+}
+
+// touch advances at on proven server liveness (keepalive Pong) while the
+// stream is proven continuous and still in epoch.
+func (m *liveMark) touch(epoch uint64, now int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.isLive || m.epoch != epoch {
 		return false
 	}
-	m.isLive, m.at = true, max(m.at, now)
+	m.at = max(m.at, now)
 	return true
 }
 
@@ -639,28 +792,30 @@ func (m *liveMark) proven() bool {
 	return m.isLive
 }
 
-// advance moves the mark to now if the stream is proven continuous.
-func (m *liveMark) advance(now int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.isLive {
-		m.at = max(m.at, now)
-	}
-	return m.isLive
+// provenAtLocked returns the last proven timestamp without advancing it.
+func (m *liveMark) provenAtLocked() (int64, bool) {
+	return m.at, m.isLive && m.at > 0
 }
 
-// end closes the stream: if it was proven, the gap starts now; otherwise it
-// still starts where the last proven stream ended. Reports whether the
-// stream was proven.
-func (m *liveMark) end(now int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// endLocked closes the stream without advancing at to time.Now(): the gap
+// starts at the last proven server-alive moment. Reports whether it was proven.
+func (m *liveMark) endLocked() (int64, bool) {
 	was := m.isLive
-	if was {
-		m.at = max(m.at, now)
-	}
 	m.isLive = false
-	return was
+	return m.at, was
+}
+
+func (m *liveMark) resetToLocked(gapStart int64) {
+	m.isLive = false
+	m.at = gapStart
+}
+
+func (m *liveMark) wakeLocked(preSleep int64) int64 {
+	m.isLive = false
+	if preSleep > 0 && m.at > preSleep {
+		m.at = preSleep
+	}
+	return m.at
 }
 
 func (m *liveMark) gapStart() int64 {
@@ -914,18 +1069,28 @@ func sameLastPosts(a, b []model.Channel) bool {
 // live loop does; a reset hello among them can only be recorded — the
 // resync happens at the start of the next session.
 func (w *Worker) drain(events <-chan ws.Event) {
+	w.drainResume(events, nil, 0)
+}
+
+func (w *Worker) drainResume(events <-chan ws.Event, resumePending *bool, resumeGap int64) {
 	for ev := range events {
-		w.applyDrained(ev)
+		w.applyDrained(ev, resumePending, resumeGap)
 	}
 	w.st.ClearGuard()
 }
 
-func (w *Worker) applyDrained(ev ws.Event) {
+func (w *Worker) applyDrained(ev ws.Event, resumePending *bool, resumeGap int64) {
 	if ev.Type == "hello" {
 		if ev.Reset {
+			if resumePending != nil && *resumePending {
+				w.resetLiveTo(resumeGap)
+			}
 			w.needResync = true
 		}
 		return
+	}
+	if resumePending != nil {
+		*resumePending = false
 	}
 	w.apply(ev)
 }
@@ -1052,7 +1217,7 @@ func (w *Worker) refreshUsers(ctx context.Context, ids []string, since int64) {
 		return
 	}
 	if since > 0 {
-		since = max(1, since-sinceMargin.Milliseconds())
+		since = w.sinceParam(since)
 	}
 	if !w.lockUsers(ctx) {
 		return
@@ -1099,11 +1264,9 @@ func (w *Worker) flushLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return // Run does the final flush once everything else stopped
 		case <-t.C:
-			// live/at is persisted only while the stream is proven
-			// continuous: a cold start catches up from there.
-			if now := w.cfg.Now().UnixMilli(); w.live.advance(now) {
-				w.st.SetLiveAt(now)
-			}
+			// live/at records only already-proven server-alive time;
+			// flushLoop never advances it to time.Now() across sleep/freeze.
+			w.syncLiveAt()
 			w.flush(ctx)
 		}
 	}
@@ -1165,10 +1328,7 @@ func mergeDelta(oldPut []store.CacheEntry, oldDel []store.CacheKey, newPut []sto
 }
 
 func (w *Worker) wakeLoop(ctx context.Context) {
-	watchWake(ctx, w.cfg.WakeCheck, func() {
-		slog.Info("system woke up, reconnecting", "srv", w.srv.ID)
-		w.Nudge()
-	})
+	watchWake(ctx, w.cfg.WakeCheck, w.onWake)
 }
 
 // AccountID is immutable for the lifetime of a worker.

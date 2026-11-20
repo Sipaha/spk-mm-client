@@ -93,16 +93,41 @@ func TestRefusedResumeFallsBackToFreshConnection(t *testing.T) {
 
 func TestLiveMarkMovesOnlyWhileProven(t *testing.T) {
 	var m liveMark
+	epoch := m.nextEpoch()
 	assert.True(t, m.prove(100))
-	assert.False(t, m.prove(150), "already proven")
-	assert.True(t, m.advance(200))
-	assert.True(t, m.end(300), "stream was proven: the gap starts at its end")
-	assert.Equal(t, int64(300), m.gapStart())
-	assert.False(t, m.advance(900), "not proven: the flush loop must not move it")
-	assert.False(t, m.end(950), "an unproven stream does not move the gap start")
-	assert.Equal(t, int64(300), m.gapStart())
-	m.prove(1000)
+	assert.False(t, m.prove(150), "already proven, but advances proven mark")
+	assert.Equal(t, int64(150), m.gapStart())
+	assert.True(t, m.touch(epoch, 200), "keepalive Pong in current epoch advances mark")
+	assert.False(t, m.touch(epoch-1, 250), "stale epoch Pong must not advance mark")
+	at, ok := m.provenAtLocked()
+	assert.True(t, ok)
+	assert.Equal(t, int64(200), at)
+
+	endAt, was := m.endLocked()
+	assert.True(t, was, "stream was proven")
+	assert.Equal(t, int64(200), endAt, "end does not jump to a post-freeze time.Now()")
+	assert.Equal(t, int64(200), m.gapStart())
+
+	assert.False(t, m.touch(epoch, 900), "not proven: keepalive must not move it")
+	_, ok = m.provenAtLocked()
+	assert.False(t, ok, "not proven: flush must not move live/at")
+	endAt, was = m.endLocked()
+	assert.False(t, was, "an unproven stream does not report proven")
+	assert.Equal(t, int64(200), endAt)
+	assert.Equal(t, int64(200), m.gapStart())
+
+	assert.True(t, m.prove(1000))
 	assert.Equal(t, int64(1000), m.gapStart())
+	// Wake clamps liveMark back to pre-sleep timestamp and ends live state.
+	assert.Equal(t, int64(600), m.wakeLocked(600))
+	assert.False(t, m.proven())
+	assert.Equal(t, int64(600), m.gapStart())
+
+	// Reset rewinds to pre-disconnect gapStart.
+	assert.True(t, m.prove(1200))
+	m.resetToLocked(400)
+	assert.False(t, m.proven())
+	assert.Equal(t, int64(400), m.gapStart())
 }
 
 // NB-1: a refresh left over from the previous session starts first on the

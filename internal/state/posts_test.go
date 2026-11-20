@@ -69,6 +69,7 @@ func TestMergeSinceDropsDeletedAndHistory(t *testing.T) {
 	s := newFixture()
 	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("b", "off", "u2", 2000)}, false, 5, 0)
 	s.MarkStale(10)
+	_, gen := s.FetchMode()
 	edited := mkPost("a", "off", "u2", 1000)
 	edited.Message, edited.EditAt, edited.UpdateAt = "edited", 4000, 4000
 	hist := mkPost("h", "off", "u2", 1000)
@@ -77,7 +78,7 @@ func TestMergeSinceDropsDeletedAndHistory(t *testing.T) {
 	del.DeleteAt, del.UpdateAt = 4100, 4100
 	older := mkPost("old", "off", "u2", 500) // before the window start: not ours to insert
 	newer := mkPost("c", "off", "u2", 4200)
-	s.MergeSince("off", []model.Post{older, hist, edited, del, newer}, 99, 0)
+	s.MergeSince("off", []model.Post{older, hist, edited, del, newer}, 99, gen)
 	assert.Equal(t, []string{"a", "c"}, windowIDs(s, "off"))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,4 +297,141 @@ func TestPageFromBeforeResetWindowsIsDropped(t *testing.T) {
 	appendOlder(t, s, "town", []model.Post{mkPost("o", "town", "u2", 50)}, true)
 	v, _ = s.ChannelView("town")
 	assert.Equal(t, []string{"o", "a"}, []string{v.Posts[0].ID, v.Posts[1].ID})
+}
+
+func TestMarkStaleAdvancesSyncGenAndDropsInFlightFetch(t *testing.T) {
+	s := newFixture()
+	_, gen0 := s.FetchMode()
+	require.True(t, s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000)}, false, 1000, gen0))
+
+	// First reconnect marks off stale; fetcher captures gen1 before its HTTP call.
+	s.MarkStale(1500)
+	it1, _, gen1, ok := s.BeginFetch("off")
+	require.True(t, ok)
+	assert.NotEqual(t, gen0, gen1)
+	assert.True(t, it1.Loaded)
+
+	// While that fetch is in flight, a second stream loss occurs.
+	s.MarkStale(2500)
+	_, gen2 := s.FetchMode()
+	assert.NotEqual(t, gen1, gen2)
+
+	// In-flight MergeSince and SetWindow with gen1 must both be dropped,
+	// preserving Stale=true and GapAfter="a" so the post-resync fetch still runs.
+	applied, needReload := s.MergeSince("off", []model.Post{mkPost("old", "off", "u2", 1200)}, 1600, gen1)
+	assert.False(t, applied)
+	assert.False(t, needReload)
+	assert.False(t, s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000)}, false, 1600, gen1))
+
+	v, _ := s.ChannelView("off")
+	assert.True(t, v.Syncing, "in-flight fetch must not clear Stale after MarkStale")
+	assert.Equal(t, "a", v.GapAfter)
+	_, stillNeed := s.SyncItemFor("off")
+	assert.True(t, stillNeed)
+
+	// Post-resync catch-up with gen2 applies cleanly.
+	applied, needReload = s.MergeSince("off", []model.Post{mkPost("b", "off", "u2", 2600)}, 2700, gen2)
+	assert.True(t, applied)
+	assert.False(t, needReload)
+	v, _ = s.ChannelView("off")
+	assert.False(t, v.Syncing)
+	assert.Empty(t, v.GapAfter)
+	assert.Equal(t, []string{"a", "b"}, windowIDs(s, "off"))
+}
+
+func TestMergeSinceTriggersReloadOnMetadataGap(t *testing.T) {
+	for _, crt := range []bool{false, true} {
+		t.Run(fmt.Sprint("crt=", crt), func(t *testing.T) {
+			s := crtFixture(crt)
+			_, gen := s.FetchMode()
+			require.True(t, s.SetWindow("town", []model.Post{mkPost("p1", "town", "u2", 1000)}, false, 1000, gen))
+
+			// Server metadata advances by 1 root post during an outage.
+			b := fixture()
+			if crt {
+				b.Config.CollapsedThreads = "always_on"
+			}
+			b.Channels[0].TotalMsgCount++
+			b.Channels[0].TotalMsgCountRoot++
+			b.Channels[0].LastPostAt = 2000
+			b.Channels[0].LastRootPostAt = 2000
+			s.Bootstrap(b)
+			s.MarkStale(1500)
+			_, gen2 := s.FetchMode()
+
+			// A posts?since= response that missed the new post leaves metadata ahead
+			// of what the window accounted for -> MergeSince requests full reload.
+			applied, needReload := s.MergeSince("town", nil, 2500, gen2)
+			assert.True(t, applied)
+			assert.True(t, needReload)
+			it, ok := s.SyncItemFor("town")
+			require.True(t, ok)
+			assert.True(t, it.NeedReload)
+
+			// Authoritative SetWindow clears NeedReload and Stale.
+			require.True(t, s.SetWindow("town", []model.Post{mkPost("p1", "town", "u2", 1000), mkPost("p2", "town", "u2", 2000)}, false, 2600, gen2))
+			_, ok = s.SyncItemFor("town")
+			assert.False(t, ok)
+		})
+	}
+}
+
+func TestReconcileMetadataMarksDiscrepantWindowForReload(t *testing.T) {
+	for _, crt := range []bool{false, true} {
+		t.Run(fmt.Sprint("crt=", crt), func(t *testing.T) {
+			s := crtFixture(crt)
+			_, gen := s.FetchMode()
+			require.True(t, s.SetWindow("town", []model.Post{mkPost("p1", "town", "u2", 1000)}, false, 1000, gen))
+			s.ClearGuard()
+			assert.Empty(t, s.ReconcileMetadata(), "matching metadata triggers no reload")
+
+			// Under CRT, a reply bumps TotalMsgCount/LastPostAt but not root fields:
+			// must NOT trigger a channel reload.
+			if crt {
+				b := fixture()
+				b.Config.CollapsedThreads = "always_on"
+				b.Channels[0].TotalMsgCount++
+				b.Channels[0].LastPostAt = 1500
+				s.Bootstrap(b)
+				assert.True(t, s.ClearGuard())
+				assert.Empty(t, s.ReconcileMetadata(), "CRT reply metadata must not reload root-only channel window")
+			}
+
+			// A missed root post bumps TotalMsgCountRoot/LastRootPostAt and TotalMsgCount/LastPostAt.
+			b := fixture()
+			if crt {
+				b.Config.CollapsedThreads = "always_on"
+			}
+			b.Channels[0].TotalMsgCount += 2
+			b.Channels[0].TotalMsgCountRoot++
+			b.Channels[0].LastPostAt = 3000
+			b.Channels[0].LastRootPostAt = 3000
+			s.Bootstrap(b)
+			assert.True(t, s.ClearGuard())
+
+			items := s.ReconcileMetadata()
+			require.Len(t, items, 1)
+			assert.Equal(t, "town", items[0].ChannelID)
+			assert.True(t, items[0].NeedReload)
+		})
+	}
+}
+
+func TestRestoreSetsNeedReloadForColdStartSelfHeal(t *testing.T) {
+	s := newFixture()
+	_, gen := s.FetchMode()
+	s.SetWindow("off", []model.Post{mkPost("a", "off", "u2", 1000), mkPost("c", "off", "u2", 3000)}, false, 4000, gen)
+	s.SetDraft("off", "keep me")
+	s.SetLiveAt(4000)
+	put, _ := s.TakeSnapshot()
+
+	r := New(fixedNow)
+	require.NoError(t, r.Restore(put))
+	it, ok := r.SyncItemFor("off")
+	require.True(t, ok)
+	assert.True(t, it.Loaded, "restored window stays readable offline")
+	assert.True(t, it.NeedReload, "cold start schedules authoritative latest-page reload")
+	v, ok := r.ChannelView("off")
+	require.True(t, ok)
+	assert.Equal(t, "keep me", v.Draft)
 }

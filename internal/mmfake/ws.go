@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -97,6 +98,7 @@ func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
 	s.hub.sessions[sess.id] = sess
 	sess.conn, sess.out, sess.cancel = c, make(chan wsEvent, 1024), cancel
 	out := sess.out
+	helloDelay := s.helloDelay
 	if hello {
 		out <- s.hub.stamp(sess, wsEvent{Event: "hello",
 			Data:      map[string]any{"connection_id": sess.id, "server_version": "10.11.0-fake"},
@@ -113,6 +115,13 @@ func (s *Server) websocketHandler(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return
 			case ev := <-out:
+				if ev.Event == "hello" && helloDelay > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(helloDelay):
+					}
+				}
 				b, _ := json.Marshal(ev)
 				if c.Write(ctx, websocket.MessageText, b) != nil {
 					cancel()
@@ -166,6 +175,14 @@ func (s *Server) deliverLocked(name string, data map[string]any, b wsBroadcast, 
 			}
 		}
 	}
+}
+
+// SetHelloDelay delays sending WebSocket hello events on new/reset streams
+// by d (0 disables). Used by tests for late reset hello after resumeSettle.
+func (s *Server) SetHelloDelay(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.helloDelay = d
 }
 
 // DropConnections closes every socket. lose=true also forgets the sessions,

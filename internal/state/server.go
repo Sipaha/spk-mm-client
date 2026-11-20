@@ -61,6 +61,15 @@ type Window struct {
 	SyncedAt int64        `json:"synced_at"` // local ms: history complete up to here
 	Stale    bool         `json:"stale"`     // posts after GapAfter may be missing
 	GapAfter string       `json:"gap_after"`
+
+	// Runtime-only authoritative-sync tracking (not persisted in snapshots).
+	// needReload forces the next fetch to call loadLatest (SetWindow) instead
+	// of posts?since= (cold start from SQLite, or metadata discrepancy).
+	needReload           bool
+	verifiedPostAt       int64
+	verifiedRootPostAt   int64
+	verifiedMsgCount     int64
+	verifiedMsgCountRoot int64
 }
 
 type Chan struct {
@@ -114,7 +123,8 @@ type Server struct {
 	guard         map[string]int64
 	seen          seenSet
 	gone          seenSet      // deleted replies already taken off their root's count
-	winGen        uint64       // bumped by ResetWindows, see FetchMode
+	winGen        uint64       // bumped by ResetWindows, checked by HistOp
+	syncGen       uint64       // bumped by ResetWindows and MarkStale, checked by SetWindow/MergeSince
 	orphans       []orphan     // posted events for channels not known yet
 	ephemeral     []model.Post // ephemeral_message posts, oldest first (ephemeral.go)
 	reactEchoID   uint64

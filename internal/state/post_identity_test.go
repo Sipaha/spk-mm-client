@@ -65,6 +65,7 @@ func TestPendingReconciledAcrossRESTSegmentAndThreadReads(t *testing.T) {
 		deleted.DeleteAt = 2200
 
 		s.MarkStale(1500)
+		_, gen = s.FetchMode()
 		s.MergeSince("off", []model.Post{confirmed, deleted}, 2500, gen)
 
 		assert.ElementsMatch(t, []string{"f-1", "f-del"}, s.TakeReleased())

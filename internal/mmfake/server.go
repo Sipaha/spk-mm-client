@@ -120,6 +120,7 @@ type Server struct {
 	failures       map[string]failure
 	broken         map[string]bool // BreakReplies
 	rejectResumes  bool
+	helloDelay     time.Duration
 	hits           map[string]int
 	fileThrottle   int                    // bytes/sec, 0 = full speed (SetFileThrottle/SetFileThrottleFor)
 	fileThrottleID string                 // "" = every file (SetFileThrottle); a specific id = only that file (SetFileThrottleFor)

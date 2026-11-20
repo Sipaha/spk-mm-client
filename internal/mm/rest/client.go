@@ -24,11 +24,12 @@ const (
 )
 
 type Client struct {
-	base  string
-	token string
-	hc    *http.Client
-	sleep func(context.Context, time.Duration) error
-	lim   *rate.Limiter
+	base   string
+	token  string
+	hc     *http.Client
+	sleep  func(context.Context, time.Duration) error
+	lim    *rate.Limiter
+	onDate func(time.Time)
 }
 
 // New builds a client for baseURL (already normalized). A nil hc gets a 30s
@@ -56,6 +57,14 @@ func (c *Client) WithToken(token string) *Client {
 func (c *Client) WithLimiter(l *rate.Limiter) *Client {
 	cp := *c
 	cp.lim = l
+	return &cp
+}
+
+// WithOnDate returns a copy that reports the parsed HTTP Date header from
+// successful (< 400) server responses so callers can track server clock skew.
+func (c *Client) WithOnDate(fn func(time.Time)) *Client {
+	cp := *c
+	cp.onDate = fn
 	return &cp
 }
 
@@ -149,6 +158,13 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			return resp.Header, classify(resp)
+		}
+		if c.onDate != nil {
+			if d := resp.Header.Get("Date"); d != "" {
+				if t, perr := http.ParseTime(d); perr == nil {
+					c.onDate(t)
+				}
+			}
 		}
 		if out != nil {
 			if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,14 +177,44 @@ func TestRepliesWithSeqReplyAreIgnored(t *testing.T) {
 }
 
 func TestKeepaliveDetectsSilentPeer(t *testing.T) {
+	var pongs atomic.Int32
 	u := rawServer(t, func(ctx context.Context, _ *websocket.Conn) {
 		<-ctx.Done() // never reads → never answers pings
 	})
-	c, err := Dial(context.Background(), Options{BaseURL: u, Token: "t", PingInterval: 50 * time.Millisecond, PingTimeout: 100 * time.Millisecond}, Resume{})
+	c, err := Dial(context.Background(), Options{
+		BaseURL:      u,
+		Token:        "t",
+		PingInterval: 50 * time.Millisecond,
+		PingTimeout:  100 * time.Millisecond,
+		OnPong:       func() { pongs.Add(1) },
+	}, Resume{})
 	require.NoError(t, err)
 	defer c.Close()
 	waitClosed(t, c)
 	assert.True(t, rest.IsNetwork(c.Err()))
+	assert.Zero(t, pongs.Load(), "silent peer must never trigger OnPong")
+}
+
+func TestKeepaliveOnPongCallback(t *testing.T) {
+	var pongs atomic.Int32
+	u := rawServer(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				return
+			}
+		}
+	})
+	c, err := Dial(context.Background(), Options{
+		BaseURL:      u,
+		Token:        "t",
+		PingInterval: 30 * time.Millisecond,
+		PingTimeout:  500 * time.Millisecond,
+		OnPong:       func() { pongs.Add(1) },
+	}, Resume{})
+	require.NoError(t, err)
+	defer c.Close()
+	require.Eventually(t, func() bool { return pongs.Load() >= 2 }, 2*time.Second, 10*time.Millisecond,
+		"successful keepalive Pongs must invoke OnPong")
 }
 
 func TestCloseIsIdempotentAndClosesEvents(t *testing.T) {

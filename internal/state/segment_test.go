@@ -269,7 +269,8 @@ func TestAppendNewerClosesGapOnlyOnProof(t *testing.T) {
 	assert.False(t, closed, "window stale")
 	assert.True(t, progressed)
 	assert.True(t, townView(t, s).Gap.Open)
-	s.MergeSince("town", nil, 7, 0)
+	_, gen := s.FetchMode()
+	s.MergeSince("town", nil, 7, gen)
 
 	// A page with nothing to show still moves the raw cursor.
 	filtered := run("s", 21, 2, 1000)
@@ -343,7 +344,8 @@ func TestMarkStaleInvalidatesInFlightLoadNewer(t *testing.T) {
 	op, ok := s.BeginLoadNewer("town")
 	require.True(t, ok)
 	s.MarkStale(6)
-	s.MergeSince("town", nil, 7, 0) // the window is live again
+	_, gen := s.FetchMode()
+	s.MergeSince("town", nil, 7, gen) // the window is live again
 	page := plist("s10", "", run("s", 11, 2, 1000)...)
 	closed, progressed := s.AppendNewer(op, page)
 	assert.False(t, closed, "begun before the reconnect")
@@ -738,7 +740,8 @@ func TestOverflowKeepsOldWindowAsHistory(t *testing.T) {
 	s.MarkStale(9)
 	s.ApplyEvent(postedEv(mkPost("x", "town", "u2", 20_000))) // after the stream loss: not contiguous
 	check(t, s)
-	s.SetWindow("town", run("n", 0, 5, 90_000), false, 9, 0)
+	_, gen := s.FetchMode()
+	s.SetWindow("town", run("n", 0, 5, 90_000), false, 9, gen)
 	check(t, s)
 	assert.Equal(t, append([]string{"o1"}, wIDs(0, 9)...), olderIDs(s))
 	v := townView(t, s)
@@ -851,7 +854,8 @@ func TestSegmentReadBeforeReconnectIsStale(t *testing.T) {
 		op, ok := s.BeginJump("town")
 		require.True(t, ok)
 		s.MarkStale(20_000)
-		s.MergeSince("town", nil, 20_001, 0) // caught up: the window is live again
+		_, gen := s.FetchMode()
+		s.MergeSince("town", nil, 20_001, gen) // caught up: the window is live again
 		require.False(t, townView(t, s).Syncing)
 		require.True(t, s.SetSegment(op, stdTarget(), stdBefore(), stdAfter()))
 		check(t, s)

@@ -150,3 +150,27 @@ func TestTimeoutIsNotRetried(t *testing.T) {
 	assert.True(t, IsNetwork(err))
 	assert.Equal(t, int32(1), accepted.Load(), "a timed-out GET must not be replayed")
 }
+
+func TestWithOnDateReportsServerDate(t *testing.T) {
+	want := time.Date(2026, 6, 15, 11, 30, 0, 0, time.UTC)
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Date", want.Format(http.TimeFormat))
+		st := int(status.Load())
+		w.WriteHeader(st)
+		if st == http.StatusOK {
+			_, _ = w.Write([]byte(`{"status":"OK"}`))
+		}
+	})
+	var got []time.Time
+	c = c.WithOnDate(func(tm time.Time) { got = append(got, tm) })
+
+	require.NoError(t, c.Ping(context.Background()))
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Equal(want))
+
+	status.Store(http.StatusBadGateway)
+	require.Error(t, c.Ping(context.Background()))
+	assert.Len(t, got, 1, "error responses must not update server clock")
+}

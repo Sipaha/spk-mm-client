@@ -153,6 +153,12 @@ func (s *Server) removeLocked(ch *Chan, d model.Post) bool {
 		s.older = slices.DeleteFunc(s.older, gone)
 		changed = changed || len(s.older) != m
 	}
+	if ch.Win.Loaded {
+		ch.Win.verifiedPostAt = max(ch.Win.verifiedPostAt, d.CreateAt, d.UpdateAt, d.DeleteAt)
+		if d.RootID == "" {
+			ch.Win.verifiedRootPostAt = max(ch.Win.verifiedRootPostAt, d.CreateAt)
+		}
+	}
 	if changed {
 		s.dirty.posts[ch.Info.ID] = true
 	}
@@ -230,6 +236,50 @@ func replyPosted(root *model.Post, p model.Post) bool {
 	return true
 }
 
+func winMaxUpdateAt(posts []model.Post) int64 {
+	var m int64
+	for _, p := range posts {
+		m = max(m, p.CreateAt, p.UpdateAt)
+	}
+	return m
+}
+
+func winMaxRootCreateAt(posts []model.Post) int64 {
+	var m int64
+	for _, p := range posts {
+		if p.RootID == "" {
+			m = max(m, p.CreateAt)
+		}
+	}
+	return m
+}
+
+// windowHasMetadataGapLocked reports whether server channel metadata
+// (TotalMsgCount/LastPostAt, or root equivalents under CRT) is ahead of what
+// this loaded window has accounted for via SetWindow, MergeSince and live
+// events.
+func (s *Server) windowHasMetadataGapLocked(ch *Chan) bool {
+	if !ch.Win.Loaded {
+		return false
+	}
+	if s.crtLocked() {
+		if ch.Info.TotalMsgCountRoot > ch.Win.verifiedMsgCountRoot {
+			return true
+		}
+		if ch.Info.LastRootPostAt > max(ch.Win.verifiedRootPostAt, winMaxRootCreateAt(ch.Win.Posts)) {
+			return true
+		}
+		return false
+	}
+	if ch.Info.TotalMsgCount > ch.Win.verifiedMsgCount {
+		return true
+	}
+	if ch.Info.LastPostAt > max(ch.Win.verifiedPostAt, winMaxUpdateAt(ch.Win.Posts)) {
+		return true
+	}
+	return false
+}
+
 // SetWindow installs the latest page of a channel. Posts already in the
 // window that are newer than the page arrived over WS while the request was
 // in flight — they are kept. History loaded above the old window of the
@@ -237,14 +287,15 @@ func replyPosted(root *model.Post, p model.Post) bool {
 // new page no longer reaches the old window's first post (a catch-up
 // overflow reloads only the latest page).
 //
-// gen is FetchMode's generation when the page was requested: a page from
-// before a ResetWindows is dropped.
-func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64, gen uint64) {
+// gen is FetchMode/BeginFetch's generation when the page was requested: a
+// page from before a ResetWindows or MarkStale is dropped and SetWindow
+// returns false.
+func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, syncedAt int64, gen uint64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
-	if ch == nil || gen != s.winGen {
-		return
+	if ch == nil || gen != s.syncGen {
+		return false
 	}
 	crt := s.crtLocked()
 	var merged []model.Post
@@ -272,24 +323,41 @@ func (s *Server) SetWindow(channelID string, page []model.Post, complete bool, s
 	if channelID == s.active && s.historyHeldLocked() {
 		s.windowReplacedLocked(ch.Win, merged)
 	}
-	ch.Win = Window{Posts: merged, Loaded: true, Complete: complete, SyncedAt: syncedAt}
+	ch.Win = Window{
+		Posts:                merged,
+		Loaded:               true,
+		Complete:             complete,
+		SyncedAt:             syncedAt,
+		verifiedPostAt:       max(ch.Info.LastPostAt, winMaxUpdateAt(merged)),
+		verifiedRootPostAt:   max(ch.Info.LastRootPostAt, winMaxRootCreateAt(merged)),
+		verifiedMsgCount:     ch.Info.TotalMsgCount,
+		verifiedMsgCountRoot: ch.Info.TotalMsgCountRoot,
+	}
 	s.trimWindowLocked(ch)
 	s.dirty.posts[channelID] = true
+	return true
 }
 
 // MergeSince applies a posts?since= response (edits, deletions, new posts)
-// and marks the window caught up. gen: as in SetWindow. Every copy held is
+// and marks the window caught up. gen: as in SetWindow — a response begun
+// before ResetWindows or MarkStale is dropped (applied=false) so an in-flight
+// fetch cannot clear Stale/GapAfter after a stream loss. Every copy held is
 // updated first (the window and, for the open channel, the history); then a
 // new post goes to the window by the window's own rule — one inside the
 // history's gap does not fill it and is left to the gap's loading.
-func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64, gen uint64) {
+//
+// If channel metadata (TotalMsgCount/LastPostAt, or root equivalents under
+// CRT) still lies ahead of what the window accounted for after merging,
+// MergeSince keeps the window stale with needReload=true and returns
+// (true, true) so the worker follows up with an authoritative loadLatest.
+func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64, gen uint64) (applied, needReload bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch := s.chans[channelID]
 	// Only a loaded window is caught up: since= rows alone would pass for
 	// the channel's latest page.
-	if ch == nil || gen != s.winGen || !ch.Win.Loaded {
-		return
+	if ch == nil || gen != s.syncGen || !ch.Win.Loaded {
+		return false, false
 	}
 	crt := s.crtLocked()
 	var oldest int64
@@ -305,19 +373,36 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 		// clock skew (SyncedAt is our clock) comes with the gap's loading.
 		oldest = ch.Win.SyncedAt
 	}
+	var newMsgs, newRoots, maxSinceAt, maxSinceRootAt int64
 	for _, p := range posts {
 		switch {
 		case p.OriginalID != "":
 			continue // edit-history row
 		case p.DeleteAt > 0:
+			maxSinceAt = max(maxSinceAt, p.CreateAt, p.UpdateAt, p.DeleteAt)
+			if p.RootID == "" {
+				maxSinceRootAt = max(maxSinceRootAt, p.CreateAt)
+			}
+			alreadyKnown := indexOf(ch.Win.Posts, p.ID) >= 0 || (channelID == s.active && indexOf(s.older, p.ID) >= 0) || s.seen.has(p.ID) || s.gone.has(p.ID)
+			if !alreadyKnown && p.CreateAt > ch.Win.verifiedPostAt {
+				newMsgs++
+				if p.RootID == "" {
+					newRoots++
+				}
+			}
 			s.reconcilePendingLocked(channelID, p)
 			s.removeLocked(ch, p)
 		case s.gone.has(p.ID):
 			continue
 		case !keep(p, crt):
+			maxSinceAt = max(maxSinceAt, p.CreateAt, p.UpdateAt)
 			s.reconcilePendingLocked(channelID, p)
 			continue
 		default:
+			maxSinceAt = max(maxSinceAt, p.CreateAt, p.UpdateAt)
+			if p.RootID == "" {
+				maxSinceRootAt = max(maxSinceRootAt, p.CreateAt)
+			}
 			s.reconcilePendingLocked(channelID, p)
 			held := false
 			if channelID == s.active {
@@ -326,27 +411,58 @@ func (s *Server) MergeSince(channelID string, posts []model.Post, syncedAt int64
 					held = true
 				}
 			}
-			if indexOf(ch.Win.Posts, p.ID) >= 0 || (!held && p.CreateAt >= oldest) {
+			inWin := indexOf(ch.Win.Posts, p.ID) >= 0
+			if inWin || (!held && p.CreateAt >= oldest) {
+				if !inWin && !held && !s.seen.has(p.ID) {
+					newMsgs++
+					if p.RootID == "" {
+						newRoots++
+					}
+				}
 				s.upsertLocked(ch, p)
 			}
 		}
 	}
-	ch.Win.Loaded, ch.Win.Stale, ch.Win.GapAfter = true, false, ""
+	ch.Win.verifiedMsgCount += newMsgs
+	ch.Win.verifiedMsgCountRoot += newRoots
+	ch.Win.verifiedPostAt = max(ch.Win.verifiedPostAt, winMaxUpdateAt(ch.Win.Posts), maxSinceAt)
+	ch.Win.verifiedRootPostAt = max(ch.Win.verifiedRootPostAt, winMaxRootCreateAt(ch.Win.Posts), maxSinceRootAt)
+	if s.windowHasMetadataGapLocked(ch) {
+		ch.Win.needReload = true
+		ch.Win.Stale = true
+		s.dirty.posts[channelID] = true
+		return true, true
+	}
+	ch.Win.Loaded, ch.Win.Stale, ch.Win.GapAfter, ch.Win.needReload = true, false, "", false
 	ch.Win.SyncedAt = max(ch.Win.SyncedAt, syncedAt)
 	s.dirty.posts[channelID] = true
+	return true, false
 }
 
 // FetchMode is what a post fetch is requested with: the CRT mode and the
-// window generation, read together. The generation is handed back to
-// SetWindow/MergeSince (history operations capture it in their HistOp),
-// which drop a page requested before a
-// ResetWindows — it may be of the other mode, or land on a window that is
-// no longer there as Loaded. (The same pattern guards the thread cache
-// against ResetThreads.)
+// window sync generation, read together. The generation is handed back to
+// SetWindow/MergeSince, which drop a page requested before a ResetWindows or
+// MarkStale.
 func (s *Server) FetchMode() (crt bool, gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.crtLocked(), s.winGen
+	return s.crtLocked(), s.syncGen
+}
+
+// BeginFetch atomically captures the channel's sync item, CRT mode and
+// window sync generation before starting a background fetch request.
+func (s *Server) BeginFetch(channelID string) (it SyncItem, crt bool, gen uint64, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.chans[channelID]
+	if c == nil {
+		return SyncItem{}, false, 0, false
+	}
+	it, ok = s.syncItemLocked(c)
+	if !ok {
+		return SyncItem{}, false, 0, false
+	}
+	return it, s.crtLocked(), s.syncGen, true
 }
 
 // ResetWindows forgets every post window (CRT was toggled: the windows hold
@@ -356,6 +472,7 @@ func (s *Server) ResetWindows() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.winGen++
+	s.syncGen++
 	for id, ch := range s.chans {
 		ch.Win = Window{}
 		s.dirty.posts[id] = true
@@ -383,11 +500,13 @@ func (w *Window) markStale(liveUntil int64) {
 // MarkStale records that the event stream was lost. Every loaded window may
 // miss posts after its last one; it stays readable and is caught up by the worker.
 // A LoadNewer begun before cannot close the history's gap (gapGen): its
-// proof may predate what the window missed.
+// proof may predate what the window missed. An in-flight SetWindow/MergeSince
+// begun before is dropped (syncGen) so it cannot clear Stale/GapAfter.
 func (s *Server) MarkStale(liveUntil int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gapGen++
+	s.syncGen++
 	s.markThreadsStaleLocked()
 	for id, ch := range s.chans {
 		if !ch.Win.Loaded || ch.Win.Stale {
@@ -398,11 +517,37 @@ func (s *Server) MarkStale(liveUntil int64) {
 	}
 }
 
+// ReconcileMetadata checks loaded, non-stale windows against the latest
+// server channel metadata (TotalMsgCount/LastPostAt, or root equivalents
+// under CRT). Any window whose metadata is ahead of what it accounted for is
+// marked stale for an authoritative latest-page reload.
+func (s *Server) ReconcileMetadata() []SyncItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []SyncItem
+	for id, ch := range s.chans {
+		if ch.Info.DeleteAt != 0 || !ch.Win.Loaded || ch.Win.Stale {
+			continue
+		}
+		if !s.windowHasMetadataGapLocked(ch) {
+			continue
+		}
+		ch.Win.markStale(s.liveAt)
+		ch.Win.needReload = true
+		s.dirty.posts[id] = true
+		if it, ok := s.syncItemLocked(ch); ok {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
 type SyncItem struct {
-	ChannelID string
-	Loaded    bool
-	SyncedAt  int64
-	Priority  int // lower first
+	ChannelID  string
+	Loaded     bool
+	NeedReload bool
+	SyncedAt   int64
+	Priority   int // lower first
 }
 
 const recentWindow = 7 * 24 * time.Hour
@@ -429,7 +574,7 @@ func (s *Server) syncItemLocked(c *Chan) (SyncItem, bool) {
 	if c.Info.DeleteAt != 0 || (c.Win.Loaded && !c.Win.Stale) {
 		return SyncItem{}, false
 	}
-	return SyncItem{ChannelID: c.Info.ID, Loaded: c.Win.Loaded, SyncedAt: c.Win.SyncedAt, Priority: s.priorityLocked(c)}, true
+	return SyncItem{ChannelID: c.Info.ID, Loaded: c.Win.Loaded, NeedReload: c.Win.needReload, SyncedAt: c.Win.SyncedAt, Priority: s.priorityLocked(c)}, true
 }
 
 func (s *Server) SyncItems() []SyncItem {
@@ -721,6 +866,7 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 	s.seen.add(p.ID)
 	s.reconcilePendingLocked(ch.Info.ID, p)
 	root := p.RootID == ""
+	wasInWin := ch.Win.Loaded && indexOf(ch.Win.Posts, p.ID) >= 0
 	switch {
 	case keep(p, crt):
 		if ch.Win.Loaded {
@@ -735,6 +881,14 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 		return false, false
 	}
 	if g, ok := s.guard[ch.Info.ID]; ok && p.CreateAt <= g {
+		if ch.Win.Loaded && !wasInWin {
+			ch.Win.verifiedMsgCount++
+			ch.Win.verifiedPostAt = max(ch.Win.verifiedPostAt, p.CreateAt, p.UpdateAt)
+			if root {
+				ch.Win.verifiedMsgCountRoot++
+				ch.Win.verifiedRootPostAt = max(ch.Win.verifiedRootPostAt, p.CreateAt)
+			}
+		}
 		return true, false
 	}
 	ch.Info.TotalMsgCount++
@@ -742,6 +896,14 @@ func (s *Server) applyNewPostLocked(ch *Chan, p model.Post, mentions []string) (
 	if root {
 		ch.Info.TotalMsgCountRoot++
 		ch.Info.LastRootPostAt = max(ch.Info.LastRootPostAt, p.CreateAt)
+	}
+	if ch.Win.Loaded {
+		ch.Win.verifiedMsgCount++
+		ch.Win.verifiedPostAt = max(ch.Win.verifiedPostAt, p.CreateAt, p.UpdateAt)
+		if root {
+			ch.Win.verifiedMsgCountRoot++
+			ch.Win.verifiedRootPostAt = max(ch.Win.verifiedRootPostAt, p.CreateAt)
+		}
 	}
 	if p.UserID == s.me.ID {
 		// The server marks the channel viewed for our post, except a
@@ -781,6 +943,9 @@ func (s *Server) updatePostLocked(p model.Post) Change {
 		c.Threads = s.threadsOfLocked(p)
 	}
 	changed := false
+	if ch.Win.Loaded {
+		ch.Win.verifiedPostAt = max(ch.Win.verifiedPostAt, p.UpdateAt)
+	}
 	if indexOf(ch.Win.Posts, p.ID) >= 0 {
 		s.upsertLocked(ch, p)
 		changed = true
@@ -1044,10 +1209,13 @@ func (s *Server) SetUnread(u model.ChannelUnreadAt) Change {
 }
 
 // ClearGuard ends the post-bootstrap window during which posted events
-// already reflected in the REST counters must not bump them again.
-func (s *Server) ClearGuard() {
+// already reflected in the REST counters must not bump them again. Reports
+// whether a guard was active.
+func (s *Server) ClearGuard() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	had := len(s.guard) > 0 || s.threadGuard
 	s.guard = map[string]int64{}
 	s.threadGuard = false
+	return had
 }

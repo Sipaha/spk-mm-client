@@ -79,12 +79,29 @@ Runner запускает текущие регрессионные тесты A
   выбранный сервер — иначе баннер ошибки/выбор мигали бы на каждый чих. —
   `frontend/src/store.ts` (`setServers`).
 - Начало дыры в потоке событий — конец последнего **доказанного** потока: `Worker.live` (и
-  `live/at` в снимке) не двигаются, пока новый поток не доказан (завершён bootstrap, событие с
-  ожидаемым seq после resume или `resumeSettle` без `hello` и без удержанных
-  refresh-ом событий; до первого доказательства — `live/at` из снимка); иначе отказ в resume после долгого
-  офлайна догонял бы каналы только с момента переподключения и терял посты из дыры. —
+  `live/at` в снимке) двигаются только при доказанной живости сервера (завершён bootstrap,
+  пришло WS-событие с ожидаемым seq, получен keepalive Pong, либо `resumeSettle` без `hello` и без
+  удержанных refresh-ом событий; `flushLoop` и завершение сессии никогда не двигают отметку к
+  пост-сонному `time.Now()`, а `watchWake` передаёт и фиксирует pre-sleep метку). Поздний reset
+  `hello`, пришедший после `resumeSettle`, откатывает `gapStart` к до-разрывному значению; `MarkStale`
+  двигаeт `syncGen`, проверяемый в `SetWindow`/`MergeSince` (атомарно через `BeginFetch`), чтобы
+  in-flight fetch не сбросил `Stale`/`GapAfter`; `posts?since=` и `users/ids?since=` якорятся на
+  серверные часы по HTTP `Date` (с фолбэком по расхождению `TotalMsgCount`/`LastPostAt` и
+  `TotalMsgCountRoot`/`LastRootPostAt` под CRT); восстановленные при холодном старте окна
+  перезагружаются через `loadLatest` (`SetWindow`), автоматически затягивая существующие дыры в
+  SQLite-кэше с сохранением черновиков, живых WS-постов и `s.older`. —
   `TestLongOfflineGapWithLossCatchesUpFromStreamEnd`, `TestLiveMarkMovesOnlyWhileProven`,
-  `TestSettleDoesNotProveWhileRefreshHoldsTheHello`, `TestRestoreSeedsGapStart`.
+  `TestSettleDoesNotProveWhileRefreshHoldsTheHello`, `TestRestoreSeedsGapStart`,
+  `TestSleepWakeCatchesUpFromPreSleepNotWakeTime`, `TestKeepalivePongAdvancesLiveMark`,
+  `TestLateResetHelloAfterResumeSettleUsesPreDisconnectGapStart`,
+  `TestInFlightFetchBeforeMarkStaleCannotClearStaleAndDropCatchUp`,
+  `TestLocalClockAheadOfServerClockCatchesUp`,
+  `TestColdStartSelfHealsExistingInteriorHoleInSQLiteCache`,
+  `TestSteadyStateLiveTrafficMakesNoExtraReloads`,
+  `TestMarkStaleAdvancesSyncGenAndDropsInFlightFetch`,
+  `TestMergeSinceTriggersReloadOnMetadataGap`,
+  `TestReconcileMetadataMarksDiscrepantWindowForReload`,
+  `TestRestoreSetsNeedReloadForColdStartSelfHeal`.
 - Обновление метаданных применяет цикл событий сессии (`startRefresh`/`finishRefresh`), события
   на время REST-чтения копятся и применяются после `Bootstrap` под его guard — иначе `Bootstrap`
   откатывает счётчики, поднятые событиями. Уведомление зависит от новизны поста (seen-set), не от

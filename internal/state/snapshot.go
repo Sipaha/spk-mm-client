@@ -226,6 +226,10 @@ func (s *Server) Restore(entries []store.CacheEntry) error {
 		w.Posts = dedup
 		w.Loaded = true
 		w.markStale(liveAt)
+		// Cold start reloads the authoritative latest page so any interior
+		// hole already persisted in SQLite self-heals automatically while
+		// the restored window remains immediately readable offline.
+		w.needReload = true
 		ch.Win = w
 		for _, p := range w.Posts {
 			s.seen.add(p.ID)

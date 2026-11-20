@@ -100,27 +100,38 @@ func (w *Worker) fetchLoop(ctx context.Context) {
 }
 
 func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
-	// The generation first: a ResetWindows after it drops the page, even
-	// if the item below was read before the reset.
-	crt, gen := w.st.FetchMode()
-	it, need := w.st.SyncItemFor(queued.ChannelID) // the queued copy may be outdated
+	// Capture the sync item, CRT mode and window sync generation atomically:
+	// a ResetWindows or MarkStale after this drops the landing page so an
+	// in-flight fetch cannot clear Stale/GapAfter after a stream loss.
+	it, crt, gen, need := w.st.BeginFetch(queued.ChannelID)
 	if !need {
 		return
 	}
 	started := w.cfg.Now().UnixMilli()
-	var err error
-	if it.Loaded {
+	var (
+		applied bool
+		err     error
+	)
+	var since int64
+	if it.Loaded && !it.NeedReload {
+		since = w.sinceParam(it.SyncedAt)
+	}
+	if since > 0 {
 		var l model.PostList
-		l, err = w.rc.ChannelPosts(ctx, it.ChannelID, rest.PostsQuery{Since: max(1, it.SyncedAt-sinceMargin.Milliseconds()), CollapsedThreads: crt})
+		l, err = w.rc.ChannelPosts(ctx, it.ChannelID, rest.PostsQuery{Since: since, CollapsedThreads: crt})
 		switch {
 		case err != nil:
 		case len(l.Order) >= w.cfg.sinceLimit:
-			err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
+			applied, err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
 		default:
-			w.st.MergeSince(it.ChannelID, l.Ascending(), started, gen)
+			var needReload bool
+			applied, needReload = w.st.MergeSince(it.ChannelID, l.Ascending(), started, gen)
+			if applied && needReload {
+				applied, err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
+			}
 		}
 	} else {
-		err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
+		applied, err = w.loadLatest(ctx, it.ChannelID, crt, gen, started)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
@@ -140,22 +151,24 @@ func (w *Worker) fetch(ctx context.Context, queued state.SyncItem) {
 		slog.Debug("channel fetch failed", "srv", w.srv.ID, "channel", it.ChannelID, "err", err)
 		return
 	}
+	if !applied {
+		return
+	}
 	w.loadUsers(ctx)
 	if it.ChannelID == w.st.Active() {
 		w.requestStatuses() // authors the open channel did not have yet
-		// A catch-up overflow left the held history stale (only the latest
-		// page was reloaded): reread it. Also retries one a reconnect
-		// dropped.
+		// A catch-up overflow or reload left the held history stale (only
+		// the latest page was reloaded): reread it. Also retries one a
+		// reconnect dropped.
 		w.scheduleRevalidation(it.ChannelID)
 	}
 	w.changed(state.Change{Sidebar: true, Channels: []string{it.ChannelID}})
 }
 
-func (w *Worker) loadLatest(ctx context.Context, channelID string, crt bool, gen uint64, started int64) error {
+func (w *Worker) loadLatest(ctx context.Context, channelID string, crt bool, gen uint64, started int64) (bool, error) {
 	l, err := w.rc.ChannelPosts(ctx, channelID, rest.PostsQuery{PerPage: state.WindowSize, CollapsedThreads: crt})
 	if err != nil {
-		return err
+		return false, err
 	}
-	w.st.SetWindow(channelID, l.Ascending(), l.PrevPostID == "", started, gen)
-	return nil
+	return w.st.SetWindow(channelID, l.Ascending(), l.PrevPostID == "", started, gen), nil
 }

@@ -466,9 +466,10 @@ func TestReplyDeleteAfterFresherRootIsNotCountedTwice(t *testing.T) {
 	root.UpdateAt = 5000 // read after r1 was deleted at 5000
 	s.SetWindow("town", []model.Post{root}, true, 5, 0)
 	s.MarkStale(10)
+	_, gen := s.FetchMode()
 	gone := reply("r1", "root", "u1", 3000, 0)
 	gone.DeleteAt, gone.UpdateAt = 5000, 5000
-	s.MergeSince("town", []model.Post{gone}, 99, 0)
+	s.MergeSince("town", []model.Post{gone}, 99, gen)
 	n, _ := rootCount(t, s, "town", "root")
 	assert.Equal(t, int64(1), n)
 }
@@ -482,13 +483,14 @@ func TestPageReadBeforeReplyDeletionKeepsTheLowerCount(t *testing.T) {
 	before := threadRoot(2, 2100)
 	s.SetWindow("town", []model.Post{before, r1, reply("r2", "root", "u3", 2100, 2)}, true, 5, 0)
 	s.MarkStale(10)
+	_, gen := s.FetchMode()
 	gone := r1
 	gone.DeleteAt, gone.UpdateAt = 5000, 5000
-	s.MergeSince("town", []model.Post{gone}, 99, 0)
+	s.MergeSince("town", []model.Post{gone}, 99, gen)
 	n, _ := rootCount(t, s, "town", "root")
 	require.Equal(t, int64(1), n)
 
-	s.SetWindow("town", []model.Post{before, r1}, true, 100, 0) // requested before the deletion
+	s.SetWindow("town", []model.Post{before, r1}, true, 100, gen) // requested before the deletion
 	n, _ = rootCount(t, s, "town", "root")
 	assert.Equal(t, int64(1), n, "the older page does not bring the deleted reply's count back")
 }

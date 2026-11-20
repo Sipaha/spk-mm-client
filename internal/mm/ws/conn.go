@@ -41,6 +41,9 @@ type Options struct {
 	HTTPClient   *http.Client
 	PingInterval time.Duration
 	PingTimeout  time.Duration
+	// OnPong is called after each successful keepalive Pong while the socket
+	// is open, proving server liveness without relying on local wall time.
+	OnPong func()
 }
 
 // Resume identifies the server-side stream to continue: NextSeq is the next
@@ -71,6 +74,7 @@ type Conn struct {
 	events chan Event
 	cancel context.CancelFunc
 	once   sync.Once
+	onPong func()
 
 	mu     sync.Mutex
 	resume Resume
@@ -122,7 +126,7 @@ func Dial(ctx context.Context, o Options, r Resume) (*Conn, error) {
 		timeout = defaultPingTimeout
 	}
 	rctx, cancel := context.WithCancel(context.Background())
-	c := &Conn{ws: wc, events: make(chan Event, eventBuffer), cancel: cancel, resume: r}
+	c := &Conn{ws: wc, events: make(chan Event, eventBuffer), cancel: cancel, onPong: o.OnPong, resume: r}
 	go c.readLoop(rctx)
 	go c.keepalive(rctx, interval, timeout)
 	return c, nil
@@ -240,6 +244,9 @@ func (c *Conn) keepalive(ctx context.Context, interval, timeout time.Duration) {
 					c.fail(fmt.Errorf("ws keepalive: %w", err))
 				}
 				return
+			}
+			if c.onPong != nil && ctx.Err() == nil {
+				c.onPong()
 			}
 		}
 	}
