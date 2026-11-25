@@ -21,7 +21,34 @@ const (
 	maxBackoff    = 5 * time.Second
 	maxRetryAfter = 60 * time.Second
 	errBodyLimit  = 64 << 10
+
+	http2SendPingTimeout  = 10 * time.Second
+	http2PingTimeout      = 10 * time.Second
+	http2WriteByteTimeout = 15 * time.Second
 )
+
+// NewHTTPTransport returns a cloned http.DefaultTransport with HTTP/2 enabled
+// and health-check / write timeouts set so silently blackholed TCP connections
+// (after suspend/resume, VPN or network changes) are detected via HTTP/2 PING
+// and evicted instead of stalling subsequent requests indefinitely.
+func NewHTTPTransport() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	tr.HTTP2 = &http.HTTP2Config{
+		SendPingTimeout:  http2SendPingTimeout,
+		PingTimeout:      http2PingTimeout,
+		WriteByteTimeout: http2WriteByteTimeout,
+	}
+	return tr
+}
+
+// NewHTTPClient builds an *http.Client using NewHTTPTransport and timeout.
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: NewHTTPTransport(),
+	}
+}
 
 type Client struct {
 	base   string
@@ -37,7 +64,7 @@ type Client struct {
 // whole sync loop in spk-cockpit.
 func New(baseURL, token string, hc *http.Client) *Client {
 	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+		hc = NewHTTPClient(30 * time.Second)
 	}
 	return &Client{base: baseURL, token: token, hc: hc, sleep: sleepCtx}
 }

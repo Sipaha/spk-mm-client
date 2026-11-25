@@ -151,7 +151,7 @@ func (c *Config) defaults() {
 		c.sinceLimit = rest.SinceLimit
 	}
 	if c.HTTPClient == nil {
-		c.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		c.HTTPClient = rest.NewHTTPClient(30 * time.Second)
 	}
 }
 
@@ -379,6 +379,9 @@ func (w *Worker) Run(ctx context.Context) {
 			<-ctx.Done()
 			break
 		}
+		if w.cfg.HTTPClient != nil {
+			w.cfg.HTTPClient.CloseIdleConnections()
+		}
 		if errors.Is(err, errNudged) {
 			attempt = 0
 			continue
@@ -393,6 +396,9 @@ func (w *Worker) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 		case <-w.nudge:
+			if w.cfg.HTTPClient != nil {
+				w.cfg.HTTPClient.CloseIdleConnections()
+			}
 		case <-time.After(d):
 		}
 	}
@@ -483,14 +489,17 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 	if err != nil {
 		return err
 	}
+	resumed := w.resume.ConnectionID != ""
 	epoch := w.live.nextEpoch()
 	dctx, dcancel := context.WithTimeout(sctx, dialTimeout)
 	conn, err := ws.Dial(dctx, w.wsOptions(epoch), w.resume)
 	dcancel()
 	if err != nil {
+		if resumed {
+			w.recordResumeFailure(ctx, err)
+		}
 		return err
 	}
-	resumed := w.resume.ConnectionID != ""
 	// On a resumed session, remember the pre-disconnect gapStart until a
 	// bootstrap or an in-sequence non-hello event arrives: if a late reset
 	// hello arrives after resumeSettle (3 s), catch-up must still start from
@@ -511,19 +520,15 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 		}
 		w.drainResume(conn.Events(), &resumePending, resumeGap)
 		w.resume = conn.Resume()
-		if !w.endLive() && resumed && ctx.Err() == nil && !errors.Is(err, errNudged) && !sessionExpired(err) {
-			w.resumeFails++
-			if w.resumeFails >= maxResumeFails {
-				slog.Info("server keeps refusing the resume, reconnecting fresh", "srv", w.srv.ID)
-				w.resume, w.needResync, w.resumeFails = ws.Resume{}, true, 0
-			}
+		if !w.endLive() && resumed {
+			w.recordResumeFailure(ctx, err)
 		}
 		if refresh != nil { // abandoned: done again once a session runs
 			w.requestMeta()
 		}
 	}()
 	if !w.booted || !resumed || w.needResync {
-		if err := w.bootstrap(sctx, w.booted); err != nil {
+		if err := w.bootstrap(sctx, w.booted, &refreshes); err != nil {
 			return err
 		}
 		resumePending = false
@@ -568,7 +573,7 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 			evs := held
 			held = nil
 			for i, ev := range evs {
-				if err := w.handle(sctx, ev, &resumePending, resumeGap); err != nil {
+				if err := w.handle(sctx, &refreshes, ev, &resumePending, resumeGap); err != nil {
 					held = evs[i+1:] // the cleanup applies the rest
 					return err
 				}
@@ -586,7 +591,7 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 				held = append(held, ev)
 				continue
 			}
-			if err := w.handle(sctx, ev, &resumePending, resumeGap); err != nil {
+			if err := w.handle(sctx, &refreshes, ev, &resumePending, resumeGap); err != nil {
 				return err
 			}
 			if len(conn.Events()) == 0 {
@@ -598,15 +603,30 @@ func (w *Worker) runSession(ctx context.Context, onLive func()) (err error) {
 	}
 }
 
+// recordResumeFailure tracks consecutive failed/unproven resume attempts
+// (either pre-upgrade ws.Dial failures after a valid Me or post-dial drops
+// before the stream is proven) and drops the saved resume token once
+// maxResumeFails is reached so the next session reconnects fresh and resyncs.
+func (w *Worker) recordResumeFailure(ctx context.Context, err error) {
+	if ctx.Err() != nil || errors.Is(err, errNudged) || sessionExpired(err) {
+		return
+	}
+	w.resumeFails++
+	if w.resumeFails >= maxResumeFails {
+		slog.Info("server keeps refusing the resume, reconnecting fresh", "srv", w.srv.ID)
+		w.resume, w.needResync, w.resumeFails = ws.Resume{}, true, 0
+	}
+}
+
 // handle applies one event of the live stream.
-func (w *Worker) handle(ctx context.Context, ev ws.Event, resumePending *bool, resumeGap int64) error {
+func (w *Worker) handle(ctx context.Context, refreshes *sync.WaitGroup, ev ws.Event, resumePending *bool, resumeGap int64) error {
 	if ev.Type == "hello" {
 		if ev.Reset {
 			if resumePending != nil && *resumePending {
 				w.resetLiveTo(resumeGap)
 			}
 			slog.Info("event stream lost, resyncing", "srv", w.srv.ID)
-			if err := w.bootstrap(ctx, true); err != nil {
+			if err := w.bootstrap(ctx, true, refreshes); err != nil {
 				return err
 			}
 			if resumePending != nil {
@@ -923,10 +943,10 @@ func (w *Worker) replayOrphans() {
 // bootstrap reads all metadata. lost: the event stream was lost, so every
 // window may miss posts since the gap start — needResync stays set until
 // this succeeds, so a failure is retried by the next session.
-func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
+func (w *Worker) bootstrap(sctx context.Context, lost bool, refreshes *sync.WaitGroup) error {
 	// Bound the whole read, including paging, limiter waits and retries.
 	// A per-request HTTP timeout alone allows setup to stall for minutes.
-	ctx, cancel := context.WithTimeout(ctx, w.cfg.bootstrapTimeout)
+	ctx, cancel := context.WithTimeout(sctx, w.cfg.bootstrapTimeout)
 	defer cancel()
 	if lost {
 		w.needResync = true
@@ -958,13 +978,31 @@ func (w *Worker) bootstrap(ctx context.Context, lost bool) error {
 		w.needResync = true
 		return err
 	}
-	w.goBG(func(ctx context.Context) { w.refreshUsers(ctx, known, since) })
+	w.startRefreshUsers(sctx, refreshes, known, since)
 	w.enqueueAll()
 	w.reloadOpenThread() // stale since the gap, or reset
 	w.startEmojiLoad()
 	w.changed(state.Change{Sidebar: true, Badge: true, Channels: []string{w.st.Active()}, Threads: w.openThreads()})
 	w.viewFocused()
 	return nil
+}
+
+// startRefreshUsers runs refreshUsers bound to the session context sctx under
+// refreshes so it outlives bootstrap's own timeout, yet is cancelled and
+// awaited (releasing usersSem) when the session ends or is nudged.
+func (w *Worker) startRefreshUsers(sctx context.Context, refreshes *sync.WaitGroup, known []string, since int64) {
+	if len(known) == 0 {
+		return
+	}
+	if refreshes != nil {
+		refreshes.Add(1)
+		go func() {
+			defer refreshes.Done()
+			w.refreshUsers(sctx, known, since)
+		}()
+		return
+	}
+	w.goBG(func(ctx context.Context) { w.refreshUsers(ctx, known, since) })
 }
 
 // fetchMeta reads channels and memberships first: events that arrive

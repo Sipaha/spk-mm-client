@@ -17,6 +17,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mm/model"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/paths"
 	"github.com/spk/spk-mm-client/internal/store"
@@ -81,7 +82,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		em.Emit(events.Event{Type: api.EventOpenExternal, Payload: map[string]any{"url": u}})
 		return nil
 	}
-	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second}, api.BuildInfo{Version: version, Mode: "browser"})
+	svc := api.NewService(st, em, open, rest.NewHTTPClient(30*time.Second), api.BuildInfo{Version: version, Mode: "browser"})
 	notes := &api.RecordingNotifier{} // browser mode has no OS notifications; e2e reads them via test-API
 	svc.SetNotifier(notes)
 	opened := &api.RecordingOpener{} // no system apps in browser mode; e2e reads them via test-API

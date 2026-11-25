@@ -11,13 +11,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
-
 	"github.com/spk/spk-mm-client/internal/api"
 	"github.com/spk/spk-mm-client/internal/appfiles"
 	"github.com/spk/spk-mm-client/internal/desktop"
 	"github.com/spk/spk-mm-client/internal/events"
 	"github.com/spk/spk-mm-client/internal/media"
+	"github.com/spk/spk-mm-client/internal/mm/rest"
 	"github.com/spk/spk-mm-client/internal/mmfake"
 	"github.com/spk/spk-mm-client/internal/paths"
 	"github.com/spk/spk-mm-client/internal/store"
@@ -43,10 +42,10 @@ func runDesktop(ctx context.Context, o desktopOpts) error {
 	defer st.Close()
 
 	em := events.NewEmitter()
-	open := func(u string) error { return application.Get().Browser.OpenURL(u) }
-	svc := api.NewService(st, em, open, &http.Client{Timeout: 30 * time.Second}, api.BuildInfo{Version: version, Mode: "desktop"})
-	// xdg-open (Wails Browser.OpenFile) starts and returns at once.
-	svc.SetFileOpener(func(path string) error { return application.Get().Browser.OpenFile(path) })
+	svc := api.NewService(st, em, desktop.OpenURL, rest.NewHTTPClient(30*time.Second), api.BuildInfo{Version: version, Mode: "desktop"})
+	// On Linux, desktop.OpenFile launches xdg-open via a detached transient
+	// systemd user service (falling back to Wails Browser.OpenFile).
+	svc.SetFileOpener(desktop.OpenFile)
 	// "Show in folder": FileManager1.ShowItems (bounded), else the folder
 	// through the opener above. Only on the user's action.
 	svc.SetRevealer(desktop.ShowItem)
