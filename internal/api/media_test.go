@@ -19,6 +19,7 @@ import (
 	"github.com/spk/spk-mm-client/internal/media"
 	"github.com/spk/spk-mm-client/internal/mm/model"
 	"github.com/spk/spk-mm-client/internal/mmfake"
+	"github.com/spk/spk-mm-client/internal/state"
 )
 
 func TestMediaOriginStreamsThroughTheWorker(t *testing.T) {
@@ -304,4 +305,42 @@ func TestPDFOnlyWhileLive(t *testing.T) {
 	resp, body = get("f-spec")
 	assert.Equal(t, 200, resp.StatusCode, "ErrNoServer was not remembered")
 	assert.True(t, bytes.HasPrefix(body, []byte("%PDF-")), "the fake's junk PDF passes the magic check: pdf.js refuses it")
+}
+
+func TestMediaPostGifThroughTheService(t *testing.T) {
+	f := newChatFixture(t)
+	fake := startFake(t)
+	id := f.signIn(fake, "alice")
+	f.eventually(func() bool { return f.server(id).State == "live" }, "never live")
+	f.eventually(func() bool { return f.loaded(id, "c-town") }, "town square not prefetched")
+
+	gifURL := fake.URL() + mmfake.SampleGifPath
+	p := fake.PostAs("c-town", "bob", "![dance]("+gifURL+")")
+	key := state.GifKey(gifURL)
+	f.eventually(func() bool {
+		_, ok := f.svc.PostGif(id, p.ID, key)
+		return ok
+	}, "gif post never arrived")
+
+	mc, err := media.New(media.Options{Dir: t.TempDir(), Origin: f.svc, PostIcons: f.svc, PostGifs: f.svc})
+	require.NoError(t, err)
+	ts := httptest.NewServer(mc)
+	defer ts.Close()
+
+	// Wrong account scope is refused before cache-hit.
+	resp, err := http.Get(fmt.Sprintf("%s/media/%d/postgif/%s?k=%s&account=wrong", ts.URL, id, p.ID, key))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	// Valid request serves GIF89a with security headers.
+	resp, err = http.Get(fmt.Sprintf("%s/media/%d/postgif/%s?k=%s&account=%s", ts.URL, id, p.ID, key, f.server(id).MediaScope))
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "image/gif", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "default-src 'none'; sandbox", resp.Header.Get("Content-Security-Policy"))
+	assert.Equal(t, mmfake.SampleGifBytes, body)
 }

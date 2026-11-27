@@ -32,7 +32,7 @@ afterAll(() => {
 vi.mock('../chat', () => ({
   copyLink: vi.fn(), deletePost: vi.fn(), discardPost: vi.fn(), downloadFile: vi.fn(), editLastOwn: vi.fn(),
   editPost: vi.fn(), emojiInfo: vi.fn().mockResolvedValue({ recent: [], custom: [], custom_enabled: false }),
-  loadOlderReplies: vi.fn().mockResolvedValue(true), markUnread: vi.fn(), openFile: vi.fn(), openLink: vi.fn(),
+  loadOlderReplies: vi.fn().mockResolvedValue(true), markUnread: vi.fn(), openExternalLink: vi.fn(), openFile: vi.fn(), openLink: vi.fn(), openPermalinkPost: vi.fn(),
   openThread: vi.fn(), react: vi.fn().mockResolvedValue(undefined), reactionUsers: vi.fn().mockResolvedValue({ users: [], unknown: 0 }),
   retryPost: vi.fn(), saveThreadDraft: vi.fn(), sendReply: vi.fn().mockResolvedValue(undefined), setPostSaved: vi.fn(),
   uploadAttachments: vi.fn().mockResolvedValue(undefined),
@@ -233,11 +233,11 @@ test('root_deleted shows a banner and disables the composer', () => {
 })
 
 test('capped shows the "showing the last 200 replies" banner with an "open in browser" link', async () => {
-  const { openLink } = await import('../chat')
+  const { openExternalLink } = await import('../chat')
   render(<ThreadPane server={server()} thread={thread({ capped: true })} onClose={() => {}} />)
   expect(screen.getByText('Showing the last 200 replies')).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Open in browser' }))
-  expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/root')
+  expect(openExternalLink).toHaveBeenCalledWith('https://mm/team/pl/root')
 })
 
 test('a load error shows "Retry", which re-opens the thread', async () => {
@@ -381,12 +381,12 @@ test('ThreadPane focus: a stale segment offers Retry of the reread', async () =>
 })
 
 test('ThreadPane focus: "open in browser" goes to the target reply\'s permalink', async () => {
-  const { openLink } = await import('../chat')
-  vi.mocked(openLink).mockClear()
+  const { openExternalLink } = await import('../chat')
+  vi.mocked(openExternalLink).mockClear()
   render(<ThreadPane server={server()} thread={focused()} onClose={() => {}} />)
   expect(screen.getByText('Showing the replies around the one found')).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Open in browser' }))
-  expect(openLink).toHaveBeenCalledWith('https://mm/team/pl/s2')
+  expect(openExternalLink).toHaveBeenCalledWith('https://mm/team/pl/s2')
 })
 
 const narrowWindow = () => {

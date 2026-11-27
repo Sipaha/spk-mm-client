@@ -1,13 +1,16 @@
-import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import type { Attachment, EmojiDTO, FileView, PostView, ReactionUsersDTO } from '../api/types'
+import type { Attachment, EmojiDTO, FileView, GifPreviewView, PermalinkPreviewView, PostView, ReactionUsersDTO } from '../api/types'
 import { invalidateRecent, useQuickReactions } from '../emoji/recent'
 import { errorMessage } from '../errors'
 import { formatTime } from '../format'
 import { t } from '../i18n'
+import { mediaURL, useLoadFailure } from '../media'
 import { Attachments } from './Attachments'
+import { Avatar } from './Avatar'
 import { EmojiGlyph } from './EmojiGlyph'
-import { IconAddReaction, IconBookmark, IconBookmarkFilled, IconMore, IconReply } from './icons'
+import { boxStyle, fitBox } from './files'
+import { IconAddReaction, IconAttach, IconBookmark, IconBookmarkFilled, IconMore, IconReply } from './icons'
 import { Markdown } from './Markdown'
 import { PostAvatar } from './PostAvatar'
 import PostMenu from './PostMenu'
@@ -38,6 +41,10 @@ export interface PostActions {
   // root_id's. Used by the "N replies" link, the ↩ reply button and the
   // reply-context line's click (Task 6).
   openThread(post: PostView): void
+  // openPermalink: navigates to a quoted permalink card's target message.
+  openPermalink?(pl: PermalinkPreviewView): void
+  // viewGif: opens an external/markdown GIF preview in GifLightbox.
+  viewGif?(postId: string, gif: GifPreviewView): void
 }
 
 interface Props {
@@ -191,6 +198,116 @@ function AttachmentView({
         </div>
       </div>
     </>
+  )
+}
+
+const GIF_BOX_MAX = { w: 480, h: 360 }
+
+function PostGifTile({
+  serverId,
+  postId,
+  gif,
+  onViewGif,
+}: {
+  serverId: number
+  postId: string
+  gif: GifPreviewView
+  onViewGif?(postId: string, gif: GifPreviewView): void
+}) {
+  const url = mediaURL(serverId, 'postgif', postId, { k: gif.id })
+  const [failed, fail] = useLoadFailure(serverId, url)
+  if (failed) return null
+  const box = fitBox(gif.width, gif.height, GIF_BOX_MAX.w, GIF_BOX_MAX.h)
+  return (
+    <button
+      type="button"
+      data-gif-id={gif.id}
+      aria-label={gif.alt ? `${t('gif.view')}: ${gif.alt}` : t('gif.view')}
+      title={gif.alt || gif.url}
+      onClick={(e) => {
+        e.stopPropagation()
+        onViewGif?.(postId, gif)
+      }}
+      className="block shrink-0 overflow-hidden rounded border border-line bg-panel focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      style={boxStyle(box)}
+    >
+      <img
+        src={url}
+        alt={gif.alt || ''}
+        width={box.width}
+        height={box.height}
+        decoding="async"
+        draggable={false}
+        onError={fail}
+        className="block h-full w-full object-contain"
+      />
+    </button>
+  )
+}
+
+function PermalinkCard({
+  serverId,
+  pl,
+  me,
+  locale,
+  onLink,
+  onOpen,
+  emojiInfo,
+}: {
+  serverId: number
+  pl: PermalinkPreviewView
+  me: string
+  locale: string
+  onLink(href: string): void
+  onOpen?(): void
+  emojiInfo(): Promise<EmojiDTO>
+}) {
+  const channelLabel = pl.channel_display_name || pl.channel_name || ''
+  const author = pl.author || t('reaction.unknownUser')
+  const open = () => onOpen?.()
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-permalink-card
+      data-permalink-post-id={pl.post_id}
+      aria-label={`${t('permalink.jump')}: ${author}`}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('a, button')) return
+        const sel = window.getSelection()
+        if (sel && !sel.isCollapsed && sel.toString() !== '' && e.currentTarget.contains(sel.anchorNode)) return
+        e.stopPropagation()
+        open()
+      }}
+      onKeyDown={(e) => {
+        if ((e.key !== 'Enter' && e.key !== ' ') || e.target !== e.currentTarget) return
+        e.preventDefault()
+        open()
+      }}
+      className="my-1.5 max-w-[520px] cursor-pointer overflow-hidden rounded-r border-y border-r border-line border-l-[3px] border-l-accent/70 bg-panel/60 px-3 py-2 text-left transition-colors hover:bg-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    >
+      <div className="mb-1 flex min-w-0 items-center gap-1.5 text-xs">
+        {pl.user_id && <Avatar serverId={serverId} userId={pl.user_id} version={pl.avatar} name={author} size={18} surface="app" />}
+        <span className="truncate font-semibold text-fg">{author}</span>
+        {pl.create_at ? <time className="shrink-0 text-fg-muted">{formatTime(pl.create_at, locale)}</time> : null}
+        {channelLabel && (
+          <span className="min-w-0 truncate text-fg-muted">
+            · {pl.channel_type === 'O' || pl.channel_type === 'P' ? `#${channelLabel}` : channelLabel}
+          </span>
+        )}
+      </div>
+      {pl.message && (
+        <div className="line-clamp-4 text-sm text-fg">
+          <Markdown text={pl.message} me={me} onLink={onLink} serverId={serverId} emojiInfo={emojiInfo} />
+        </div>
+      )}
+      {(pl.file_count ?? 0) > 0 && (
+        <div className="mt-1 flex items-center gap-1 text-xs text-fg-muted">
+          <IconAttach size={13} className="shrink-0" />
+          <span>{t('permalink.files', { n: String(pl.file_count) })}</span>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -494,6 +611,10 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
       }),
     )
   }, [visible])
+  const handleViewGif = useMemo(
+    () => (actions.viewGif ? (g: GifPreviewView) => actions.viewGif!(post.id, g) : undefined),
+    [actions.viewGif, post.id],
+  )
   return (
     <article
       ref={articleRef}
@@ -566,11 +687,45 @@ export const PostItem = memo(function PostItem({ serverId, post, head, me, local
             <EditBox post={post} actions={actions} />
           ) : (
             <div className={post.system ? 'italic text-fg-muted' : ''} onClick={openThreadFromText}>
-              {post.message && <Markdown text={post.message} me={me.username} onLink={actions.link} serverId={serverId} emojiInfo={actions.emojiInfo} />}
+              {post.message && (
+                <Markdown
+                  text={post.message}
+                  me={me.username}
+                  onLink={actions.link}
+                  serverId={serverId}
+                  emojiInfo={actions.emojiInfo}
+                  postId={post.id}
+                  gifPreviews={post.gif_previews}
+                  onViewGif={handleViewGif}
+                />
+              )}
               {post.edit_at ? <span className="text-xs text-fg-subtle">{t('post.edited')}</span> : null}
               {post.ephemeral ? <span className="text-xs not-italic text-fg-subtle">{t('post.onlyVisibleToYou')}</span> : null}
             </div>
           )}
+          {post.permalinks?.map((pl) => (
+            <PermalinkCard
+              key={pl.post_id}
+              serverId={serverId}
+              pl={pl}
+              me={me.username}
+              locale={locale}
+              onLink={actions.link}
+              onOpen={() => actions.openPermalink?.(pl)}
+              emojiInfo={actions.emojiInfo}
+            />
+          ))}
+          {(() => {
+            const extraGifs = (post.gif_previews ?? []).filter((g) => !g.inline)
+            if (extraGifs.length === 0) return null
+            return (
+              <div className="mt-1 flex w-full min-w-0 flex-wrap gap-2" data-testid="post-gif-previews">
+                {extraGifs.map((g) => (
+                  <PostGifTile key={g.id} serverId={serverId} postId={post.id} gif={g} onViewGif={actions.viewGif} />
+                ))}
+              </div>
+            )
+          })()}
           {post.attachments?.map((a, i) => (
             <AttachmentView key={i} serverId={serverId} a={a} me={me.username} onLink={actions.link} emojiInfo={actions.emojiInfo} />
           ))}

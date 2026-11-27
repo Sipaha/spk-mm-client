@@ -15,6 +15,7 @@ import type {
   QuickChannelDTO,
   PostView,
   ReactionUsersDTO,
+  ResolvedPostDTO,
   SavedFile,
   SearchPageDTO,
   SearchSuggestKind,
@@ -59,6 +60,8 @@ export interface Client {
   getChannel(id: number, channelId: string): Promise<ChannelDTO>
   getChannelDelta(id: number, channelId: string, base: number): Promise<ChannelPatch>
   loadOlder(id: number, channelId: string): Promise<void>
+  /** Resolves a Mattermost permalink's postId to its channel/root and local membership. Aborting `signal` cancels it in Go. */
+  resolvePost(id: number, postId: string, signal?: AbortSignal): Promise<ResolvedPostDTO>
   /**
    * Shows postId of the open channel: held already → as is; else the segment
    * around it replaces the held history, behind ChannelDTO.gap. A new
@@ -214,6 +217,7 @@ export const httpClient: Client = {
   getChannel: (id, channel_id) => post('GetChannel', { id, channel_id }),
   getChannelDelta: (id, channel_id, base) => post('GetChannelDelta', { id, channel_id, base }),
   loadOlder: (id, channel_id) => done(post('LoadOlder', { id, channel_id })),
+  resolvePost: (id, post_id, signal) => post('ResolvePost', { id, post_id }, signal),
   jumpToPost: (id, channel_id, post_id, signal) => post('JumpToPost', { id, channel_id, post_id }, signal),
   loadNewer: (id, channel_id) => done(post('LoadNewer', { id, channel_id })),
   retryRevalidation: (id, channel_id) => done(post('RetryRevalidation', { id, channel_id })),
@@ -361,6 +365,7 @@ export const wailsClient: Client = {
   getChannel: (id, channelId) => wcall('GetChannel', id, channelId),
   getChannelDelta: (id, channelId, base) => wcall('GetChannelDelta', id, channelId, base),
   loadOlder: (id, channelId) => wcall('LoadOlder', id, channelId),
+  resolvePost: (id, postId, signal) => cancellable<ResolvedPostDTO>(signal, 'ResolvePost', id, postId),
   jumpToPost: (id, channelId, postId, signal) => cancellable<JumpDTO>(signal, 'JumpToPost', id, channelId, postId),
   loadNewer: (id, channelId) => wcall('LoadNewer', id, channelId),
   retryRevalidation: (id, channelId) => wcall('RetryRevalidation', id, channelId),

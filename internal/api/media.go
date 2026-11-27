@@ -11,6 +11,7 @@ import (
 var (
 	_ media.Origin    = (*Service)(nil)
 	_ media.PostIcons = (*Service)(nil)
+	_ media.PostGifs  = (*Service)(nil)
 )
 
 // running is the worker of a signed-in server whose session is live. Media
@@ -91,6 +92,34 @@ func (s *Service) PostIconContext(ctx context.Context, serverID int64, postID st
 	}
 	st := w.State()
 	u, ok := st.PostIconURL(postID)
+	if !ok {
+		return media.PostIcon{}, false
+	}
+	return media.PostIcon{URL: u, Base: w.REST().Base(), ImageProxy: st.Config().ImageProxy,
+		Live: w.Status() == mmsync.StatusLive}, true
+}
+
+// PostGif implements media.PostGifs: a GIF URL referenced by a held post on
+// serverID, resolved by its 16-hex key. Known offline too (its copy may be on
+// disk); Live says whether a fresh fetch is allowed.
+func (s *Service) PostGif(serverID int64, postID, key string) (media.PostIcon, bool) {
+	return s.PostGifContext(context.Background(), serverID, postID, key)
+}
+
+func (s *Service) PostGifContext(ctx context.Context, serverID int64, postID, key string) (media.PostIcon, bool) {
+	m := s.manager()
+	if m == nil {
+		return media.PostIcon{}, false
+	}
+	w := m.Worker(serverID)
+	if bound, ok := ctx.Value(mediaWorkerKey{}).(*mmsync.Worker); ok {
+		w = bound
+	}
+	if w == nil || ctx.Err() != nil {
+		return media.PostIcon{}, false
+	}
+	st := w.State()
+	u, ok := st.PostGifURL(postID, key)
 	if !ok {
 		return media.PostIcon{}, false
 	}

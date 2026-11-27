@@ -24,13 +24,19 @@ export const IMAGE_FILE_MAX = 25 * 1024 * 1024
 
 export const extOf = (f: FileView) => (f.ext || (f.name.includes('.') ? f.name.slice(f.name.lastIndexOf('.') + 1) : f.name)).toLowerCase()
 
+function isUploadedGif(f: FileView): boolean {
+  const mime = (f.mime || '').toLowerCase().split(';')[0].trim()
+  if (mime === 'image/gif') return true
+  return (mime === '' || mime === 'application/octet-stream') && extOf(f) === 'gif'
+}
+
 // imageSrc: what the feed and the viewer load for an image — the server
 // preview, or the original when there is none (GIF keeps its animation;
 // small images the server made no preview for). null: shown as a card.
 export function imageSrc(f: FileView): 'preview' | 'file' | null {
+  if (isUploadedGif(f)) return f.size <= GIF_INLINE_MAX ? 'file' : null
   const mime = (f.mime || '').toLowerCase()
   if (!mime.startsWith('image/') || mime === 'image/svg+xml') return null
-  if (mime === 'image/gif') return f.size <= GIF_INLINE_MAX ? 'file' : null
   if (f.has_preview) return 'preview'
   return RASTER.has(mime) && f.size <= IMAGE_FILE_MAX ? 'file' : null
 }
@@ -42,9 +48,9 @@ export function imageSrc(f: FileView): 'preview' | 'file' | null {
 // has_preview: the viewer wants the original even when a preview exists,
 // the preview there is only ever a placeholder until it loads.
 export function imageOriginalOk(f: FileView): boolean {
+  if (isUploadedGif(f)) return f.size <= GIF_INLINE_MAX
   const mime = (f.mime || '').toLowerCase()
   if (!RASTER.has(mime)) return false
-  if (mime === 'image/gif') return f.size <= GIF_INLINE_MAX
   return f.size <= IMAGE_FILE_MAX
 }
 

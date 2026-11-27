@@ -70,6 +70,42 @@ type JumpResult struct {
 	InFeed bool   `json:"in_feed"`
 }
 
+// ResolvedPost locates a post by ID for permalink navigation. HasChannel=false
+// means the post exists and is readable on the server, but the client is not a
+// member of its channel (the UI falls back to opening its permalink externally).
+type ResolvedPost struct {
+	PostID     string `json:"post_id"`
+	ChannelID  string `json:"channel_id"`
+	RootID     string `json:"root_id"`
+	HasChannel bool   `json:"has_channel"`
+}
+
+// ResolvePost resolves a post ID to its channel/root ID and local membership.
+// Held posts resolve offline without a network call; otherwise GET /posts/{id}
+// is queried with 404/deleted mapped to ErrPostGone, 403 to ErrForbidden and
+// 401 sent through the session-expired path.
+func (w *Worker) ResolvePost(ctx context.Context, postID string) (ResolvedPost, error) {
+	if p, ok := w.st.FindPost(postID); ok && p.DeleteAt == 0 && p.ChannelID != "" && w.st.HasChannel(p.ChannelID) {
+		return ResolvedPost{PostID: p.ID, ChannelID: p.ChannelID, RootID: p.RootID, HasChannel: true}, nil
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(w.life, cancel)
+	defer func() { stop(); cancel() }()
+	p, err := w.rc.Post(rctx, postID)
+	if err != nil {
+		return ResolvedPost{}, w.jumpErr(rctx, err)
+	}
+	if p.DeleteAt != 0 || p.ChannelID == "" {
+		return ResolvedPost{}, ErrPostGone
+	}
+	return ResolvedPost{
+		PostID:     p.ID,
+		ChannelID:  p.ChannelID,
+		RootID:     p.RootID,
+		HasChannel: w.st.HasChannel(p.ChannelID),
+	}, nil
+}
+
 // histLane is one channel's history operations.
 type histLane struct {
 	histMu chan struct{} // held by the running operation (a lock a waiter can give up on)

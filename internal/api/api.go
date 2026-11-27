@@ -86,6 +86,11 @@ type API interface {
 	GetChannel(ctx context.Context, id int64, channelID string) (ChannelDTO, error)
 	GetChannelDelta(ctx context.Context, id int64, channelID string, base uint64) (state.ChannelPatch, error)
 	LoadOlder(ctx context.Context, id int64, channelID string) error
+	// ResolvePost resolves a Mattermost permalink's postID to its channel and
+	// thread root, reporting whether the client currently holds membership in
+	// that channel (has_channel). Runs under the caller's ctx so stale
+	// navigations cancel in Go.
+	ResolvePost(ctx context.Context, id int64, postID string) (ResolvedPostDTO, error)
 	// JumpToPost shows postID of the open channel channelID: a post it
 	// holds as is, else the segment around it replaces the held history,
 	// behind a gap (ChannelDTO.gap) until proved to join the window. A new

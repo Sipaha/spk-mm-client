@@ -41,8 +41,10 @@ func (s *Server) reactLocked(userID, postID, name string, add bool) (model.React
 	}
 	var list []model.Reaction
 	var files []model.FileInfo
+	var embeds []model.PostEmbed
+	var images map[string]model.PostImage
 	if p.Metadata != nil {
-		list, files = slices.Clone(p.Metadata.Reactions), p.Metadata.Files
+		list, files, embeds, images = slices.Clone(p.Metadata.Reactions), p.Metadata.Files, p.Metadata.Embeds, p.Metadata.Images
 	}
 	i := slices.IndexFunc(list, func(r model.Reaction) bool { return r.UserID == userID && r.EmojiName == name })
 	if add == (i >= 0) {
@@ -60,7 +62,7 @@ func (s *Server) reactLocked(userID, postID, name string, add bool) (model.React
 		list = slices.Delete(list, i, i+1)
 	}
 	// A fresh Metadata: copies of the post handed out earlier keep theirs.
-	p.Metadata = &model.PostMetadata{Files: files, Reactions: list}
+	p.Metadata = &model.PostMetadata{Files: files, Reactions: list, Embeds: embeds, Images: images}
 	p.UpdateAt = now
 	b, _ := json.Marshal(r)
 	ev := "reaction_added"

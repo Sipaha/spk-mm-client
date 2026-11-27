@@ -2,10 +2,13 @@ import { memo, useMemo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
-import type { EmojiDTO } from '../api/types'
+import type { EmojiDTO, GifPreviewView } from '../api/types'
 import { emojiChar, useEmojiIndex, type EmojiIndex } from '../emoji'
 import { useEmojiInfo } from '../emoji/recent'
+import { t } from '../i18n'
+import { mediaURL, useLoadFailure } from '../media'
 import { EmojiGlyph } from './EmojiGlyph'
+import { boxStyle, fitBox } from './files'
 import { HighlightedCode } from './HighlightedCode'
 import { IconImage } from './icons'
 import { emojiNames, isEmojiOnlyText, remarkEmoji } from './remarkEmoji'
@@ -105,6 +108,64 @@ function linkTo(href: string | undefined, onLink: (href: string) => void) {
   }
 }
 
+const GIF_MAX = { w: 480, h: 360 }
+
+function MarkdownGif({
+  serverId,
+  postId,
+  gif,
+  alt,
+  href,
+  onLink,
+  onViewGif,
+}: {
+  serverId: number
+  postId: string
+  gif: GifPreviewView
+  alt: string
+  href: string
+  onLink(href: string): void
+  onViewGif?(gif: GifPreviewView): void
+}) {
+  const url = mediaURL(serverId, 'postgif', postId, { k: gif.id })
+  const [failed, fail] = useLoadFailure(serverId, url)
+  if (failed) {
+    return (
+      <a href={href} title={href} className="inline-flex max-w-full items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
+        <IconImage size={14} className="shrink-0" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{alt || href}</span>
+      </a>
+    )
+  }
+  const box = fitBox(gif.width, gif.height, GIF_MAX.w, GIF_MAX.h)
+  return (
+    <button
+      type="button"
+      data-gif-id={gif.id}
+      aria-label={alt ? `${t('gif.view')}: ${alt}` : t('gif.view')}
+      title={alt || href}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (onViewGif) onViewGif(gif)
+        else onLink(href)
+      }}
+      className="my-1 block shrink-0 overflow-hidden rounded border border-line bg-panel focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      style={boxStyle(box)}
+    >
+      <img
+        src={url}
+        alt={alt || ''}
+        width={box.width}
+        height={box.height}
+        decoding="async"
+        draggable={false}
+        onError={fail}
+        className="block h-full w-full object-contain"
+      />
+    </button>
+  )
+}
+
 // Markdown renders a message the way Mattermost does, without ever loading
 // remote content: images become links, every link opens in the system
 // browser, ":name:" shortcodes become emoji (see MarkdownEmojiNode).
@@ -123,6 +184,9 @@ export const Markdown = memo(function Markdown({
   preview = false,
   find = '',
   highlight = NO_HIGHLIGHT,
+  postId,
+  gifPreviews,
+  onViewGif,
 }: {
   text: string
   me: string
@@ -157,6 +221,9 @@ export const Markdown = memo(function Markdown({
   // after the mention/channel/emoji plugins). Keep the array stable: it
   // keys the plugin list.
   highlight?: string[]
+  postId?: string
+  gifPreviews?: GifPreviewView[]
+  onViewGif?(gif: GifPreviewView): void
 }) {
   const remarkPlugins = useMemo(() => {
     const out: unknown[] = [...plugins]
@@ -181,63 +248,82 @@ export const Markdown = memo(function Markdown({
     () => names.length > 0 && names.every((n) => !!standardChar(n, jumboIdx) || (!!jumboInfo?.custom_enabled && jumboInfo.custom.includes(n))),
     [names, jumboIdx, jumboInfo],
   )
-  const components: Components = {
-    a: ({ href, children }) => (
-      <a href={href} title={href} className="text-accent hover:underline" onClick={linkTo(href, onLink)}>
-        {children}
-      </a>
-    ),
-    img: ({ src, alt }) => {
-      const href = typeof src === 'string' ? src : ''
-      return (
-        // max-w-full + a wrapping, shrinkable text item: the text is often
-        // the bare URL, an unbreakable run whose min-content width an
-        // inline-flex box keeps — it pushed the feed scroller sideways once
-        // the open thread panel narrowed the feed (2026-09-30).
-        <a href={href} title={href} className="inline-flex max-w-full items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
-          <IconImage size={14} className="shrink-0" />
-          <span className="min-w-0 [overflow-wrap:anywhere]">{alt || href}</span>
+  const components = useMemo<Components>(
+    () => ({
+      a: ({ href, children }) => (
+        <a href={href} title={href} className="text-accent hover:underline" onClick={linkTo(href, onLink)}>
+          {children}
         </a>
-      )
-    },
-    span: (props) => {
-      const p = props as Record<string, unknown>
-      const emojiName = p['data-emoji']
-      if (typeof emojiName === 'string') {
+      ),
+      img: ({ src, alt }) => {
+        const href = typeof src === 'string' ? src : ''
+        if (!inline && !document && !preview && postId && gifPreviews && gifPreviews.length > 0) {
+          const match = gifPreviews.find((g) => g.url === href)
+          if (match) {
+            return (
+              <MarkdownGif
+                serverId={serverId}
+                postId={postId}
+                gif={match}
+                alt={alt || match.alt || ''}
+                href={href}
+                onLink={onLink}
+                onViewGif={onViewGif}
+              />
+            )
+          }
+        }
         return (
-          <MarkdownEmojiNode serverId={serverId} name={emojiName} jumbo={jumbo} emojiInfo={emojiInfo}>
-            {props.children}
-          </MarkdownEmojiNode>
+          // max-w-full + a wrapping, shrinkable text item: the text is often
+          // the bare URL, an unbreakable run whose min-content width an
+          // inline-flex box keeps — it pushed the feed scroller sideways once
+          // the open thread panel narrowed the feed (2026-09-30).
+          <a href={href} title={href} className="inline-flex max-w-full items-center gap-1 text-accent hover:underline" onClick={linkTo(href, onLink)}>
+            <IconImage size={14} className="shrink-0" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">{alt || href}</span>
+          </a>
         )
-      }
-      const channel = p['data-channel']
-      if (typeof channel === 'string') {
+      },
+      span: (props) => {
+        const p = props as Record<string, unknown>
+        const emojiName = p['data-emoji']
+        if (typeof emojiName === 'string') {
+          return (
+            <MarkdownEmojiNode serverId={serverId} name={emojiName} jumbo={jumbo} emojiInfo={emojiInfo}>
+              {props.children}
+            </MarkdownEmojiNode>
+          )
+        }
+        const channel = p['data-channel']
+        if (typeof channel === 'string') {
+          return (
+            <ChannelMention serverId={serverId} name={channel}>
+              {props.children}
+            </ChannelMention>
+          )
+        }
+        const name = p['data-mention']
+        if (typeof name !== 'string') return <span className={props.className}>{props.children}</span>
+        const loud = name === me.toLowerCase() || SPECIAL.has(name)
         return (
-          <ChannelMention serverId={serverId} name={channel}>
+          <span data-mention={name} className={loud ? 'rounded bg-mention-bg px-0.5 font-medium text-mention-fg' : 'font-medium text-accent'}>
             {props.children}
-          </ChannelMention>
+          </span>
         )
-      }
-      const name = p['data-mention']
-      if (typeof name !== 'string') return <span className={props.className}>{props.children}</span>
-      const loud = name === me.toLowerCase() || SPECIAL.has(name)
-      return (
-        <span data-mention={name} className={loud ? 'rounded bg-mention-bg px-0.5 font-medium text-mention-fg' : 'font-medium text-accent'}>
-          {props.children}
-        </span>
-      )
-    },
-    mark: ({ children, ...props }) => {
-      const fileFind = (props as Record<string, unknown>)['data-file-find'] === 'true'
-      return <mark data-file-find={fileFind ? 'true' : undefined} className="rounded-sm bg-mention-bg text-mention-fg">{children}</mark>
-    },
-    code: ({ className, children }) => <HighlightedCode className={className}>{children}</HighlightedCode>,
-    table: ({ children }) => (
-      <div className="overflow-x-auto">
-        <table>{children}</table>
-      </div>
-    ),
-  }
+      },
+      mark: ({ children, ...props }) => {
+        const fileFind = (props as Record<string, unknown>)['data-file-find'] === 'true'
+        return <mark data-file-find={fileFind ? 'true' : undefined} className="rounded-sm bg-mention-bg text-mention-fg">{children}</mark>
+      },
+      code: ({ className, children }) => <HighlightedCode className={className}>{children}</HighlightedCode>,
+      table: ({ children }) => (
+        <div className="overflow-x-auto">
+          <table>{children}</table>
+        </div>
+      ),
+    }),
+    [document, emojiInfo, gifPreviews, inline, jumbo, me, onLink, onViewGif, postId, preview, serverId],
+  )
   // inlineComponents: only the block-level tags need overriding — anything
   // already inline (a/img/span/strong/em/code/...) is left to `components`
   // above. children-only (no wrapping element at all) rather than a <span>

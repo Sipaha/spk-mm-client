@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FileView, ServerDTO, ThreadDTO } from '../api/types'
+import type { FileView, GifPreviewView, ServerDTO, ThreadDTO } from '../api/types'
 import { errorMessage } from '../errors'
 import {
   backToResults, copyLink, deletePost, discardPost, downloadFile, editLastOwn, editPost, emojiInfo, executeCommand, loadOlderReplies, loadThreadFocus,
-  markUnread, openFile, openLink, openThread, react, reactionUsers, retryPost, retryThreadRevalidation, saveThreadDraft, sendReply,
+  markUnread, openExternalLink, openFile, openLink, openPermalinkPost, openThread, react, reactionUsers, retryPost, retryThreadRevalidation, saveThreadDraft, sendReply,
   setPostSaved, uploadAttachments,
 } from '../chat'
 import { formatLocale } from '../format'
@@ -13,6 +13,7 @@ import { useNarrow } from '../useNarrow'
 import { Composer } from './Composer'
 import { Feed, type FeedData } from './Feed'
 import { fileKind } from './files'
+import { GifLightbox } from './GifLightbox'
 import { IconChevronLeft, IconClose } from './icons'
 import type { PostActions } from './PostItem'
 import { TOAST_HOST } from './Toast'
@@ -36,6 +37,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
   const narrow = useNarrow()
   const paneRef = useRef<HTMLElement>(null)
   const [viewer, setViewer] = useState<{ rootId: string; files: FileView[]; index: number } | null>(null)
+  const [gifLightbox, setGifLightbox] = useState<{ rootId: string; postId: string; gif: GifPreviewView } | null>(null)
   const [dragActive, setDragActive] = useState(false)
 
   // onClose churns every render (App.tsx has no selector, so any store
@@ -103,6 +105,8 @@ export function ThreadPane({ server, thread, onClose }: Props) {
         const rootId = p.root_id || p.id
         if (rootId !== thread.root_id) void openThread(server.id, thread.channel_id, rootId)
       },
+      openPermalink: (pl) => void openPermalinkPost(server.id, pl.post_id, pl.team_name || thread.team_name),
+      viewGif: (postId, gif) => setGifLightbox({ rootId: thread.root_id, postId, gif }),
     }),
     [server.id, server.url, thread.channel_id, thread.team_name, thread.root_id],
   )
@@ -236,7 +240,7 @@ export function ThreadPane({ server, thread, onClose }: Props) {
       {(thread.capped || partial) && (
         <div role="status" className="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5 text-xs text-fg-muted">
           <span>{t(partial ? 'thread.focused' : 'thread.capped')}</span>
-          <button type="button" className="shrink-0 underline" onClick={() => openLink(permalink)}>
+          <button type="button" className="shrink-0 underline" onClick={() => openExternalLink(permalink)}>
             {t('thread.openInBrowser')}
           </button>
         </div>
@@ -313,6 +317,14 @@ export function ThreadPane({ server, thread, onClose }: Props) {
           onClose={() => setViewer(null)}
           onDownload={(f) => void downloadFile(server.id, f)}
           onOpen={(f) => void openFile(server.id, f)}
+        />
+      )}
+      {gifLightbox && gifLightbox.rootId === thread.root_id && (
+        <GifLightbox
+          serverId={server.id}
+          postId={gifLightbox.postId}
+          gif={gifLightbox.gif}
+          onClose={() => setGifLightbox(null)}
         />
       )}
     </aside>

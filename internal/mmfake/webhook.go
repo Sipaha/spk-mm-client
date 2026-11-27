@@ -1,7 +1,10 @@
 package mmfake
 
 import (
+	"bytes"
+	"image"
 	"image/color"
+	"image/gif"
 	"net/http"
 	"net/url"
 
@@ -12,6 +15,10 @@ import (
 // real server's /static/ files — a relative override_icon_url for webhook
 // posts (the server's own emoji icons look like this too).
 const WebhookIconPath = "/static/images/webhook-icon.png"
+
+// SampleGifPath is a valid animated GIF89a served from /static/ for E2E and
+// integration tests of GIF previews.
+const SampleGifPath = "/static/images/sample.gif"
 
 // UnauthorizedIconPath answers 401 to everyone (a location behind a
 // reverse proxy's own auth); RedirectIconPath?to=<url> redirects there (a
@@ -24,10 +31,51 @@ const (
 // webhookIcon: GitLab-ish orange stripes, recognisable in a screenshot.
 var webhookIcon = patternPNG(64, 64, color.RGBA{226, 67, 41, 255})
 
+// SampleGifBytes is a real 2-frame animated GIF89a (160×100).
+var SampleGifBytes = animatedSampleGIF(160, 100)
+
+func animatedSampleGIF(w, h int) []byte {
+	pal := color.Palette{
+		color.RGBA{34, 42, 62, 255},
+		color.RGBA{79, 140, 255, 255},
+		color.RGBA{46, 184, 134, 255},
+		color.RGBA{245, 247, 250, 255},
+	}
+	makeFrame := func(shift int) *image.Paletted {
+		img := image.NewPaletted(image.Rect(0, 0, w, h), pal)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				var idx uint8
+				if ((x + y + shift) / 20 % 2) == 0 {
+					idx = 1
+				} else if ((x - y + w + shift) / 20 % 2) == 0 {
+					idx = 2
+				}
+				if x >= 12 && x < w-12 && y >= 12 && y < h-12 && ((x-w/2)*(x-w/2)+(y-h/2)*(y-h/2) < 400) {
+					idx = 3
+				}
+				img.SetColorIndex(x, y, idx)
+			}
+		}
+		return img
+	}
+	var buf bytes.Buffer
+	_ = gif.EncodeAll(&buf, &gif.GIF{
+		Image:     []*image.Paletted{makeFrame(0), makeFrame(10)},
+		Delay:     []int{25, 25},
+		LoopCount: 0,
+	})
+	return buf.Bytes()
+}
+
 func (s *Server) webhookRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+WebhookIconPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(webhookIcon)
+	})
+	mux.HandleFunc("GET "+SampleGifPath, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/gif")
+		_, _ = w.Write(SampleGifBytes)
 	})
 	mux.HandleFunc("GET "+UnauthorizedIconPath, func(w http.ResponseWriter, _ *http.Request) {
 		appError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "not for you")

@@ -226,3 +226,17 @@ test('searchPosts/searchSuggest: an abort cancels the Wails call (its Go context
   await wailsClient.searchSuggest(3, 't1', 'users', 'bo')
   expect(Call.ByName).toHaveBeenCalledWith(FQN + 'SearchSuggest', 3, 't1', 'users', 'bo')
 })
+
+test('resolvePost: addressed by FQN and abort cancels the Wails call', async () => {
+  let resolve!: (v: unknown) => void
+  const cancel = vi.fn()
+  const p = Object.assign(new Promise((r) => (resolve = r)), { cancel })
+  vi.mocked(Call.ByName).mockReturnValue(p as never)
+  const ctl = new AbortController()
+  const res = wailsClient.resolvePost(2, 'post123', ctl.signal)
+  expect(Call.ByName).toHaveBeenCalledWith(FQN + 'ResolvePost', 2, 'post123')
+  ctl.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  resolve({ post_id: 'post123', channel_id: 'c1', root_id: '', has_channel: true })
+  await expect(res).resolves.toEqual({ post_id: 'post123', channel_id: 'c1', root_id: '', has_channel: true })
+})

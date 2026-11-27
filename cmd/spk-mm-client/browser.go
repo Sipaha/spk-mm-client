@@ -96,7 +96,7 @@ func buildBrowserServer(ctx context.Context, o browserOpts) (srv *http.Server, c
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("start sync: %w", err)
 	}
-	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc, PostIcons: svc})
+	mc, err := media.New(media.Options{Dir: p.MediaDir, Origin: svc, Staged: svc, PostIcons: svc, PostGifs: svc})
 	if err != nil {
 		cleanup()
 		return nil, nil, "", nil, fmt.Errorf("media cache: %w", err)
@@ -237,13 +237,38 @@ func newBrowserHandler(svc *api.Service, em *events.Emitter, dist fs.FS, fake *m
 		})
 		tm.HandleFunc("POST /api/_test/fake/post", withFake(func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
+				ChannelID       string              `json:"channel_id"`
+				Username        string              `json:"username"`
+				Message         string              `json:"message"`
+				RootID          string              `json:"root_id"`
+				PermalinkPostID string              `json:"permalink_post_id"`
+				Metadata        *model.PostMetadata `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			var p model.Post
+			switch {
+			case in.PermalinkPostID != "":
+				p = fake.PostPermalinkAs(in.ChannelID, in.Username, in.Message, in.PermalinkPostID)
+			case in.Metadata != nil:
+				p = fake.PostWithMetadata(in.ChannelID, in.Username, in.Message, in.Metadata)
+			default:
+				p = fake.ReplyAs(in.ChannelID, in.RootID, in.Username, in.Message)
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
+		}))
+		tm.HandleFunc("POST /api/_test/fake/gif-file", withFake(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
 				ChannelID string `json:"channel_id"`
 				Username  string `json:"username"`
 				Message   string `json:"message"`
-				RootID    string `json:"root_id"`
+				Name      string `json:"name"`
+				Mime      string `json:"mime"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
-			p := fake.ReplyAs(in.ChannelID, in.RootID, in.Username, in.Message)
+			if in.Name == "" {
+				in.Name = "demo.gif"
+			}
+			p := fake.PostFile(in.ChannelID, in.Username, in.Message, in.Name, in.Mime, mmfake.SampleGifBytes)
 			writeJSON(w, http.StatusOK, map[string]string{"id": p.ID})
 		}))
 		tm.HandleFunc("POST /api/_test/fake/webhook", withFake(func(w http.ResponseWriter, r *http.Request) {

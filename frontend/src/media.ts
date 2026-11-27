@@ -6,7 +6,7 @@ function accountScope(serverId: number): string {
   return useStore.getState().servers.find(s => s.id === serverId && s.signed_in)?.media_scope ?? ''
 }
 
-export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' | 'staged' | 'posticon' | 'pdf'
+export type MediaKind = 'avatar' | 'thumb' | 'feed' | 'full' | 'text' | 'emoji' | 'staged' | 'posticon' | 'postgif' | 'pdf'
 
 // mediaURL addresses a picture or file snippet that Go serves on the UI's
 // own origin (internal/media): the UI never talks to a Mattermost server

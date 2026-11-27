@@ -14,6 +14,26 @@ import (
 // UI opens its thread).
 type JumpDTO = mmsync.JumpResult
 
+// ResolvedPostDTO locates a post for permalink navigation.
+type ResolvedPostDTO = mmsync.ResolvedPost
+
+func (s *Service) ResolvePost(ctx context.Context, id int64, postID string) (ResolvedPostDTO, error) {
+	if !validID(postID) {
+		return ResolvedPostDTO{}, coded(CodeInvalidArgument, errors.New("id"))
+	}
+	w, err := s.worker(ctx, id)
+	if err != nil {
+		return ResolvedPostDTO{}, err
+	}
+	rctx, cancel := s.bounded(ctx)
+	defer cancel()
+	res, err := w.ResolvePost(rctx, postID)
+	if err != nil {
+		return ResolvedPostDTO{}, histError(err)
+	}
+	return res, nil
+}
+
 func (s *Service) JumpToPost(ctx context.Context, id int64, channelID, postID string) (JumpDTO, error) {
 	if !validID(channelID) || !validID(postID) {
 		return JumpDTO{}, coded(CodeInvalidArgument, errors.New("id"))

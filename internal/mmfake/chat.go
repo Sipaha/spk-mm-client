@@ -550,12 +550,21 @@ func (s *Server) createPostLocked(userID string, in model.Post) (model.Post, *ap
 	now := s.nowLocked()
 	p := &fpost{Post: model.Post{ID: newID(), ChannelID: c.ID, UserID: userID, RootID: in.RootID,
 		Message: in.Message, Props: in.Props, PendingPostID: in.PendingPostID, CreateAt: now, UpdateAt: now}}
+	if in.Metadata != nil && (len(in.Metadata.Embeds) > 0 || len(in.Metadata.Images) > 0) {
+		p.Metadata = &model.PostMetadata{
+			Embeds: slices.Clone(in.Metadata.Embeds),
+			Images: in.Metadata.Images,
+		}
+	}
 	if len(in.FileIDs) > 0 {
 		if files := s.attachFilesLocked(p.ID, c.ID, userID, in.FileIDs); len(files) > 0 {
 			for _, fi := range files {
 				p.FileIDs = append(p.FileIDs, fi.ID)
 			}
-			p.Metadata = &model.PostMetadata{Files: files}
+			if p.Metadata == nil {
+				p.Metadata = &model.PostMetadata{}
+			}
+			p.Metadata.Files = files
 		}
 	}
 	isRoot := root == nil
@@ -798,6 +807,71 @@ func (s *Server) userIDByName(username string) string {
 
 func (s *Server) PostAs(channelID, username, message string) model.Post {
 	return s.ReplyAs(channelID, "", username, message)
+}
+
+// PostWithMetadata posts message with pre-populated metadata (embeds/images).
+func (s *Server) PostWithMetadata(channelID, username, message string, meta *model.PostMetadata) model.Post {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, e := s.createPostLocked(s.userIDByName(username), model.Post{ChannelID: channelID, Message: message, Metadata: meta})
+	if e != nil {
+		panic("mmfake: PostWithMetadata: " + e.id)
+	}
+	return p
+}
+
+// PostPermalinkAs posts message with a server-side type="permalink" embed
+// quoting targetPostID.
+func (s *Server) PostPermalinkAs(channelID, username, message, targetPostID string) model.Post {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	target := s.chat.byID[targetPostID]
+	if target == nil {
+		panic("mmfake: PostPermalinkAs: unknown post " + targetPostID)
+	}
+	ch := s.chat.channels[target.ChannelID]
+	teamName := ""
+	chDisplay, chName, chType := "", "", ""
+	if ch != nil {
+		chDisplay, chName, chType = ch.DisplayName, ch.Name, ch.Type
+		for _, tm := range s.chat.teams {
+			if tm.ID == ch.TeamID {
+				teamName = tm.Name
+				break
+			}
+		}
+	}
+	fc := len(target.FileIDs)
+	if target.Metadata != nil && len(target.Metadata.Files) > fc {
+		fc = len(target.Metadata.Files)
+	}
+	meta := &model.PostMetadata{
+		Embeds: []model.PostEmbed{{
+			Type: "permalink",
+			Permalink: &model.PermalinkData{
+				PostID: target.ID,
+				Post: model.PermalinkPost{
+					ID:        target.ID,
+					ChannelID: target.ChannelID,
+					UserID:    target.UserID,
+					RootID:    target.RootID,
+					Message:   target.Message,
+					CreateAt:  target.CreateAt,
+					EditAt:    target.EditAt,
+					FileCount: fc,
+				},
+				TeamName:           teamName,
+				ChannelDisplayName: chDisplay,
+				ChannelName:        chName,
+				ChannelType:        chType,
+			},
+		}},
+	}
+	p, e := s.createPostLocked(s.userIDByName(username), model.Post{ChannelID: channelID, Message: message, Metadata: meta})
+	if e != nil {
+		panic("mmfake: PostPermalinkAs: " + e.id)
+	}
+	return p
 }
 
 func (s *Server) ReplyAs(channelID, rootID, username, message string) model.Post {

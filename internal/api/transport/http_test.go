@@ -102,6 +102,13 @@ func (f *fakeAPI) DownloadFile(_ context.Context, id int64, fileID string) (api.
 	return api.SavedFile{Path: fmt.Sprintf("/dl/%d/%s", id, fileID)}, nil
 }
 
+func (f *fakeAPI) ResolvePost(_ context.Context, id int64, postID string) (api.ResolvedPostDTO, error) {
+	if postID == "gone" {
+		return api.ResolvedPostDTO{}, &api.CodedError{Code: api.CodePostGone}
+	}
+	return api.ResolvedPostDTO{PostID: postID, ChannelID: fmt.Sprintf("c-%d", id), RootID: "r1", HasChannel: true}, nil
+}
+
 func (f *fakeAPI) GetChannel(_ context.Context, _ int64, channelID string) (api.ChannelDTO, error) {
 	return api.ChannelDTO{ID: channelID, Name: "Town", Posts: []state.PostView{}}, nil
 }
@@ -542,6 +549,20 @@ type jumpAPI struct {
 	ended   chan error
 }
 
+func (f *jumpAPI) ResolvePost(ctx context.Context, id int64, postID string) (api.ResolvedPostDTO, error) {
+	f.calls = append(f.calls, fmt.Sprintf("resolve %d/%s", id, postID))
+	if f.blocked != nil {
+		close(f.blocked)
+		<-ctx.Done()
+		f.ended <- ctx.Err()
+		return api.ResolvedPostDTO{}, ctx.Err()
+	}
+	if postID == "gone" {
+		return api.ResolvedPostDTO{}, &api.CodedError{Code: api.CodePostGone}
+	}
+	return api.ResolvedPostDTO{PostID: postID, ChannelID: "c1", RootID: "r1", HasChannel: true}, nil
+}
+
 func (f *jumpAPI) JumpToPost(ctx context.Context, id int64, channelID, postID string) (api.JumpDTO, error) {
 	f.calls = append(f.calls, fmt.Sprintf("jump %d/%s/%s", id, channelID, postID))
 	if f.blocked != nil {
@@ -618,7 +639,14 @@ func TestJumpRoutes(t *testing.T) {
 	assert.Equal(t, "post_gone", code(call(t, h, ts.URL, "JumpToPost", `{"id":3,"channel_id":"c1","post_id":"gone"}`)))
 	assert.Equal(t, "no_progress", code(call(t, h, ts.URL, "LoadNewer", `{"id":3,"channel_id":"c1"}`)))
 	assert.Equal(t, 200, call(t, h, ts.URL, "RetryRevalidation", `{"id":3,"channel_id":"c1"}`).StatusCode)
-	assert.Equal(t, []string{"jump 3/c1/p1", "jump 3/c1/gone", "newer 3/c1", "reval 3/c1"}, f.calls)
+	resp = call(t, h, ts.URL, "ResolvePost", `{"id":3,"post_id":"p1"}`)
+	require.Equal(t, 200, resp.StatusCode)
+	var rv map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rv))
+	assert.Equal(t, map[string]any{"post_id": "p1", "channel_id": "c1", "root_id": "r1", "has_channel": true}, rv)
+	assert.Equal(t, "post_gone", code(call(t, h, ts.URL, "ResolvePost", `{"id":3,"post_id":"gone"}`)))
+
+	assert.Equal(t, []string{"jump 3/c1/p1", "jump 3/c1/gone", "newer 3/c1", "reval 3/c1", "resolve 3/p1", "resolve 3/gone"}, f.calls)
 }
 
 // An aborted fetch (the UI dropped a stale jump) cancels the request

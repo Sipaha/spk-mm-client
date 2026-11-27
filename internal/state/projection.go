@@ -114,5 +114,6 @@ func samePostView(a, b PostView) bool {
 		a.Bot == b.Bot && a.Pending == b.Pending && a.Failed == b.Failed && a.PendingPostID == b.PendingPostID &&
 		a.Saved == b.Saved && a.Ephemeral == b.Ephemeral && a.SystemAuthor == b.SystemAuthor && a.RootAuthor == b.RootAuthor &&
 		a.RootSnippet == b.RootSnippet && slices.Equal(a.Files, b.Files) && slices.Equal(a.Reactions, b.Reactions) &&
+		slices.Equal(a.Permalinks, b.Permalinks) && slices.Equal(a.GifPreviews, b.GifPreviews) &&
 		((len(a.Attachments) == 0 && len(b.Attachments) == 0) || reflect.DeepEqual(a.Attachments, b.Attachments))
 }

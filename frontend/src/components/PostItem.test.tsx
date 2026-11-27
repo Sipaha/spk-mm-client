@@ -1030,3 +1030,67 @@ test('R1: two confirmed own posts sharing pending_post_id never carry open menu,
   rerender(<PostItem serverId={1} post={conf} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
   expect(await screen.findByTestId('post-toolbar')).toBeInTheDocument()
 })
+
+test('renders permalink quote card and triggers openPermalink on click', async () => {
+  const a = actions()
+  a.openPermalink = vi.fn()
+  const pl = {
+    post_id: 'orig1',
+    channel_id: 'c-dev',
+    user_id: 'u-carol',
+    author: 'carol',
+    message: 'Quoted **important** note',
+    create_at: new Date(2026, 8, 24, 10, 15).getTime(),
+    team_name: 'citeck',
+    channel_display_name: 'Dev',
+    channel_name: 'dev',
+    channel_type: 'O',
+    file_count: 2,
+  }
+  render(<PostItem serverId={1} post={post({ permalinks: [pl] })} head me={me} locale="en-US" crt={false} actions={a} editing={false} />)
+  const card = screen.getByRole('button', { name: /Jump to message: carol/ })
+  expect(card).toHaveAttribute('data-permalink-post-id', 'orig1')
+  expect(within(card).getByText('carol')).toBeInTheDocument()
+  expect(within(card).getByText(/#Dev/)).toBeInTheDocument()
+  expect(within(card).getByText('important').tagName).toBe('STRONG')
+  expect(within(card).getByText('Attachments: 2')).toBeInTheDocument()
+
+  await userEvent.click(card)
+  expect(a.openPermalink).toHaveBeenCalledWith(pl)
+})
+
+test('renders non-inline GIF previews without duplicating inline ones, opens lightbox on click, and hides failed tile', async () => {
+  const a = actions()
+  a.viewGif = vi.fn()
+  const inlineGif = { id: 'aaaaaaaaaaaaaaaa', url: 'https://cdn.example/in.gif', alt: 'inline', width: 200, height: 150, inline: true }
+  const bareGif = { id: 'bbbbbbbbbbbbbbbb', url: 'https://cdn.example/bare.gif', alt: 'bare', width: 320, height: 180, inline: false }
+  const { container } = render(
+    <PostItem
+      serverId={1}
+      post={post({
+        id: 'p-gif',
+        message: '![inline](https://cdn.example/in.gif)\nhttps://cdn.example/bare.gif',
+        gif_previews: [inlineGif, bareGif],
+      })}
+      head
+      me={me}
+      locale="en-US"
+      crt={false}
+      actions={a}
+      editing={false}
+    />,
+  )
+  // Exactly 2 GIF images total (no duplication of inlineGif in the extra block).
+  const imgs = container.querySelectorAll('img[src*="/media/1/postgif/p-gif"]')
+  expect(imgs).toHaveLength(2)
+  const extraBlock = screen.getByTestId('post-gif-previews')
+  const extraImgs = extraBlock.querySelectorAll('img')
+  expect(extraImgs).toHaveLength(1)
+  expect(extraImgs[0]).toHaveAttribute('src', '/media/1/postgif/p-gif?k=bbbbbbbbbbbbbbbb')
+
+  await userEvent.click(extraImgs[0].closest('button')!)
+  expect(a.viewGif).toHaveBeenCalledWith('p-gif', bareGif)
+
+  fireEvent.error(extraImgs[0])
+  expect(extraBlock.querySelectorAll('img')).toHaveLength(0)
+})

@@ -53,6 +53,9 @@ const (
 	// KindPostIcon is a webhook post's own author picture
 	// (override_icon_url); key the POST id, never a URL — posticon.go.
 	KindPostIcon Kind = "posticon"
+	// KindPostGif is a GIF preview referenced by a held post's message or
+	// metadata; key the POST id + ?k=<16-hex>, never a raw URL — posticon.go.
+	KindPostGif Kind = "postgif"
 	// KindPDF is a PDF file for the viewer's pdf.js (the UI's lazy PdfView):
 	// the whole file up to PDFMax, spooled to the cache as it comes, with
 	// "%PDF-" in its first pdfMagicWithin bytes; served as an attachment
@@ -66,6 +69,7 @@ const (
 	FeedMax         = 960              // px: feed boxes are ≤480×360 CSS px, ×2 for HiDPI
 	TextLimit       = 64 << 10         // bytes of a text file shown in the feed snippet
 	TextFullLimit   = 1 << 20          // bytes of a text file shown in the viewer (?full=1)
+	PostGifMax      = 16 << 20         // bytes of an external/markdown GIF preview (KindPostGif)
 	PDFMax          = 50 << 20         // bytes of a PDF the viewer loads (the UI's PDF_MAX)
 	maxPixels       = 50_000_000       // decompression-bomb guard for every image
 	scaleMaxPixels  = 24_000_000       // largest feed image decoded to scale (~96 MB bitmap)
@@ -126,9 +130,12 @@ type Options struct {
 	Staged   Staged // nil: staged pictures are not found
 	// PostIcons: nil — posticon pictures are not found.
 	PostIcons PostIcons
-	Fetches   int           // concurrent upstream fetches; 0 → 6
-	Timeout   time.Duration // per upstream fetch; 0 → 60 s
-	Now       func() time.Time
+	// PostGifs: nil — postgif previews are not found (falls back to PostIcons
+	// if it also implements PostGifs).
+	PostGifs PostGifs
+	Fetches  int           // concurrent upstream fetches; 0 → 6
+	Timeout  time.Duration // per upstream fetch; 0 → 60 s
+	Now      func() time.Time
 }
 
 type entry struct {
@@ -247,6 +254,8 @@ var (
 	emojiRe = regexp.MustCompile(`^[a-zA-Z0-9_+-]{1,64}$`)
 	// iconVersionRe: a posticon's ?v= (state.PostView.IconVersion).
 	iconVersionRe = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
+	// gifKeyRe: a postgif's ?k= (state.GifPreviewView.ID).
+	gifKeyRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 )
 
 func parse(u *url.URL) (request, bool) {
@@ -284,6 +293,12 @@ func parse(u *url.URL) (request, bool) {
 		if v := u.Query().Get("v"); v != "" && !iconVersionRe.MatchString(v) {
 			return request{}, false
 		}
+	case KindPostGif:
+		k := u.Query().Get("k")
+		if !gifKeyRe.MatchString(k) {
+			return request{}, false
+		}
+		q.variant = k
 	case KindThumb, KindStream, KindStaged, KindPDF:
 	case KindText:
 		switch u.Query().Get("full") {
@@ -303,12 +318,13 @@ func parse(u *url.URL) (request, bool) {
 
 // spec is what to fetch for a request and how much of it to accept.
 type spec struct {
-	path  string
-	hdr   http.Header
-	max   int64
-	text  bool
-	scale bool
-	pdf   bool
+	path    string
+	hdr     http.Header
+	max     int64
+	text    bool
+	scale   bool
+	pdf     bool
+	gifOnly bool
 }
 
 func (q request) spec(id string) spec {
@@ -334,6 +350,8 @@ func (q request) spec(id string) spec {
 		return spec{max: 25 << 20, scale: true}
 	case KindPostIcon: // shown as a 36 px avatar: large ones are scaled down
 		return spec{path: q.icon.path, max: 2 << 20, scale: true}
+	case KindPostGif: // kept animated (no downscale), must sniff as image/gif
+		return spec{path: q.icon.path, max: PostGifMax, scale: false, gifOnly: true}
 	case KindText:
 		limit := int64(TextLimit)
 		if q.variant == "full" {
@@ -470,7 +488,7 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 		head := make([]byte, sniffLen)
 		n, _ := io.ReadFull(f, head)
 		ctype := http.DetectContentType(head[:n])
-		if !rasterTypes[ctype] {
+		if !rasterTypes[ctype] || (q.kind == KindPostGif && ctype != "image/gif") {
 			c.drop(name)
 			http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 			return
@@ -486,7 +504,7 @@ func (c *Cache) serve(w http.ResponseWriter, r *http.Request, q request, name st
 	switch q.kind {
 	case KindPDF: // pdf.js gets the bytes; a copy in the webview's cache would only cost its memory
 		h.Set("Cache-Control", "no-store")
-	case KindEmoji, KindPostIcon:
+	case KindEmoji, KindPostIcon, KindPostGif:
 		h.Set("Cache-Control", "private, max-age=3600") // by name / by post: may change
 	default:
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
@@ -507,6 +525,12 @@ func (c *Cache) get(ctx context.Context, q request) (string, int) {
 	if q.kind == KindPostIcon {
 		var status int
 		if id, q.icon, status = c.postIcon(q); status != 0 {
+			return "", status
+		}
+	}
+	if q.kind == KindPostGif {
+		var status int
+		if id, q.icon, status = c.postGif(q); status != 0 {
 			return "", status
 		}
 	}
@@ -587,7 +611,7 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	// An external icon waits for its own slots: a slow host out there must
 	// not hold the ones avatars, previews and emoji use; nor must PDFs,
 	// downloads of up to PDFMax with a longer timeout.
-	external := q.kind == KindPostIcon && q.icon.ext != ""
+	external := (q.kind == KindPostIcon || q.kind == KindPostGif) && q.icon.ext != ""
 	sem := c.sem
 	switch {
 	case external:
@@ -640,7 +664,7 @@ func (c *Cache) fill(key, name string, q request, id string, cl *call) {
 	// sign-in, and the picture must load once it is signed in again.
 	// A post icon's 401 is its path's answer, not a dead session (GetIcon
 	// never asks for a sign-in): remembered like a 403.
-	if status != 0 && !abandoned && !errors.Is(err, ErrNoServer) && (!unauthorized(err) || q.kind == KindPostIcon) {
+	if status != 0 && !abandoned && !errors.Is(err, ErrNoServer) && (!unauthorized(err) || q.kind == KindPostIcon || q.kind == KindPostGif) {
 		ttl := negTTLTransient
 		switch status {
 		case http.StatusForbidden, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
@@ -708,7 +732,7 @@ func (c *Cache) fetch(parent context.Context, q request, id, name string, sl *sl
 		defer cancel()
 		var resp *http.Response
 		var err error
-		if q.kind == KindPostIcon {
+		if q.kind == KindPostIcon || q.kind == KindPostGif {
 			resp, err = c.openIcon(ctx, q, sl)
 		} else {
 			resp, err = c.o.Origin.Get(ctx, q.server, sp.path, sp.hdr)

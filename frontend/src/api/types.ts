@@ -184,6 +184,32 @@ export interface EmojiDTO {
   custom_enabled: boolean
 }
 
+export interface PermalinkPreviewView {
+  post_id: string
+  channel_id?: string
+  root_id?: string
+  user_id?: string
+  author?: string
+  avatar?: string
+  message: string
+  create_at?: number
+  edit_at?: number
+  team_name?: string
+  channel_display_name?: string
+  channel_name?: string
+  channel_type?: string
+  file_count?: number
+}
+
+export interface GifPreviewView {
+  id: string
+  url: string
+  alt?: string
+  width?: number
+  height?: number
+  inline?: boolean
+}
+
 export interface PostView {
   id: string
   user_id: string
@@ -215,6 +241,8 @@ export interface PostView {
   attachments?: Attachment[]
   files?: FileView[]
   reactions?: ReactionView[]
+  permalinks?: PermalinkPreviewView[]
+  gif_previews?: GifPreviewView[]
   saved?: boolean
   // root_author/root_snippet: a reply's context line without CRT ("reply to
   // <author>: <snippet>") — the root's author and a collapsed, cut snippet
@@ -271,6 +299,15 @@ export interface HistGap {
   gen: number
   before_id: string
   stale: boolean
+}
+
+// ResolvedPostDTO locates a post for permalink navigation; has_channel=false
+// means the client is not a member of its channel (fallback to browser).
+export interface ResolvedPostDTO {
+  post_id: string
+  channel_id: string
+  root_id: string
+  has_channel: boolean
 }
 
 // JumpDTO is where a jump landed; in_feed=false: a reply of a collapsed

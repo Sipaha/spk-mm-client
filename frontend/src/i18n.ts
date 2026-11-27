@@ -330,6 +330,10 @@ const ru = {
   'autocomplete.channel': 'Уведомляет всех на канале',
   'autocomplete.all': 'Уведомляет всех на канале',
   'autocomplete.you': '(это вы)',
+  'gif.view': 'Просмотр GIF',
+  'gif.viewerLabel': 'Просмотр GIF',
+  'permalink.files': 'Вложений: {n}',
+  'permalink.jump': 'Перейти к сообщению',
 } as const
 
 type Key = keyof typeof ru
@@ -652,6 +656,10 @@ const en: Record<Key, string> = {
   'autocomplete.channel': 'Notifies everyone in this channel',
   'autocomplete.all': 'Notifies everyone in this channel',
   'autocomplete.you': '(you)',
+  'gif.view': 'View GIF',
+  'gif.viewerLabel': 'GIF viewer',
+  'permalink.files': 'Attachments: {n}',
+  'permalink.jump': 'Jump to message',
 }
 
 export const dict = { ru, en }

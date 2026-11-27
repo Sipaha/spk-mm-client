@@ -278,3 +278,53 @@ test('~channel link: clicking it opens the channel and holds it (fix round 1: ca
   expect(client.openChannel).toHaveBeenCalledWith(1, 'town')
   await waitFor(() => expect(useStore.getState().heldChannel).toEqual({ id: 'town', hadMentions: true }))
 })
+
+test('inline GIF preview renders through /media/.../postgif, opens lightbox on click, falls back to link on error, and stays link in inline/document/preview modes', async () => {
+  const { fireEvent } = await import('@testing-library/react')
+  const onLink = vi.fn()
+  const onViewGif = vi.fn()
+  const gif = { id: '0123456789abcdef', url: 'https://cdn.example/dance.gif', alt: 'dance', width: 320, height: 240, inline: true }
+
+  const { container, rerender } = render(
+    <Markdown
+      text={'![dance](https://cdn.example/dance.gif)\n![static](https://cdn.example/pic.png)'}
+      me="alice"
+      onLink={onLink}
+      serverId={1}
+      postId="p1"
+      gifPreviews={[gif]}
+      onViewGif={onViewGif}
+    />,
+  )
+  const imgs = container.querySelectorAll('img')
+  expect(imgs).toHaveLength(1)
+  expect(imgs[0].getAttribute('src')).toBe('/media/1/postgif/p1?k=0123456789abcdef')
+  await userEvent.click(imgs[0].closest('button')!)
+  expect(onViewGif).toHaveBeenCalledWith(gif)
+
+  // Non-GIF image stays a link with no <img>.
+  expect(screen.getByRole('link', { name: /static/ })).toHaveAttribute('href', 'https://cdn.example/pic.png')
+
+  // Load failure falls back cleanly to a link.
+  fireEvent.error(imgs[0])
+  expect(container.querySelector('img')).toBeNull()
+  await userEvent.click(screen.getByRole('link', { name: /dance/ }))
+  expect(onLink).toHaveBeenCalledWith('https://cdn.example/dance.gif')
+
+  // inline / document / preview modes never render GIF <img>.
+  for (const mode of [{ inline: true }, { document: true }, { preview: true }] as const) {
+    rerender(
+      <Markdown
+        text={'![dance](https://cdn.example/dance.gif)'}
+        me="alice"
+        onLink={onLink}
+        serverId={1}
+        postId="p2"
+        gifPreviews={[gif]}
+        onViewGif={onViewGif}
+        {...mode}
+      />,
+    )
+    expect(container.querySelector('img')).toBeNull()
+  }
+})

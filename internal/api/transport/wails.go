@@ -65,6 +65,12 @@ func (w *API) LoadOlder(id int64, channelID string) error {
 	return w.a.LoadOlder(context.Background(), id, channelID)
 }
 
+// ResolvePost takes Wails' call context: cancelling the JS promise (a stale
+// permalink click) cancels the server call.
+func (w *API) ResolvePost(ctx context.Context, id int64, postID string) (api.ResolvedPostDTO, error) {
+	return w.a.ResolvePost(ctx, id, postID)
+}
+
 // JumpToPost takes Wails' call context: cancelling the JS promise (a
 // stale jump) cancels the server calls.
 func (w *API) JumpToPost(ctx context.Context, id int64, channelID, postID string) (api.JumpDTO, error) {

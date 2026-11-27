@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ChannelDTO, FileView, ServerDTO } from '../api/types'
+import type { ChannelDTO, FileView, GifPreviewView, ServerDTO } from '../api/types'
 import {
   clearDownloads, closeDownloadsPanel, copyLink, deletePost, discardPost, downloadFile, downloadPrimaryAction,
   editLastOwn, editPost, emojiInfo, executeCommand, loadNewer, loadOlder, markUnread, openDownload, openDownloadsPanel, openFile, openLink,
-  openThread, react, reactionUsers, removeDownload, retryPost, retryRevalidation, revealDownload, saveDraft, sendPost, setPostSaved,
+  openPermalinkPost, openThread, react, reactionUsers, removeDownload, retryPost, retryRevalidation, revealDownload, saveDraft, sendPost, setPostSaved,
   uploadAttachments,
 } from '../chat'
 import { errorMessage } from '../errors'
@@ -15,6 +15,7 @@ import { Composer } from './Composer'
 import Downloads from './Downloads'
 import { Feed } from './Feed'
 import { fileKind } from './files'
+import { GifLightbox } from './GifLightbox'
 import { ChannelTypeMarker, IconDownload, IconPin } from './icons'
 import { Markdown } from './Markdown'
 import type { PostActions } from './PostItem'
@@ -37,6 +38,7 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
   const downloadsBtnRef = useRef<HTMLButtonElement>(null)
   // The viewer belongs to the channel it was opened in.
   const [viewer, setViewer] = useState<{ channelId: string; files: FileView[]; index: number } | null>(null)
+  const [gifLightbox, setGifLightbox] = useState<{ channelId: string; postId: string; gif: GifPreviewView } | null>(null)
   const [pinsOpen, setPinsOpen] = useState(false)
 
   // Drag-and-drop (browser mode; desktop drops never reach the page —
@@ -95,6 +97,8 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
       emojiInfo: () => emojiInfo(server.id),
       reactionUsers: (p, emoji) => reactionUsers(server.id, p.id, emoji),
       openThread: (p) => void openThread(server.id, channelId, p.root_id || p.id),
+      openPermalink: (pl) => void openPermalinkPost(server.id, pl.post_id, pl.team_name || teamName),
+      viewGif: (postId, gif) => setGifLightbox({ channelId, postId, gif }),
     }),
     [server.id, server.url, channelId, teamName],
   )
@@ -281,6 +285,14 @@ export function ChannelPane({ server, channel, onReauth }: { server: ServerDTO; 
           onClose={() => setViewer(null)}
           onDownload={(f) => void downloadFile(server.id, f)}
           onOpen={(f) => void openFile(server.id, f)}
+        />
+      )}
+      {gifLightbox && gifLightbox.channelId === channel.id && (
+        <GifLightbox
+          serverId={server.id}
+          postId={gifLightbox.postId}
+          gif={gifLightbox.gif}
+          onClose={() => setGifLightbox(null)}
         />
       )}
       {downloadsOpen &&

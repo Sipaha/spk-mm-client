@@ -9,6 +9,7 @@ vi.mock('./api/client', () => ({
     getChannel: vi.fn(),
     sidebar: vi.fn(),
     selectServer: vi.fn().mockResolvedValue(undefined),
+    openURL: vi.fn().mockResolvedValue(undefined),
     listServers: vi.fn(),
     editPost: vi.fn(),
     downloadFile: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('./api/client', () => ({
     loadOlderReplies: vi.fn().mockResolvedValue(undefined),
     sendReply: vi.fn().mockResolvedValue(undefined),
     saveThreadDraft: vi.fn().mockResolvedValue(undefined),
+    resolvePost: vi.fn(),
     jumpToPost: vi.fn(),
     searchPosts: vi.fn().mockResolvedValue({ hits: [], has_next: false, limit_reached: false }),
     searchSuggest: vi.fn().mockResolvedValue({ users: [], others: [], channels: [], emoji: [], commands: [] }),
@@ -53,7 +55,7 @@ const { client, uploadAttachmentBrowser } = await import('./api/client')
 const {
   attachFromClipboard, clearDownloads, closeDownloadsPanel, closeThread, downloadFile, downloadPrimaryAction, editPost,
   loadOlderReplies, loadSidebar, onAttachmentRefused, onAttachmentsChanged, onDownloadsChanged, openChannel, openDownload,
-  openDownloadsPanel, openFile, openFromNotification, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
+  openDownloadsPanel, openExternalLink, openFile, openFromNotification, openLink, openPermalink, openThread, pickAttachments, refreshChannel, refreshDownloads, refreshThread,
   react, removeAttachment, removeDownload, resetChat, retryAttachment, revealDownload, revealSavedFile, saveThreadDraft, selectServer, sendReply, setPostSaved, uploadAttachments,
   jumpToPost, loadNewer, retryRevalidation, loadThreadFocus, retryThreadRevalidation,
   submitSearch, loadMoreSearch, retrySearch, closeSearch, backToResults, openHit,
@@ -1759,4 +1761,70 @@ test('rejected incremental channel delta retries once with base 0 and falls back
  } finally {
   delete c.getChannelDelta
  }
+})
+
+test('openLink: matching permalink resolves and jumps in-client (including CRT thread); non-permalink opens external browser', async () => {
+  const s1: ServerDTO = { ...srv(1), url: 'https://mm.citeck.ru' }
+  useStore.setState({ servers: [s1], selectedId: 1 })
+  vi.mocked(client.openURL).mockClear()
+  vi.mocked(client.resolvePost).mockResolvedValueOnce({ post_id: 'p42', channel_id: 'c-dev', root_id: '', has_channel: true })
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('c-dev'))
+  vi.mocked(client.jumpToPost).mockResolvedValueOnce({ post_id: 'p42', root_id: '', in_feed: true })
+  vi.mocked(client.getChannel).mockResolvedValueOnce(chan('c-dev'))
+
+  openLink('https://mm.citeck.ru/citeck/pl/p42')
+  await vi.waitFor(() => expect(useStore.getState().focus?.postId).toBe('p42'))
+  expect(client.resolvePost).toHaveBeenCalledWith(1, 'p42', expect.any(AbortSignal))
+  expect(client.jumpToPost).toHaveBeenCalledWith(1, 'c-dev', 'p42', expect.any(AbortSignal))
+  expect(client.openURL).not.toHaveBeenCalled()
+
+  // Non-permalink URL opens external browser.
+  openLink('https://example.com/docs')
+  expect(client.openURL).toHaveBeenCalledWith('https://example.com/docs')
+
+  // openExternalLink always opens external browser even for a matching permalink.
+  vi.mocked(client.openURL).mockClear()
+  openExternalLink('https://mm.citeck.ru/citeck/pl/p42')
+  expect(client.openURL).toHaveBeenCalledWith('https://mm.citeck.ru/citeck/pl/p42')
+})
+
+test('PR1: relative permalink on base subpath server with has_channel=false falls back to absolute openURL with query/fragment and never calls jumpToPost', async () => {
+  const s1: ServerDTO = { ...srv(1), url: 'https://corp.example/mm/' }
+  useStore.setState({ servers: [s1], selectedId: 1 })
+  vi.mocked(client.openURL).mockClear()
+  vi.mocked(client.jumpToPost).mockClear()
+  vi.mocked(client.resolvePost).mockResolvedValueOnce({ post_id: 'p77', channel_id: 'c-other', root_id: '', has_channel: false })
+
+  openLink('/mm/citeck/pl/p77?foo=1#frag', 1)
+  await vi.waitFor(() => expect(client.openURL).toHaveBeenCalledWith('https://corp.example/mm/citeck/pl/p77?foo=1#frag'))
+  expect(client.jumpToPost).not.toHaveBeenCalled()
+
+  // Also without basePath prefix in relative href.
+  vi.mocked(client.openURL).mockClear()
+  vi.mocked(client.resolvePost).mockResolvedValueOnce({ post_id: 'p78', channel_id: 'c-other', root_id: '', has_channel: false })
+  openLink('/citeck/pl/p78?bar=2#end', 1)
+  await vi.waitFor(() => expect(client.openURL).toHaveBeenCalledWith('https://corp.example/mm/citeck/pl/p78?bar=2#end'))
+  expect(client.jumpToPost).not.toHaveBeenCalled()
+})
+
+test('openPermalink: post_gone/forbidden show localized toast without opening browser; superseded resolve stays silent', async () => {
+  setLocale('en')
+  const s1: ServerDTO = { ...srv(1), url: 'https://mm.citeck.ru' }
+  useStore.setState({ servers: [s1], selectedId: 1, toast: null })
+  vi.mocked(client.openURL).mockClear()
+
+  vi.mocked(client.resolvePost).mockRejectedValueOnce(new ApiError('post_gone', ''))
+  await openPermalink({ serverId: 1, teamName: 'citeck', postId: 'gone1', fallbackUrl: 'https://mm.citeck.ru/citeck/pl/gone1' })
+  expect(useStore.getState().toast?.text).toBe('The message was deleted or is not available')
+  expect(client.openURL).not.toHaveBeenCalled()
+
+  useStore.setState({ toast: null })
+  const slow = deferred<{ post_id: string; channel_id: string; root_id: string; has_channel: boolean }>()
+  vi.mocked(client.resolvePost).mockReturnValueOnce(slow.p)
+  vi.mocked(client.openChannel).mockResolvedValueOnce(chan('c-other'))
+  const p = openPermalink({ serverId: 1, teamName: 'citeck', postId: 'slow1', fallbackUrl: 'https://mm.citeck.ru/citeck/pl/slow1' })
+  await openChannel(1, 'c-other')
+  slow.reject(new ApiError('forbidden', ''))
+  await expect(p).resolves.toBe(false)
+  expect(useStore.getState().toast).toBeNull()
 })

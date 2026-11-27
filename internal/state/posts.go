@@ -1024,9 +1024,13 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add, server boo
 		}
 		var reacts []model.Reaction
 		files := []model.FileInfo(nil)
+		var embeds []model.PostEmbed
+		var images map[string]model.PostImage
 		if p.Metadata != nil {
 			reacts = append(reacts, p.Metadata.Reactions...)
 			files = p.Metadata.Files
+			embeds = p.Metadata.Embeds
+			images = p.Metadata.Images
 		}
 		same := func(x model.Reaction) bool { return x.UserID == r.UserID && x.EmojiName == r.EmojiName }
 		if add {
@@ -1040,7 +1044,7 @@ func (s *Server) reactLocked(channelID string, r model.Reaction, add, server boo
 				return false
 			}
 		}
-		p.Metadata = &model.PostMetadata{Files: files, Reactions: reacts}
+		p.Metadata = &model.PostMetadata{Files: files, Reactions: reacts, Embeds: embeds, Images: images}
 		return true
 	}
 	// Every copy: the feed (window or history) and the thread cache.

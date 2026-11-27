@@ -57,23 +57,25 @@ type PostView struct {
 	IconVersion string `json:"icon_version,omitempty"`
 	// Webhook: from_webhook — never grouped with its neighbours (webapp
 	// areConsecutivePostsBySameUser).
-	Webhook       bool               `json:"webhook,omitempty"`
-	Avatar        string             `json:"avatar,omitempty"` // picture version; "" = profile not loaded
-	Status        string             `json:"status,omitempty"` // presence of the author; "" for bots
-	RootID        string             `json:"root_id,omitempty"`
-	Message       string             `json:"message"`
-	CreateAt      int64              `json:"create_at"`
-	EditAt        int64              `json:"edit_at,omitempty"`
-	ReplyCount    int64              `json:"reply_count,omitempty"`
-	LastReplyAt   int64              `json:"last_reply_at,omitempty"`
-	System        bool               `json:"system,omitempty"`
-	Bot           bool               `json:"bot,omitempty"`
-	Pending       bool               `json:"pending,omitempty"`
-	Failed        bool               `json:"failed,omitempty"`
-	PendingPostID string             `json:"pending_post_id,omitempty"`
-	Attachments   []model.Attachment `json:"attachments,omitempty"`
-	Files         []FileView         `json:"files,omitempty"`
-	Reactions     []ReactionView     `json:"reactions,omitempty"`
+	Webhook       bool                   `json:"webhook,omitempty"`
+	Avatar        string                 `json:"avatar,omitempty"` // picture version; "" = profile not loaded
+	Status        string                 `json:"status,omitempty"` // presence of the author; "" for bots
+	RootID        string                 `json:"root_id,omitempty"`
+	Message       string                 `json:"message"`
+	CreateAt      int64                  `json:"create_at"`
+	EditAt        int64                  `json:"edit_at,omitempty"`
+	ReplyCount    int64                  `json:"reply_count,omitempty"`
+	LastReplyAt   int64                  `json:"last_reply_at,omitempty"`
+	System        bool                   `json:"system,omitempty"`
+	Bot           bool                   `json:"bot,omitempty"`
+	Pending       bool                   `json:"pending,omitempty"`
+	Failed        bool                   `json:"failed,omitempty"`
+	PendingPostID string                 `json:"pending_post_id,omitempty"`
+	Attachments   []model.Attachment     `json:"attachments,omitempty"`
+	Files         []FileView             `json:"files,omitempty"`
+	Reactions     []ReactionView         `json:"reactions,omitempty"`
+	Permalinks    []PermalinkPreviewView `json:"permalinks,omitempty"`
+	GifPreviews   []GifPreviewView       `json:"gif_previews,omitempty"`
 	// Saved: a flagged_post preference for this post — see SetPostSaved.
 	Saved bool `json:"saved,omitempty"`
 	// Ephemeral: only we see it (a slash command's answer) — never stored
@@ -239,14 +241,21 @@ func (s *Server) channelViewLocked(channelID string, emit func(PostView, *model.
 			cached = s.projection.posts[p.ID]
 		}
 		// Metadata is replaced rather than mutated by state reducers. Reuse its
-		// already projected files/reactions while still recomputing all live scalars.
+		// already projected files/reactions (and gif previews when message is
+		// unchanged) while still recomputing live scalars and permalink authors.
 		reuse := cached != nil && cached.metadata == metadata
-		if reuse {
-			p.Metadata = nil
-		}
-		pv := s.postViewLocked(p)
+		reuseGif := reuse && cached.view.Message == p.Message
+		pv := s.postViewOptsLocked(p, reuse, reuseGif)
 		if reuse {
 			pv.Files, pv.Reactions = cached.view.Files, cached.view.Reactions
+			if metadata != nil {
+				pv.Permalinks = s.permalinksLocked(metadata)
+			}
+			if reuseGif {
+				pv.GifPreviews = cached.view.GifPreviews
+			} else {
+				pv.GifPreviews = extractPostGifs(p.Message, metadata)
+			}
 		}
 		rootContext(&pv)
 		appendView(pv, metadata)
@@ -285,6 +294,9 @@ func (s *Server) PostViews(posts []model.Post) []PostView {
 		if v.Icon == "post" {
 			v.Icon, v.IconVersion = "webhook", ""
 		}
+		// Search hits may not be held in any window/thread cache, so /media/.../postgif/<id>
+		// cannot look them up safely (same rule as Icon == "post").
+		v.GifPreviews = nil
 		out = append(out, v)
 	}
 	return out
@@ -390,6 +402,10 @@ func (s *Server) PostIconURL(postID string) (string, bool) {
 }
 
 func (s *Server) postViewLocked(p model.Post) PostView {
+	return s.postViewOptsLocked(p, false, false)
+}
+
+func (s *Server) postViewOptsLocked(p model.Post, skipMeta, skipGifs bool) PostView {
 	v := PostView{ID: p.ID, UserID: p.UserID, RootID: p.RootID, Message: p.Message, CreateAt: p.CreateAt,
 		EditAt: p.EditAt, ReplyCount: p.ReplyCount, LastReplyAt: p.LastReplyAt, System: p.IsSystem(), Attachments: p.Props.Attachments,
 		Bot: bool(p.Props.FromBot) || bool(p.Props.FromWebhook), Webhook: bool(p.Props.FromWebhook), PendingPostID: p.PendingPostID,
@@ -415,7 +431,7 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 		v.SystemAuthor = true
 		v.Author, v.RealAuthor, v.Avatar, v.Status, v.Icon, v.IconVersion = "", "", "", "", "", ""
 	}
-	if p.Metadata != nil {
+	if !skipMeta && p.Metadata != nil {
 		for _, f := range p.Metadata.Files {
 			v.Files = append(v.Files, FileView{ID: f.ID, Name: f.Name, Ext: f.Extension, Size: f.Size, Mime: f.MimeType,
 				Width: f.Width, Height: f.Height, HasPreview: f.HasPreviewImage})
@@ -431,6 +447,47 @@ func (s *Server) postViewLocked(p model.Post) PostView {
 			v.Reactions[i].Count++
 			v.Reactions[i].Mine = v.Reactions[i].Mine || r.UserID == s.me.ID
 		}
+		v.Permalinks = s.permalinksLocked(p.Metadata)
+	}
+	if !skipGifs {
+		v.GifPreviews = extractPostGifs(p.Message, p.Metadata)
 	}
 	return v
+}
+
+func (s *Server) permalinksLocked(meta *model.PostMetadata) []PermalinkPreviewView {
+	if meta == nil || len(meta.Embeds) == 0 {
+		return nil
+	}
+	var out []PermalinkPreviewView
+	for _, e := range meta.Embeds {
+		if e.Type != "permalink" || e.Permalink == nil {
+			continue
+		}
+		pl := e.Permalink
+		postID := pl.PostID
+		if postID == "" {
+			postID = pl.Post.ID
+		}
+		if postID == "" {
+			continue
+		}
+		out = append(out, PermalinkPreviewView{
+			PostID:             postID,
+			ChannelID:          pl.Post.ChannelID,
+			RootID:             pl.Post.RootID,
+			UserID:             pl.Post.UserID,
+			Author:             s.displayNameLocked(pl.Post.UserID),
+			Avatar:             s.avatarLocked(pl.Post.UserID),
+			Message:            pl.Post.Message,
+			CreateAt:           pl.Post.CreateAt,
+			EditAt:             pl.Post.EditAt,
+			TeamName:           pl.TeamName,
+			ChannelDisplayName: pl.ChannelDisplayName,
+			ChannelName:        pl.ChannelName,
+			ChannelType:        pl.ChannelType,
+			FileCount:          pl.Post.FileCount,
+		})
+	}
+	return out
 }

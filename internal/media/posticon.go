@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -61,6 +62,16 @@ type PostIcons interface {
 	// client that follows only the redirects redirect allows. Unlike
 	// Origin.Get a 401 does not ask for a new sign-in: the path is chosen by
 	// a post's author, not by us.
+	GetIcon(ctx context.Context, serverID int64, path string, redirect func(*http.Request, []*http.Request) error) (*http.Response, error)
+}
+
+// PostGifs finds a GIF preview URL referenced by a held post (implemented by
+// api.Service over the server's state).
+type PostGifs interface {
+	// PostGif resolves (serverID, postID, key) to the GIF URL and server routing
+	// context when postID is held and carries a GIF with 16-hex key.
+	PostGif(serverID int64, postID, key string) (PostIcon, bool)
+	// GetIcon GETs a same-origin or image-proxy path with the server's session.
 	GetIcon(ctx context.Context, serverID int64, path string, redirect func(*http.Request, []*http.Request) error) (*http.Response, error)
 }
 
@@ -228,17 +239,68 @@ func (c *Cache) postIcon(q request) (string, iconRoute, int) {
 	return r.id(), r, 0
 }
 
-// openIcon starts a posticon download. Every route needs the server live,
-// the external one too: offline nothing is fetched (ErrNoServer, not
+func (c *Cache) postGifs() PostGifs {
+	if c.o.PostGifs != nil {
+		return c.o.PostGifs
+	}
+	if pg, ok := c.o.PostIcons.(PostGifs); ok {
+		return pg
+	}
+	return nil
+}
+
+// postGif resolves a postgif request: the cache id of its GIF and where it
+// comes from, or a status.
+func (c *Cache) postGif(q request) (string, iconRoute, int) {
+	pg := c.postGifs()
+	if pg == nil {
+		return "", iconRoute{}, http.StatusNotFound
+	}
+	ic, ok := pg.PostGif(q.server, q.key, q.variant)
+	if scoped, yes := pg.(interface {
+		PostGifContext(context.Context, int64, string, string) (PostIcon, bool)
+	}); yes && q.owner != nil {
+		ic, ok = scoped.PostGifContext(q.owner, q.server, q.key, q.variant)
+	}
+	if !ok {
+		return "", iconRoute{}, http.StatusNotFound
+	}
+	r, ok := routeIcon(ic)
+	if !ok {
+		return "", iconRoute{}, http.StatusNotFound
+	}
+	r.live = ic.Live
+	return r.id(), r, 0
+}
+
+type iconGetter interface {
+	GetIcon(ctx context.Context, serverID int64, path string, redirect func(*http.Request, []*http.Request) error) (*http.Response, error)
+}
+
+func (c *Cache) iconGetterFor(kind Kind) iconGetter {
+	if kind == KindPostGif {
+		if pg := c.postGifs(); pg != nil {
+			return pg
+		}
+	}
+	return c.o.PostIcons
+}
+
+// openIcon starts a posticon or postgif download. Every route needs the server
+// live, the external one too: offline nothing is fetched (ErrNoServer, not
 // remembered), and pictures on disk are still served.
 func (c *Cache) openIcon(ctx context.Context, q request, sl *slot) (*http.Response, error) {
 	if !q.icon.live {
 		return nil, ErrNoServer
 	}
 	if q.icon.ext != "" {
-		return c.fetchExternal(ctx, q.icon.ext, q.icon.base)
+		return c.fetchExternal(ctx, q.icon.ext, q.icon.base, q.kind)
 	}
-	resp, err := c.o.PostIcons.GetIcon(ctx, q.server, q.icon.path, iconRedirect(q.icon.base))
+	getter := c.iconGetterFor(q.kind)
+	if getter == nil {
+		return nil, errNoObject
+	}
+	resp, err := getter.GetIcon(ctx, q.server, q.icon.path, iconRedirect(q.icon.base))
 	if err != nil {
 		if errors.Is(err, errBlocked) {
 			return nil, errBlocked
@@ -268,7 +330,7 @@ func (c *Cache) openIcon(ctx context.Context, q request, sl *slot) (*http.Respon
 	}
 	loc.Fragment, loc.RawFragment = "", ""
 	sl.toExternal()
-	return c.fetchExternal(ctx, loc.String(), q.icon.base)
+	return c.fetchExternal(ctx, loc.String(), q.icon.base, q.kind)
 }
 
 func isRedirect(status int) bool {
@@ -279,21 +341,48 @@ func isRedirect(status int) bool {
 	return false
 }
 
+type cancelBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+func extDeadline(kind Kind) time.Duration {
+	if kind == KindPostGif {
+		return extGifTimeout
+	}
+	return extTimeout
+}
+
 // fetchExternal GETs rawURL without any credentials: the strict client, or
-// the intranet one for a server on a private address.
-func (c *Cache) fetchExternal(ctx context.Context, rawURL, base string) (*http.Response, error) {
+// the intranet one for a server on a private address. The whole-request
+// deadline (10 s for posticon, 30 s for postgif) is enforced via ctx so the
+// shared external clients keep transport timeouts without capping large GIFs.
+func (c *Cache) fetchExternal(ctx context.Context, rawURL, base string, kind Kind) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, extDeadline(kind))
 	ext := c.ext
 	if c.intranet(ctx, base) {
 		ext = c.extIntranet
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
+		cancel()
 		return nil, errNoObject
 	}
-	req.Header.Set("Accept", "image/png,image/jpeg,image/gif,image/webp,image/bmp")
+	if kind == KindPostGif {
+		req.Header.Set("Accept", "image/gif")
+	} else {
+		req.Header.Set("Accept", "image/png,image/jpeg,image/gif,image/webp,image/bmp")
+	}
 	req.Header.Set("User-Agent", "spk-mm-client")
 	resp, err := ext.Do(req)
 	if err != nil {
+		cancel()
 		if errors.Is(err, errBlocked) {
 			return nil, errBlocked
 		}
@@ -301,6 +390,7 @@ func (c *Cache) fetchExternal(ctx context.Context, rawURL, base string) (*http.R
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:
+		resp.Body = cancelBody{ReadCloser: resp.Body, cancel: cancel}
 		return resp, nil
 	case http.StatusNotFound, http.StatusGone, http.StatusForbidden, http.StatusUnauthorized:
 		err = errNoObject
@@ -308,6 +398,7 @@ func (c *Cache) fetchExternal(ctx context.Context, rawURL, base string) (*http.R
 		err = errUpstream
 	}
 	_ = resp.Body.Close()
+	cancel()
 	return nil, err
 }
 
@@ -357,10 +448,11 @@ func (c *Cache) intranet(ctx context.Context, base string) bool {
 	return private
 }
 
-// Limits of external icon fetches.
+// Limits of external icon/GIF fetches.
 const (
-	extFetches = 2                // at once, apart from the slots other pictures use
-	extTimeout = 10 * time.Second // a whole external fetch, redirects included
+	extFetches    = 2                // at once, apart from the slots other pictures use
+	extTimeout    = 10 * time.Second // whole external fetch for KindPostIcon
+	extGifTimeout = 30 * time.Second // whole external fetch for KindPostGif (up to 16 MiB)
 )
 
 // newExternalClient fetches pictures from outside any Mattermost server:
@@ -387,7 +479,7 @@ func newExternalClient(allow func(netip.AddrPort) bool) *http.Client {
 		MaxIdleConns:           4,
 		IdleConnTimeout:        30 * time.Second,
 	}
-	return &http.Client{Transport: tr, Timeout: extTimeout,
+	return &http.Client{Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) > maxRedirects || (req.URL.Scheme != "http" && req.URL.Scheme != "https") || req.URL.User != nil {
 				return errBlocked

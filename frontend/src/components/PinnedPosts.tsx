@@ -29,9 +29,9 @@ export function PinnedPosts({ server, channelId, onClose }: { server: ServerDTO;
         {!posts && !failed && <p role="status" className="py-8 text-center text-fg-muted">{t('pins.loading')}</p>}
         {failed && <p role="alert" className="py-8 text-center text-danger">{t('pins.error')}</p>}
         {posts?.length === 0 && <p role="status" className="py-8 text-center text-fg-muted">{t('pins.empty')}</p>}
-        {posts?.map((p) => <button key={p.id} className="mb-2 block w-full rounded border border-line bg-panel p-3 text-left hover:bg-hover" onClick={() => { onClose(); void jumpToPost(server.id, channelId, p.id, p.root_id).catch(() => {}) }}>
+        {posts?.map((p) => <button key={p.id} className="mb-2 block w-full rounded border border-line bg-panel p-3 text-left hover:bg-hover" onClick={(e) => { if ((e.target as HTMLElement).closest('a')) return; onClose(); void jumpToPost(server.id, channelId, p.id, p.root_id).catch(() => {}) }}>
           <div className="mb-1 flex items-baseline gap-2"><strong className="truncate text-fg">{p.author || t('post.system')}</strong><span className="text-xs text-fg-muted">{formatDay(p.create_at, formatLocale())}, {formatTime(p.create_at, formatLocale())}</span></div>
-          <div className="line-clamp-4 text-sm text-fg"><Markdown text={p.message} me={server.username} onLink={openLink} serverId={server.id} /></div>
+          <div className="line-clamp-4 text-sm text-fg"><Markdown text={p.message} me={server.username} onLink={(href) => { onClose(); openLink(href, server.id) }} serverId={server.id} /></div>
         </button>)}
       </div>
     </div>

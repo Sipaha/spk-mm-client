@@ -205,8 +205,11 @@ func (h *HTTP) routes() {
 	h.mux.HandleFunc("POST /api/LoadOlder", handle(func(ctx context.Context, r *chanReq) (any, error) {
 		return nil, h.api.LoadOlder(ctx, r.ID, r.ChannelID)
 	}))
-	// JumpToPost runs under the request's context: the UI aborts a stale
-	// jump, which cancels its server calls.
+	// ResolvePost and JumpToPost run under the request's context: the UI aborts
+	// a stale navigation, which cancels its server calls.
+	h.mux.HandleFunc("POST /api/ResolvePost", handle(func(ctx context.Context, r *postReq) (any, error) {
+		return h.api.ResolvePost(ctx, r.ID, r.PostID)
+	}))
 	h.mux.HandleFunc("POST /api/JumpToPost", handle(func(ctx context.Context, r *struct {
 		ID        int64  `json:"id"`
 		ChannelID string `json:"channel_id"`

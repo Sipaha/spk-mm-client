@@ -74,7 +74,7 @@ func writeImage(dst io.Writer, src io.ReadSeeker, sp spec) (int64, error) {
 		return 0, err
 	}
 	ctype := http.DetectContentType(head[:n])
-	if n == 0 || !rasterTypes[ctype] {
+	if n == 0 || !rasterTypes[ctype] || (sp.gifOnly && ctype != "image/gif") {
 		return 0, errType
 	}
 	if _, err := src.Seek(0, io.SeekStart); err != nil {

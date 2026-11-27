@@ -149,11 +149,14 @@ type Emoji struct {
 	DeleteAt  int64  `json:"delete_at,omitempty"`
 }
 
-// PostMetadata keeps only files and reactions; embeds/images/emojis are
+// PostMetadata keeps files, reactions, compact permalink embeds and GIF
+// image/embed metadata; non-GIF OpenGraph text, raw JSON and emojis are
 // dropped at decode time (memory: the hot layer holds ~60 posts × channels).
 type PostMetadata struct {
-	Files     []FileInfo `json:"files,omitempty"`
-	Reactions []Reaction `json:"reactions,omitempty"`
+	Files     []FileInfo           `json:"files,omitempty"`
+	Reactions []Reaction           `json:"reactions,omitempty"`
+	Embeds    []PostEmbed          `json:"embeds,omitempty"`
+	Images    map[string]PostImage `json:"images,omitempty"`
 }
 
 type Post struct {

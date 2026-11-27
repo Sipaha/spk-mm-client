@@ -630,3 +630,42 @@ func TestJumpAcrossReconnectIsReread(t *testing.T) {
 		"the segment read before the reconnect is reread")
 	assert.NotContains(t, messages(h.view("c-town")), "Message #10")
 }
+
+func TestResolvePost(t *testing.T) {
+	h, g := jumpHarness(t, mmfake.Options{})
+
+	// 1. Held post resolves locally without hitting REST (works offline too).
+	held := h.postID("Message #120")
+	g.clearLog()
+	res, err := h.w.ResolvePost(context.Background(), held)
+	require.NoError(t, err)
+	assert.Equal(t, ResolvedPost{PostID: held, ChannelID: "c-town", HasChannel: true}, res)
+	assert.Empty(t, g.requests(), "held post resolves without REST call")
+
+	// 2. Unheld post in a joined channel resolves via GET /posts/{id} with HasChannel=true.
+	old := h.postID("Message #10")
+	res, err = h.w.ResolvePost(context.Background(), old)
+	require.NoError(t, err)
+	assert.Equal(t, ResolvedPost{PostID: old, ChannelID: "c-town", HasChannel: true}, res)
+
+	// 3. Post in a public channel alice is NOT a member of resolves with HasChannel=false.
+	unjoined := h.fake.PostAs("c-offices", "bob", "hello from unjoined open channel")
+	res, err = h.w.ResolvePost(context.Background(), unjoined.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ResolvedPost{PostID: unjoined.ID, ChannelID: "c-offices", HasChannel: false}, res)
+
+	// 4. 404 / deleted -> ErrPostGone, 403 -> ErrForbidden.
+	_, err = h.w.ResolvePost(context.Background(), "nosuchpostnosuchpostnosuch")
+	assert.ErrorIs(t, err, ErrPostGone)
+	private := h.postID("Message #7")
+	h.fake.SetFailure("/posts/"+private, http.StatusForbidden)
+	_, err = h.w.ResolvePost(context.Background(), private)
+	assert.ErrorIs(t, err, ErrForbidden)
+
+	// 5. 401 triggers session expiration / CheckAuth.
+	unauth := h.postID("Message #8")
+	h.fake.SetFailure("/posts/"+unauth, http.StatusUnauthorized)
+	_, err = h.w.ResolvePost(context.Background(), unauth)
+	require.Error(t, err)
+	assert.True(t, sessionExpired(err), "401 must surface as sessionExpired")
+}

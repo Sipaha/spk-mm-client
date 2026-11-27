@@ -544,8 +544,8 @@ func (s *Server) RefreshUsers(us []model.User) bool {
 	return changed
 }
 
-// MissingUserIDs lists users the views need (DM partners, post authors)
-// that are not loaded yet.
+// MissingUserIDs lists users the views need (DM partners, post authors,
+// permalink-embed authors) that are not loaded yet.
 func (s *Server) MissingUserIDs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -555,15 +555,15 @@ func (s *Server) MissingUserIDs() []string {
 			need[p] = true
 		}
 		for _, p := range c.Win.Posts {
-			need[p.UserID] = true
+			collectPostUsers(need, p)
 		}
 	}
 	for _, p := range s.older {
-		need[p.UserID] = true
+		collectPostUsers(need, p)
 	}
 	for _, t := range s.threads {
-		need[t.root.UserID] = true
-		t.eachReply(func(p *model.Post) { need[p.UserID] = true })
+		collectPostUsers(need, t.root)
+		t.eachReply(func(p *model.Post) { collectPostUsers(need, *p) })
 	}
 	var out []string
 	for id := range need {
@@ -573,6 +573,19 @@ func (s *Server) MissingUserIDs() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func collectPostUsers(need map[string]bool, p model.Post) {
+	if p.UserID != "" {
+		need[p.UserID] = true
+	}
+	if p.Metadata != nil {
+		for _, e := range p.Metadata.Embeds {
+			if e.Type == "permalink" && e.Permalink != nil && e.Permalink.Post.UserID != "" {
+				need[e.Permalink.Post.UserID] = true
+			}
+		}
+	}
 }
 
 func atoiDefault(s string, def int64) int64 {

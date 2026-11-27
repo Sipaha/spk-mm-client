@@ -1,8 +1,9 @@
 import { applyChannelPatch } from './channelPatch'
 import { ApiError, client, uploadAttachmentBrowser } from './api/client'
-import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, SearchHit, SidebarDTO, ThreadDTO } from './api/types'
+import type { AttachmentView, ChannelDTO, ChannelItem, DownloadView, PostView, ResolvedPostDTO, SearchHit, SidebarDTO, ThreadDTO } from './api/types'
 import { errorMessage } from './errors'
 import { t } from './i18n'
+import { parsePermalink, type ParsedPermalink } from './permalink'
 import { parseSearchTerms } from './search/terms'
 import { useStore } from './store'
 
@@ -63,8 +64,9 @@ let jumpSeq = 0
 let jumpAbort: AbortController | null = null
 
 // cancelled: a history operation a newer navigation replaced (Go's
-// CodeCancelled) — never shown.
-const cancelled = (e: unknown) => e instanceof ApiError && e.code === 'cancelled'
+// CodeCancelled) or an aborted fetch — never shown.
+const cancelled = (e: unknown) =>
+  (e instanceof ApiError && e.code === 'cancelled') || (e instanceof Error && e.name === 'AbortError')
 
 export const report = (e: unknown) => useStore.getState().setError(errorMessage(e))
 
@@ -789,8 +791,57 @@ export async function uploadAttachments(serverId: number, channelId: string, fil
   if (failed) throw failed.reason
 }
 
-export const openLink = (href: string) => {
+export const openExternalLink = (href: string) => {
   client.openURL(href).catch(report)
+}
+
+export async function openPermalink(parsed: ParsedPermalink): Promise<boolean> {
+  dropJump()
+  const my = jumpSeq
+  const ctl = new AbortController()
+  jumpAbort = ctl
+  const live = () => my === jumpSeq
+  let resolved: ResolvedPostDTO
+  try {
+    resolved = await client.resolvePost(parsed.serverId, parsed.postId, ctl.signal)
+  } catch (e) {
+    if (!live() || cancelled(e)) return false
+    useStore.getState().showToast(errorMessage(e))
+    return false
+  } finally {
+    if (jumpAbort === ctl) jumpAbort = null
+  }
+  if (!live()) return false
+  if (!resolved.has_channel) {
+    openExternalLink(parsed.fallbackUrl)
+    return false
+  }
+  try {
+    return await jumpToPost(parsed.serverId, resolved.channel_id, resolved.post_id, resolved.root_id || undefined)
+  } catch (e) {
+    if (cancelled(e)) return false
+    useStore.getState().showToast(errorMessage(e))
+    return false
+  }
+}
+
+export function openPermalinkPost(serverId: number, postId: string, teamName?: string): Promise<boolean> {
+  const s = useStore.getState()
+  const srv = s.servers.find((x) => x.id === serverId)
+  const team = teamName || s.channel?.team_name || s.sidebar?.teams?.find((tm) => tm.id === s.sidebar?.team_id)?.name || ''
+  const base = (srv?.url ?? '').replace(/\/+$/, '')
+  const fallbackUrl = base && team ? `${base}/${team}/pl/${postId}` : base ? `${base}/pl/${postId}` : ''
+  return openPermalink({ serverId, teamName: team, postId, fallbackUrl })
+}
+
+export const openLink = (href: string, serverId?: number) => {
+  const s = useStore.getState()
+  const parsed = parsePermalink(href, s.servers, serverId ?? s.selectedId)
+  if (parsed) {
+    void openPermalink(parsed)
+    return
+  }
+  openExternalLink(href)
 }
 
 // loadOlder fetches one page of history above the window; resolves true
